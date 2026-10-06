@@ -9,10 +9,10 @@ emu=$(cd ../xboxrecomp 2>/dev/null && pwd -P || true)/tests/proton_run.sh
 cmake -B build-win -DCMAKE_CROSSCOMPILING_EMULATOR="$emu" >/dev/null
 cmake --build build-win --target d3d8_hlsl_split d3d11_backend_smoke input_map_test input_keyboard_test
 # tests/nv2a_zbuf, apu_irq, kernel_irql_abi, fp_precision, vblank_ack, vblank_schedule
-# and spin_wait are projects of their own
+# spin_wait and rt_alias are projects of their own
 # (not in the game build): configure each beside build-win with the same
 # toolchain.
-standalone="nv2a_zbuf apu_irq kernel_irql_abi fp_precision vblank_ack vblank_schedule spin_wait"
+standalone="nv2a_zbuf apu_irq kernel_irql_abi fp_precision vblank_ack vblank_schedule spin_wait rt_alias"
 for t in $standalone; do
     src=../xboxrecomp/tests/$t
     [ -f "$src/CMakeLists.txt" ] || { echo "tests: $src missing (toolkit too old?)" >&2; exit 1; }
