@@ -1,0 +1,7 @@
+#@ scripts/benchlib/host/setup_box.sh.in: a template `blinx2 bench` fills, the text
+#@ scripts/bench.sh expanded, byte for byte. The #@ lines this file starts
+#@ with are this note and are not sent. It is remote (setup). After the prologue; @BENCH_IMAGE@ is the distrobox image.
+mkdir -p "$BENCH_DIR"
+if ! distrobox list | awk -F'|' -v box="$BENCH_BOX" 'NR>1 {gsub(/ /,"",$2)} $2 == box {f=1} END {exit !f}'; then
+    distrobox create --yes --name "$BENCH_BOX" --image '@BENCH_IMAGE@'
+fi

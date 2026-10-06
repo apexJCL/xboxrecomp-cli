@@ -1,0 +1,10 @@
+#@ scripts/benchlib/host/prologue.sh.in: a template `blinx2 bench` fills, the text
+#@ scripts/bench.sh expanded, byte for byte. The #@ lines this file starts
+#@ with are this note and are not sent. It is the remote_vars prologue every script after it starts with. @NAME@ is
+#@ filled with the configured value, unquoted on purpose: ~ expands on the host.
+set -euo pipefail
+BENCH_DIR=@BENCH_DIR@
+REMOTE_GAME=@REMOTE_GAME@
+LLVM_MINGW_ROOT=@LLVM_MINGW_ROOT@
+BENCH_PREFIX=@BENCH_PREFIX@
+BENCH_BOX='@BENCH_BOX@'

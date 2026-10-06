@@ -1,0 +1,15 @@
+#@ scripts/benchlib/host/lock_box.sh.in: a template `blinx2 bench` fills, the text
+#@ scripts/bench.sh expanded, byte for byte. The #@ lines this file starts
+#@ with are this note and are not sent. It is not stdin: the ssh command argument in_box_locked runs, before
+#@ `distrobox enter`. @FL@ is -s (builds) or -x (tests), @WHAT@ the word the
+#@ waiting message names, @BENCH_BOX@ the distrobox. No final newline, on
+#@ purpose: it is one ssh argument, as bench.sh built it.
+
+        exec 9>>~/.recomp-run.lock
+        if ! flock @FL@ -n 9; then
+            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\.lock$/ && NF == 2 {h = $1} END {print h}' || true)
+            echo "bench: @WHAT@ waiting for the run lock, held by: $( [ -n "$h" ] && ps -o pid=,args= -p "$h" | cut -c1-200 || echo '?')" >&2
+            flock @FL@ -w 3600 -E 75 9 || exit 75
+            echo 'bench: @WHAT@ got the run lock' >&2
+        fi
+        distrobox enter '@BENCH_BOX@' -- bash -s 9>&-

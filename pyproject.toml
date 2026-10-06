@@ -1,0 +1,56 @@
+# xboxrecomp-cli: the toolchain CLI for statically recompiled Xbox games.
+# Standard library only at runtime (dependencies = []); a game's wrapper runs
+# it with `uv run --project <this dir> --locked xbr --game <root> ...`. The
+# game's own tools environment (cmake, ninja, capstone, pefile) is the game's
+# pyproject.toml and uv.lock, made by `setup`, not this one.
+
+[project]
+name = "xboxrecomp-cli"
+dynamic = ["version"]
+description = "Set up, generate, build, package and bench a statically recompiled Xbox game from its game.toml"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+xbr = "xboxrecomp_cli.main:main"
+
+[dependency-groups]
+# ruff at the version the games lock, so the bootstrap a game vendors formats
+# the same in both repositories.
+dev = ["numpy==2.5.3", "pytest", "ruff==0.16.10"]  # numpy: test_audio_check only
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/xboxrecomp_cli/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xboxrecomp_cli"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["external", "third_party", ".venv*", "build*", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+  "E501",     # format wraps code; long strings and comments are left to review
+  "UP031",    # the code uses %-formatting throughout; f-strings by hand would be churn,
+              # and the unsafe fix can change a tuple argument's meaning
+  "B905",     # zip() without strict=: the code moved from a Python 3.9 floor, where
+              # strict= did not exist; its pairs are equal by construction
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The bootstrap every game vendors runs on Python 3.9 (a host with only the
+# system Python still prints help and the uv hint).
+"src/xboxrecomp_cli/wrapper/*.py" = ["UP"]
+"src/xboxrecomp_cli/helptext.py" = ["UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
