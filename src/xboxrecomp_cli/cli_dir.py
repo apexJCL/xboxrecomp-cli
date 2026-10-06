@@ -26,16 +26,16 @@ def tree_state():
 
 def doctor_line():
     """cli: <path> @ <sha> (pinned | differs from the pin <sha>); a checkout
-    the bootstrap did not clone (no .xbr-pin) is a developer's and only
-    says how it compares."""
+    the bootstrap did not clone (no .xbr-pin) is a developer's, and says
+    "not the pin" instead: nothing moves it."""
     d = cli_dir()
     pin = host.g().m["cli"]["commit"]
     head = host.git_head(d)
     if not head:
         return "cli:        %s (not a git checkout)" % d
     note = toolkit.pin_note(d, pin)
-    if not note and head != pin:
-        note = " (not the pin %s)" % pin[:12]
+    if not note:
+        note = " (pinned)" if head == pin else " (not the pin %s)" % pin[:12]
     return "cli:        %s @ %s%s" % (d, head[:12], note)
 
 

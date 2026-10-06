@@ -803,3 +803,20 @@ def test_stock_refusal_text():
     )
     assert msg.startswith("build-pkg-macos is not a stock build: XBOXRECOMP_ENHANCE=OFF (want ON)")
     assert "package macos --reconfigure" in msg and "delete build-pkg-macos/" in msg
+
+
+def test_doctor_cli_row(d):
+    """doctor's cli: row says whether the running CLI is the game's pin."""
+    import pytest
+
+    from xboxrecomp_cli import cli_dir
+
+    with fake_tree(d):
+        here = cli_dir.cli_dir()
+        head = host.git_head(here)
+        if not head:
+            pytest.skip("the CLI is not a git checkout here")
+        host.g().m["cli"]["commit"] = head
+        assert cli_dir.doctor_line().endswith("@ %s (pinned)" % head[:12])
+        host.g().m["cli"]["commit"] = "0" * 40
+        assert cli_dir.doctor_line().endswith("(not the pin 000000000000)")
