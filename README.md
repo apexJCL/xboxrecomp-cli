@@ -25,12 +25,15 @@ Players never install this repository. A game vendors a small bootstrap,
 next to its `<slug>` and `<slug>.cmd` wrappers. The bootstrap needs only
 Python 3.9 and the standard library. It finds the CLI in this order:
 
-1. `$XBOXRECOMP_CLI_DIR`.
-2. `external/xboxrecomp-cli` in the game's tree.
-3. `../xboxrecomp-cli` beside the game's checkout.
-4. Otherwise it clones `cli.url` at `cli.commit` into
-   `external/xboxrecomp-cli`. The clone is marked `.xbr-pin`, so `setup`
-   moves it when the pin moves.
+1. `$XBOXRECOMP_CLI_DIR`, used as it is.
+2. `external/xboxrecomp-cli` in the game's tree, but only at `cli.commit`.
+   A clone the bootstrap made (marked `.xbr-pin`) is moved to a new pin.
+   Any other checkout there at another commit is refused.
+3. `../xboxrecomp-cli` beside the game's checkout, used as it is.
+4. Otherwise it clones `cli.url` into `external/xboxrecomp-cli` and checks
+   out `cli.commit`. The clone is moved into place only once it is at the
+   pin. If the clone or checkout fails (no network, or a pin that was never
+   pushed), it leaves nothing behind and prints how to get the CLI.
 
 It then runs:
 
@@ -38,7 +41,12 @@ It then runs:
 
 The game's commands and help therefore read `<slug> ...` as before. The
 bootstrap needs [uv](https://docs.astral.sh/uv/) 0.5.31 or newer. Without
-uv, it still prints the help and how to install uv.
+uv, `<slug> --help` still prints the help (from a CLI it finds; it clones
+nothing without uv) and how to install uv. With neither uv nor a CLI, it
+prints how to get both: install uv, then clone this repository beside the
+game's checkout
+(`git clone https://github.com/apexJCL/xboxrecomp-cli.git`) or set
+`XBOXRECOMP_CLI_DIR`.
 
 `<slug> wrapper --check` compares a game's copy of the bootstrap with this
 CLI's template, and `<slug> wrapper --print` prints the template.
@@ -80,6 +88,15 @@ Before a public push, run `scripts/audit-public.sh` (or
 `scripts/audit-public.sh --all`). It checks what the push would publish
 for private paths, private host names and addresses, binaries, game
 data, and any commit identity other than the noreply one.
+
+The private patterns are not in the repository. They live in the clone's
+`.git/info/audit-private`, one extended regex per line (`#` starts a
+comment), and the script refuses to run without them. Write the bench
+host's name and the personal email there once per clone:
+
+    printf '%s\n' 'hostname' 'name@example[.]com' > "$(git rev-parse --git-path info/audit-private)"
+
+`XBR_AUDIT_PRIVATE=<file>` points the script at another file.
 
 Where each file came from: [docs/origin.md](docs/origin.md).
 

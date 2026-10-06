@@ -444,7 +444,7 @@ def test_parity_refusals(d):
     a, _ = assert_parity(d, ["build"], {"BENCH_HOST": ""})
 
 
-def test_golden_refuses_unknown_dump():
+def test_golden_refuses_unknown_dump(capsys):
     import hashlib
 
     from xboxrecomp_cli import manifest
@@ -454,7 +454,8 @@ def test_golden_refuses_unknown_dump():
     with tempfile.TemporaryDirectory() as d:
         shutil.copy(os.path.join(GAME, "game.toml"), d)
         game = manifest.load(d)
-        for xbe, ok in ((None, False), (b"other dump", False), (b"known", True)):
+        # No dump here: a warning, not a refusal (the host has its own).
+        for xbe, ok in ((None, True), (b"other dump", False), (b"known", True)):
             if xbe is not None:
                 os.makedirs(os.path.join(d, "game_files"), exist_ok=True)
                 with open(game.xbe, "wb") as f:
@@ -465,6 +466,7 @@ def test_golden_refuses_unknown_dump():
                 assert ok, xbe
             except BenchError as e:
                 assert not ok, (xbe, e)
+        assert "no game_files/default.xbe here, so the host's dump" in capsys.readouterr().err
         game.m["xbe"]["sha256"][:] = []
         with open(game.xbe, "wb") as f:
             f.write(b"other dump")

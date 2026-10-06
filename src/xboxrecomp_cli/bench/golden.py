@@ -36,17 +36,22 @@ def golden_args(game):
 def check_dump(game):
     """The goldens were recorded on the dumps xbe.sha256 lists: another
     dump's frames mean nothing against them, so golden refuses it before
-    any run (an empty list turns the check off)."""
+    any run (an empty list turns the check off). The dump checked is this
+    tree's, the one `sync --game-files` copies to the host; a controller
+    with no dump of its own (the host's BENCH_GAME_FILES came from
+    elsewhere) only warns, as the host's copy is not checked."""
     from .. import host
 
     known = game.m["xbe"]["sha256"]
     if not known:
         return
     if not os.path.isfile(game.xbe):
-        raise BenchError(
-            "golden: no %s here to check against the known dumps (game.toml xbe.sha256)"
-            % game.rel(game.xbe)
+        print(
+            "golden: warning: no %s here, so the host's dump (BENCH_GAME_FILES) is not "
+            "checked against the known dumps (game.toml xbe.sha256)" % game.rel(game.xbe),
+            file=sys.stderr,
         )
+        return
     sha = host.sha256_path(game.xbe)
     if sha not in known:
         raise BenchError(

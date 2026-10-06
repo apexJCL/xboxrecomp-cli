@@ -54,8 +54,11 @@ fi
 
 private=${XBR_AUDIT_PRIVATE:-$(git rev-parse --git-path info/audit-private)}
 if [ ! -s "$private" ]; then
-    echo "audit-public: no private patterns in $private (one regex per line: the bench" >&2
-    echo "host's name, the personal email): refusing to pass without them" >&2
+    echo "audit-public: no private patterns in $private, so it cannot check for them." >&2
+    echo "Write one extended regex per line (the bench host's name, the personal email)," >&2
+    echo "once per clone:" >&2
+    echo "    printf '%s\n' 'hostname' 'name@example[.]com' > \"\$(git rev-parse --git-path info/audit-private)\"" >&2
+    echo "or set XBR_AUDIT_PRIVATE to a file that has them. See README.md, Releases and pins." >&2
     exit 2
 fi
 patterns=("${PUBLIC_PATTERNS[@]}")

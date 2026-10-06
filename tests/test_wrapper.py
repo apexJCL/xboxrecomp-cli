@@ -28,14 +28,47 @@ FAKE_UV = """#!/bin/sh
 if [ "$1" = "--version" ]; then echo "uv %s"; exit 0; fi
 printf '%%s\\n' "$@" > "$UV_LOG"
 """
+# A git with a remote in env: FAKE_MAIN is the remote's main, FAKE_HAS the
+# commits it holds (space separated), FAKE_OFFLINE no network. HEAD lives in
+# .git/fake-head.
 FAKE_GIT = """#!/bin/sh
 echo "$@" >> "$GIT_LOG"
+fail() { echo "fatal: $1" >&2; exit 128; }
+if [ "$1" = clone ]; then
+  [ -n "$FAKE_OFFLINE" ] && fail "unable to access '$4': Could not resolve host"
+  /bin/mkdir -p "$5/.git/info"; : > "$5/pyproject.toml"
+  echo "$FAKE_MAIN" > "$5/.git/fake-head"; exit 0
+fi
+[ "$1" = -C ] || exit 0
+dir="$2"; shift 2
 case "$1" in
-  clone) /bin/mkdir -p "$4/.git/info"; : > "$4/pyproject.toml" ;;
-  -C) [ "$3" = rev-parse ] && echo .git/info/exclude ;;
+  rev-parse)
+    if [ "$2" = HEAD ]; then
+      [ -f "$dir/.git/fake-head" ] || fail "not a git repository"
+      /bin/cat "$dir/.git/fake-head"
+    else echo .git/info/exclude; fi ;;
+  fetch) [ -n "$FAKE_OFFLINE" ] && fail "unable to access: Could not resolve host" ;;
+  checkout)
+    case " $FAKE_HAS " in
+      *" $3 "*) echo "$3" > "$dir/.git/fake-head" ;;
+      *) fail "reference is not a tree: $3" ;;
+    esac ;;
 esac
 exit 0
 """
+PIN = "0" * 40  # tests/testdata/game/game.toml [cli] commit
+OLD = "1" * 40
+
+
+def fake_clone(path, sha, marked):
+    """A checkout of the CLI at sha, as the fake git sees it."""
+    os.makedirs(os.path.join(path, ".git", "info"))
+    open(os.path.join(path, "pyproject.toml"), "w").close()
+    with open(os.path.join(path, ".git", "fake-head"), "w") as f:
+        f.write(sha + "\n")
+    if marked:
+        with open(os.path.join(path, ".xbr-pin"), "w") as f:
+            f.write(sha + "\n")
 
 
 def scratch(d):
@@ -60,7 +93,11 @@ def run(root, bindir, args, python=sys.executable, **env):
     e = {"PATH": bindir, "HOME": os.environ.get("HOME", "/")}
     e.update(env)
     return subprocess.run(
-        [python, os.path.join(root, "blinx2.py")] + args, env=e, capture_output=True, text=True
+        [python, os.path.join(root, "blinx2.py")] + args,
+        env=e,
+        cwd=os.path.dirname(root),
+        capture_output=True,
+        text=True,
     )
 
 
@@ -110,12 +147,14 @@ def test_search_order(d):
     beside = os.path.join(d, "xboxrecomp-cli")
     external = os.path.join(root, "external", "xboxrecomp-cli")
     override = os.path.join(d, "elsewhere")
-    for p in (beside, external, override):
+    for p in (beside, override):
         os.makedirs(p)
         open(os.path.join(p, "pyproject.toml"), "w").close()
+    fake_clone(external, PIN, marked=False)
+    tool(bindir, "git", FAKE_GIT)
 
     def project(**env):
-        r = run(root, bindir, ["doctor"], UV_LOG=log, **env)
+        r = run(root, bindir, ["doctor"], UV_LOG=log, GIT_LOG=os.path.join(d, "git.log"), **env)
         assert r.returncode == 0, r.stderr
         with open(log) as f:
             argv = f.read().splitlines()
@@ -155,23 +194,106 @@ def test_uv_command(d):
     ], argv
 
 
+def git_env(d, **kw):
+    e = {"UV_LOG": os.path.join(d, "uv.log"), "GIT_LOG": os.path.join(d, "git.log")}
+    e.update({"FAKE_MAIN": OLD, "FAKE_HAS": "%s %s" % (OLD, PIN)})
+    e.update(kw)
+    return e
+
+
+def git_calls(d):
+    with open(os.path.join(d, "git.log")) as f:
+        return f.read().splitlines()
+
+
 def test_clone_at_the_pin(d):
     root, bindir = scratch(d)
     tool(bindir, "uv", FAKE_UV % "0.9.0")
     tool(bindir, "git", FAKE_GIT)
-    log = os.path.join(d, "git.log")
-    r = run(root, bindir, ["doctor"], UV_LOG=os.path.join(d, "uv.log"), GIT_LOG=log)
+    r = run(root, bindir, ["doctor"], **git_env(d))
     assert r.returncode == 0, r.stderr
     dest = os.path.join(root, "external", "xboxrecomp-cli")
+    tmp = dest + ".partial"
     pin = tomllib.load(open(os.path.join(root, "game.toml"), "rb"))["cli"]
-    with open(log) as f:
-        calls = f.read().splitlines()
-    assert calls[0] == "clone --quiet %s %s" % (pin["url"], dest), calls
-    assert calls[1] == "-C %s checkout --quiet %s" % (dest, pin["commit"]), calls
+    calls = git_calls(d)
+    assert calls[0] == "clone --quiet --no-checkout %s %s" % (pin["url"], tmp), calls
+    assert calls[1] == "-C %s checkout --quiet %s" % (tmp, pin["commit"]), calls
     with open(os.path.join(dest, ".xbr-pin")) as f:
         assert f.read() == pin["commit"] + "\n"
     with open(os.path.join(dest, ".git", "info", "exclude")) as f:
         assert "/.xbr-pin" in f.read()
+    assert not os.path.exists(tmp)
+    with open(os.path.join(d, "uv.log")) as f:
+        argv = f.read().splitlines()
+    assert argv[argv.index("--project") + 1] == dest
+
+
+def refused(r, d, *why):
+    """The friendly no-CLI message, no traceback, nothing run, nothing left
+    in external/."""
+    assert r.returncode == 1, r
+    assert "Traceback" not in r.stderr, r.stderr
+    for w in why:
+        assert w in r.stderr, r.stderr
+    assert "no xboxrecomp-cli: clone it beside this checkout, or set XBOXRECOMP_CLI_DIR" in (
+        r.stderr
+    )
+    assert not os.path.exists(os.path.join(d, "uv.log"))
+
+
+@pytest.mark.parametrize("python", PYTHONS)
+def test_pin_not_on_the_remote(d, python):
+    """A pin the remote does not have (a commit never pushed): no traceback,
+    no clone left at the remote's main for the next run to pick up."""
+    root, bindir = scratch(d)
+    tool(bindir, "uv", FAKE_UV % "0.9.0")
+    tool(bindir, "git", FAKE_GIT)
+    for _ in range(2):  # the second run is no better off than the first
+        r = run(root, bindir, ["doctor"], python, **git_env(d, FAKE_HAS=OLD))
+        refused(r, d, "git checkout failed: fatal: reference is not a tree")
+        assert not os.listdir(os.path.join(root, "external"))
+
+
+@pytest.mark.parametrize("python", PYTHONS)
+def test_no_network(d, python):
+    root, bindir = scratch(d)
+    tool(bindir, "uv", FAKE_UV % "0.9.0")
+    tool(bindir, "git", FAKE_GIT)
+    r = run(root, bindir, ["doctor"], python, **git_env(d, FAKE_OFFLINE="1"))
+    refused(r, d, "git clone failed: fatal: unable to access")
+    assert not os.listdir(os.path.join(root, "external"))
+
+
+@pytest.mark.parametrize("python", PYTHONS)
+def test_stale_clone(d, python):
+    """A clone this script made, left at an older pin, moves to the new pin
+    (fetching when it lacks it); an unmarked checkout there at another commit
+    is refused, never run."""
+    root, bindir = scratch(d)
+    tool(bindir, "uv", FAKE_UV % "0.9.0")
+    tool(bindir, "git", FAKE_GIT)
+    dest = os.path.join(root, "external", "xboxrecomp-cli")
+    fake_clone(dest, OLD, marked=True)
+    r = run(root, bindir, ["doctor"], python, **git_env(d))
+    assert r.returncode == 0, r.stderr
+    assert "the pin moved" in r.stderr
+    with open(os.path.join(dest, ".git", "fake-head")) as f:
+        assert f.read().strip() == PIN
+    with open(os.path.join(dest, ".xbr-pin")) as f:
+        assert f.read() == PIN + "\n"
+    # Offline, and the old clone lacks the new pin: refused, left as it was.
+    shutil.rmtree(dest)
+    os.remove(os.path.join(d, "uv.log"))
+    fake_clone(dest, OLD, marked=True)
+    r = run(root, bindir, ["doctor"], python, **git_env(d, FAKE_HAS=OLD, FAKE_OFFLINE="1"))
+    refused(r, d, "git fetch failed")
+    # Unmarked: someone else's checkout.
+    shutil.rmtree(dest)
+    fake_clone(dest, OLD, marked=False)
+    r = run(root, bindir, ["doctor"], python, **git_env(d))
+    refused(r, d, "is at 111111111111, not the pin 000000000000, and this script did not clone it")
+    with open(os.path.join(dest, ".git", "fake-head")) as f:
+        assert f.read().strip() == OLD
 
 
 @pytest.mark.parametrize("python", PYTHONS)
@@ -180,6 +302,11 @@ def test_no_uv(d, python):
     anything else prints the hint."""
     root, bindir = scratch(d)
     cli = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(helptext.__file__))))
+    # Neither uv nor a CLI: --help says how to get both.
+    r = run(root, bindir, ["--help"], python)
+    assert r.returncode == 1 and "Traceback" not in r.stderr, r.stderr
+    assert "no xboxrecomp-cli: clone it beside" in r.stderr, r.stderr
+    assert "no uv 0.5.31+ on PATH" in r.stderr, r.stderr
     r = run(root, bindir, ["--help"], python, XBOXRECOMP_CLI_DIR=cli)
     assert r.returncode == 0, r.stderr
     assert r.stdout == helptext.top_help("blinx2", "BLiNX 2"), r.stdout
@@ -199,6 +326,10 @@ def test_no_cli(d):
     assert "no xboxrecomp-cli: clone it beside this checkout, or set XBOXRECOMP_CLI_DIR" in (
         r.stderr
     )
+    # A mistyped XBOXRECOMP_CLI_DIR says so, rather than failing inside uv.
+    r = run(root, bindir, ["doctor"], XBOXRECOMP_CLI_DIR=os.path.join(d, "nope"))
+    assert r.returncode == 1 and "Traceback" not in r.stderr, r.stderr
+    assert "is not an xboxrecomp-cli checkout" in r.stderr, r.stderr
 
 
 def test_wrapper_check(d, capsys):
