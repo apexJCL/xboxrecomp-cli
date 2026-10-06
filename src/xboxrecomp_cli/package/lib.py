@@ -277,6 +277,12 @@ def stage_game_files(src, dst):
                 copy_function=lambda a, b: copy_file(a, b, clone),
                 ignore=shutil.ignore_patterns(".DS_Store"),
             )
+            # copytree gives each directory the dump's mode, often r-x (a
+            # disc copy): the stage could not then be removed with rm -rf.
+            for dirpath, _dirnames, _filenames in os.walk(d):
+                mode = os.stat(dirpath).st_mode & 0o7777
+                if mode & 0o700 != 0o700:
+                    os.chmod(dirpath, mode | 0o700)
         else:
             copy_file(s, d, clone)
         n += 1

@@ -120,10 +120,21 @@ def readme(target, version, lib, dst):
         "LOG_KEEP": "10",
     }
     render(os.path.join(templates(), "README.txt.in"), values, dst)
-    with open(os.path.join(G.content, target, "README.part")) as f:
+    part_values = {"VERSION": version}
+    if target == "steamos":
+        # The CLI's own install section, unless the game has its own.
+        from . import steamos
+
+        part_path = steamos.template("README.part")
+        part_values.update(steamos.steamos_values(lib))
+    else:
+        part_path = os.path.join(G.content, target, "README.part")
+    with open(part_path) as f:
         part = f.read()
+    for k, v in part_values.items():
+        part = part.replace("@%s@" % k, v)
     with open(dst, "a", newline="\n") as f:
-        f.write(part.replace("@VERSION@", version))
+        f.write(part.replace("\r\n", "\n"))
 
 
 def check_staged(root, lib):

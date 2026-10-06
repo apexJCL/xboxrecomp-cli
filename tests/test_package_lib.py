@@ -12,6 +12,7 @@ import datetime
 import hashlib
 import json
 import os
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -261,6 +262,28 @@ def test_game_files_exclusions(d):
     dst = os.path.join(d, "dst")
     pl.stage_game_files(src, dst)
     assert pl.list_files(dst) == ["default.xbe", "media/a.xpr"], pl.list_files(dst)
+
+
+def test_game_files_read_only_dump(d):
+    """A dump copied off a disc has r-x directories; the staged copy must
+    still be removable."""
+    src = os.path.join(d, "src")
+    os.makedirs(os.path.join(src, "media", "sub"))
+    for rel in ("default.xbe", "media/a.xpr", "media/sub/b.xpr"):
+        with open(os.path.join(src, rel), "w") as f:
+            f.write(rel)
+    for rel in ("media/sub", "media"):
+        os.chmod(os.path.join(src, rel), 0o555)
+    dst = os.path.join(d, "dst")
+    try:
+        pl.stage_game_files(src, dst)
+        for rel in ("media", "media/sub"):
+            assert os.stat(os.path.join(dst, rel)).st_mode & 0o700 == 0o700, rel
+        shutil.rmtree(dst)
+        assert not os.path.exists(dst)
+    finally:
+        for rel in ("media", "media/sub"):
+            os.chmod(os.path.join(src, rel), 0o755)
 
 
 def test_staged_refusals(d):

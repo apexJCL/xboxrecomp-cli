@@ -138,8 +138,25 @@ This table is optional. Without it, `package` says so.
 | `brew` | `[]` | The Homebrew formulae the macos target links. `doctor` checks them. |
 | `dylib_companions` | `[]` | `NAME=brew:FORMULA`: libraries loaded with dlopen, bundled too. |
 | `content` | `"packaging"` | The game's own packaging content. |
-| `templates` | `""` | The packaging templates, for now the game's own directory. |
+| `templates` | `""` | The game's packaging templates (`README.txt.in` and the windows and macos ones). A file in its `steamos/` subfolder replaces the CLI's own steamos template of that name. |
 | `icon` | `"xbe"` | The XBE's title image, or the generic icon. |
+
+### The steamos templates
+
+The steamos installer and launcher are the CLI's own, for every game:
+`install.sh`, `install_lib.py`, `launch.sh` and the README's install
+section `README.part`, in
+[src/xboxrecomp_cli/package/templates/steamos](../src/xboxrecomp_cli/package/templates/steamos).
+`package steamos` fills their `@KEY@` placeholders from game.toml: the
+name, `package.app` and `product`, `build.exe`, `pipeline.game_name`,
+`data.steamos` (the install root), `<SLUG>_ROOT` (the variable that moves
+it), and the umu-launcher pin from `pins.py`. They run on a Steam Deck with
+stock SteamOS (the installer offers to download the pinned umu-launcher
+when umu-run is missing) and on a distribution that ships umu-run. A game
+overrides one only if it must: put its own copy in
+`<package.templates>/steamos/` (`README.part` may also sit in
+`<package.content>/steamos/`). A game with `scripts/running_game.py` gets it
+in the bundle, for `install.sh status`.
 
 ## [bench]
 

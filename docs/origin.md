@@ -28,6 +28,7 @@ The commits there that built this code:
 | `src/xboxrecomp_cli/package/__init__.py` | `blinx2.py`: `package` (plan, payload, manifest) |
 | `src/xboxrecomp_cli/package/windows.py` | `blinx2.py`: `wrap_windows`, the launcher, NSIS |
 | `src/xboxrecomp_cli/package/steamos.py` | `blinx2.py`: `wrap_steamos` |
+| `src/xboxrecomp_cli/package/templates/steamos/*` | `packaging/steamos/*`, made game-agnostic |
 | `src/xboxrecomp_cli/package/macos.py` | `blinx2.py`: `wrap_macos` |
 | `src/xboxrecomp_cli/package/lib.py` | `scripts/package_lib.py` |
 | `src/xboxrecomp_cli/package/icon.py` | `scripts/game_icon.py` |

@@ -1,31 +1,77 @@
 """The steamos target: the payload's launch and install scripts, and one tar
-that is the same from any build host."""
+that is the same from any build host.
+
+The installer (install.sh, install_lib.py), the launcher (launch.sh) and the
+README's install section are this CLI's own, game-agnostic templates
+(templates/steamos/), filled with the game's values from game.toml. A game
+that needs its own copy of one puts it in <package.templates>/steamos/ (or
+README.part in <package.content>/steamos/), and that file wins."""
 
 import os
 import shutil
 import tarfile
 
-from .. import host
+from .. import host, pins
 from ..host import CliError
-from . import app, copy_lf, render, templates
+from . import app, copy_lf, g, render
+
+DEFAULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "steamos")
+# Rendered with steamos_values(); install.sh is the one the installer runs.
+FILES = (("install.sh", 0o755), ("launch.sh", 0o755), ("install_lib.py", 0o644))
+
+
+def template(name):
+    """The game's override of a steamos template, else the CLI's default."""
+    G = g()
+    dirs = [os.path.join(G.templates, "steamos")] if G.templates else []
+    if name == "README.part" and G.content:
+        dirs.append(os.path.join(G.content, "steamos"))
+    for d in dirs:
+        p = os.path.join(d, name)
+        if os.path.isfile(p):
+            return p
+    return os.path.join(DEFAULTS, name)
+
+
+def steamos_values(lib):
+    """The @KEY@ values of the steamos templates."""
+    G = g()
+    umu = pins.UMU_LAUNCHER
+    return {
+        "NAME": lib.PRODUCT_NAME,
+        "APP": app(),
+        "PRODUCT": lib.PRODUCT,
+        "EXE": G.exe_name,
+        "SOURCE_NAME": lib.SOURCE_NAME,
+        "DEFAULT_ROOT": G.m["data"]["steamos"],
+        "ROOT_ENV": G.m["game"]["slug"].upper().replace("-", "_") + "_ROOT",
+        "UMU_VERSION": umu["version"],
+        "UMU_URL": umu["url"],
+        "UMU_SHA256": umu["sha256"],
+    }
+
+
+def render_lf(src, values, dst, mode):
+    """render(), with LF line endings whatever the checkout did."""
+    render(src, values, dst, mode)
+    with open(dst, "rb") as f:
+        data = f.read()
+    if b"\r\n" in data:
+        with open(dst, "wb") as f:
+            f.write(data.replace(b"\r\n", b"\n"))
 
 
 def stage_steamos(payload, lib, icon_dir):
     """install.sh, launch.sh, install_lib.py, the game's running_game.py
-    (the launcher asks it whether a copy already runs) and the icon."""
-    t = os.path.join(templates(), "steamos")
-    copy_lf(os.path.join(t, "install.sh"), os.path.join(payload, "install.sh"), 0o755)
-    render(
-        os.path.join(t, "launch.sh"),
-        {"NAME": lib.PRODUCT_NAME},
-        os.path.join(payload, "launch.sh"),
-        0o755,
-    )
-    copy_lf(os.path.join(t, "install_lib.py"), os.path.join(payload, "install_lib.py"))
-    copy_lf(
-        host.g().path("scripts", "running_game.py"),
-        os.path.join(payload, "running_game.py"),
-    )
+    when it has one (install.sh status asks it whether a copy runs) and the
+    icon."""
+    values = steamos_values(lib)
+    for name, mode in FILES:
+        render_lf(template(name), values, os.path.join(payload, name), mode)
+    # Without it, install.sh status looks for the exe with pgrep.
+    rg = host.g().path("scripts", "running_game.py")
+    if os.path.isfile(rg):
+        copy_lf(rg, os.path.join(payload, "running_game.py"))
     shutil.copy2(os.path.join(icon_dir, "icon.png"), os.path.join(payload, "icon.png"))
 
 

@@ -51,6 +51,8 @@ ignore = [
 # system Python still prints help and the uv hint).
 "src/xboxrecomp_cli/wrapper/*.py" = ["UP"]
 "src/xboxrecomp_cli/helptext.py" = ["UP"]
+# The steamos installer runs on the target's system Python (3.9 is enough).
+"src/xboxrecomp_cli/package/templates/**/*.py" = ["UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

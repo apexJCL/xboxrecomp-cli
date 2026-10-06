@@ -15,6 +15,18 @@ from .host import CliError
 
 CLI_BRANCH = "main"
 
+# The umu-launcher release a steamos bundle's installer may download for a
+# host without umu-run (a stock Steam Deck): `install.sh --fetch-umu`, or a
+# yes at its prompt. The installer checks the download against this sha256
+# and fetches nothing else. Moving it is an edit reviewed here, with the
+# sha256 of the release asset taken when the pin moves.
+UMU_LAUNCHER = {
+    "version": "1.4.4",
+    "url": "https://github.com/Open-Wine-Components/umu-launcher/releases/download/"
+    "1.4.4/umu-launcher-1.4.4-zipapp.tar",
+    "sha256": "eb590691841f7fad3fc3ad8fd5db4ccb87849fe7948e62b28ece7a4ee48cc851",
+}
+
 
 def _get_json(url):
     req = urllib.request.Request(
