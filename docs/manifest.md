@@ -12,7 +12,9 @@ reads and validates it on every command:
 - Tables other than `[package]` are always present in effect: a table you
   leave out takes its defaults.
 
-The CLI never writes this file.
+The CLI never writes this file, except once: `xbr new DIR` writes a starter
+one (every required key filled in, the defaults written out with their
+comments) and never touches it again.
 
 Three tables are also read by the bootstrap and by the help that prints
 without uv, using a line parser instead of a TOML parser: `[cli]` (`commit`,

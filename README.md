@@ -1,93 +1,269 @@
 # xboxrecomp-cli
 
-The command line for games built with the
+`xbr` turns a dumped original-Xbox game into a native build with the
 [xboxrecomp](https://github.com/apexJCL/xboxrecomp) static recompilation
-toolkit. It handles a game's whole life on a developer's or a player's
-machine:
-- **Setup:** fetch the pinned toolchain into the game's tree.
-- **Generation:** run the toolkit's pipeline (parse, disasm, funcid, abi,
-  names, recomp), with a key that says when the generated code is stale.
-- **Build:** compile for Windows (llvm-mingw) and macOS.
-- **Packaging:** make a private bundle for Windows, SteamOS or macOS, with
-  the player's own game files inside.
-- **Bench:** drive a Linux/Proton host over ssh to build, run and compare
-  golden frames.
+toolkit: one command sets up the toolchain, lifts the XBE to C, builds the
+executable, and (when you want it) packages a private bundle for Windows,
+SteamOS or macOS. A game is a directory with a `game.toml`; the CLI holds no
+game's values. [BLiNX 2](https://github.com/apexJCL/blinx2-recomp) is the
+first game that runs on it, Burnout 3 the second.
 
-A game says everything that is its own in a `game.toml` at its root
-([docs/manifest.md](docs/manifest.md)). The CLI holds no game's values.
-[BLiNX 2](https://github.com/apexJCL/blinx2-recomp) is the first game that
-uses it.
+**Your dump, your machines.** You supply the dump of a game you own. Nothing
+the CLI fetches is game data (the toolkit at a pinned commit, llvm-mingw and
+NSIS by sha256, Python wheels hashed in `uv.lock`), nothing it writes to a
+public place contains any, and a bundle, which has your dump inside, is for
+your own machines only. Enhancement assets (upscaled textures, fonts) are
+made locally from your dump and never distributed.
 
-## How a game uses it
+## Prerequisites
 
-Players never install this repository. A game vendors a small bootstrap,
-`<slug>.py` (a copy of [wrapper/game.py](src/xboxrecomp_cli/wrapper/game.py)),
-next to its `<slug>` and `<slug>.cmd` wrappers. The bootstrap needs only
-Python 3.9 and the standard library. It finds the CLI in this order:
+| | macOS | Linux | Windows |
+|---|---|---|---|
+| **uv** | `brew install uv` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` (into `~/.local/bin`; SteamOS too) | `winget install --id=astral-sh.uv -e` |
+| **git** | Command Line Tools: `xcode-select --install` | the distribution's | [Git for Windows](https://git-scm.com/download/win) |
+| **Python** | comes with the tools (3.9+ runs the bootstrap) | the system's | python.org's, with the `py` launcher |
+| **For the Windows installer** | `brew install makensis` | `nsis` / `mingw32-nsis` from the distribution | fetched by `setup` |
+
+That is all. `setup` fetches the rest into the game's own tree: CMake, Ninja,
+the toolkit's Python packages (from the game's `uv.lock`), llvm-mingw and the
+toolkit, every download checked against a pinned sha256. No Visual Studio:
+the Windows executable is cross-compiled with llvm-mingw on every host,
+Windows included. About 15 GB free.
+
+**Windows notes.** Use a short checkout path (`C:\g\mygame`): the build nests
+deep. Run `git config --global core.longpaths true`; `doctor` warns when the
+path is long or `LongPathsEnabled` is off. Defender scans every generated
+file, so an exclusion for the checkout folder speeds the build up (the CLI
+never adds one). The commands below read `mygame` instead of `./mygame`
+(the `mygame.cmd` wrapper), or `py -3 mygame.py`. Building on a Windows host
+is supported and not yet verified on a real machine; macOS and Linux are.
+
+## Quickstart: a new game in five steps
+
+```sh
+# 1. uv and git (above). Then, from the directory your game will live in:
+uvx --from git+https://github.com/apexJCL/xboxrecomp-cli xbr new mygame
+# 2. put your dump (default.xbe and the game's files) in mygame/game_files/
+cd mygame
+./mygame setup          # .venv, llvm-mingw, the toolkit (ends with doctor)
+./mygame all            # analyze (parse, disasm, funcid, abi), recomp, build
+```
+
+`xbr new` writes a complete starter game and nothing else: `game.toml` with
+every pin filled in (the CLI commit it ran from, the toolkit branch head),
+the `mygame` bootstrap and its wrappers, the tools environment
+(`pyproject.toml`, `uv.lock`), `.gitignore` (the dump, the generated code,
+the toolchain and the bundles never enter git), the toolkit's
+`templates/new-game/` (CMakeLists.txt, `src/main.c`, `src/recomp_manual.c`)
+with your game's constants patched in, and `config/setup-pins.json`. Put the
+dump in `game_files/` first (or pass `--xbe PATH`) and the title, title ID
+and entry point come from the XBE header; the dump is read, never copied.
+Without network, git or uv, each piece it could not finish is named as the
+command that will (`setup`, `pins refresh`); `--offline` skips them on
+purpose. `xbr new --help` lists the options (`--slug`, `--name`,
+the pins).
+
+The first build is `build-win/mygame_recomp.exe`, a Windows x86-64
+executable that runs natively on Windows and under Proton on Linux (D3D11).
+On a Mac it is the file you carry to one of those. "macOS as a target"
+below says what the macOS build needs.
+
+To read before running: the uvx line installs the CLI's `main` into uv's
+cache and runs it; `@<sha>` after the repository pins a commit
+(`…/xboxrecomp-cli@023c77e xbr new mygame`). The no-pipe way is the clone:
+
+```sh
+git clone https://github.com/apexJCL/xboxrecomp-cli.git
+cd xboxrecomp-cli && uv run xbr new ../mygame
+```
+
+A game made beside a clone runs that clone (the bootstrap's search order,
+below), so this is also how you work on the CLI.
+
+## Port your first game
+
+The first run of a recompiled game crashes. That is where the port starts,
+and the loop is short:
+
+1. **Run it** (on Windows, or `./mygame bench run` on a Proton host, below)
+   and read the crash report: the faulting guest function, the guest return
+   addresses, the last indirect-call targets.
+2. **Seed the functions the disassembler missed.** An ICALL failure names a
+   target the lifter did not know was a function. Add it to
+   `config/seed_functions.json` (`{"start": "0x...", "source": "...",
+   "observed": true}`), then `./mygame analyze` and `./mygame recomp`:
+   `recomp` alone misses new seeds. Never edit `src/recomp/gen/` by hand;
+   it is regenerated, and `src/recomp/gen.key.json` records what from (the
+   XBE, the toolkit's tools, the seed files, the exact stage commands), so
+   `package` knows when it is stale.
+3. **Override what the lifter got wrong** in `src/recomp_manual.c`:
+   `recomp_lookup_manual()` runs before the generated dispatch, so a
+   function can be wrapped, stubbed or replaced by a native one.
+4. **Add what the runtime lacks.** A kernel call, a D3D path or an input
+   detail the toolkit does not have yet is toolkit work: the fork's
+   branch is `blinx2/portability`, and `XBOXRECOMP_DIR` points `setup`,
+   `build` and the bench at your own checkout (a checkout the bootstrap did
+   not clone is never moved to the pin).
+5. **Build again:** `./mygame build` is incremental.
+
+The toolkit's docs carry the long form: its README's Quick Start and
+`docs/GETTING_STARTED.md` (Step 8, Debug Iteratively), `docs/pipeline/`,
+and `docs/technical/indirect-calls.md` for ICALLs. Its `tools/doctor.py`
+checks the pipeline's environment.
+
+Every setting a game has is a key in `game.toml`:
+[docs/manifest.md](docs/manifest.md) documents each one, with its default.
+The ones a port meets first: `pipeline.disasm.extra_sections` (code outside
+`.text`, such as the XDK library sections), `pipeline.split`,
+`pipeline.spin_waits`, `xbe.sha256` (the dumps the goldens were recorded
+on), and `[package]`, which turns packaging on.
+
+### Environment and enhancements
+
+The runtime reads its environment through one table (`recomp_env`;
+`RECOMP_*` keys in three tiers: config, trace, debug). A game adds its own
+keys in a header named by `game.env_header` and documents them in
+`game.env_doc`. The toolkit's opt-in enhancements layer (`XBOXRECOMP_ENHANCE`,
+render scale, present filter, pacing, read from `enhance.toml`) is off by
+default and never changes stock behaviour; a game that builds it lists the
+option in `build.stock_cmake`.
+
+### macOS as a target
+
+The toolkit builds for macOS (Apple silicon, Metal) and BLiNX 2 runs there,
+but the toolkit's template `main.c` is Win32 (WinMain, the VEH crash
+handler, dbghelp). A game that lists `macos` in `build.targets` needs a
+`main.c` with the POSIX host code: BLiNX 2's `src/main.c` has it
+(`host_main`, the signal handlers, the SDL window), and a portable template
+is a toolkit follow-up. Until then a Mac is a build host for the windows
+target and a run host for nothing, unless you port the host code.
+
+## Commands
+
+`./mygame --help` prints them; `./mygame <command> --help` the options.
+
+| Command | What it does |
+|---|---|
+| `./mygame` | package for this computer (macos on a Mac, steamos on Linux, windows on Windows): sets up, generates and builds whatever is missing or stale |
+| `./mygame package windows\|steamos\|macos` | the same for a target, into `dist/`; needs `[package]` in `game.toml` |
+| `./mygame doctor` | what this host has, what it can package, and `next:` the first thing to do |
+| `./mygame setup [--dev] [--no-toolkit]` | fetch the pinned toolchain into this tree; `--dev` adds pytest, ruff and the toolkit's test dependencies |
+| `./mygame analyze` | parse, disasm, funcid, abi, and `names` when a Ghidra export exists |
+| `./mygame recomp` | lift x86 to C into `pipeline.gen` |
+| `./mygame all` | analyze, recomp, then build for this host's default target |
+| `./mygame build [windows\|macos]` | configure once, then compile incrementally; `--system-tools` uses the host's cmake and ninja |
+| `./mygame parse\|disasm\|funcid\|abi\|ghidra\|names` | one stage, with extra arguments passed to the tool |
+| `./mygame pins refresh` | maintainers: re-pin the downloads and the lock, print the newest heads |
+| `./mygame new DIR` | start another game |
+| `./mygame bench <command>` | the Proton bench host (below) |
+| `./mygame golden`, `pacing-stats`, `benchlog-retention`, `audio-check` | the developer tools, each with the game's paths from `game.toml` |
+
+`wrapper --check` compares the game's bootstrap with the CLI's template and
+`wrapper --print` prints the template, for when a game moves its CLI pin.
+
+Coming on the housekeeping branch: `bench gc` and golden pruning,
+`recomp --seeds`, the `enhance_stock` keys moving into `game.toml`, and a
+refusal in `build` and `integrate` when `gen/` is stale.
+
+### How a game finds the CLI
+
+Players and porters never install this repository. A game vendors the small
+bootstrap `<slug>.py` (a copy of
+[wrapper/game.py](src/xboxrecomp_cli/wrapper/game.py); standard library,
+Python 3.9+) beside its `<slug>` and `<slug>.cmd` wrappers. It finds the CLI
+in this order, then runs `uv run --project <cli> --locked --no-dev xbr
+--game <root> --prog <slug> …`:
 
 1. `$XBOXRECOMP_CLI_DIR`, used as it is.
-2. `external/xboxrecomp-cli` in the game's tree, but only at `cli.commit`.
-   A clone the bootstrap made (marked `.xbr-pin`) is moved to a new pin.
-   Any other checkout there at another commit is refused.
+2. `external/xboxrecomp-cli` in the game's tree, only at `cli.commit`. A
+   clone the bootstrap made (marked `.xbr-pin`) is moved to a new pin;
+   another checkout there at another commit is refused.
 3. `../xboxrecomp-cli` beside the game's checkout, used as it is.
-4. Otherwise it clones `cli.url` into `external/xboxrecomp-cli` and checks
-   out `cli.commit`. The clone is moved into place only once it is at the
-   pin. If the clone or checkout fails (no network, or a pin that was never
-   pushed), it leaves nothing behind and prints how to get the CLI.
+4. A clone of `cli.url` into `external/xboxrecomp-cli` at `cli.commit`. A
+   failed clone or checkout leaves nothing behind and prints how to get
+   the CLI.
 
-It then runs:
+Without uv, `<slug> --help` still prints the help and the uv install
+command for the host.
 
-    uv run --project <cli> --locked --no-dev xbr --game <root> --prog <slug> ARGS
+## The bench host (optional, advanced)
 
-The game's commands and help therefore read `<slug> ...` as before. The
-bootstrap needs [uv](https://docs.astral.sh/uv/) 0.5.31 or newer. Without
-uv, `<slug> --help` still prints the help (from a CLI it finds; it clones
-nothing without uv) and how to install uv. With neither uv nor a CLI, it
-prints how to get both: install uv, then clone this repository beside the
-game's checkout
-(`git clone https://github.com/apexJCL/xboxrecomp-cli.git`) or set
-`XBOXRECOMP_CLI_DIR`.
+The Windows build is tested under Proton. `./mygame bench` drives a Linux
+host over ssh: it syncs the tree, builds there, runs the game with scripted
+input, and compares frames against the goldens in `golden.json`. Host
+settings (`BENCH_HOST`, `BENCH_DIR`, the Proton prefix) come from the
+environment or the game's `scripts/bench.env`; `./mygame bench --help` lists
+the commands (`sync`, `build`, `run`, `golden`, `integrate`, `pacing`,
+`symbolize`, …) and `[bench]` in `docs/manifest.md` the per-game keys. A
+game with no `golden.json` can still `bench build` and `bench run`.
 
-`<slug> wrapper --check` compares a game's copy of the bootstrap with this
-CLI's template, and `<slug> wrapper --print` prints the template.
+## Troubleshooting
 
-## Working on it
+- **`no uv 0.5.31+ on PATH`**: install it (the table above) and open a new
+  shell. `<slug> --help` works without it; nothing else does.
+- **`xboxrecomp-cli: the pin moved` / `git checkout failed`**: the game
+  pins a CLI commit the remote does not have (a pin that was never pushed).
+  Clone the CLI beside the game or set `XBOXRECOMP_CLI_DIR`, and fix
+  `cli.commit`.
+- **`no config/setup-pins.json`**: `./mygame pins refresh` writes it (and
+  `uv.lock`); it needs the network.
+- **`uv lock --check failed`**: `uv.lock` is out of date with
+  `pyproject.toml`: `./mygame pins refresh`, or `uv lock`, then commit it.
+- **`llvm-mingw ... quarantined`** (macOS): `xattr -dr com.apple.quarantine
+  third_party/llvm-mingw-*`, as `doctor` prints.
+- **`makensis: missing`**: only the windows installer needs it; `doctor`
+  prints the install command for your system, including the toolbox route
+  on an immutable Linux.
+- **`the template changed`** (from `xbr new`): the toolkit's
+  `templates/new-game/` no longer has the line the scaffold patches; the
+  message names the edit to make by hand in `CMakeLists.txt` or
+  `src/main.c`.
+- **`implicit declaration of function 'recomp_dispatch_init'`**: an older
+  template; add `extern int recomp_dispatch_init(void);` to `src/main.c`
+  (`xbr new` does).
+- **`title ID 0x... is not ...`**: the dump in `game_files/` is another
+  game, or `xbe.title_id` is still `0` from a scaffold made without the
+  dump.
+- **`gen/ is being regenerated`**: the last `recomp` failed or is still
+  running; run it again.
+- **Windows: a path error deep in the build**: the checkout path is long;
+  move it to `C:\g\<slug>` and enable long paths (`doctor` says which).
 
-    git clone https://github.com/apexJCL/xboxrecomp-cli.git
-    # maintainers: git clone git@github.com:apexJCL/xboxrecomp-cli.git
-    cd xboxrecomp-cli
-    uv sync
-    uv run pytest
-    uv run ruff check . && uv run ruff format --check .
+## Maintainers
 
-Clone it beside a game's checkout, or point `XBOXRECOMP_CLI_DIR` at it,
-and that game's `./<slug>` runs your copy. `<slug> doctor` shows the
-commit you are on and whether it is the one the game pins
-(`cli.commit`).
+### Working on the CLI
 
-The CLI needs Python 3.12 or newer, and its runtime uses only the standard
-library. The dev group has pytest, ruff and numpy (numpy for the audio
-check's tests).
+```sh
+git clone https://github.com/apexJCL/xboxrecomp-cli.git
+# maintainers: git clone git@github.com:apexJCL/xboxrecomp-cli.git
+cd xboxrecomp-cli
+uv sync
+uv run pytest
+uv run ruff check . && uv run ruff format --check .
+```
 
-The game's developer tools also run through it. Each one reads the game's
-paths from `game.toml`:
-- `<slug> golden`
-- `<slug> pacing-stats`
-- `<slug> benchlog-retention`
-- `<slug> audio-check` (runs in the game's `.venv`, which has numpy)
+Clone it beside a game's checkout, or point `XBOXRECOMP_CLI_DIR` at it, and
+that game's `./<slug>` runs your copy; `doctor` shows the commit you are on
+and whether it is the one the game pins. The CLI needs Python 3.12 or
+newer, and its runtime uses only the standard library. The dev group has
+pytest, ruff and numpy (numpy for the audio check's tests). The test that
+reads the toolkit's real template runs when a toolkit checkout is beside
+this one or `XBOXRECOMP_DIR` names one.
 
-## Releases and pins
+### Releases and pins
 
 There are no releases. A game pins a commit of `main` in its `game.toml`,
-in the same way it pins the toolkit. `<slug> pins refresh` refreshes the
-game's download hashes and prints the toolkit's and this CLI's newest
-heads next to the pinned ones. The maintainer then edits the two
-`commit` lines by hand.
+as it pins the toolkit. `<slug> pins refresh` refreshes the game's download
+hashes and `uv.lock` and prints the toolkit's and this CLI's newest heads
+next to the pinned ones; the maintainer then edits the two `commit` lines
+by hand.
 
-Before a public push, run `scripts/audit-public.sh` (or
-`scripts/audit-public.sh --all`). It checks what the push would publish
-for private paths, private host names and addresses, binaries, game
-data, and any commit identity other than the noreply one.
+### Before a public push
+
+Run `scripts/audit-public.sh` (or `scripts/audit-public.sh --all`). It
+checks what the push would publish for private paths, private host names
+and addresses, binaries, game data, and any commit identity other than the
+noreply one.
 
 The private patterns are not in the repository. They live in the clone's
 `.git/info/audit-private`, one extended regex per line (`#` starts a
