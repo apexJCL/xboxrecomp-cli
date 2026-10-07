@@ -2,24 +2,59 @@
 NSIS installer beside the game files."""
 
 import os
+import re
 import shutil
 import zipfile
 
 from .. import doctor, fetch, host
 from ..host import CliError
-from . import app, render, templates
+from . import app, g, render, template
+
+LOCALAPPDATA = "%LOCALAPPDATA%\\"
+
+
+def data_dir():
+    """data.windows below %LOCALAPPDATA%: the launcher finds that folder with
+    SHGetKnownFolderPath, so it can be nowhere else."""
+    d = g().m["data"]["windows"]
+    if not d.upper().startswith(LOCALAPPDATA) or len(d) == len(LOCALAPPDATA):
+        raise CliError("game.toml's data.windows (%s) must be %%LOCALAPPDATA%%\\<folder>" % d)
+    return d[len(LOCALAPPDATA) :]
+
+
+def c_escape(s):
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def link_name(name):
+    """The product name as a shortcut file name: ':' and the other characters
+    Windows refuses in a file name become ' -' or go."""
+    name = re.sub(r"\s*:\s*", " - ", name)
+    return re.sub(r'[<>"/\\|?*]', "", name).strip(" .")
+
+
+def launcher_values():
+    """The C-escaped @KEY@ values of launcher.c."""
+    G = g()
+    return {
+        "APP": c_escape(app()),
+        "EXE": c_escape(G.exe_name + ".exe"),
+        "DATA_DIR": c_escape(data_dir()),
+        "DATA_DIR_ENV": c_escape(G.m["data"]["dir_env"]),
+    }
 
 
 def build_launcher_exe(dst, ico, work, name):
     """<app>.exe with the icon compiled in (windres, from llvm-mingw); the
-    .rc and its object stay in the work dir, out of the payload. The
-    launcher's name macro is <APP>_NAME, as the game's launcher.c reads it."""
+    rendered launcher.c, the .rc and its object stay in the work dir, out of
+    the payload."""
     a = app()
     rc, res = os.path.join(work, a + ".rc"), os.path.join(work, a + ".res.o")
-    render(os.path.join(templates(), "windows", a + ".rc.in"), {"ICON": ico.replace("\\", "/")}, rc)
+    src = os.path.join(work, "launcher.c")
+    render(template("windows", "app.rc.in"), {"ICON": ico.replace("\\", "/")}, rc)
+    render(template("windows", "launcher.c"), launcher_values(), src)
     env = host.build_env()
     host.run([fetch.mingw_tool("windres"), "-O", "coff", "-o", res, rc], env=env)
-    macro = "".join(c if c.isalnum() else "_" for c in a.upper()) + "_NAME"
     host.run(
         [
             fetch.mingw_tool("clang"),
@@ -29,8 +64,8 @@ def build_launcher_exe(dst, ico, work, name):
             "-Wall",
             "-o",
             dst,
-            '-D%s=L"%s"' % (macro, name.replace("\\", "\\\\").replace('"', '\\"')),
-            os.path.join(templates(), "windows", "launcher.c"),
+            '-DAPP_NAME=L"%s"' % c_escape(name),
+            src,
             res,
             "-lshell32",
             "-lole32",
@@ -42,6 +77,22 @@ def build_launcher_exe(dst, ico, work, name):
 
 def nsis_escape(path):
     return path.replace("$", "$$")
+
+
+def installer_values(lib, version, setup, payload, ico, inst, uninst):
+    """The @KEY@ values of installer.nsi.in."""
+    return {
+        "NAME": lib.PRODUCT_NAME,
+        "LINK_NAME": nsis_escape(link_name(lib.PRODUCT_NAME)),
+        "APP": nsis_escape(app()),
+        "DATA_DIR": nsis_escape(data_dir()),
+        "VERSION": version,
+        "OUTFILE": nsis_escape(setup),
+        "STAGE": nsis_escape(payload),
+        "ICON": nsis_escape(ico),
+        "INSTALL_FILES": inst.rstrip("\n"),
+        "UNINSTALL_FILES": uninst.rstrip("\n"),
+    }
 
 
 def wrap_windows(stage, payload, version, out, lib, icon_dir):
@@ -66,16 +117,10 @@ def wrap_windows(stage, payload, version, out, lib, icon_dir):
     setup = os.path.join(folder, "%s-%s-setup.exe" % (a, version))
     nsi = os.path.join(stage, "installer.nsi")
     render(
-        os.path.join(templates(), "windows", "installer.nsi.in"),
-        {
-            "NAME": lib.PRODUCT_NAME,
-            "VERSION": version,
-            "OUTFILE": nsis_escape(setup),
-            "STAGE": nsis_escape(payload),
-            "ICON": nsis_escape(os.path.join(icon_dir, a + ".ico")),
-            "INSTALL_FILES": inst.rstrip("\n"),
-            "UNINSTALL_FILES": uninst.rstrip("\n"),
-        },
+        template("windows", "installer.nsi.in"),
+        installer_values(
+            lib, version, setup, payload, os.path.join(icon_dir, a + ".ico"), inst, uninst
+        ),
         nsi,
     )
     flag = "/" if host.host_os() == "windows" else "-"

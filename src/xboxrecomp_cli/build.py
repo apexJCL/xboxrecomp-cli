@@ -1,8 +1,11 @@
 """build: configure once, then compile incrementally, for the windows target
 (llvm-mingw) or the macos one (Apple clang)."""
 
+import glob
 import os
+import re
 import shutil
+import sys
 
 from . import fetch, host, toolkit
 from .host import CliError
@@ -32,7 +35,11 @@ def build_tools(system_tools, os_name=None):
 
 
 def default_build_target(os_name=None):
-    return "macos" if (os_name or host.host_os()) == "macos" else "windows"
+    """This host's own target when the game builds it, else the first one
+    game.toml lists (a windows-only game cross-builds on a Mac)."""
+    native = "macos" if (os_name or host.host_os()) == "macos" else "windows"
+    targets = host.g().m["build"]["targets"]
+    return native if native in targets or not targets else targets[0]
 
 
 def check_build_target(target, os_name=None):
@@ -63,10 +70,30 @@ def stock_cmake_args():
 
 
 def toolchain_file():
-    tf = host.g().toolchain_file
-    if not tf:
-        raise CliError("game.toml sets no build.toolchain_file (the windows target needs it)")
-    return tf
+    return host.g().toolchain_file
+
+
+TOOLCHAIN_INCLUDE = re.compile(r'^include\("([^"]+)"\)', re.M)
+
+
+def reset_stale_toolchain(bdir):
+    """A tree configured with a toolchain file that is gone (a game's own
+    copy, deleted when the CLI's became the default) cannot reconfigure:
+    CMakeSystem.cmake includes the old path on every run. Start its cache
+    afresh; the next configure names the current file."""
+    for sysf in glob.glob(os.path.join(bdir, "CMakeFiles", "*", "CMakeSystem.cmake")):
+        with open(sysf, encoding="utf-8", errors="replace") as f:
+            gone = [p for p in TOOLCHAIN_INCLUDE.findall(f.read()) if not os.path.isfile(p)]
+        if gone:
+            print(
+                "%s: its toolchain file %s is gone; configuring afresh" % (bdir, gone[0]),
+                file=sys.stderr,
+            )
+            if os.path.isfile(os.path.join(bdir, "CMakeCache.txt")):
+                os.remove(os.path.join(bdir, "CMakeCache.txt"))
+            shutil.rmtree(os.path.join(bdir, "CMakeFiles"), ignore_errors=True)
+            return True
+    return False
 
 
 def build(target, cmake_args=(), system_tools=False, bdir=None, stock=False, reconfigure=False):
@@ -86,6 +113,8 @@ def build(target, cmake_args=(), system_tools=False, bdir=None, stock=False, rec
         raise CliError(
             "no toolkit at %s: run '%s setup' or set XBOXRECOMP_DIR" % (tk, host.prog())
         )
+    if target == "windows":
+        reset_stale_toolchain(bdir)
     if reconfigure:
         if os.path.isfile(os.path.join(bdir, "CMakeCache.txt")):
             os.remove(os.path.join(bdir, "CMakeCache.txt"))

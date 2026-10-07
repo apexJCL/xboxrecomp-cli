@@ -31,9 +31,9 @@ Commands:
   setup     create the build distrobox, install cmake/ninja/umu-launcher,
             download llvm-mingw                                (once per host)
   sync      rsync the toolkit (see XBOXRECOMP_DIR) and this project to the host
-            --game-files  also set up game_files/ (your own host only): the
+            --game-files  also set up @GAME_FILES@/ (your own host only): the
                       host keeps ONE copy, BENCH_GAME_FILES. A sync from the
-                      tree that owns it copies this machine's game_files/ into
+                      tree that owns it copies this machine's @GAME_FILES@/ into
                       it; any other tree gets a symlink to it (nothing copied)
             --game-files=reflink  a btrfs reflink copy instead of the symlink
   build     configure + compile build-win/ on the host     [extra cmake args]
@@ -41,7 +41,7 @@ Commands:
   run       launch @WINDOWS_EXE@ under Proton, log to
             bench-logs/<timestamp>/ on the host, then pull logs   [game args];
             fails if any D3D11 flip presented a surface other than the one the
-            walker drew, or on [CRASH], or (with a limit) an early exit
+            walker drew, or on @CRASH_TAG@, or (with a limit) an early exit
   golden    run the golden-frame scenarios (@GOLDEN_JSON@) and
             compare their frames; first runs `tests`. Exit 1 on a regression,
             3 when a run was slow on a busy host (INCONCLUSIVE)
@@ -60,7 +60,7 @@ Commands:
             RECOMP_TRACE=flip,pacing=all, and BENCH_ENV applies to both arms
   logs      symbolize a run's crash reports, then pull bench-logs/ from the
             host into ./bench-logs/              [stamp, default: newest run]
-  symbolize name the native addresses in a run's [CRASH] reports, into
+  symbolize name the native addresses in a run's @CRASH_TAG@ reports, into
             bench-logs/<stamp>/crash-symbols.txt  [stamp, default: newest run]
   shell     open an ssh shell in the host's project directory
   all       sync, build, run
@@ -94,7 +94,7 @@ this machine's home, as it did when bench.sh sourced the file:
   LLVM_MINGW_TAG   llvm-mingw release to install     (game.toml)
   PROTONPATH       Proton for umu-run                (GE-Proton = latest GE)
   BENCH_PREFIX     Wine prefix on the host           ($BENCH_DIR/prefix)
-  BENCH_GAME_FILES the host's single game_files copy (~/xbox-recomp/<game>/game_files);
+  BENCH_GAME_FILES the host's single @GAME_FILES@ copy (~/xbox-recomp/<game>/@GAME_FILES@);
                    every other tree links to it; it may be read-only
   BENCH_ENV        space-separated VAR=value pairs for the game, e.g.
                    "RECOMP_AC97_READY=0 WINEDEBUG=+seh"; RECOMP_SAVE_DIR=@run
@@ -112,7 +112,7 @@ this machine's home, as it did when bench.sh sourced the file:
                    else ../xboxrecomp)
 
 run-info.txt records the exe's sha256 and, from build-win/provenance.txt, the
-cat and toolkit commits it was built from and whether either tree was dirty
+@TREE@ and toolkit commits it was built from and whether either tree was dirty
 at sync time.
 
 The host always gets the toolkit next to the project, so CMakeLists.txt finds
@@ -135,6 +135,10 @@ def render_help(game):
         "GOLDEN_JSON": m["golden"]["json"] or "game.toml golden.json",
         "PACING": scen,
         "GAME_NAME": m["pipeline"]["game_name"],
+        "GAME_FILES": m["data"]["game_files"],
+        # The provenance lines' name for the game tree: its remote name.
+        "TREE": m["bench"]["remote_name"] or os.path.basename(game.root.rstrip("/")),
+        "CRASH_TAG": m["bench"]["crash_tag"],
         "MAIN_BRANCH": m["bench"]["main_branch"],
         # The old text wrapped here; keep its two lines when a branch is named.
         "TOOLKIT_BRANCH": ("; a toolkit off\n            %s only warns" % tkb) if tkb else "",
@@ -249,7 +253,8 @@ class Bench:
         log = os.path.join(self.cfg.game_dir, "bench-logs", stamp)
         rc = 0
         with self.no_errexit():
-            if checks.check_run_end(log, out=self.say) != 0:
+            tag = self.cfg.game.m["bench"]["crash_tag"]
+            if checks.check_run_end(log, out=self.say, crash_tag=tag) != 0:
                 rc = 1
             if (
                 checks.check_present_mismatch(os.path.join(log, "game-stdio.log"), out=self.say)

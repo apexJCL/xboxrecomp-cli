@@ -56,6 +56,7 @@ SPEC = {
         "game_name": (STR, REQUIRED),
         "gen": (STR, REQUIRED),
         "out": (STR, "analysis"),
+        "analysis_json": (STR, ""),
         "seeds": (STRS, []),
         "icall_seeds": (BOOL, True),
         "spin_waits": (STR, ""),
@@ -112,6 +113,8 @@ SPEC = {
         "toolkit_branch": (STR, ""),
         "toolkit_tests": (BOOL, True),
         "pacing_scenario": (STR, ""),
+        "sync_excludes": (STRS, []),
+        "crash_tag": (STR, "[CRASH]"),
     },
 }
 # Optional tables: a game without them still sets up, generates, builds and
@@ -119,6 +122,10 @@ SPEC = {
 OPTIONAL = {"package"}
 TARGETS = ("windows", "steamos", "macos")
 BUILD_TARGETS = ("windows", "macos")
+# The windows target's toolchain file when build.toolchain_file is unset.
+CLI_TOOLCHAIN = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "cmake", "llvm-mingw-x86_64.cmake"
+)
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # The bootstrap reads [cli] with a line parser, and the help without uv
 # reads [game] name the same way: plain one-line strings there.
@@ -231,6 +238,14 @@ def _check_values(m):
         for t in m["package"]["targets"]:
             if t not in TARGETS:
                 errors.append("package.targets: %r is not one of %s" % (t, ", ".join(TARGETS)))
+        if m["package"]["app"].lower() == m["build"]["exe"].lower():
+            # <app>.exe (the launcher) and <exe>.exe sit in one folder, and
+            # NTFS and APFS ignore case: the launcher would replace the game.
+            errors.append(
+                "package.app: %r names the same file as build.exe %r on a case-insensitive "
+                "filesystem (Windows, macOS); pick another app name"
+                % (m["package"]["app"], m["build"]["exe"])
+            )
         if "macos" in m["package"]["targets"] and "macos" not in m["build"]["targets"]:
             errors.append("package.targets: macos needs build.targets to hold macos")
         for c in m["package"]["dylib_companions"]:
@@ -261,7 +276,7 @@ def _paths(m):
     ]
     out += [("pipeline.seeds", s) for s in p["seeds"]]
     out += [("pipeline.names_hooks", s) for s in p["names_hooks"]]
-    for k in ("spin_waits", "exclude_manual"):
+    for k in ("spin_waits", "exclude_manual", "analysis_json"):
         if p[k]:
             out.append(("pipeline." + k, p[k]))
     b = m["build"]
@@ -345,8 +360,14 @@ class Game:
         self.game_files = j(m["data"]["game_files"])
         self.xbe = j(m["xbe"]["path"])
         stem = os.path.splitext(os.path.basename(self.xbe))[0]
-        # xbe_parser's --json, beside the dump (the toolkit's convention).
-        self.analysis_json = os.path.join(os.path.dirname(self.xbe), stem + "_analysis.json")
+        # xbe_parser's --json: pipeline.analysis_json, else beside the dump
+        # (the toolkit's convention). A game whose dump is read-only (a
+        # link to the player's own copy) names a path under its tree.
+        self.analysis_json = (
+            j(p["analysis_json"])
+            if p["analysis_json"]
+            else os.path.join(os.path.dirname(self.xbe), stem + "_analysis.json")
+        )
         self.out = j(p["out"])
         self.seeds = [j(s) for s in p["seeds"]]
         self.icall_seeds = os.path.join(self.out, "icall_seeds.json")
@@ -359,7 +380,9 @@ class Game:
         self.uv_lock = j("uv.lock")
         self.dist = j("dist")
         self.exe_name = b["exe"]
-        self.toolchain_file = j(b["toolchain_file"]) if b["toolchain_file"] else ""
+        # Unset: the CLI's own llvm-mingw toolchain file, the one every game
+        # cross-compiles with (a game may still name its own).
+        self.toolchain_file = j(b["toolchain_file"]) if b["toolchain_file"] else CLI_TOOLCHAIN
         pkg = m.get("package")
         self.content = j(pkg["content"]) if pkg else ""
         self.templates = j(pkg["templates"]) if pkg and pkg["templates"] else ""

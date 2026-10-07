@@ -138,7 +138,7 @@ def cmd_golden(b, args, bench_env=None):
         log = os.path.join(b.cfg.game_dir, "bench-logs", stamp)
         if minf == "0":
             minf = ""
-        e = check_run_end(log, minf, out=b.say)
+        e = check_run_end(log, minf, out=b.say, crash_tag=b.cfg.game.m["bench"]["crash_tag"])
         if e == 3:
             inc = 1
         elif e != 0:

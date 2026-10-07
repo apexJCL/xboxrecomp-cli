@@ -77,12 +77,13 @@ def check_present_mismatch(log, out=print):
     return 1
 
 
-def check_run_end(log, min_flips="", out=print):
-    """Fail a run that crashed or ended before its limit; with MIN_FLIPS, a
-    run under the floor is INCONCLUSIVE (3) on a busy host and a FAIL on an
-    idle one. Returns 0, 1 or 3."""
+def check_run_end(log, min_flips="", out=print, crash_tag="[CRASH]"):
+    """Fail a run that crashed (a game-stdio.log line starting with
+    CRASH_TAG, game.toml's bench.crash_tag) or ended before its limit; with
+    MIN_FLIPS, a run under the floor is INCONCLUSIVE (3) on a busy host and
+    a FAIL on an idle one. Returns 0, 1 or 3."""
     stdio = _read(os.path.join(log, "game-stdio.log"))
-    crash = next((x for x in _lines(stdio) if x.startswith("[CRASH]")), "")
+    crash = next((x for x in _lines(stdio) if x.startswith(crash_tag)), "")
     if crash:
         out("end: FAIL crashed: %s" % crash)
         return 1

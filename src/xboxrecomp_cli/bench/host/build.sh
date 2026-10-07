@@ -3,11 +3,19 @@
 #@ with are this note and are not sent. Runs as: in_box_locked, shared (build). After the prologue and EXTRA_ARGS (an array of
 #@ extra cmake arguments).
 cd "$REMOTE_GAME"
-[ -f cmake/llvm-mingw-x86_64.cmake ] || { echo "cmake/llvm-mingw-x86_64.cmake missing -- not synced yet?" >&2; exit 1; }
+[ -f "$TOOLCHAIN" ] || { echo "$TOOLCHAIN missing -- not synced yet?" >&2; exit 1; }
 export PATH="$LLVM_MINGW_ROOT/bin:$PATH"
+# A tree configured with a toolchain file that is gone (the game's own copy,
+# deleted once the CLI's became the default) cannot reconfigure:
+# CMakeSystem.cmake includes the old path on every run. Start it afresh.
+old=$(sed -n 's/^include("\(.*\)")$/\1/p' build-win/CMakeFiles/*/CMakeSystem.cmake 2>/dev/null | head -1 || true)
+if [ -n "$old" ] && [ ! -f "$old" ]; then
+    echo "build: its toolchain file $old is gone; configuring afresh"
+    rm -rf build-win/CMakeCache.txt build-win/CMakeFiles
+fi
 if [ ! -f build-win/CMakeCache.txt ]; then
     cmake -S . -B build-win -G Ninja \
-        -DCMAKE_TOOLCHAIN_FILE=cmake/llvm-mingw-x86_64.cmake \
+        -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
         -DLLVM_MINGW_ROOT="$LLVM_MINGW_ROOT" \
         -DCMAKE_BUILD_TYPE=Release \
         "${EXTRA_ARGS[@]}"
@@ -24,4 +32,4 @@ if [ -f bench-provenance.txt ]; then
 else
     echo "build: unknown sources (no bench-provenance.txt; synced by an older bench.sh?)" > build-win/provenance.txt
 fi
-ls -la build-win/*.exe
+ls -la "$EXE_REL"

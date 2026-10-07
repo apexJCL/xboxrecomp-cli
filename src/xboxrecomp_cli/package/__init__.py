@@ -3,8 +3,10 @@
 The plan (setup, generate, build, package) is judged before anything runs;
 the payload is staged, checked and wrapped per target (windows.py,
 steamos.py, macos.py). Names, folders and the title ID come from game.toml;
-the templates and content files from the game's package.templates and
-package.content."""
+the content files from the game's package.content. The mechanism
+templates (installer, launchers, README) are this CLI's own (templates/);
+a game that needs its own copy of one puts it in package.templates, and
+that copy wins (template())."""
 
 import json
 import os
@@ -20,6 +22,7 @@ NOTICE_TEXT = (
     "It is for your own machines only. The game is not yours to redistribute:\n"
     "never share, upload or publish this bundle."
 )
+DEFAULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 TARGET_NAMES = {
     "windows": "windows-x86_64",
     "steamos": "steamos-x86_64-proton",
@@ -47,17 +50,32 @@ def plib():
         pkg["app"],
         G.m["data"]["game_files_exclude"],
         G.m["build"]["nonstock_vars"],
+        G.m["build"]["stock_cmake"],
     )
     return lib_mod
 
 
 def templates():
-    """The dir the mechanism files are read from (package.templates)."""
+    """The game's own templates dir (package.templates): the macos templates
+    are still only there."""
     if not g().templates:
-        raise CliError(
-            "game.toml sets no package.templates (this CLI has no templates of its own yet)"
-        )
+        raise CliError("game.toml sets no package.templates (the macos target needs them)")
     return g().templates
+
+
+def template(target, name, content=False):
+    """<target>/<name> ("" for the top level): the game's copy in
+    package.templates (or, with content, package.content) wins over this
+    CLI's."""
+    G = g()
+    roots = [G.templates] if G.templates else []
+    if content and G.content:
+        roots.append(G.content)
+    for r in roots:
+        p = os.path.join(r, target, name)
+        if os.path.isfile(p):
+            return p
+    return os.path.join(DEFAULTS, target, name)
 
 
 def data_paths(target):
@@ -112,6 +130,7 @@ def readme(target, version, lib, dst):
     tk = lib.tree_state(toolkit.toolkit_dir())
     values = {
         "NAME": lib.PRODUCT_NAME,
+        "PRODUCT": lib.PRODUCT,
         "VERSION": version,
         "TARGET": TARGET_NAMES[target],
         "SOURCES": "%s %s, toolkit %s"
@@ -119,13 +138,20 @@ def readme(target, version, lib, dst):
         "DATA_PATHS": data_paths(target),
         "LOG_KEEP": "10",
     }
-    render(os.path.join(templates(), "README.txt.in"), values, dst)
+    # The PRIVATE and "built by" paragraphs: the game's README.intro (in
+    # package.content) when it words them its own way, else the CLI's.
+    with open(template("", "README.intro", content=True)) as f:
+        intro = f.read()
+    for k, v in values.items():
+        intro = intro.replace("@%s@" % k, v)
+    values["INTRO"] = intro
+    render(template("", "README.txt.in"), values, dst)
     part_values = {"VERSION": version}
     if target == "steamos":
         # The CLI's own install section, unless the game has its own.
         from . import steamos
 
-        part_path = steamos.template("README.part")
+        part_path = template("steamos", "README.part", content=True)
         part_values.update(steamos.steamos_values(lib))
     else:
         part_path = os.path.join(G.content, target, "README.part")
@@ -236,8 +262,10 @@ def write_common(payload, target, version, lib):
         os.path.join(G.content, "enhance.toml.default"),
         os.path.join(payload, "enhance.toml.default"),
     )
+    # LICENSE always; NOTICE when the game has one (third-party notices).
     for n in ("LICENSE", "NOTICE"):
-        copy_lf(os.path.join(G.root, n), os.path.join(payload, n))
+        if n == "LICENSE" or os.path.isfile(os.path.join(G.root, n)):
+            copy_lf(os.path.join(G.root, n), os.path.join(payload, n))
     readme(target, version, lib, os.path.join(payload, "README.txt"))
     n = lib.stage_game_files(G.game_files, os.path.join(payload, "game_files"))
     host.say("game files: %d entries staged" % n)

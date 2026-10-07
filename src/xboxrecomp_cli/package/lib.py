@@ -43,6 +43,9 @@ TITLE_ID = None
 SOURCE_NAME = "game"
 APP = ""
 NONSTOCK_VARS = ()
+# build.stock_cmake: the -DVAR=VALUE options a stock build is configured
+# with (manifest.py's default until configure() gives the game's).
+STOCK_CMAKE = ("-DXBOXRECOMP_ENHANCE=ON",)
 SCHEMA = 1
 DATA_LAYOUT = 1
 
@@ -53,13 +56,23 @@ GAME_FILES_EXCLUDE = (".DS_Store",)
 TARGETS = ("windows-x86_64", "steamos-x86_64-proton", "macos-arm64")
 
 
-def configure(product, name, title_id, source_name, app, game_files_exclude=(), nonstock_vars=()):
+def configure(
+    product,
+    name,
+    title_id,
+    source_name,
+    app,
+    game_files_exclude=(),
+    nonstock_vars=(),
+    stock_cmake=STOCK_CMAKE,
+):
     """The game's values (package/__init__.py passes game.toml's)."""
     global PRODUCT, PRODUCT_NAME, TITLE_ID, SOURCE_NAME, APP, GAME_FILES_EXCLUDE
-    global NONSTOCK_VARS, LF_ONLY, ICON_FILES
+    global NONSTOCK_VARS, STOCK_CMAKE, LF_ONLY, ICON_FILES
     PRODUCT, PRODUCT_NAME, TITLE_ID, SOURCE_NAME, APP = product, name, title_id, source_name, app
     GAME_FILES_EXCLUDE = tuple(game_files_exclude) + (".DS_Store",)
     NONSTOCK_VARS = tuple(nonstock_vars)
+    STOCK_CMAKE = tuple(stock_cmake)
     LF_ONLY = lf_only(app)
     ICON_FILES = icon_files(app)
 
@@ -183,9 +196,52 @@ def cache_problems(vals):
     for var in NONSTOCK_VARS:
         if vals.get(var, ""):
             nonstock.append("%s=%s (want empty)" % (var, vals[var]))
-    if vals.get("XBOXRECOMP_ENHANCE", "ON").upper() in ("OFF", "0", "FALSE", "NO"):
-        nonstock.append("XBOXRECOMP_ENHANCE=%s (want ON)" % vals["XBOXRECOMP_ENHANCE"])
+    for var, want in stock_defines():
+        if var in vals and not cmake_same(vals[var], want):
+            nonstock.append("%s=%s (want %s)" % (var, vals[var], want))
     return debug, nonstock
+
+
+CMAKE_FALSE = ("OFF", "0", "FALSE", "NO", "N", "IGNORE", "NOTFOUND", "")
+CMAKE_TRUE = ("ON", "1", "TRUE", "YES", "Y")
+
+
+def stock_defines():
+    """(VAR, VALUE) for each -DVAR[:TYPE]=VALUE of build.stock_cmake. The
+    -U entries are build.nonstock_vars' business."""
+    out = []
+    for opt in STOCK_CMAKE:
+        m = re.match(r"^-D([A-Za-z_][A-Za-z0-9_]*)(?::[A-Z]+)?=(.*)$", opt)
+        if m:
+            out.append((m.group(1), m.group(2)))
+    return out
+
+
+def cmake_same(actual, want):
+    """A cache value against the stock one: booleans by CMake's truth (OFF,
+    0, NO... all false), anything else as text."""
+    a, w = actual.upper(), want.upper()
+    if w in CMAKE_TRUE or (w and w in CMAKE_FALSE):
+        return (a in CMAKE_TRUE) == (w in CMAKE_TRUE)
+    return actual == want
+
+
+def nonstock_help(nonstock_vars, stock_cmake):
+    """--allow-nonstock's list: each nonstock var, then each stock define
+    as the value that would make the build non-stock."""
+    out = list(nonstock_vars)
+    for opt in stock_cmake:
+        m = re.match(r"^-D([A-Za-z_][A-Za-z0-9_]*)(?::[A-Z]+)?=(.*)$", opt)
+        if not m:
+            continue
+        var, want = m.group(1), m.group(2)
+        if want.upper() in CMAKE_TRUE:
+            out.append("%s=OFF" % var)
+        elif want.upper() in CMAKE_FALSE and want:
+            out.append("%s=ON" % var)
+        else:
+            out.append("%s!=%s" % (var, want))
+    return out
 
 
 def compiler_line(vals, build_dir=None):
@@ -534,6 +590,12 @@ def main(argv=None):
     c.add_argument(
         "--nonstock", action="append", default=[], help="a variable a stock build leaves empty"
     )
+    c.add_argument(
+        "--stock",
+        action="append",
+        default=None,
+        help="-DVAR=VALUE a stock build is configured with (default: -DXBOXRECOMP_ENHANCE=ON)",
+    )
 
     x = sub.add_parser("xbe-title")
     x.add_argument("xbe")
@@ -564,8 +626,10 @@ def main(argv=None):
     if a.cmd == "version":
         print(compute_version(a.game, a.toolkit, a.gen, a.exe))
     elif a.cmd == "check-cache":
-        global NONSTOCK_VARS
+        global NONSTOCK_VARS, STOCK_CMAKE
         NONSTOCK_VARS = tuple(a.nonstock)
+        if a.stock is not None:
+            STOCK_CMAKE = tuple(a.stock)
         debug, nonstock = cache_problems(read_cache(a.cache))
         bad = ([] if a.allow_debug else debug) + ([] if a.allow_nonstock else nonstock)
         if bad:

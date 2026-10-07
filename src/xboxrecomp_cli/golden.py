@@ -121,7 +121,7 @@ background matches. A view not seen before is NEWVIEW, which is
 INCOMPLETE: someone looks at it and records it. See "split frames" below.
 
 `dumpat` and `check` print a WARNING (stderr; never a failure) when a game
-process is running (the game's scripts/running_game.py): an installed copy left open
+process of the game's exe is running (running_game.py): an installed copy left open
 beside a Metal or CPU golden run makes its timings noisy.
 """
 
@@ -1677,11 +1677,12 @@ def warn_running_game():
     only: on the Mac nothing holds a run lock that would make the match
     certainly foreign, and the caller may be running the game on purpose."""
     try:
-        # The game's own matcher, beside its root (it names the game's exe).
-        sys.path.insert(0, os.path.join(REPO, "scripts"))
-        import running_game
+        # The CLI's matcher, for the exe the game's manifest names.
+        from . import manifest
+        from . import running_game as rg
 
-        games = running_game.find_games(running_game.list_processes(), os.getpid())
+        exe = manifest.load(REPO).exe_name
+        games = rg.find_games(rg.list_processes(exe), os.getpid(), exe)
     except Exception:  # a listing failure must never fail a golden check
         return
     for pid, cmd in games:

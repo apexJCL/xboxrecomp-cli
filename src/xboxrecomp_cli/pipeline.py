@@ -210,6 +210,9 @@ def stage_parse(extra=()):
     host.step("parse")
     begin_stage("parse", extra)
     host.require(g().xbe, dump_hint())
+    # xbe_parser makes no directory; pipeline.analysis_json may name one
+    # under pipeline.out that does not exist yet.
+    os.makedirs(os.path.dirname(g().analysis_json), exist_ok=True)
     run_cmds(parse_cmds(extra))
 
 

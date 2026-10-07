@@ -1,0 +1,6 @@
+// The app icon, compiled into the launcher (<game> package windows) and,
+// with the game's build.icon_var CMake option, into the game's exe: the
+// taskbar shows the icon of the process that owns the window, which is the
+// game, not the launcher. The .ico is the game's title image; it never
+// enters git.
+1 ICON "@ICON@"

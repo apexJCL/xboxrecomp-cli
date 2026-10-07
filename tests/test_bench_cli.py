@@ -24,6 +24,13 @@ scripts/ has golden.py, pacing_stats.py and package_lib.py, as bench.sh
 called them), which also checks the CLI's bench against it case by case:
 
   BENCH_PARITY_REF=/path/to/old/bench.sh uv run python tests/test_bench_cli.py
+
+bench.sh is gone, so a deliberate change to what the bench sends (a new
+prologue value, a host script's new input) is recorded from the CLI itself,
+and the record's diff is then reviewed line by line before it is committed:
+
+  BENCH_PARITY_UPDATE=1 uv run pytest tests/test_bench_cli.py
+  git diff tests/testdata/bench_parity.json
 """
 
 import json
@@ -37,14 +44,18 @@ import tempfile
 
 from xboxrecomp_cli.bench import remote
 from xboxrecomp_cli.bench.remote import fill, host_text
+from xboxrecomp_cli.cli_dir import cli_dir
 from xboxrecomp_cli.package import lib as package_lib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GAME = os.path.join(HERE, "testdata", "game")
+GAME2 = os.path.join(HERE, "testdata", "game2")
 HOST = os.path.join(os.path.dirname(os.path.abspath(remote.__file__)), "host")
 FIXTURE = os.path.join(HERE, "testdata", "bench_parity.json")
 # Recording: the bench.sh to record (a full one, not the shim).
 REF = os.environ.get("BENCH_PARITY_REF")
+# Re-recording from the CLI: its own run becomes the record (review the diff).
+UPDATE = os.environ.get("BENCH_PARITY_UPDATE") == "1"
 
 SKIP = None
 if sys.platform == "win32":
@@ -92,16 +103,25 @@ def git(d, *args):
     )
 
 
-def scratch(d):
+def scratch(d, game=GAME, name="cat"):
     """d/cat (a clean main with gen/ and the golden references), d/tk (a
     clean toolkit on posix-host/portability), d/bin (the fakes). The
-    project is named cat, as the record's paths are."""
-    cat, tk, bindir = (os.path.join(d, n) for n in ("cat", "tk", "bin"))
-    for rel in (".gitignore", "game.toml", "analysis/golden/golden.json"):
+    project is named cat, as the record's paths are. game2 (GAME2): d/b3,
+    with its own gen dir and no golden."""
+    cat, tk, bindir = (os.path.join(d, n) for n in (name, "tk", "bin"))
+    rels = (
+        (".gitignore", "game.toml", "analysis/golden/golden.json")
+        if game == GAME
+        else ("game.toml",)
+    )
+    for rel in rels:
         os.makedirs(os.path.dirname(os.path.join(cat, rel)), exist_ok=True)
-        shutil.copy(os.path.join(GAME, rel), os.path.join(cat, rel))
+        shutil.copy(os.path.join(game, rel), os.path.join(cat, rel))
     # No dump in the scratch: the known-dump check is off (an empty list),
     # as bench.sh had none; test_golden_refuses_unknown_dump covers it.
+    if game != GAME:
+        with open(os.path.join(cat, ".gitignore"), "w") as f:
+            f.write("/scripts/bench.env\n/src/game/recomp/gen/\n/bench-logs/\n")
     toml = os.path.join(cat, "game.toml")
     with open(toml) as f:
         text = re.sub(r"(?ms)^sha256 = \[.*?\]", "sha256 = []", f.read(), count=1)
@@ -119,11 +139,15 @@ def scratch(d):
                 "~/bench test", "'~/bench-test'"
             )
         )
-    gen = os.path.join(cat, "src", "recomp", "gen")
+    gen = os.path.join(
+        cat, *(("src", "recomp", "gen") if game == GAME else ("src", "game", "recomp", "gen"))
+    )
     os.makedirs(gen)
     for n in ("recomp_0001.c", "recomp_funcs.h"):
         with open(os.path.join(gen, n), "w") as f:
             f.write("/* %s */\n" % n)
+    if game != GAME:
+        return scratch_rest(d, cat, tk, bindir, gen)
     g = json.load(open(os.path.join(cat, "analysis", "golden", "golden.json")))
     frames = os.path.join(cat, "analysis", "golden", "frames")
     os.makedirs(frames)
@@ -136,6 +160,10 @@ def scratch(d):
             )
             for n in names:
                 open(os.path.join(frames, n), "wb").close()
+    return scratch_rest(d, cat, tk, bindir, gen)
+
+
+def scratch_rest(d, cat, tk, bindir, gen):
     os.makedirs(tk)
     with open(os.path.join(tk, "README"), "w") as f:
         f.write("toolkit\n")
@@ -180,7 +208,7 @@ def run_side(d, side, argv, extra_env=None):
             "--game",
             cat,
             "--prog",
-            "blinx2",
+            d.get("prog", "blinx2"),
             "bench",
         ]
     ) + argv
@@ -232,6 +260,9 @@ def norm(s, tmp):
         return s
     for t in (os.path.realpath(tmp), tmp):
         s = s.replace(t, "TMP")
+    # The CLI checkout the bench syncs from (wherever this test runs).
+    for t in (os.path.realpath(cli_dir()), cli_dir()):
+        s = s.replace(t, "CLI")
     host = socket.gethostname()
     for h in (host, host.split(".")[0]):
         if h:
@@ -332,8 +363,8 @@ def assert_parity(d, argv, extra_env=None):
     b = run_side(d, "py", argv, extra_env)
     got = compact(b, d["tmp"])
     rec = record()
-    if REF:
-        rec[key] = compact(run_side(d, "sh", argv, extra_env), d["tmp"])
+    if REF or UPDATE:
+        rec[key] = compact(run_side(d, "sh", argv, extra_env), d["tmp"]) if REF else got
         os.makedirs(os.path.dirname(FIXTURE), exist_ok=True)
         with open(FIXTURE, "w", encoding="utf-8") as f:
             json.dump(rec, f, indent=1, sort_keys=True)
@@ -344,17 +375,25 @@ def assert_parity(d, argv, extra_env=None):
     return b, b
 
 
-def with_tree(fn):
+def with_tree(fn, game=GAME):
     def run():
         if SKIP:
             print("skip %s: %s" % (fn.__name__, SKIP))
             return
         with tempfile.TemporaryDirectory() as tmp:
-            d = {"tmp": tmp, "n": 0, "tree": scratch(tmp), "test": fn.__name__}
+            if game == GAME:
+                d = {"tmp": tmp, "n": 0, "tree": scratch(tmp), "test": fn.__name__}
+            else:
+                tree = scratch(tmp, game, "b3")
+                d = {"tmp": tmp, "n": 0, "tree": tree, "test": fn.__name__, "prog": "game2"}
             fn(d)
 
     run.__name__ = fn.__name__
     return run
+
+
+def with_game2_tree(fn):
+    return with_tree(fn, GAME2)
 
 
 @with_tree
@@ -442,6 +481,34 @@ def test_parity_refusals(d):
     a, _ = assert_parity(d, ["golden", "--bogus"])
     assert a[0] == 1, a
     a, _ = assert_parity(d, ["build"], {"BENCH_HOST": ""})
+
+
+@with_game2_tree
+def test_parity_second_game(d):
+    """A Burnout 3-shaped game (testdata/game2): the exe, gen dir, game
+    files folder (with a space) and crash tag reach the host from its
+    manifest, and every host path keeps the space inside one word."""
+    a, _ = assert_parity(d, ["sync", "--game-files"])
+    ship = [c for c in a[3] if c[0] == "ssh" and c[2] and "dst=" in c[2]]
+    assert ship and "dst=~/bench-test/b3/Second\\ Game\\ Files\n" in ship[0][2], ship
+    assert "src=~/xbox-recomp/b3/Second\\ Game\\ Files\n" in ship[0][2], ship
+    assert_parity(d, ["build"])
+    a, _ = assert_parity(d, ["run"], {"BENCH_TIMEOUT": "30"})
+    pro = [c[2] for c in a[3] if c[0] == "ssh" and c[2] and "run_game" not in c[2]]
+    sent = "".join(c[2] or "" for c in a[3] if c[0] == "ssh")
+    for line in (
+        "EXE=game2.exe\n",
+        "EXE_REL=build-win/game2.exe\n",
+        "GEN_DIR=src/game/recomp/gen\n",
+        "GAME_FILES=Second\\ Game\\ Files\n",
+        "XBE=Second\\ Game\\ Files/default.xbe\n",
+        "CRASH_TAG=\\[FAULT\\]\n",
+        'TOOLCHAIN="$CLI_DIR"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\n',
+    ):
+        assert line in sent, (line, pro[:1])
+    assert_parity(d, ["symbolize"])
+    a, _ = assert_parity(d, ["integrate"])
+    assert "gen: 2 files" in a[1], (a[1], a[2])
 
 
 def test_golden_refuses_unknown_dump(capsys):

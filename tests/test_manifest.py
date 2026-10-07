@@ -85,6 +85,10 @@ def test_package_defaults():
             lambda t: t + '[package]\napp = "A"\ntargets = ["macos"]\n',
             "package.targets: macos needs build.targets",
         ),
+        (
+            lambda t: t + '[package]\napp = "Some_Recomp"\n',
+            "package.app: 'Some_Recomp' names the same file as build.exe",
+        ),
         (lambda t: t + '[xbe.extra]\nx = "y"\n', "xbe.extra: unknown table"),
     ],
 )

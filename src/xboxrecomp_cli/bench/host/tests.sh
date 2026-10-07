@@ -17,7 +17,7 @@ for t in $standalone; do
     src=../xboxrecomp/tests/$t
     [ -f "$src/CMakeLists.txt" ] || { echo "tests: $src missing (toolkit too old?)" >&2; exit 1; }
     cmake -S "$src" -B "build-win/tests/$t" -G Ninja \
-        -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/llvm-mingw-x86_64.cmake" \
+        -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
         -DLLVM_MINGW_ROOT="$LLVM_MINGW_ROOT" -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CROSSCOMPILING_EMULATOR="$emu" >/dev/null
     cmake --build "build-win/tests/$t"

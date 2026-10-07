@@ -33,12 +33,19 @@ def command(name, help, configure=None):
     return wrap
 
 
+def _build_target_help():
+    targets = host.g().m["build"]["targets"]
+    if "windows" in targets and "macos" in targets:
+        return "default: macos on a macOS host, windows elsewhere"
+    return "default: %s (game.toml's build.targets)" % (targets[0] if targets else "windows")
+
+
 def _cfg_build(p):
     p.add_argument(
         "target",
         nargs="?",
         choices=("windows", "macos"),
-        help="default: macos on a macOS host, windows elsewhere",
+        help=_build_target_help(),
     )
     p.add_argument(
         "--system-tools",
@@ -131,14 +138,17 @@ def cmd_pins(a):
 
 
 def _cfg_package(p):
-    nonstock = host.g().m["build"]["nonstock_vars"]
+    from .package import lib as pkg_lib
+
+    b = host.g().m["build"]
+    nonstock = pkg_lib.nonstock_help(b["nonstock_vars"], b["stock_cmake"])
     p.add_argument("target", choices=("windows", "steamos", "macos"))
     p.add_argument("--no-build", action="store_true", help="package the existing build as it is")
     p.add_argument("--allow-debug", action="store_true", help="package a non-Release build")
     p.add_argument(
         "--allow-nonstock",
         action="store_true",
-        help="package with %s (recorded)" % " or ".join(nonstock + ["XBOXRECOMP_ENHANCE=OFF"]),
+        help="package with %s (recorded)" % " or ".join(nonstock),
     )
     p.add_argument(
         "--archive", action="store_true", help="windows: also a stored .zip of the folder"
@@ -237,8 +247,18 @@ def make_parser(prog=None):
 
 
 def native_target(os_name=None):
-    """What the wrapper with no arguments packages: the bundle for this host."""
-    return {"macos": "macos", "windows": "windows"}.get(os_name or host.host_os(), "steamos")
+    """What the wrapper with no arguments packages: the bundle for this host
+    when the game makes it, else the first of package.targets this host can
+    make (a game without macos bundles packages windows on a Mac)."""
+    os_name = os_name or host.host_os()
+    native = {"macos": "macos", "windows": "windows"}.get(os_name, "steamos")
+    targets = host.g().m.get("package", {}).get("targets")
+    if not targets or native in targets:
+        return native
+    for t in targets:
+        if t != "macos" or os_name == "macos":
+            return t
+    return native
 
 
 def cmd_bench(argv):

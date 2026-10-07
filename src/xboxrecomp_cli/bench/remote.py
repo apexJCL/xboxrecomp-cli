@@ -80,6 +80,18 @@ def shell_quote(s):
     return "".join(out)
 
 
+def host_path(p):
+    """A host path for a command line the host's shell reads: quoted, except
+    a leading ~ or ~/ (printf %q would escape it, and the host must expand
+    it). rsync targets are not built with this: rsync 3.2.4+ escapes its
+    remote arguments itself, leading ~ excepted."""
+    if p == "~":
+        return p
+    if p.startswith("~/"):
+        return "~/" + shell_quote(p[2:]) if p[2:] else p
+    return shell_quote(p)
+
+
 def quote_words(words):
     """`printf '%q ' WORDS`: each word quoted and followed by a space; no
     words give nothing (bash's printf gave "'' ", so a run without game
@@ -96,6 +108,11 @@ class Remote:
 
     def prologue(self):
         c = self.cfg
+        g = c.game
+        m = g.m
+        b = m["build"]
+        exe = b["exe"] + ".exe"
+        tf = b["toolchain_file"]
         return fill(
             "prologue.sh.in",
             BENCH_DIR=c["BENCH_DIR"],
@@ -103,6 +120,19 @@ class Remote:
             LLVM_MINGW_ROOT=c["LLVM_MINGW_ROOT"],
             BENCH_PREFIX=c["BENCH_PREFIX"],
             BENCH_BOX=c["BENCH_BOX"],
+            SLUG=shell_quote(g.slug),
+            EXE=shell_quote(exe),
+            EXE_REL=shell_quote("/".join(x for x in (b["windows_dir"], b["exe_dir"], exe) if x)),
+            GEN_DIR=shell_quote(m["pipeline"]["gen"]),
+            GAME_FILES=shell_quote(m["data"]["game_files"]),
+            XBE=shell_quote(m["xbe"]["path"]),
+            # The game's own toolchain file, else the CLI's (synced to CLI_DIR).
+            TOOLCHAIN=(
+                '"$REMOTE_GAME"/' + shell_quote(tf)
+                if tf
+                else '"$CLI_DIR"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake'
+            ),
+            CRASH_TAG=shell_quote(m["bench"]["crash_tag"]),
         )
 
     def ship(self, name, assignments="", prologue=True):

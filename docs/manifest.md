@@ -74,6 +74,7 @@ BLiNX 2's manifest is the full example
 | `game_name` | required | `recomp --game-name`. It is written into every generated file, so it is fixed for the life of the game. |
 | `gen` | required | The generated code. `gen.key.json` and the regeneration marker sit beside it. |
 | `out` | `"analysis"` | Every intermediate. |
+| `analysis_json` | `""` | Where `parse` writes the XBE analysis. Empty writes it beside the XBE (`<stem>_analysis.json`); a game whose dump is read-only, such as a link to the player's own copy, names a path under its tree (`parse` makes the directory). |
 | `seeds` | `[]` | `--seed-functions` files for disasm. |
 | `icall_seeds` | `true` | Seed from the toolkit's icall_feedback database, when there is one. |
 | `spin_waits` | `""` | `recomp --spin-waits`. Empty passes no flag. |
@@ -95,10 +96,10 @@ BLiNX 2's manifest is the full example
 |---|---|---|
 | `exe` | required | The CMake target and file name (`.exe` on Windows). |
 | `exe_dir` | `""` | Where the exe lands inside the build dir, if not at its top. |
-| `targets` | `["windows"]` | The build targets this game supports: `windows`, `macos`. |
+| `targets` | `["windows"]` | The build targets this game supports: `windows`, `macos`. `build` with no target builds this host's own (`macos` on a Mac, else `windows`) when it is listed, else the first listed. |
 | `windows_dir`, `macos_dir` | `"build-win"`, `"build"` | The developer build dirs. |
-| `toolchain_file` | `""` | The CMake toolchain file for the windows target. |
-| `stock_cmake` | `["-DXBOXRECOMP_ENHANCE=ON"]` | Passed on every packaging configure, so that a cache cannot keep a non-stock value. |
+| `toolchain_file` | `""` | The CMake toolchain file for the windows target. Empty uses the CLI's own `src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake`, locally and on the bench host. |
+| `stock_cmake` | `["-DXBOXRECOMP_ENHANCE=ON"]` | Passed on every packaging configure, so that a cache cannot keep a non-stock value. It is also the stock rule: `package` refuses a cache whose `VAR` differs from a `-DVAR=VALUE` here (booleans by CMake's truth), without `--allow-nonstock`. |
 | `nonstock_vars` | `[]` | Cache variables `package` refuses without `--allow-nonstock`. |
 | `icon_var` | `""` | The CMake variable that compiles the icon into the exe. |
 
@@ -134,29 +135,47 @@ This table is optional. Without it, `package` says so.
 |---|---|---|
 | `app` | required | The file, app and folder name (`BLiNX2`). |
 | `product` | `<slug>-recomp` | `manifest.json`'s `product`. |
-| `targets` | `["windows", "steamos"]` | The bundles: `windows`, `steamos`, `macos`. `macos` needs `build.targets` to include it. |
+| `targets` | `["windows", "steamos"]` | The bundles: `windows`, `steamos`, `macos`. `macos` needs `build.targets` to include it. The command with no arguments packages this host's own bundle when it is listed, else the first listed one this host can make. |
 | `brew` | `[]` | The Homebrew formulae the macos target links. `doctor` checks them. |
 | `dylib_companions` | `[]` | `NAME=brew:FORMULA`: libraries loaded with dlopen, bundled too. |
-| `content` | `"packaging"` | The game's own packaging content. |
-| `templates` | `""` | The game's packaging templates (`README.txt.in` and the windows and macos ones). A file in its `steamos/` subfolder replaces the CLI's own steamos template of that name. |
+| `content` | `"packaging"` | The game's own packaging content: `launch.env.default.<windows\|macos>`, `enhance.toml.default`, `<target>/README.part` for windows and macos, and optionally `README.intro`. |
+| `templates` | `""` | The game's own packaging templates: the macos ones (required for `macos`), and any copy of a CLI template that must differ, at the same path (`README.txt.in`, `windows/launcher.c`, `steamos/launch.sh`, ...), which then wins. |
 | `icon` | `"xbe"` | The XBE's title image, or the generic icon. |
 
-### The steamos templates
+### The CLI's templates
 
-The steamos installer and launcher are the CLI's own, for every game:
-`install.sh`, `install_lib.py`, `launch.sh` and the README's install
-section `README.part`, in
-[src/xboxrecomp_cli/package/templates/steamos](../src/xboxrecomp_cli/package/templates/steamos).
-`package steamos` fills their `@KEY@` placeholders from game.toml: the
-name, `package.app` and `product`, `build.exe`, `pipeline.game_name`,
-`data.steamos` (the install root), `<SLUG>_ROOT` (the variable that moves
-it), and the umu-launcher pin from `pins.py`. They run on a Steam Deck with
-stock SteamOS (the installer offers to download the pinned umu-launcher
-when umu-run is missing) and on a distribution that ships umu-run. A game
-overrides one only if it must: put its own copy in
-`<package.templates>/steamos/` (`README.part` may also sit in
-`<package.content>/steamos/`). A game with `scripts/running_game.py` gets it
-in the bundle, for `install.sh status`.
+The installers, launchers and README frame are the CLI's own, for every
+game, in [src/xboxrecomp_cli/package/templates](../src/xboxrecomp_cli/package/templates).
+`package` fills their `@KEY@` placeholders from game.toml. A game overrides
+one only if it must: its own copy at the same path under
+`package.templates` wins (`README.part` and `README.intro` may also sit
+under `package.content`).
+
+- **README** (`README.txt.in`): the title line, the data folders and the
+  saves section. Its first paragraphs, the PRIVATE notice and what built
+  the bundle, come from `README.intro`: the CLI's names the game
+  (`game.name`) and `package.product`; a game with its own wording puts
+  `README.intro` in `package.content` (the same placeholders work there).
+  The target's install section `<target>/README.part` follows.
+- **windows** (`launcher.c`, `installer.nsi.in`, `app.rc.in`): the
+  launcher `<app>.exe`, with the icon compiled in, sets the game's
+  environment (`RECOMP_HDD_DIR`, `RECOMP_GAME_FILES`, `RECOMP_ENHANCE_CONFIG`,
+  `RECOMP_STDIO_LOG`) below `data.windows` (or the folder that the
+  `data.dir_env` variable names, when set)
+  and starts `build.exe`. `data.windows` must be a folder below
+  `%LOCALAPPDATA%`. The per-user NSIS installer puts the program in
+  `%LOCALAPPDATA%\Programs\<app>`; the Start Menu shortcut is `game.name`
+  without the characters a file name cannot hold (`:` becomes ` -`).
+- **steamos** (`install.sh`, `install_lib.py`, `launch.sh` and the
+  install section `README.part`): filled with the name, `package.app` and
+  `product`, `build.exe`, `pipeline.game_name`, `data.steamos` (the install
+  root), `<SLUG>_ROOT` (the variable that moves it), and the umu-launcher
+  pin from `pins.py`. They run on a Steam Deck with stock SteamOS (the
+  installer offers to download the pinned umu-launcher when umu-run is
+  missing) and on a distribution that ships umu-run. The bundle also gets
+  the CLI's `running_game.py` with `build.exe` baked in, for
+  `install.sh status`.
+- **macos**: still the game's own, in `<package.templates>/macos/`.
 
 ## [bench]
 
@@ -167,6 +186,8 @@ in the bundle, for `install.sh status`.
 | `toolkit_branch` | `""` | `integrate` warns when the toolkit is on another branch. |
 | `toolkit_tests` | `true` | `golden` runs the toolkit's Proton tests first. |
 | `pacing_scenario` | `""` | `pacing`'s default scenario. Empty uses the first in golden.json. |
+| `sync_excludes` | `[]` | More rsync excludes for `sync`, after the ones every game has: the game's own local output (rsync does not read `.gitignore`). |
+| `crash_tag` | `"[CRASH]"` | The start of the line the game's crash handler prints. `run`, `golden` and `symbolize` fail or symbolize a run whose `game-stdio.log` has a line starting with it. Symbolizing reads BLiNX 2's report format (`RIP=`, `[i] 0x...` frames); another format's report keeps its tagged lines only. |
 
 Host settings are not part of the manifest: `BENCH_HOST`, `BENCH_DIR` and
 the rest come from the environment or the game's `scripts/bench.env`

@@ -1,0 +1,119 @@
+; The installer, rendered by `<game> package windows` into
+; dist/.stage-windows/installer.nsi and compiled with makensis.
+;
+; Per user, no elevation. The program files are embedded; game_files\ is
+; copied from the folder setup.exe runs in (NSIS caps an installer at 2 GB,
+; and the dump alone is larger). Saves and settings live in
+; the data folder (game.toml's data.windows), which neither the installer nor the uninstaller
+; ever writes: installing on top or uninstalling keeps them.
+;
+; Placeholders (each written between @ signs): NAME LINK_NAME APP DATA_DIR
+; VERSION OUTFILE ICON INSTALL_FILES UNINSTALL_FILES. Never write one in a comment: it is replaced
+; there too.
+
+Unicode true
+SetCompressor zlib
+RequestExecutionLevel user
+ManifestDPIAware true
+
+!define APP "@APP@"
+!define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\@APP@"
+
+Name "@NAME@"
+OutFile "@OUTFILE@"
+InstallDir "$LOCALAPPDATA\Programs\@APP@"
+InstallDirRegKey HKCU "Software\@APP@" "InstallDir"
+ShowInstDetails show
+ShowUninstDetails show
+
+!include "MUI2.nsh"
+!include "LogicLib.nsh"
+; The game's icon (or the generic one) on the installer and uninstaller.
+!define MUI_ICON "@ICON@"
+!define MUI_UNICON "@ICON@"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\@APP@.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Play @NAME@"
+!define MUI_FINISHPAGE_TEXT "@NAME@ @VERSION@ is installed in $INSTDIR.$\r$\n$\r$\nYour saves and settings are kept in $LOCALAPPDATA\@DATA_DIR@ and survive updates and uninstalling.$\r$\n$\r$\nPRIVATE: this contains your own copy of the game. Do not share it."
+!insertmacro MUI_PAGE_WELCOME
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE DirLeave
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_COMPONENTS
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+!define MUI_UNFINISHPAGE_NOAUTOCLOSE
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_LANGUAGE "English"
+
+Function .onInit
+  IfFileExists "$EXEDIR\game_files\default.xbe" +3
+    MessageBox MB_ICONSTOP "game_files\default.xbe is missing beside this setup program.$\r$\nKeep the @APP@-@VERSION@-windows folder together and run setup from it." /SD IDOK
+    Abort
+  ; /S skips the directory page, so check here too.
+  ${If} ${Silent}
+    Call CheckInstDir
+  ${EndIf}
+FunctionEnd
+
+; The install replaces $INSTDIR\game_files (RMDir /r, then a copy from
+; $EXEDIR\game_files): installing into the bundle folder, or into a folder
+; that holds it, would delete the dump before copying it.
+Function CheckInstDir
+  StrCpy $0 "$INSTDIR\"
+  StrCpy $1 "$EXEDIR\"
+  StrLen $2 $0
+  StrCpy $3 $1 $2
+  ${If} $3 == $0
+    MessageBox MB_ICONSTOP "Choose another install folder: $INSTDIR holds this setup program's game_files, which installing would delete." /SD IDOK
+    Abort
+  ${EndIf}
+FunctionEnd
+
+Function DirLeave
+  Call CheckInstDir
+FunctionEnd
+
+Section "@NAME@" SecMain
+  SectionIn RO
+  SetOutPath "$INSTDIR"
+@INSTALL_FILES@
+  ; The dump: replaced on every install, the same way every version.
+  RMDir /r "$INSTDIR\game_files"
+  CreateDirectory "$INSTDIR\game_files"
+  CopyFiles /SILENT "$EXEDIR\game_files\*.*" "$INSTDIR\game_files"
+  IfFileExists "$INSTDIR\game_files\default.xbe" +3
+    MessageBox MB_ICONSTOP "Copying the game files failed (disk full?)." /SD IDOK
+    Abort
+  WriteUninstaller "$INSTDIR\uninstall.exe"
+  WriteRegStr HKCU "Software\@APP@" "InstallDir" "$INSTDIR"
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "@NAME@"
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "@VERSION@"
+  WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "your own build"
+  WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\@APP@.exe,0"
+  WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
+  WriteRegStr HKCU "${UNINST_KEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
+  WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
+  WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
+  CreateDirectory "$SMPROGRAMS\@APP@"
+  CreateShortcut "$SMPROGRAMS\@APP@\@LINK_NAME@.lnk" "$INSTDIR\@APP@.exe" "" "$INSTDIR\@APP@.exe" 0
+SectionEnd
+
+Section /o "Desktop shortcut" SecDesktop
+  CreateShortcut "$DESKTOP\@LINK_NAME@.lnk" "$INSTDIR\@APP@.exe" "" "$INSTDIR\@APP@.exe" 0
+SectionEnd
+
+Section "Uninstall"
+  ; Only what the installer wrote, by name. The data folder (saves,
+  ; settings, logs) is never touched.
+@UNINSTALL_FILES@
+  Delete "$INSTDIR\uninstall.exe"
+  RMDir /r "$INSTDIR\game_files"
+  RMDir "$INSTDIR"
+  Delete "$SMPROGRAMS\@APP@\@LINK_NAME@.lnk"
+  RMDir "$SMPROGRAMS\@APP@"
+  Delete "$DESKTOP\@LINK_NAME@.lnk"
+  DeleteRegKey HKCU "${UNINST_KEY}"
+  DeleteRegKey HKCU "Software\@APP@"
+  DetailPrint "Your saves and settings were kept in $LOCALAPPDATA\@DATA_DIR@."
+SectionEnd

@@ -1,0 +1,60 @@
+# A second game in the shape of Burnout 3's manifest (b3-on-xbr): a
+# windows-only build, a dump folder whose name has a space and is read-only,
+# its own intermediates dir, no enhancements layer, no golden. Synthetic: the
+# values are the shape, not a real game's data.
+schema = 1
+
+[game]
+name = "Second Game: Test"
+slug = "game2"
+env_header = "src/env/recomp_env_game.h"
+env_doc = "docs/running.md"
+
+[xbe]
+path = "Second Game Files/default.xbe"
+title_id = 0x4541005B
+sha256 = []
+
+[cli]
+commit = "0000000000000000000000000000000000000000"
+url = "https://github.com/apexJCL/xboxrecomp-cli.git"
+
+[toolkit]
+url = "https://github.com/apexJCL/xboxrecomp.git"
+branch = "blinx2/portability"
+commit = "6d51fa2d2b9eae4a31b22022925c6e72ad14dd04"
+
+[toolchain]
+llvm_mingw = "20260922"
+
+[pipeline]
+game_name = "Second Game"
+gen = "src/game/recomp/gen"
+out = "build/xr"
+analysis_json = "build/xr/analysis.json"
+seeds = ["config/seed_functions.json"]
+icall_seeds = false
+exclude_manual = "src/game/recomp/recomp_manual.c"
+split = 1000
+ghidra = false
+
+[pipeline.disasm]
+text_only = false
+
+[build]
+exe = "game2"
+targets = ["windows"]
+stock_cmake = []
+
+[data]
+game_files = "Second Game Files"
+game_files_exclude = ["default_analysis.json", "dashupdate.xbe"]
+
+[input]
+script_env = "RECOMP_PAD_SCRIPT"
+
+[bench]
+main_branch = "main"
+toolkit_tests = false
+sync_excludes = ["/bin/", "/runs/"]
+crash_tag = "[FAULT]"

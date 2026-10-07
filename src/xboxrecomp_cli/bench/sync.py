@@ -6,8 +6,9 @@ import shutil
 import subprocess
 import sys
 
+from ..cli_dir import cli_dir
 from .checks import provenance
-from .remote import KEEPALIVE, BenchError
+from .remote import KEEPALIVE, BenchError, host_path
 
 # Source trees: -a without -t, plus --checksum. A file whose content changed
 # is rewritten and gets the host's current time; an unchanged one is left
@@ -67,7 +68,11 @@ def game_excludes(game):
             game.rel(game.regen_marker),
         ]
     )
-    return [x if x is not None else next(fill) for x in GAME_EXCLUDES]
+    # bench.sync_excludes last: a game's own local output (rsync does not
+    # read .gitignore), after the patterns every game has.
+    return [x if x is not None else next(fill) for x in GAME_EXCLUDES] + list(
+        game.m["bench"]["sync_excludes"]
+    )
 
 
 def synced_ignored(game):
@@ -117,7 +122,12 @@ def cmd_sync(b, args):
             "gen/ is mid-regeneration (%s exists); wait for %s recomp"
             % (c.regen_marker, c.game.slug)
         )
-    b.ok(b.r.remote("mkdir -p %s %s/xboxrecomp\n" % (c.remote_game, c["BENCH_DIR"]))[0])
+    b.ok(
+        b.r.remote(
+            "mkdir -p %s %s\n"
+            % (host_path(c.remote_game), host_path(c["BENCH_DIR"] + "/xboxrecomp"))
+        )[0]
+    )
 
     b.step(
         "sync: xboxrecomp @ %s %s"
@@ -134,6 +144,20 @@ def cmd_sync(b, args):
             "%s:%s/xboxrecomp/" % (c.host, c["BENCH_DIR"]),
         )
     )
+    # The CLI itself: the host scripts use its toolchain file and
+    # running_game.py from there.
+    cli = cli_dir()
+    b.step(
+        "sync: xboxrecomp-cli @ %s" % _git_word(cli, "rev-parse", "--short", "HEAD", fallback="?")
+    )
+    b.ok(
+        rsync(
+            *SRC_OPTS,
+            *excludes(TOOLKIT_EXCLUDES),
+            cli + "/",
+            "%s:%s/xboxrecomp-cli/" % (c.host, c["BENCH_DIR"]),
+        )
+    )
     b.step("sync: %s" % c.game_name)
     b.ok(
         rsync(
@@ -143,7 +167,11 @@ def cmd_sync(b, args):
             "%s:%s/" % (c.host, c.remote_game),
         )
     )
-    b.ok(b.r.command("cat > %s/bench-provenance.txt" % c.remote_game, stdin=provenance(c))[0])
+    b.ok(
+        b.r.command(
+            "cat > %s" % host_path(c.remote_game + "/bench-provenance.txt"), stdin=provenance(c)
+        )[0]
+    )
     b.say(provenance(c), end="")
     if game_files is None:
         return 0
@@ -160,15 +188,19 @@ def sync_game_files(b, mode):
     c = b.cfg
     gf = c["BENCH_GAME_FILES"]
     parent = gf.rsplit("/", 1)[0] if "/" in gf else gf
-    _, out = b.r.command("realpath -m %s; realpath -m %s" % (parent, c.remote_game), capture=True)
+    _, out = b.r.command(
+        "realpath -m %s; realpath -m %s" % (host_path(parent), host_path(c.remote_game)),
+        capture=True,
+    )
     lines = out.split("\n")
     if lines and lines[-1] == "":
         lines.pop()
     uniq = [x for i, x in enumerate(lines) if i == 0 or x != lines[i - 1]]
     if len(uniq) == 1:
         b.step("sync: game_files (to %s only) -> %s, the host's single copy" % (c.host, gf))
+        q = host_path(gf)
         _, ro = b.r.command(
-            "mkdir -p %s; [ -w %s ] && echo 0 || { chmod -R u+w %s; echo 1; }" % (gf, gf, gf),
+            "mkdir -p %s; [ -w %s ] && echo 0 || { chmod -R u+w %s; echo 1; }" % (q, q, q),
             capture=True,
         )
         ro = ro.rstrip("\n")
@@ -183,8 +215,12 @@ def sync_game_files(b, mode):
             "%s:%s/" % (c.host, gf),
         )
         if ro != "0":
-            b.r.command("chmod -R a-w %s" % gf)
+            b.r.command("chmod -R a-w %s" % host_path(gf))
         return rc
     b.step("sync: game_files -> %s of %s" % (mode, gf))
-    assigns = "src=%s\ndst=%s/game_files\nmode=%s\n" % (gf, c.remote_game, mode)
+    assigns = "src=%s\ndst=%s\nmode=%s\n" % (
+        host_path(gf),
+        host_path(c.remote_game + "/" + c.game.m["data"]["game_files"]),
+        mode,
+    )
     return b.r.remote(b.r.ship("game_files.sh", assigns))[0]

@@ -2,8 +2,9 @@
 #@ byte for byte from a scripts/bench.sh heredoc. The #@ lines this file starts
 #@ with are this note and are not sent. Runs as: remote (sync --game-files, a tree that does not own BENCH_GAME_FILES). After the
 #@ prologue and src (the host's single game_files copy), dst (this tree's
-#@ game_files) and mode (link or reflink), unquoted so ~ expands on the host.
-[ -f "$src/default.xbe" ] || { echo "sync: $src has no default.xbe; run sync --game-files from the tree that owns it (BENCH_DIR=${src%/*/game_files}) first" >&2; exit 1; }
+#@ game files folder) and mode (link or reflink); src keeps a leading ~/
+#@ unquoted so ~ expands on the host, the rest is quoted.
+[ -f "$src/${XBE##*/}" ] || { echo "sync: $src has no ${XBE##*/}; run sync --game-files from the tree that owns it (BENCH_DIR=${src%/*/"$GAME_FILES"}) first" >&2; exit 1; }
 if [ -L "$dst" ]; then
     rm "$dst"
 elif [ -e "$dst" ]; then

@@ -54,7 +54,6 @@ exe = "cat_recomp"
 targets = ["windows", "macos"]
 windows_dir = "build-win"
 macos_dir = "build"
-toolchain_file = "cmake/llvm-mingw-x86_64.cmake"
 # Passed on every packaging configure so a cache cannot keep a non-stock
 # value; nonstock_vars are what package refuses without --allow-nonstock.
 stock_cmake = ["-DXBOXRECOMP_ENHANCE=ON", "-UCAT_GEN_OPT"]

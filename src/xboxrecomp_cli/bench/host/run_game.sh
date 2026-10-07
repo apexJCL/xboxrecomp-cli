@@ -4,8 +4,8 @@
 #@ GAME_ARGS (array), GAME_ENV (array, word-split from BENCH_ENV), TIMEOUT, FRAMES,
 #@ KILL_GAME, LOCK_HELD. Takes the run lock on fd 9 itself.
 cd "$REMOTE_GAME"
-[ -f build-win/cat_recomp.exe ] || { echo "no build-win/cat_recomp.exe -- run build first" >&2; exit 1; }
-[ -f game_files/default.xbe ]   || { echo "no game_files/ in this tree -- run: sync --game-files" >&2; exit 1; }
+[ -f "$EXE_REL" ] || { echo "no $EXE_REL -- run build first" >&2; exit 1; }
+[ -f "$XBE" ]     || { echo "no $GAME_FILES/ in this tree -- run: sync --game-files" >&2; exit 1; }
 
 # SSH has no display; borrow the logged-in desktop session's, which KDE and
 # GNOME import into the systemd user environment.
@@ -54,10 +54,11 @@ fi
 # takes no lock, and every bench run holds this one, so any game process now
 # is foreign and would make this run's timings noisy: warn (into the run's
 # log dir too), or end it with --kill-game / BENCH_KILL_GAME=1.
-if [ -f scripts/running_game.py ] && games=$(python3 scripts/running_game.py 2>/dev/null) \
+rg="$CLI_DIR/src/xboxrecomp_cli/running_game.py"
+if [ -f "$rg" ] && games=$(python3 "$rg" --exe "$EXE" 2>/dev/null) \
         && [ -n "$games" ]; then
     if [ "$KILL_GAME" = 1 ]; then
-        python3 scripts/running_game.py --kill | sed 's/^/bench: ended a game outside the bench: /' \
+        python3 "$rg" --exe "$EXE" --kill | sed 's/^/bench: ended a game outside the bench: /' \
             | tee -a "$LOG/warnings.txt" || true
     else
         printf '%s\n' "$games" \
@@ -92,6 +93,17 @@ if [ "${RECOMP_SAVE_DIR:-}" = @run ]; then
         [ "${GAME_ENV[$i]}" != RECOMP_SAVE_DIR=@run ] || GAME_ENV[$i]="RECOMP_SAVE_DIR=$RECOMP_SAVE_DIR"
     done
 fi
+# RECOMP_FB_DUMP=@run: the CPU backend's frame dumps (RECOMP_DEBUG=fb_dump)
+# go to this run's frames/ (a Z: path for Wine), as d3d11_dump's do below;
+# not pulled by logs.
+if [ "${RECOMP_FB_DUMP:-}" = @run ]; then
+    unset RECOMP_FB_DUMP
+    mkdir -p "$LOG/frames"
+    export RECOMP_DEBUG="${RECOMP_DEBUG:+$RECOMP_DEBUG,}fb_dump=Z:$PWD/$LOG/frames/f"
+    for i in "${!GAME_ENV[@]}"; do
+        [ "${GAME_ENV[$i]}" != RECOMP_FB_DUMP=@run ] || GAME_ENV[$i]="RECOMP_DEBUG=fb_dump=Z:$PWD/$LOG/frames/f"
+    done
+fi
 if [ "$FRAMES" = 1 ]; then
     # Wine sees the host's / as Z:.
     mkdir -p "$LOG/frames"
@@ -106,7 +118,7 @@ fi
     echo "args:   ${GAME_ARGS[*]:-(none)}"
     echo "limit:  ${TIMEOUT:-none}${TIMEOUT:+ s (SIGINT)}"
     echo "lock:   $LOCK, waited ${waited}s"
-    sha256sum build-win/cat_recomp.exe
+    sha256sum "$EXE_REL"
     if [ -f build-win/provenance.txt ]; then
         sed 's/^/built:  /' build-win/provenance.txt
     else
@@ -114,7 +126,7 @@ fi
     fi
 } > "$LOG/run-info.txt"
 
-# game_files/ is found relative to the working directory: run from here
+# The game files are found relative to the working directory: run from here
 # (umu-run keeps it). stdin is /dev/null: this script itself arrives on stdin,
 # and anything reading it would swallow the lines below.
 # With a limit: SIGINT, then SIGKILL 10 s later if umu-run is still up. The
@@ -147,7 +159,7 @@ psi_start=$(psi_cpu); t_start=$(date +%s.%N)
 
 set +e
 : > "$LOG/console.log"
-RECOMP_BENCH_RUN="$STAMP" ${LIMIT[@]+"${LIMIT[@]}"} umu-run "$PWD/build-win/cat_recomp.exe" ${GAME_ARGS[@]+"${GAME_ARGS[@]}"} </dev/null >"$LOG/console.log" 2>&1 9>&- &
+RECOMP_BENCH_RUN="$STAMP" ${LIMIT[@]+"${LIMIT[@]}"} umu-run "$PWD/$EXE_REL" ${GAME_ARGS[@]+"${GAME_ARGS[@]}"} </dev/null >"$LOG/console.log" 2>&1 9>&- &
 pid=$!
 tail -n +1 -f --pid="$pid" "$LOG/console.log" 9>&- &
 tailpid=$!
@@ -180,7 +192,7 @@ echo "$rc" > "$LOG/exit-code"
 # minimum age skips this script's own ps and sed).
 ncpu=$(nproc)
 top=$(ps -eo pcpu=,etimes=,args= --sort=-pcpu | sed -n '1,8p' | cut -c1-160)
-hog=$(awk '$2 >= 2 && $1 >= 50 && $0 !~ /cat_recomp|wine|[Pp]roton|pressure-vessel|pv-adverb|srt-bwrap|umu|steam/ {
+hog=$(awk -v exe="${EXE%.exe}" '$2 >= 2 && $1 >= 50 && index($0, exe) == 0 && $0 !~ /wine|[Pp]roton|pressure-vessel|pv-adverb|srt-bwrap|umu|steam/ {
            if (!n++) { $2 = ""; print } }' <<<"$top")
 load_end=$(loadavg)
 stall=

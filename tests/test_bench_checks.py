@@ -224,6 +224,25 @@ def test_check_run_end():
                 assert sh_run("check_run_end", log, minf) == (want, code), name
 
 
+def test_check_run_end_crash_tag():
+    """A game whose handler prints another tag (Burnout 3's [FAULT]): that
+    tag fails the run under its crash_tag and is ordinary output under the
+    default; [CRASH] is then ordinary output too."""
+    stdio = "boot\n\n[FAULT] code 0xC0000005 at host 0000000140001000 (thread 7)\n"
+    with tempfile.TemporaryDirectory() as d:
+        log = make(d, "fault", stdio=stdio)
+        rc = checks.check_run_end(log, out=lambda m: None, crash_tag="[FAULT]")
+        assert rc == 1
+        got = []
+        checks.check_run_end(log, out=got.append, crash_tag="[FAULT]")
+        assert got == [
+            "end: FAIL crashed: [FAULT] code 0xC0000005 at host 0000000140001000 (thread 7)"
+        ]
+        assert py_run(checks.check_run_end, log, "") == ("end: ran to the 75 s limit\n", 0)
+        log = make(d, "crash", stdio="[CRASH] SIGSEGV\n")
+        assert checks.check_run_end(log, out=lambda m: None, crash_tag="[FAULT]") == 0
+
+
 def test_check_present_mismatch():
     with tempfile.TemporaryDirectory() as d:
         for name, text, want, code in PRESENT:

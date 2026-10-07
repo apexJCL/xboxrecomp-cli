@@ -122,7 +122,10 @@ class Config:
         default("PROTONPATH", "GE-Proton")
         default("BENCH_PREFIX", env["BENCH_DIR"] + "/prefix")
         default("BENCH_ENV", "")
-        default("BENCH_GAME_FILES", "~/xbox-recomp/%s/game_files" % self.game_name)
+        default(
+            "BENCH_GAME_FILES",
+            "~/xbox-recomp/%s/%s" % (self.game_name, m["data"]["game_files"]),
+        )
         self.env = env
         self.remote_game = env["BENCH_DIR"] + "/" + self.game_name
         self.regen_marker = self.game.regen_marker
