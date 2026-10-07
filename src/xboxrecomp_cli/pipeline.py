@@ -6,11 +6,14 @@ not share one toolkit). The stages and their order follow the toolkit's
 docs/GETTING_STARTED.md, Steps 2-7, and the upstream README's Quick Start.
 """
 
+import glob
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
+import sys
 
 from . import host, toolkit
 from .host import CliError
@@ -175,6 +178,38 @@ def names_cmds(extra=()):
     ] + [py_cmd(hook, funcs) for hook in G.names_hooks]
 
 
+# The parser definition of recomp's --seeds (toolkit b0eb653), not any
+# mention of the flag.
+SEEDS_FLAG_RE = re.compile(r"""add_argument\(\s*["']--seeds["']""")
+_seeds_probe = {}
+
+
+def toolkit_has_seeds(tk=None):
+    """Whether the toolkit's recomp takes --seeds, from its source: a file
+    read, as gen_key() hashes recomp_cmds() on every build and package. A
+    toolkit's sha cannot tell (the public fork's shas differ from a
+    developer's). Cached per process; warns once when it is missing."""
+    tk = tk or toolkit.toolkit_dir()
+    if tk not in _seeds_probe:
+        hit = False
+        for p in sorted(glob.glob(os.path.join(tk, "tools", "recomp", "*.py"))):
+            try:
+                with open(p, errors="replace") as f:
+                    if SEEDS_FLAG_RE.search(f.read()):
+                        hit = True
+                        break
+            except OSError:
+                pass
+        _seeds_probe[tk] = hit
+        if not hit and g().seeds:
+            print(
+                "recomp: the toolkit has no --seeds (before b0eb653); the observed-seed "
+                "report stays empty",
+                file=sys.stderr,
+            )
+    return _seeds_probe[tk]
+
+
 def recomp_cmds(extra=()):
     G = g()
     out = G.out
@@ -198,6 +233,12 @@ def recomp_cmds(extra=()):
     ]
     if G.spin_waits:
         args += ["--spin-waits", G.spin_waits]
+    # --seeds: the flag-fallback report lists the sites inside seeds marked
+    # "observed" (seen at runtime); without it that list is empty. Only the
+    # game's own seed files: icall_seeds.json carries no "observed" field.
+    if G.seeds and toolkit_has_seeds():
+        for s in G.seeds:
+            args += ["--seeds", s]
     args += ["-o", os.path.join(out, "recomp")]
     return [tool_cmd("recomp", G.xbe, *args, *extra)]
 

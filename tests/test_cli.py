@@ -561,6 +561,31 @@ def test_stage_argv_optional_inputs(d):
         assert flag not in argv, flag
 
 
+def test_recomp_seeds_probe(d, capsys):
+    """recomp gets --seeds per pipeline.seeds file, after --spin-waits, only
+    when the toolkit's recomp parser defines the flag; a mention of it in a
+    comment is not one. The flag is part of the key's argv."""
+    with fake_tree(d) as (root, tk):
+        main_py = os.path.join(tk, "tools", "recomp", "__main__.py")
+        write(main_py, "# --seeds is not here yet\nparser.add_argument('--other')\n")
+        before = pipeline.stage_argv()
+        args = pipeline.recomp_cmds()[0][2]
+        assert "--seeds" not in args
+        assert "toolkit has no --seeds" in capsys.readouterr().err
+        pipeline.recomp_cmds()
+        assert capsys.readouterr().err == ""  # once per process
+
+        pipeline._seeds_probe.clear()
+        write(main_py, 'parser.add_argument(\n    "--seeds", metavar="JSON", action="append")\n')
+        args = pipeline.recomp_cmds()[0][2]
+        i = args.index("--seeds")
+        assert args[i + 1] == host.g().seeds[0]
+        assert args.index("--spin-waits") < i < args.index("-o")
+        assert pipeline.stage_argv() != before
+        assert "$ROOT/config/seed_functions.json" in pipeline.stage_argv()
+    pipeline._seeds_probe.clear()
+
+
 def test_gen_key_inputs(d):
     with fake_tree(d) as (root, tk):
         inputs = pipeline.gen_inputs()

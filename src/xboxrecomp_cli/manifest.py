@@ -280,7 +280,8 @@ def _check_values(m):
     for k in m["golden"]["enhance_stock"]:
         if k in TOOLKIT_ENHANCE_KEYS:
             errors.append(
-                "golden.enhance_stock: %r is a toolkit key, which the golden check knows already" % k
+                "golden.enhance_stock: %r is a toolkit key, which the golden check knows already"
+                % k
             )
     gc = m["bench"]["gc"]
     for k in ("keep", "days"):
@@ -291,7 +292,9 @@ def _check_values(m):
             # These may leave the game root on purpose (a workspace's notes
             # beside it), but stay relative so every worktree resolves them.
             if os.path.isabs(path) or path.startswith("~") or "\\" in path:
-                errors.append("bench.gc.%s: %r must be relative to the game root, with /" % (k, path))
+                errors.append(
+                    "bench.gc.%s: %r must be relative to the game root, with /" % (k, path)
+                )
     if m["pipeline"]["split"] <= 0:
         errors.append("pipeline.split: must be positive")
     for s in m["xbe"]["sha256"]:

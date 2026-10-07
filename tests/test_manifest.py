@@ -101,7 +101,7 @@ def test_package_defaults():
         ),
         (lambda t: t + '[bench.gc]\nkeep = "3"\n', "bench.gc.keep: must be a integer"),
         (lambda t: t + '[bench.gc]\nrefs = ["/abs"]\n', "bench.gc.refs: '/abs' must be relative"),
-        (lambda t: t + '[bench.gc]\nother = 1\n', "bench.gc.other: unknown key"),
+        (lambda t: t + "[bench.gc]\nother = 1\n", "bench.gc.other: unknown key"),
     ],
 )
 def test_errors_name_the_key(edit, key):
