@@ -1213,9 +1213,9 @@ def window_report(d, img_path, ref, fr, th, k):
     return best
 
 
-def cmd_check(args):
-    g = load_golden()
-    th = g["compare"]
+def parse_check_args(args):
+    """check's options and its SCEN=DIR arguments: (window, logs, allow,
+    used_file, dirs). The value after an option is never a SCEN=DIR."""
     window, logs, rest, allow, used_file = 2, {}, [], [], None
     it = iter(args)
     for a in it:
@@ -1235,7 +1235,13 @@ def cmd_check(args):
             allow.append(kv)
         else:
             rest.append(a)
-    dirs = parse_scen_args(rest)
+    return window, logs, allow, used_file, parse_scen_args(rest)
+
+
+def cmd_check(args):
+    g = load_golden()
+    th = g["compare"]
+    window, logs, allow, used_file, dirs = parse_check_args(args)
     rcs = []  # per frame: 1 FAIL, 2 INCOMPLETE (MISSING, NEWVIEW too)
     # Per scenario, the images its verdict read and every frame's plain dump
     # (what record and reference read): what a prune keeps (--used).
@@ -1324,7 +1330,7 @@ def cmd_prune(args):
         res = read_used(tmp)
     finally:
         os.remove(tmp)
-    dirs = parse_scen_args([a for a in args if "=" in a and not a.startswith("-")])
+    dirs = parse_check_args(args)[4]
     for scen, (rc, paths) in res.items():
         if rc != 0:
             print(f"golden: {scen}: verdict {rc}, nothing pruned (only a pass is)")

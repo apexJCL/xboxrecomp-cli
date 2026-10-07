@@ -149,6 +149,21 @@ def test_prune_command_dry_run_then_prune(tmp_path):
     assert names(d) == ["flip_00080.bmp", "flip_00081.bmp", "frame_0001.bmp"]
 
 
+def test_prune_skips_option_values(tmp_path):
+    """The value after --log is a SCEN=FILE pair, not a run to prune."""
+    tmp = str(tmp_path)
+    gj = make_golden(tmp, frame_def(ref_png(tmp, "f", flat(100))), ANCHOR)
+    d = scenario_run(tmp, CLOSE)
+    G.GOLDEN_JSON, G.FRAMES_DIR = gj, os.path.join(tmp, "frames")
+    log = os.path.join(os.path.dirname(d), "game-stdio.log")
+    assert os.path.isfile(log)
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        G.cmd_prune(["s=" + d, "--log", "s=" + log])
+    assert "pruned 4 flip dumps" in out.getvalue(), out.getvalue()
+    assert os.path.isfile(log)
+    assert G.parse_check_args(["--window", "3", "--log", "s=" + log, "s=" + d])[4] == {"s": d}
+
+
 class FakeRemote:
     def __init__(self):
         self.sent = []
