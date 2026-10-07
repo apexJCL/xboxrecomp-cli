@@ -327,6 +327,58 @@ def test_enhance_fps_mode_fails_even_when_unavailable():
         assert rc == 1 and "fps.mode=lock60" in out, out
 
 
+GLOW = "[ENHANCE] fx.glow={} fx.glow_intensity={}"
+
+
+def test_enhance_game_keys_from_game_toml():
+    """The game's keys come from its enhance_stock (testdata: BLiNX 2's):
+    fx.glow=off is non-stock, an intensity of 1.0 is stock 1, and fx.glow=
+    never reads fx.glow_intensity='s value."""
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = enhance_case(tmp, [STOCK, GLOW.format("on", "1.0")])
+        assert rc == 0 and "EXACT" in out, out
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = enhance_case(tmp, [STOCK, GLOW.format("off", "1")])
+        assert rc == 1 and "fx.glow=off" in out and "fx.glow_intensity" not in out, out
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = enhance_case(tmp, [STOCK, GLOW.format("on", "0.5")])
+        assert rc == 1 and "fx.glow_intensity=0.5" in out and "fx.glow=on" not in out, out
+    rx = G.game_key_re("fx.glow")
+    assert rx.search("[ENHANCE] fx.glow_intensity=1") is None
+    assert rx.search("[ENHANCE] xfx.glow=off") is None
+    assert rx.search("[ENHANCE] fx.glow_intensity=1 fx.glow=off").group(1) == "off"
+
+
+def test_enhance_without_game_table():
+    """A game without enhance_stock checks the toolkit's keys only: fps.mode
+    is BLiNX 2's, not the CLI's."""
+    saved = dict(G.GAME_ENHANCE)
+    G.GAME_ENHANCE = {}
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out = enhance_case(tmp, [PACED.format("spin"), "[ENHANCE] fps.mode=lock60"])
+            assert rc == 0 and "EXACT" in out, out
+    finally:
+        G.GAME_ENHANCE = saved
+
+
+def test_enhance_stock_flags_configure():
+    saved = (G.GOLDEN_JSON, G.FRAMES_DIR, G.REPO, G.GOLDEN_DIR, dict(G.GAME_ENHANCE))
+    try:
+        rest = G.take_config(
+            ["--golden-json", "/x/g.json", "--enhance-stock", "fx.glow=on", "check", "a=b"]
+        )
+        assert rest == ["check", "a=b"] and G.GAME_ENHANCE == {"fx.glow": "on"}
+        assert G.enhance_args({"b": "2", "a": "1"}) == [
+            "--enhance-stock",
+            "a=1",
+            "--enhance-stock",
+            "b=2",
+        ]
+    finally:
+        G.GOLDEN_JSON, G.FRAMES_DIR, G.REPO, G.GOLDEN_DIR, G.GAME_ENHANCE = saved
+
+
 def check_allowing(tmp, lines, *allow):
     sha = ref_png(tmp, "f", flat(100))
     frame = {"name": "f", "dump": 1, "sha256": sha, "size": [W, H]}
@@ -341,6 +393,12 @@ def check_allowing(tmp, lines, *allow):
     with contextlib.redirect_stdout(out):
         rc = G.cmd_check(args + ["s=" + d])
     return rc, out.getvalue()
+
+
+def test_allow_enhance_game_key():
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = check_allowing(tmp, [STOCK, GLOW.format("off", "1")], "fx.glow=off")
+        assert rc == 0 and "NOTE" in out and "fx.glow=off" in out, out
 
 
 def test_allow_enhance_evaluates_with_a_note():

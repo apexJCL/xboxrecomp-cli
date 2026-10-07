@@ -23,6 +23,8 @@ def engine_argv(game, module):
 def golden_args(game):
     if not game.golden_json:
         raise BenchError("game.toml sets no golden.json: no golden scenarios for this game")
+    from ..golden import enhance_args
+
     return [
         "--golden-json",
         game.golden_json,
@@ -30,7 +32,7 @@ def golden_args(game):
         game.golden_frames,
         "--game-root",
         game.root,
-    ]
+    ] + enhance_args(game.m["golden"]["enhance_stock"])
 
 
 def check_dump(game):

@@ -17,9 +17,10 @@ directory). Below, golden.json and frames/ are the game's.
                                   regression, 2 on a missing frame or reference.
                                   A run whose [ENHANCE] lines show a non-stock
                                   render.scale, display.aspect, present.pacing
-                                  or fps.mode FAILs unless that KEY=VALUE is
-                                  allowed (an evaluation run, noted; record
-                                  refuses the flag)
+                                  or game key (game.toml golden.enhance_stock)
+                                  FAILs unless that KEY=VALUE is allowed (an
+                                  evaluation run, noted; record refuses the
+                                  flag)
   golden.py dumpat SCEN [--slack W] [--window K]
                                   the RECOMP_DEBUG=fb_dump_at= flip list that makes a
                                   run (Metal, CPU) dump SCEN's frames by flip
@@ -141,31 +142,52 @@ REPO = None
 GOLDEN_DIR = None
 GOLDEN_JSON = None
 FRAMES_DIR = None
+# The game's own enhancement keys and their stock values (game.toml
+# golden.enhance_stock), beside the toolkit's in ENHANCE_STOCK.
+GAME_ENHANCE = {}
 
 
-def configure(json_path, frames_dir=None, root=None):
-    global REPO, GOLDEN_DIR, GOLDEN_JSON, FRAMES_DIR
+def configure(json_path, frames_dir=None, root=None, enhance=None):
+    global REPO, GOLDEN_DIR, GOLDEN_JSON, FRAMES_DIR, GAME_ENHANCE
     GOLDEN_JSON = os.path.abspath(json_path)
     GOLDEN_DIR = os.path.dirname(GOLDEN_JSON)
     FRAMES_DIR = os.path.abspath(frames_dir) if frames_dir else os.path.join(GOLDEN_DIR, "frames")
     REPO = os.path.abspath(root) if root else GOLDEN_DIR
+    GAME_ENHANCE = dict(enhance or {})
 
 
 CONFIG_FLAGS = ("--golden-json", "--golden-frames", "--game-root")
+ENHANCE_FLAG = "--enhance-stock"
+
+
+def enhance_args(table):
+    """--enhance-stock KEY=VALUE per entry of a game's enhance_stock."""
+    out = []
+    for k, v in sorted(table.items()):
+        out += [ENHANCE_FLAG, "%s=%s" % (k, v)]
+    return out
 
 
 def take_config(argv):
-    """argv without the --golden-json/--golden-frames/--game-root pairs,
-    which configure the engine; without them, the game.toml in the current
-    directory does."""
-    vals, rest, it = {}, [], iter(argv)
+    """argv without the --golden-json/--golden-frames/--game-root pairs and
+    the --enhance-stock KEY=VALUE ones, which configure the engine; without
+    them, the game.toml in the current directory does."""
+    vals, rest, it, enhance = {}, [], iter(argv), {}
     for a in it:
         if a in CONFIG_FLAGS:
             vals[a] = next(it, None)
+        elif a == ENHANCE_FLAG:
+            kv = next(it, "")
+            if "=" not in kv:
+                sys.exit("golden: %s takes KEY=VALUE, not %r" % (ENHANCE_FLAG, kv))
+            k, v = kv.split("=", 1)
+            enhance[k] = v
         else:
             rest.append(a)
     if vals.get("--golden-json"):
-        configure(vals["--golden-json"], vals.get("--golden-frames"), vals.get("--game-root"))
+        configure(
+            vals["--golden-json"], vals.get("--golden-frames"), vals.get("--game-root"), enhance
+        )
     elif GOLDEN_JSON is None:
         from . import manifest
 
@@ -175,7 +197,7 @@ def take_config(argv):
             sys.exit("golden: %s" % e)
         if not g.golden_json:
             sys.exit("golden: game.toml sets no golden.json")
-        configure(g.golden_json, g.golden_frames, g.root)
+        configure(g.golden_json, g.golden_frames, g.root, g.m["golden"]["enhance_stock"])
     return rest
 
 
@@ -951,15 +973,34 @@ def run_backend(log):
 ENHANCE_SCALE_RE = re.compile(r"\[ENHANCE\] render\.scale=(\d+) ")
 ENHANCE_ASPECT_RE = re.compile(r"\[ENHANCE\].*display\.aspect=([0-9:]+)")
 ENHANCE_PACING_RE = re.compile(r"\[ENHANCE\].* present\.pacing=(\w+)")
-ENHANCE_FPS_RE = re.compile(r"\[ENHANCE\] fps\.mode=(\w+)")
 
-# key -> (pattern, stock value)
+# The toolkit's keys: key -> (pattern, stock value). A game's own keys
+# (fps.mode, fx.glow for BLiNX 2) come from its game.toml (GAME_ENHANCE).
 ENHANCE_STOCK = (
     ("render.scale", ENHANCE_SCALE_RE, "1"),
     ("display.aspect", ENHANCE_ASPECT_RE, "4:3"),
     ("present.pacing", ENHANCE_PACING_RE, "spin"),
-    ("fps.mode", ENHANCE_FPS_RE, "lock30"),
 )
+
+
+def game_key_re(key):
+    """A game key's value on an [ENHANCE] line: the key starts a word and
+    ends at '=', so fx.glow= never matches fx.glow_intensity=."""
+    return re.compile(r"\[ENHANCE\](?:.*\s)?" + re.escape(key) + r"=(\S+)")
+
+
+def enhance_table():
+    """(key, pattern, stock) of the toolkit's keys, then the game's."""
+    return ENHANCE_STOCK + tuple((k, game_key_re(k), v) for k, v in sorted(GAME_ENHANCE.items()))
+
+
+def stock_value(value, stock):
+    """Whether a logged value is the stock one: as numbers when both read
+    as numbers (fx.glow_intensity=1.0 is stock 1), else as strings."""
+    try:
+        return float(value) == float(stock)
+    except ValueError:
+        return value == stock
 
 
 def enhance_nonstock(log, allow=()):
@@ -980,10 +1021,15 @@ def enhance_nonstock(log, allow=()):
             for line in f:
                 if "[ENHANCE]" not in line:
                     continue
-                for key, rx, stock in ENHANCE_STOCK:
+                for key, rx, stock in enhance_table():
                     m = rx.search(line)
                     kv = f"{key}={m.group(1)}" if m else None
-                    if m and m.group(1) != stock and kv not in why and kv not in allow:
+                    if (
+                        m
+                        and not stock_value(m.group(1), stock)
+                        and kv not in why
+                        and kv not in allow
+                    ):
                         why.append(kv)
     except (OSError, TypeError):
         return None
@@ -1000,7 +1046,7 @@ def enhance_allowed(log, allow):
             for line in f:
                 if "[ENHANCE]" not in line:
                     continue
-                for key, rx, _ in ENHANCE_STOCK:
+                for key, rx, _ in enhance_table():
                     m = rx.search(line)
                     kv = f"{key}={m.group(1)}" if m else None
                     if kv in allow and kv not in seen:
@@ -1170,10 +1216,10 @@ def cmd_check(args):
             logs.update(parse_scen_args([next(it)]))
         elif a == "--allow-enhance":
             kv = next(it)
-            if "=" not in kv or kv.split("=", 1)[0] not in {k for k, _, _ in ENHANCE_STOCK}:
+            if "=" not in kv or kv.split("=", 1)[0] not in {k for k, _, _ in enhance_table()}:
                 sys.exit(
                     "golden: --allow-enhance takes KEY=VALUE with KEY one of "
-                    + ", ".join(k for k, _, _ in ENHANCE_STOCK)
+                    + ", ".join(k for k, _, _ in enhance_table())
                 )
             allow.append(kv)
         else:

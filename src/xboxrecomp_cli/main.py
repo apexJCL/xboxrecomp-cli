@@ -282,6 +282,10 @@ def tool_argv(name, argv):
         if G.golden_json
         else []
     )
+    if golden:
+        from .golden import enhance_args
+
+        golden += enhance_args(G.m["golden"]["enhance_stock"])
     if name == "golden":
         from . import golden as mod
 

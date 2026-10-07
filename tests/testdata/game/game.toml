@@ -76,6 +76,9 @@ presets = ["@attract", "@stage1", "@stage1-enemies", "@story-hub", "@story-load"
 json = "analysis/golden/golden.json"
 frames = "analysis/golden/frames"
 audio = "analysis/golden/audio.json"
+# The game's own enhancement keys at their stock values (cat docs/env.md):
+# a golden run showing another value is not a stock run.
+enhance_stock = { "fps.mode" = "lock30", "fx.glow" = "on", "fx.glow_intensity" = "1" }
 
 [package]
 app = "BLiNX2"

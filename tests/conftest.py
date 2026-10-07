@@ -19,6 +19,7 @@ golden.configure(
     os.path.join(GAME, "analysis", "golden", "golden.json"),
     os.path.join(GAME, "analysis", "golden", "frames"),
     GAME,
+    manifest.current().m["golden"]["enhance_stock"],
 )
 
 
