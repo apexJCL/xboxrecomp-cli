@@ -241,8 +241,11 @@ among the newest per scenario) with their sizes, and removes them with
   lifter, a seed file or `recomp_manual.c` changed since `recomp`; run
   `./mygame analyze && ./mygame recomp`. `--stale-gen-ok` builds anyway.
 - **`gc: reference sources missing`**: a path in `[bench.gc] refs` (or
-  `TASKS.md`, `openspec/`, `golden.json`) is missing in the main checkout;
-  gc will not guess from a partial set. Fix the path or the key.
+  `TASKS.md`, `openspec/`, `golden.json`, the pipeline's seeds and
+  spin-wait files) is missing in the main checkout;
+  gc will not guess from a partial set. Fix the path or the key. The
+  refs can name the maintainer's own notes outside the repo, so in a plain
+  public clone gc refuses until those are set to paths that exist there.
 - **`gen/ is being regenerated`**: the last `recomp` failed or is still
   running; run it again.
 - **Windows: a path error deep in the build**: the checkout path is long;

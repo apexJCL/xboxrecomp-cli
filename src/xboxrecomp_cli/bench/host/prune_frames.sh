@@ -9,7 +9,8 @@ for s in "${STAMPS[@]}"; do
     # Only a stamp: a name with a slash or .. could leave bench-logs/.
     [[ "$s" =~ ^[0-9]{8}-[0-9]{6}$ ]] || { echo "prune: not a run stamp: $s" >&2; exit 1; }
     d="bench-logs/$s/frames"
-    [ -d "$d" ] && [ ! -L "$d" ] || continue
+    # A linked run or frames/ points outside this run: leave it.
+    [ ! -L "bench-logs/$s" ] && [ -d "$d" ] && [ ! -L "$d" ] || continue
     kb=$(du -sk "$d" | cut -f1)
     rm -rf -- "$d"
     total=$((total + kb))
