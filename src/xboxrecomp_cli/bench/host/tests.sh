@@ -27,12 +27,12 @@ fresh_if_stale build-win
 [ -f build-win/CMakeCache.txt ] || { echo "tests: no build-win (run bench.sh build first)" >&2; exit 1; }
 cmake -B build-win -DCMAKE_CROSSCOMPILING_EMULATOR="$emu" >/dev/null
 cmake --build build-win --target d3d8_hlsl_split d3d11_backend_smoke input_map_test input_keyboard_test
-# tests/nv2a_zbuf, apu_irq, kernel_irql_abi, fp_precision, vblank_ack, vblank_schedule
-# spin_wait, rt_alias, irq_safe_points, kernel_missing_report,
+# tests/nv2a_zbuf, apu_irq, kernel_irql_abi, fp_precision, x87_trig, vblank_ack,
+# vblank_schedule, spin_wait, rt_alias, irq_safe_points, kernel_missing_report,
 # kernel_file_status and kernel_guest_cpu are projects of their own
 # (not in the game build): configure each beside build-win with the same
 # toolchain.
-standalone="nv2a_zbuf apu_irq kernel_irql_abi fp_precision vblank_ack vblank_schedule spin_wait rt_alias irq_safe_points kernel_missing_report kernel_file_status kernel_guest_cpu"
+standalone="nv2a_zbuf apu_irq kernel_irql_abi fp_precision x87_trig vblank_ack vblank_schedule spin_wait rt_alias irq_safe_points kernel_missing_report kernel_file_status kernel_guest_cpu"
 for t in $standalone; do
     src=../xboxrecomp/tests/$t
     [ -f "$src/CMakeLists.txt" ] || { echo "tests: $src missing (toolkit too old?)" >&2; exit 1; }
