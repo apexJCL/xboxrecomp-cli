@@ -323,3 +323,25 @@ def test_host_fresh_if_stale(d):
             assert r.returncode == 0, (script, name, r.stderr)
             assert os.path.isdir(os.path.join(t, "CMakeFiles")) != reset, (script, name)
             assert ("configuring afresh" in r.stdout) == reset, (script, name, r.stdout)
+
+
+def test_manifest_enhance(d):
+    """manifest.json's build.enhance names the enhancements layer only when
+    the build has it: BLiNX 2 (its stock_cmake turns it on) yes, game2 (no
+    such option in stock_cmake or the cache, as Burnout 3) no."""
+    release = {"CMAKE_BUILD_TYPE": "Release"}
+    assert pl.enhance_on(release)
+    assert pl.enhance_on({**release, "XBOXRECOMP_ENHANCE": "ON"})
+    assert not pl.enhance_on({**release, "XBOXRECOMP_ENHANCE": "OFF"})
+    with game2_tree(d):
+        host.g().m["package"] = {"app": "Game2", "product": "game2-recomp"}
+        plib()
+        assert not pl.enhance_on(release)
+        payload = os.path.join(d, "payload")
+        write(os.path.join(payload, "game2.exe"), "MZ")
+        state = {"commit": "a" * 40, "branch": "main", "dirty": False, "dirty_paths": 0}
+        m = pl.build_manifest(
+            payload, "windows-x86_64", "v", state, state, "c" * 64, 1, release, "clang"
+        )
+        assert m["build"]["enhance"] is False
+        assert pl.enhance_on({**release, "XBOXRECOMP_ENHANCE": "1"})

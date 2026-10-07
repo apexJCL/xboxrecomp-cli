@@ -226,6 +226,17 @@ def cmake_same(actual, want):
     return actual == want
 
 
+def enhance_on(cache):
+    """Whether the build has the toolkit's enhancements layer: the cache's
+    XBOXRECOMP_ENHANCE by CMake's truth, else build.stock_cmake's value (the
+    next configure sets it). A game with neither has no such layer: false."""
+    val = cache.get("XBOXRECOMP_ENHANCE")
+    if val is None:
+        val = dict(stock_defines()).get("XBOXRECOMP_ENHANCE", "OFF")
+    v = val.upper()
+    return v not in CMAKE_FALSE and not v.endswith("-NOTFOUND")
+
+
 def nonstock_help(nonstock_vars, stock_cmake):
     """--allow-nonstock's list: each nonstock var, then each stock define
     as the value that would make the build non-stock."""
@@ -464,8 +475,7 @@ def build_manifest(
         "gen": {"sha256": gen_sha, "files": gen_files},
         "build": {
             "type": cache.get("CMAKE_BUILD_TYPE", ""),
-            "enhance": cache.get("XBOXRECOMP_ENHANCE", "ON").upper()
-            not in ("OFF", "0", "FALSE", "NO"),
+            "enhance": enhance_on(cache),
             # The first of build.nonstock_vars: the generated code's options.
             "gen_opt": cache.get(NONSTOCK_VARS[0], "") if NONSTOCK_VARS else "",
             "compiler": compiler,
