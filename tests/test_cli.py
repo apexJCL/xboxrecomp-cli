@@ -869,6 +869,20 @@ def test_gen_key_version_1_is_stale(d):
         assert pipeline.gen_stale_reasons() == ["key format changed"]
 
 
+def test_stale_gen_and_stage_extras(d):
+    """A recomp run by hand with extra arguments stales gen/ for package
+    (which regenerates plain) but not for build and integrate, which compare
+    the extras recorded now."""
+    with fake_tree(d):
+        pipeline.begin_stage("recomp", ["--trace"])
+        pipeline.write_gen_key()
+        assert pipeline.gen_stale_reasons() == ["a stage ran with extra arguments"]
+        extras = pipeline._load_json(host.g().stage_extras, {})
+        assert extras == {"recomp": ["--trace"]}
+        assert pipeline.gen_stale_reasons(extra=extras) == []
+        pipeline.refuse_stale_gen("--stale-gen-ok")  # no raise
+
+
 def test_build_refuses_stale_gen(d, monkeypatch):
     with fake_tree(d) as (root, tk):
         write(os.path.join(tk, "CMakeLists.txt"), "")

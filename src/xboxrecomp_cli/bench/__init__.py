@@ -504,7 +504,7 @@ def gen_stale_reasons(cfg):
     manifest.use(cfg.game)
     os.environ["XBOXRECOMP_DIR"] = cfg.toolkit
     try:
-        return pipeline.gen_stale_reasons()
+        return pipeline.gen_stale_reasons(extra=pipeline._load_json(cfg.game.stage_extras, {}))
     finally:
         manifest.use(saved)
         if saved_tk is None:

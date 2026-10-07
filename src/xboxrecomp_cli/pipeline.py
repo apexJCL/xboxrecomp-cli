@@ -529,8 +529,9 @@ GEN_KEY_FIELD_NAMES = {
 }
 
 
-def gen_stale_reasons():
-    """[] when gen/ is fresh for packaging, else why not, field by field."""
+def gen_stale_reasons(extra=None):
+    """[] when gen/ is fresh, else why not, field by field. extra is the
+    stage extras gen/ must have been made with ({} by default)."""
     G = g()
     if os.path.exists(G.regen_marker):
         return ["the last recomp did not finish"]
@@ -539,7 +540,10 @@ def gen_stale_reasons():
     rec = _load_json(G.gen_key, None)
     if not isinstance(rec, dict):
         return ["no key"]
-    now = gen_key(extra={})
+    # package's plan regenerates every stage plain, so any recorded extras
+    # stale gen/ for it ({}); build and integrate pass the extras recorded
+    # now, so only a change since the last recomp does.
+    now = gen_key(extra={} if extra is None else extra)
     why = []
     for k, v in now.items():
         if k == "inputs":
@@ -557,7 +561,7 @@ def gen_stale_reasons():
 def refuse_stale_gen(override):
     """Raise when gen/ is stale against its key, naming why and the
     regenerate; `override` names the flag that builds anyway."""
-    why = gen_stale_reasons()
+    why = gen_stale_reasons(extra=_load_json(g().stage_extras, {}))
     if why:
         raise CliError(
             "%s/ is stale: %s; run '%s analyze && %s recomp' (%s to build anyway)"
