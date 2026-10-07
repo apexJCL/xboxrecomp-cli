@@ -17,6 +17,7 @@ import time
 
 from . import checks
 from .config import Config, ConfigError
+from .gc import cmd_gc
 from .golden import cmd_golden
 from .pacing import cmd_pacing
 from .remote import BenchError, Remote, fill, host_text, quote_words, shell_quote
@@ -63,6 +64,15 @@ Commands:
             host into ./bench-logs/              [stamp, default: newest run]
   symbolize name the native addresses in a run's @CRASH_TAG@ reports, into
             bench-logs/<stamp>/crash-symbols.txt  [stamp, default: newest run]
+  gc        list bench runs nothing names any more, with their sizes; a dry
+            run unless --apply. Only stamp-named run dirs ever go; kept:
+            other games' runs, runs named in golden.json, TASKS.md,
+            RESUME*.md, openspec/ or game.toml [bench.gc] refs (in every
+            worktree), runs without exit-code, young runs and the newest per
+            scenario. --host: the host's store, under the run lock; a run
+            goes only when this machine holds a whole copy
+            [--apply] [--host] [--keep N] [--days D] [--include-unowned]
+            [--refs PATH]... [--quiet]
   shell     open an ssh shell in the host's project directory
   all       sync, build, run
   integrate sync + build the integration heads into BENCH_DIR; run from the
@@ -528,6 +538,8 @@ def dispatch(b, cmd, args):
         return cmd_sync(b, args)
     if cmd == "golden":
         return cmd_golden(b, args)
+    if cmd == "gc":
+        return cmd_gc(b, args)
     if cmd == "pacing":
         return cmd_pacing(b, args)
     if cmd == "all":
@@ -544,7 +556,7 @@ def main(argv, game):
     if cmd in ("-h", "--help", "help"):
         sys.stdout.write(render_help(game))
         return 0
-    if cmd not in COMMANDS and cmd not in ("sync", "golden", "pacing", "all"):
+    if cmd not in COMMANDS and cmd not in ("sync", "golden", "pacing", "all", "gc"):
         sys.stdout.write(render_help(game))
         return 1
     try:
