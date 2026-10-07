@@ -108,6 +108,26 @@ def test_3d_filter_and_checkpoint_from_batches():
         assert s2["flips3d"] == 1200 - 21  # the load's flips are not 3D
 
 
+def test_story_checkpoint_is_its_first_3d_anchor():
+    """story has no first-3d anchor (it opens on menus): without --anchor the
+    checkpoint is its first min_batches anchor, the hub (after_flip 3800), not
+    a KeyError; a named anchor the scenario lacks is a run error."""
+    with tempfile.TemporaryDirectory() as d:
+        log, t, lines = os.path.join(d, "story.log"), 0, []
+        for fl in range(1, 4201):
+            t += 33333
+            b = 6000 if fl >= 3950 else (1 if fl % 2 else 40)
+            lines.append(f"[PACING] flip {fl} t_us {t} batches {b}")
+        with open(log, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        s = P.stats(log, scen="story")
+        assert s["checkpoint"] == 3950 and s["flips3d"] == 250, s
+        s = P.stats(log, scen="story", event="first-3d")
+        assert s["error"] == "story has no first-3d anchor in golden.json", s
+        rc, out = run(["--scen", "story", log])
+        assert rc == 0 and "checkpoint flip 3950" in out, out
+
+
 def test_vblank_windows_and_exclusions():
     with tempfile.TemporaryDirectory() as d:
         windows = [

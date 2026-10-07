@@ -8,7 +8,9 @@ Standard library only.
 (or python -m xboxrecomp_cli.pacing_stats with golden's --golden-json,
 --golden-frames and --game-root). For each run, over the 3D flips after the
 checkpoint (golden.json's anchor EVENT for SCEN, found from the batch counts
-as golden.py finds it; default: the first scenario's first-3d):
+as golden.py finds it; default: the first scenario, and its first-3d anchor
+or, when it has none, its first 3D anchor (one with min_batches), so story
+starts at the hub):
   - the flip interval p5/p50/p95/max, from the "[PACING] flip N t_us T" lines
     (microseconds; "[GPU] flip N T ms" when they are missing);
   - flips/s over the 3D flips;
@@ -141,25 +143,42 @@ def parse(log):
     return run
 
 
+def anchor_event(scen, event):
+    """The checkpoint's anchor name and golden.json entry (None when SCEN has
+    no such anchor). Without --anchor: first-3d, or for a scenario without
+    one (story opens on menus) its first anchor with min_batches, the first
+    3D frame it names."""
+    anchors = golden.load_golden()["scenarios"].get(scen, {}).get("anchors", {})
+    if event is None:
+        event = "first-3d"
+        if event not in anchors:
+            event = next((k for k, v in anchors.items() if "min_batches" in v), event)
+    return event, anchors.get(event)
+
+
 def checkpoint(run, scen, event, after_flip):
     if after_flip is not None:
         return after_flip
-    g = golden.load_golden()
-    ev = g["scenarios"][scen]["anchors"][event]
-    return golden.find_anchor(run["batches"], ev)
+    ev = anchor_event(scen, event)[1]
+    return golden.find_anchor(run["batches"], ev) if ev else None
 
 
 def first_scenario():
     return next(iter(golden.load_golden()["scenarios"]), "")
 
 
-def stats(log, scen=None, event="first-3d", after_flip=None):
+def stats(log, scen=None, event=None, after_flip=None):
     scen = scen or first_scenario()
     run = parse(log)
     out = {"log": log, "coarse": run.get("coarse", False)}
     start = checkpoint(run, scen, event, after_flip)
     if start is None:
-        out["error"] = f"no {event} checkpoint in the log"
+        name, ev = anchor_event(scen, event)
+        out["error"] = (
+            f"no {name} checkpoint in the log"
+            if ev
+            else f"{scen} has no {name} anchor in golden.json"
+        )
         return out
     out["checkpoint"] = start
     t, b = run["flip_us"], run["batches"]
@@ -429,7 +448,7 @@ def fmt_run(r):
 
 def main(argv):
     argv = golden.take_config(argv)
-    scen, event, after, gate, arms, logs, as_json = None, "first-3d", None, None, [], [], False
+    scen, event, after, gate, arms, logs, as_json = None, None, None, None, [], [], False
     it = iter(argv)
     for a in it:
         if a == "--scen":
