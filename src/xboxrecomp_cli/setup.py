@@ -12,10 +12,12 @@ def run_setup(dev=False, force=False, no_toolkit=False, need_uv=True):
     """Every step skips what is already in place, so package can run it
     whenever something is missing (with need_uv False: a working .venv
     does not make a missing uv an error there)."""
-    pins = fetch.load_pins()
     host.step("setup: Python venv (.venv, from uv.lock)")
     env.sync_venv(dev, required=need_uv)
     if host.g().m["toolchain"]["llvm_mingw"]:
+        # The pins are read here, not first: a game without the windows
+        # target has none to read.
+        pins = fetch.load_pins()
         host.step("setup: llvm-mingw")
         fetch.fetch_mingw(pins, force)
         if host.host_os() == "windows":

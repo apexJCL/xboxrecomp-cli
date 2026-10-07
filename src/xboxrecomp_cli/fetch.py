@@ -23,8 +23,19 @@ MINGW_ASSETS = {
 
 
 def load_pins(path=None):
-    with open(path or host.g().pins) as f:
-        return json.load(f)
+    """config/setup-pins.json. A game without one (a fresh scaffold made
+    offline) gets the command that writes it, not a traceback."""
+    path = path or host.g().pins
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except OSError as e:
+        raise CliError(
+            "no %s (%s): run '%s pins refresh' to write the download hashes"
+            % (os.path.relpath(path, host.g().root), e.strerror, host.prog())
+        ) from e
+    except ValueError as e:
+        raise CliError("%s: not JSON (%s); run '%s pins refresh'" % (path, e, host.prog())) from e
 
 
 def mingw_tag(env=None):

@@ -28,9 +28,10 @@ import json
 import os
 import re
 import shutil
-import struct
 import subprocess
 import sys
+
+from .. import xbe
 
 # The game's values, from game.toml (configure()): manifest.json "product",
 # the name the player sees (installer, app, shortcuts, README, messages),
@@ -282,17 +283,9 @@ def compiler_line(vals, build_dir=None):
 
 
 def xbe_title_id(data):
-    """The certificate's title ID. Header: 'XBEH', base address at 0x104,
-    certificate VA at 0x118; the certificate is size, time, then title ID."""
-    if len(data) < 0x11C or data[:4] != b"XBEH":
-        raise ValueError("not an XBE (no XBEH magic)")
-    (base,) = struct.unpack_from("<I", data, 0x104)
-    (cert,) = struct.unpack_from("<I", data, 0x118)
-    off = cert - base
-    if off < 0 or off + 12 > len(data):
-        raise ValueError("certificate address 0x%X outside the header" % cert)
-    (tid,) = struct.unpack_from("<I", data, off + 8)
-    return tid
+    """The certificate's title ID (xbe.py reads the header; XbeError is a
+    ValueError, so the callers' handlers stand)."""
+    return xbe.title_id(data)
 
 
 # ── game files ───────────────────────────────────────────────────────────

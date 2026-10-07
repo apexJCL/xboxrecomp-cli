@@ -206,10 +206,21 @@ def dump_hint():
     return "(dump the disc into %s/)" % g().rel(g().game_files)
 
 
+def require_dump():
+    """The first thing a new game's pipeline needs, said plainly: there is
+    no stage that makes a dump."""
+    G = g()
+    if not os.path.isfile(G.xbe):
+        raise CliError(
+            "no %s: put your dump (default.xbe and the game's files) in %s/"
+            % (G.rel(G.xbe), G.rel(G.game_files))
+        )
+
+
 def stage_parse(extra=()):
     host.step("parse")
     begin_stage("parse", extra)
-    host.require(g().xbe, dump_hint())
+    require_dump()
     # xbe_parser makes no directory; pipeline.analysis_json may name one
     # under pipeline.out that does not exist yet.
     os.makedirs(os.path.dirname(g().analysis_json), exist_ok=True)

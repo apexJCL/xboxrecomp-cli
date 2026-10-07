@@ -19,7 +19,7 @@ import sys
 
 from . import build as build_mod
 from . import doctor as doctor_mod
-from . import helptext, host, manifest, pins, pipeline, setup
+from . import helptext, host, manifest, pins, pipeline, scaffold, setup
 from .host import CliError
 
 COMMANDS = []  # (name, help, configure(parser), func(args)), in --help order
@@ -345,6 +345,10 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     root, prog, argv = split_global(argv)
     clean_environ()
+    if argv[:1] == ["new"]:
+        # The one command without a game: it writes the game.toml the
+        # others load.
+        return scaffold.main(argv[1:], prog or "xbr")
     try:
         G = manifest.use(manifest.load(root))
     except manifest.ManifestError as e:

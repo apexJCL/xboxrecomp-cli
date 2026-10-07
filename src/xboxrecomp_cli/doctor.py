@@ -30,7 +30,7 @@ def makensis_path():
     if host.host_os() == "windows":
         try:
             ver = fetch.load_pins()["nsis"]["version"]
-        except (OSError, KeyError, ValueError):
+        except (CliError, KeyError, ValueError):
             ver = None
         if ver:
             p = os.path.join(host.g().third_party, "nsis-%s" % ver, "makensis.exe")
@@ -267,4 +267,23 @@ def doctor_report():
     targets = [t for t in ("windows", "steamos", "macos") if t in wanted and t not in blocked]
     if "package" not in g.m:
         lines.append("package:    game.toml has no [package]: nothing to package")
+    lines.append("next:       " + next_step(problems, gen_ok, gf_rel))
     return lines, targets, blocked
+
+
+def next_step(problems, gen_ok, game_files):
+    """One line for a fresh tree, where everything is missing at once: the
+    first fix in setup order (uv, then setup, then the dump, then the
+    pipeline), so the eight 'missing' lines above it end in one thing to
+    do."""
+    cmd = host.cli_name()
+    if any(p.startswith("no uv") for p in problems):
+        return "install uv: " + env.uv_hint()
+    fixes = [p for p in problems if "setup" in p or "quarantined" in p]
+    if fixes:
+        return "'%s setup' (%s)" % (cmd, "; ".join(p.split(" (")[0] for p in fixes))
+    if any(p.startswith("no ") and p.endswith(".xbe") for p in problems):
+        return "put your dump (default.xbe and the game's files) in %s/" % game_files
+    if not gen_ok:
+        return "'%s analyze', then '%s recomp' ('%s all' builds too)" % (cmd, cmd, cmd)
+    return "'%s build', or '%s package <target>'" % (cmd, cmd)
