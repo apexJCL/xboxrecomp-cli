@@ -5,6 +5,24 @@ cd "$REMOTE_GAME"
 export PATH="$LLVM_MINGW_ROOT/bin:$PATH"
 emu=$(cd ../xboxrecomp 2>/dev/null && pwd -P || true)/tests/proton_run.sh
 [ -x "$emu" ] || { echo "tests: $emu missing (toolkit older than 5564c43?)" >&2; exit 1; }
+# A tree configured with a toolchain file that is gone (the game's own copy,
+# deleted once the CLI's became the default) cannot reconfigure:
+# CMakeSystem.cmake includes the old path on every run. One configured with
+# another file keeps it: CMake ignores a new -DCMAKE_TOOLCHAIN_FILE. Either
+# way, start that tree afresh.
+fresh_if_stale() {
+    local dir=$1 old
+    old=$(sed -n 's/^include("\(.*\)")$/\1/p' "$dir"/CMakeFiles/*/CMakeSystem.cmake 2>/dev/null | head -1 || true)
+    if [ -z "$old" ] || [ -f "$old" ]; then
+        old=$(sed -n 's/^CMAKE_TOOLCHAIN_FILE:[A-Z]*=//p' "$dir/CMakeCache.txt" 2>/dev/null | head -1 || true)
+        if [ -z "$old" ] || [ "$old" -ef "$TOOLCHAIN" ]; then
+            return 0
+        fi
+    fi
+    echo "$dir: configured with the toolchain file $old, not $TOOLCHAIN; configuring afresh"
+    rm -rf "$dir/CMakeCache.txt" "$dir/CMakeFiles"
+}
+fresh_if_stale build-win
 [ -f build-win/CMakeCache.txt ] || { echo "tests: no build-win (run bench.sh build first)" >&2; exit 1; }
 cmake -B build-win -DCMAKE_CROSSCOMPILING_EMULATOR="$emu" >/dev/null
 cmake --build build-win --target d3d8_hlsl_split d3d11_backend_smoke input_map_test input_keyboard_test
@@ -16,6 +34,7 @@ standalone="nv2a_zbuf apu_irq kernel_irql_abi fp_precision vblank_ack vblank_sch
 for t in $standalone; do
     src=../xboxrecomp/tests/$t
     [ -f "$src/CMakeLists.txt" ] || { echo "tests: $src missing (toolkit too old?)" >&2; exit 1; }
+    fresh_if_stale "build-win/tests/$t"
     cmake -S "$src" -B "build-win/tests/$t" -G Ninja \
         -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
         -DLLVM_MINGW_ROOT="$LLVM_MINGW_ROOT" -DCMAKE_BUILD_TYPE=Release \

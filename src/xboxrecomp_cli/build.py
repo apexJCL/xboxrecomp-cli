@@ -76,24 +76,44 @@ def toolchain_file():
 TOOLCHAIN_INCLUDE = re.compile(r'^include\("([^"]+)"\)', re.M)
 
 
-def reset_stale_toolchain(bdir):
+CACHED_TOOLCHAIN = re.compile(r"^CMAKE_TOOLCHAIN_FILE:[A-Z]+=(.*)$", re.M)
+
+
+def same_file(a, b):
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def reset_stale_toolchain(bdir, toolchain=None):
     """A tree configured with a toolchain file that is gone (a game's own
     copy, deleted when the CLI's became the default) cannot reconfigure:
-    CMakeSystem.cmake includes the old path on every run. Start its cache
-    afresh; the next configure names the current file."""
+    CMakeSystem.cmake includes the old path on every run. Nor does a tree
+    configured with another toolchain file take a new -DCMAKE_TOOLCHAIN_FILE:
+    CMake keeps the first. Start its cache afresh; the next configure names
+    the current file (toolchain, when given)."""
+    stale = []
     for sysf in glob.glob(os.path.join(bdir, "CMakeFiles", "*", "CMakeSystem.cmake")):
         with open(sysf, encoding="utf-8", errors="replace") as f:
-            gone = [p for p in TOOLCHAIN_INCLUDE.findall(f.read()) if not os.path.isfile(p)]
-        if gone:
-            print(
-                "%s: its toolchain file %s is gone; configuring afresh" % (bdir, gone[0]),
-                file=sys.stderr,
-            )
-            if os.path.isfile(os.path.join(bdir, "CMakeCache.txt")):
-                os.remove(os.path.join(bdir, "CMakeCache.txt"))
-            shutil.rmtree(os.path.join(bdir, "CMakeFiles"), ignore_errors=True)
-            return True
-    return False
+            stale += [p for p in TOOLCHAIN_INCLUDE.findall(f.read()) if not os.path.isfile(p)]
+    cache = os.path.join(bdir, "CMakeCache.txt")
+    if not stale and toolchain and os.path.isfile(cache):
+        with open(cache, encoding="utf-8", errors="replace") as f:
+            m = CACHED_TOOLCHAIN.search(f.read())
+        if m and m.group(1).strip() and not same_file(m.group(1).strip(), toolchain):
+            stale.append(m.group(1).strip())
+    if not stale:
+        return False
+    print(
+        "%s: configured with the toolchain file %s, not the current one; configuring afresh"
+        % (bdir, stale[0]),
+        file=sys.stderr,
+    )
+    if os.path.isfile(cache):
+        os.remove(cache)
+    shutil.rmtree(os.path.join(bdir, "CMakeFiles"), ignore_errors=True)
+    return True
 
 
 def build(target, cmake_args=(), system_tools=False, bdir=None, stock=False, reconfigure=False):
@@ -114,7 +134,7 @@ def build(target, cmake_args=(), system_tools=False, bdir=None, stock=False, rec
             "no toolkit at %s: run '%s setup' or set XBOXRECOMP_DIR" % (tk, host.prog())
         )
     if target == "windows":
-        reset_stale_toolchain(bdir)
+        reset_stale_toolchain(bdir, toolchain_file())
     if reconfigure:
         if os.path.isfile(os.path.join(bdir, "CMakeCache.txt")):
             os.remove(os.path.join(bdir, "CMakeCache.txt"))

@@ -9,6 +9,7 @@ import contextlib
 import json
 import os
 import shutil
+import subprocess
 
 from xboxrecomp_cli import build, host, main, manifest, pipeline
 from xboxrecomp_cli import package as pkg
@@ -259,3 +260,66 @@ def test_stale_toolchain_reset(d):
     assert build.reset_stale_toolchain(bdir)
     assert not os.path.exists(os.path.join(bdir, "CMakeCache.txt"))
     assert not os.path.exists(os.path.join(bdir, "CMakeFiles"))
+
+
+def test_other_toolchain_reset(d):
+    """A cache naming another toolchain file, which still exists: CMake would
+    keep it whatever -DCMAKE_TOOLCHAIN_FILE says, so the tree starts afresh."""
+    bdir = os.path.join(d, "build-win")
+    other = os.path.join(d, "old", "llvm-mingw-x86_64.cmake")
+    write(other, "# old\n")
+    cache = os.path.join(bdir, "CMakeCache.txt")
+    write(cache, "CMAKE_TOOLCHAIN_FILE:FILEPATH=%s\n" % manifest.CLI_TOOLCHAIN)
+    assert not build.reset_stale_toolchain(bdir, manifest.CLI_TOOLCHAIN)
+    write(cache, "CMAKE_TOOLCHAIN_FILE:UNINITIALIZED=%s\n" % other)
+    write(os.path.join(bdir, "CMakeFiles", "x"), "")
+    assert not build.reset_stale_toolchain(bdir)  # no current file to compare
+    assert build.reset_stale_toolchain(bdir, manifest.CLI_TOOLCHAIN)
+    assert not os.path.exists(cache)
+    assert not os.path.exists(os.path.join(bdir, "CMakeFiles"))
+
+
+def host_fresh_if_stale(script):
+    """fresh_if_stale from a host script, as bash source."""
+    with open(os.path.join(os.path.dirname(build.__file__), "bench", "host", script)) as f:
+        text = f.read()
+    start = text.index("fresh_if_stale() {")
+    return text[start : text.index("\n}\n", start) + 3]
+
+
+def test_host_fresh_if_stale(d):
+    """build.sh and tests.sh start a tree afresh when its toolchain file is
+    gone or is another file (the toolkit's standalone test trees on the bench
+    host kept the game's old copy), and leave a current tree alone."""
+    current = os.path.join(d, "cli", "llvm-mingw-x86_64.cmake")
+    other = os.path.join(d, "game", "llvm-mingw-x86_64.cmake")
+    write(current, "")
+    write(other, "")
+    for script in ("build.sh", "tests.sh"):
+        fn = host_fresh_if_stale(script)
+        for name, sys_inc, cached, reset in (
+            ("current", current, current, False),
+            ("gone", os.path.join(d, "gone.cmake"), os.path.join(d, "gone.cmake"), True),
+            ("other", other, other, True),
+            ("fresh", None, None, False),
+        ):
+            t = os.path.join(d, script, name)
+            os.makedirs(os.path.join(t, "CMakeFiles", "3.31.0"))
+            if sys_inc:
+                write(
+                    os.path.join(t, "CMakeFiles", "3.31.0", "CMakeSystem.cmake"),
+                    'include("%s")\n' % sys_inc,
+                )
+            if cached:
+                write(
+                    os.path.join(t, "CMakeCache.txt"), "CMAKE_TOOLCHAIN_FILE:FILEPATH=%s\n" % cached
+                )
+            r = subprocess.run(
+                ["bash", "-c", 'set -euo pipefail\n%sfresh_if_stale "$1"' % fn, "x", t],
+                env=dict(os.environ, TOOLCHAIN=current),
+                capture_output=True,
+                text=True,
+            )
+            assert r.returncode == 0, (script, name, r.stderr)
+            assert os.path.isdir(os.path.join(t, "CMakeFiles")) != reset, (script, name)
+            assert ("configuring afresh" in r.stdout) == reset, (script, name, r.stdout)

@@ -7,12 +7,22 @@ cd "$REMOTE_GAME"
 export PATH="$LLVM_MINGW_ROOT/bin:$PATH"
 # A tree configured with a toolchain file that is gone (the game's own copy,
 # deleted once the CLI's became the default) cannot reconfigure:
-# CMakeSystem.cmake includes the old path on every run. Start it afresh.
-old=$(sed -n 's/^include("\(.*\)")$/\1/p' build-win/CMakeFiles/*/CMakeSystem.cmake 2>/dev/null | head -1 || true)
-if [ -n "$old" ] && [ ! -f "$old" ]; then
-    echo "build: its toolchain file $old is gone; configuring afresh"
-    rm -rf build-win/CMakeCache.txt build-win/CMakeFiles
-fi
+# CMakeSystem.cmake includes the old path on every run. One configured with
+# another file keeps it: CMake ignores a new -DCMAKE_TOOLCHAIN_FILE. Either
+# way, start that tree afresh.
+fresh_if_stale() {
+    local dir=$1 old
+    old=$(sed -n 's/^include("\(.*\)")$/\1/p' "$dir"/CMakeFiles/*/CMakeSystem.cmake 2>/dev/null | head -1 || true)
+    if [ -z "$old" ] || [ -f "$old" ]; then
+        old=$(sed -n 's/^CMAKE_TOOLCHAIN_FILE:[A-Z]*=//p' "$dir/CMakeCache.txt" 2>/dev/null | head -1 || true)
+        if [ -z "$old" ] || [ "$old" -ef "$TOOLCHAIN" ]; then
+            return 0
+        fi
+    fi
+    echo "$dir: configured with the toolchain file $old, not $TOOLCHAIN; configuring afresh"
+    rm -rf "$dir/CMakeCache.txt" "$dir/CMakeFiles"
+}
+fresh_if_stale build-win
 if [ ! -f build-win/CMakeCache.txt ]; then
     cmake -S . -B build-win -G Ninja \
         -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
