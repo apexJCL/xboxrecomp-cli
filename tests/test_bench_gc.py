@@ -84,6 +84,8 @@ def ws(tmp_path):
     write(str(root / "analysis/golden/audio.json"), "{}\n")
     write(str(root / "TASKS.md"), "# tasks\n")
     write(str(root / "openspec/changes/x/tasks.md"), "- none\n")
+    write(str(root / "config/seed_functions.json"), "[]\n")
+    write(str(root / "config/spin_waits.json"), "[]\n")
     git(str(root), "init", "-q", "-b", "main")
     git(str(root), "add", "-A")
     git(str(root), "commit", "-q", "-m", "x")
@@ -241,6 +243,21 @@ def test_refs_exclude_and_sole_protector(ws):
     rc, b = run_gc(ws, "--keep", "0")
     assert all("referenced" in v for v in rows_of(b).values())
     assert "%6d %s" % (5, os.path.realpath(str(ws / "notes" / "list.txt"))) in b.text()
+
+
+def test_seed_source_protects_its_run(ws):
+    """A seed's "source" names the bench run that observed it."""
+    store = str(ws / "store")
+    make_run(store, OLD + "00001")
+    make_run(store, OLD + "00002")
+    seed = '[{"addr": "0x10000", "observed": true, "source": "bench-logs/%s00001"}]\n' % OLD
+    write(str(ws / "game" / "config/seed_functions.json"), seed)
+    rc, b = run_gc(ws, "--keep", "0")
+    r = rows_of(b)
+    assert "referenced" in r[OLD + "00001"] and r[OLD + "00002"].endswith("removable")
+    os.remove(str(ws / "game" / "config/spin_waits.json"))
+    with pytest.raises(BenchError, match="reference sources missing"):
+        run_gc(ws)
 
 
 def test_refusals(ws):

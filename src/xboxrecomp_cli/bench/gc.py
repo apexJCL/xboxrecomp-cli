@@ -39,7 +39,9 @@ import time
 from ..benchlog_retention import SIX_RE, STAMP_RE, protection
 from .remote import BenchError, quote_words
 
-RUN_RE = re.compile(r"^(\d{8}-\d{6})(-[\w.-]+)?$")
+# ASCII only, as the host scripts' classes: a Unicode digit would pass \d
+# and then fail strptime.
+RUN_RE = re.compile(r"^([0-9]{8}-[0-9]{6})(-[A-Za-z0-9_.-]+)?$")
 EXE_LINE_RE = re.compile(r"^[0-9a-f]{64}  (\S+\.exe)\s*$", re.M)
 BUILT_RE = re.compile(r"^built:\s+([\w.-]+): [0-9a-f]{7,40}\b", re.M)
 REF_SUFFIXES = (".md", ".json", ".txt")
@@ -211,6 +213,10 @@ def read_refs(game, main_root, others, extra=()):
         required = [m["golden"]["json"]] if m["golden"]["json"] else []
         required += [m["golden"]["audio"]] if m["golden"]["audio"] else []
         required += ["TASKS.md", "openspec"] + list(gc["refs"])
+        # The pipeline's own inputs cite runs too: a seed's "source" names
+        # the bench run that observed it.
+        required += list(m["pipeline"]["seeds"])
+        required += [m["pipeline"]["spin_waits"]] if m["pipeline"]["spin_waits"] else []
         for rel in required:
             p = os.path.join(root, rel)
             if not os.path.exists(p):
@@ -493,9 +499,10 @@ def cmd_gc(b, args):
             "gc: reference sources missing, refusing (a partial reference text deletes "
             "evidence): %s" % ", ".join(refs.missing)
         )
-    for w in ("OPEN_QUESTIONS.md",):
-        if not os.path.isfile(os.path.join(wts[0], w)):
-            print("gc: warning: no %s in %s" % (w, wts[0]), file=sys.stderr)
+    if not os.path.isfile(os.path.join(wts[0], "OPEN_QUESTIONS.md")):
+        print("gc: warning: no OPEN_QUESTIONS.md in %s" % wts[0], file=sys.stderr)
+    if not any(n.startswith("RESUME") and n.endswith(".md") for n in os.listdir(wts[0])):
+        print("gc: warning: no RESUME*.md in %s" % wts[0], file=sys.stderr)
     store = os.path.join(c.game_dir, "bench-logs")
     if not os.path.isdir(store):
         raise BenchError("gc: no store at %s (a worktree needs the bench-logs link)" % store)
