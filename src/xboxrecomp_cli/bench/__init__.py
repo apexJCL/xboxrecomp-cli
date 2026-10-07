@@ -9,6 +9,7 @@ Loaded by main.py only for `<game> bench`.
 
 import contextlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -438,6 +439,16 @@ class Bench:
         self.say("host:     %s (BENCH_DIR %s, box %s)" % (c.host, c["BENCH_DIR"], c["BENCH_BOX"]))
         self.say("rsync:    %s" % (shutil.which("rsync") or "MISSING on this machine"))
         ok &= bool(shutil.which("rsync"))
+        if shutil.which("rsync") and " " in c.game.m["data"]["game_files"]:
+            # A game files folder with a space reaches the host unquoted:
+            # rsync 3.2.4+ escapes remote paths itself, openrsync does not.
+            out = subprocess.run(["rsync", "--version"], capture_output=True, text=True).stdout
+            if not rsync_escapes_args(out):
+                self.say(
+                    "rsync:    %s cannot sync %r (a space): install rsync 3.2.4 or newer"
+                    % ((out.splitlines() or ["?"])[0].strip(), c.game.m["data"]["game_files"])
+                )
+                ok = False
         rc, _ = self.r.command("true", capture=True)
         self.say(
             "ssh:      %s"
@@ -448,6 +459,13 @@ class Bench:
         rc, out = self.r.remote(self.r.prologue() + host_text("doctor.sh"), capture=True)
         self.say(out, end="")
         return 0 if ok and rc == 0 else 1
+
+
+def rsync_escapes_args(version_text):
+    """Whether `rsync --version` names rsync 3.2.4 or newer, which escapes
+    its remote arguments (openrsync and older rsync do not)."""
+    m = re.match(r"rsync\s+version\s+v?(\d+)\.(\d+)\.(\d+)", version_text.strip())
+    return bool(m) and tuple(int(x) for x in m.groups()) >= (3, 2, 4)
 
 
 COMMANDS = {

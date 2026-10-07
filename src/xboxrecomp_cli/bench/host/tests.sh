@@ -2,6 +2,7 @@
 #@ moved from a blinx2-recomp scripts/bench.sh heredoc. The #@ lines this file starts
 #@ with are this note and are not sent. Runs as: in_box_locked -x tests (tests). After the prologue; no other variables.
 cd "$REMOTE_GAME"
+[ -f "$TOOLCHAIN" ] || { echo "$TOOLCHAIN missing -- not synced yet?" >&2; exit 1; }
 export PATH="$LLVM_MINGW_ROOT/bin:$PATH"
 emu=$(cd ../xboxrecomp 2>/dev/null && pwd -P || true)/tests/proton_run.sh
 [ -x "$emu" ] || { echo "tests: $emu missing (toolkit older than 5564c43?)" >&2; exit 1; }

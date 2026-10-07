@@ -84,7 +84,8 @@ def host_path(p):
     """A host path for a command line the host's shell reads: quoted, except
     a leading ~ or ~/ (printf %q would escape it, and the host must expand
     it). rsync targets are not built with this: rsync 3.2.4+ escapes its
-    remote arguments itself, leading ~ excepted."""
+    remote arguments itself, leading ~ excepted (bench doctor checks the
+    version when a game files folder has a space)."""
     if p == "~":
         return p
     if p.startswith("~/"):

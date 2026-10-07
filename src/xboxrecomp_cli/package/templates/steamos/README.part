@@ -64,7 +64,8 @@ Troubleshooting
   resumes. If it keeps failing, delete @DEFAULT_ROOT@/prefix and launch
   again.
 - The notice window gets in the way: LAUNCH_NOTICE=0 in
-  config/launch.env turns it off.
+  config/launch.env turns it off. It closes by itself when the game
+  starts, or after NOTICE_MAX seconds (1200; set it there too).
 - Settings go in @DEFAULT_ROOT@/config/launch.env (KEY=value lines). The
   installer creates config/ and never changes what is in it.
 - Proton's own log for a bug report: PROTON_LOG=1 in config/launch.env

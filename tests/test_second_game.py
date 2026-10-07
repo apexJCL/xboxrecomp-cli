@@ -345,3 +345,14 @@ def test_manifest_enhance(d):
         )
         assert m["build"]["enhance"] is False
         assert pl.enhance_on({**release, "XBOXRECOMP_ENHANCE": "1"})
+
+
+def test_rsync_escapes_args():
+    from xboxrecomp_cli import bench
+
+    assert bench.rsync_escapes_args("rsync  version 3.5.1  protocol version 32\n")
+    assert bench.rsync_escapes_args("rsync  version v3.2.4  protocol version 31\n")
+    assert not bench.rsync_escapes_args("rsync  version 3.2.3  protocol version 31\n")
+    assert not bench.rsync_escapes_args(
+        "openrsync: protocol version 29\nrsync version 2.6.9 compatible\n"
+    )

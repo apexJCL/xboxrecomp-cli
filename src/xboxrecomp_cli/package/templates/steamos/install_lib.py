@@ -219,16 +219,11 @@ def is_product_dir(d):
 
 
 def bench_dir():
-    """The dev/bench tree on this host: BENCH_DIR from the environment or
-    from the bench's own bench.env, else ~/xbox-recomp."""
+    """The dev/bench tree on this host: BENCH_DIR from the environment, else
+    ~/xbox-recomp. A player's machine has neither; the markers in
+    check_not_dev_tree find any other checkout. Nothing of a maintainer's
+    own configuration (bench.env) is read here."""
     d = os.environ.get("BENCH_DIR")
-    env = os.path.expanduser("~/xbox-recomp/@SOURCE_NAME@/scripts/bench.env")
-    if not d and os.path.isfile(env):
-        with open(env) as f:
-            for line in f:
-                m = re.match(r"^\s*BENCH_DIR=(.*)$", line.strip())
-                if m:
-                    d = m.group(1).strip().strip("'\"")
     return os.path.realpath(os.path.expanduser(d or "~/xbox-recomp"))
 
 
@@ -733,7 +728,6 @@ def cmd_install(
     check_not_dev_tree(root.path, bench)
     check_ours(root, installing=True)
     check_layout(root)
-    umu_run = (umu or ensure_umu)(fetch_umu_now, umu_dir)
     prog = bundle.program_files()
     need = 2 * bundle.size(prog)
     if not os.path.isfile(root.p("game_files", "default.xbe")):
@@ -742,6 +736,9 @@ def cmd_install(
         raise InstallError("not enough space at %s: need %s" % (root.path, human(need)))
     say("verifying the bundle (%s) ..." % bundle.version)
     bundle.verify()
+    # Only now: umu-launcher may be a download, which a damaged bundle or a
+    # full disk would waste.
+    umu_run = (umu or ensure_umu)(fetch_umu_now, umu_dir)
     os.makedirs(root.p("versions"), exist_ok=True)
     os.makedirs(root.p("state"), exist_ok=True)
     with open(root.p("state", "layout"), "w") as f:

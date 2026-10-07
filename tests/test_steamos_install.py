@@ -259,6 +259,23 @@ def test_same_version_noop(il, d):
     assert open(os.path.join(root, "state", "history")).read() == hist
 
 
+def test_damaged_bundle_fetches_no_umu(il, d):
+    """The bundle is verified before umu-run is looked for, so a damaged one
+    never costs the umu-launcher download."""
+    calls = []
+
+    def umu(want_fetch, umu_dir):
+        calls.append(want_fetch)
+        return "/opt/umu/umu-run"
+
+    b = make_bundle(os.path.join(d, "b"), "20261001.0000-ca-tb-g1")
+    with open(os.path.join(b, EXE + ".exe"), "ab") as f:
+        f.write(b"damage")
+    rc, out = run(il, b, os.path.join(d, "r"), "install", "--fetch-umu", umu=umu)
+    assert rc == 1 and "checksum mismatch" in out, out
+    assert calls == []
+
+
 def test_corrupt_bundle_keeps_current(il, d):
     root = os.path.join(d, "r")
     v1 = make_bundle(os.path.join(d, "1"), "20261001.0000-ca-tb-g1")
