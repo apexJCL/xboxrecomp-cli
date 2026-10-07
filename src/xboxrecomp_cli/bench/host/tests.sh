@@ -27,10 +27,11 @@ fresh_if_stale build-win
 cmake -B build-win -DCMAKE_CROSSCOMPILING_EMULATOR="$emu" >/dev/null
 cmake --build build-win --target d3d8_hlsl_split d3d11_backend_smoke input_map_test input_keyboard_test
 # tests/nv2a_zbuf, apu_irq, kernel_irql_abi, fp_precision, vblank_ack, vblank_schedule
-# spin_wait, rt_alias and irq_safe_points are projects of their own
+# spin_wait, rt_alias, irq_safe_points, kernel_missing_report and
+# kernel_file_status are projects of their own
 # (not in the game build): configure each beside build-win with the same
 # toolchain.
-standalone="nv2a_zbuf apu_irq kernel_irql_abi fp_precision vblank_ack vblank_schedule spin_wait rt_alias irq_safe_points"
+standalone="nv2a_zbuf apu_irq kernel_irql_abi fp_precision vblank_ack vblank_schedule spin_wait rt_alias irq_safe_points kernel_missing_report kernel_file_status"
 for t in $standalone; do
     src=../xboxrecomp/tests/$t
     [ -f "$src/CMakeLists.txt" ] || { echo "tests: $src missing (toolkit too old?)" >&2; exit 1; }

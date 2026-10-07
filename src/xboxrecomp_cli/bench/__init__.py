@@ -296,8 +296,8 @@ class Bench:
             return 0
         self.step(
             "tests: d3d8_hlsl_split, d3d11_backend_smoke, input_map, input_keyboard, nv2a_zbuf, apu_irq, "
-            "kernel_irql_abi, fp_precision, vblank_ack, vblank_schedule, spin_wait, rt_alias, irq_safe_points under "
-            "Proton"
+            "kernel_irql_abi, fp_precision, vblank_ack, vblank_schedule, spin_wait, rt_alias, irq_safe_points, "
+            "kernel_missing_report, kernel_file_status under Proton"
         )
         rc = self.r.in_box_locked(self.r.ship("tests.sh"), exclusive=True, what="tests")[0]
         if rc == 0:
