@@ -1,5 +1,5 @@
-#@ scripts/benchlib/host/prologue.sh.in: a template `blinx2 bench` fills, the text
-#@ scripts/bench.sh expanded, byte for byte. The #@ lines this file starts
+#@ bench/host/prologue.sh.in: a template `<game> bench` fills, first the text
+#@ blinx2-recomp's scripts/bench.sh expanded. The #@ lines this file starts
 #@ with are this note and are not sent. It is the remote_vars prologue every script after it starts with. @NAME@ is
 #@ filled with the configured value, unquoted on purpose: ~ expands on the host.
 #@ The game's own values after them (game.toml; paths relative to

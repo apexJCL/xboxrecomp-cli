@@ -1,5 +1,5 @@
-#@ scripts/benchlib/host/setup_mingw.sh: a host script `blinx2 bench` ships over ssh, moved
-#@ byte for byte from a scripts/bench.sh heredoc. The #@ lines this file starts
+#@ bench/host/setup_mingw.sh: a host script `<game> bench` ships over ssh, first
+#@ moved from a blinx2-recomp scripts/bench.sh heredoc. The #@ lines this file starts
 #@ with are this note and are not sent. Runs as: in_box (setup). After the prologue and TAG (the llvm-mingw release tag).
 cc="$LLVM_MINGW_ROOT/bin/x86_64-w64-mingw32-clang"
 if [ -x "$cc" ] && [ "$(cat "$LLVM_MINGW_ROOT/.tag" 2>/dev/null)" = "$TAG" ]; then

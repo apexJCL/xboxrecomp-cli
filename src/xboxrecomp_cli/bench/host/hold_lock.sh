@@ -1,5 +1,5 @@
-#@ scripts/benchlib/host/hold_lock.sh: a host script `blinx2 bench` ships over ssh, moved
-#@ byte for byte from a scripts/bench.sh heredoc. The #@ lines this file starts
+#@ bench/host/hold_lock.sh: a host script `<game> bench` ships over ssh, first
+#@ moved from a blinx2-recomp scripts/bench.sh heredoc. The #@ lines this file starts
 #@ with are this note and are not sent. Runs as: remote (pacing). No prologue; after MAX (BENCH_HOLD_MAX seconds).
 # A transient unit of the user's systemd: a process left behind by this ssh
 # session (nohup, setsid) is killed with the session's scope when it closes.

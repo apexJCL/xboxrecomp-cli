@@ -1,5 +1,5 @@
-#@ scripts/benchlib/host/tests.sh: a host script `blinx2 bench` ships over ssh, moved
-#@ byte for byte from a scripts/bench.sh heredoc. The #@ lines this file starts
+#@ bench/host/tests.sh: a host script `<game> bench` ships over ssh, first
+#@ moved from a blinx2-recomp scripts/bench.sh heredoc. The #@ lines this file starts
 #@ with are this note and are not sent. Runs as: in_box_locked -x tests (tests). After the prologue; no other variables.
 cd "$REMOTE_GAME"
 export PATH="$LLVM_MINGW_ROOT/bin:$PATH"

@@ -1,5 +1,5 @@
-#@ scripts/benchlib/host/game_files.sh: a host script `blinx2 bench` ships over ssh, moved
-#@ byte for byte from a scripts/bench.sh heredoc. The #@ lines this file starts
+#@ bench/host/game_files.sh: a host script `<game> bench` ships over ssh, first
+#@ moved from a blinx2-recomp scripts/bench.sh heredoc. The #@ lines this file starts
 #@ with are this note and are not sent. Runs as: remote (sync --game-files, a tree that does not own BENCH_GAME_FILES). After the
 #@ prologue and src (the host's single game_files copy), dst (this tree's
 #@ game files folder) and mode (link or reflink); src keeps a leading ~/

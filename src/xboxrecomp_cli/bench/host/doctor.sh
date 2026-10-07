@@ -1,4 +1,4 @@
-#@ scripts/benchlib/host/doctor.sh: `blinx2 bench doctor`'s look at the host. New with
+#@ bench/host/doctor.sh: `<game> bench doctor`'s look at the host. New with
 #@ the CLI (bench.sh had no doctor). The #@ lines this file starts with are
 #@ this note and are not sent. Runs as: remote, after the prologue. Changes nothing: it never takes
 #@ or waits on the run lock, it only asks lslocks who holds it.

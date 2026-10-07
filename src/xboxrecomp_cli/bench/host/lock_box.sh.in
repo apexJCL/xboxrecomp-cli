@@ -1,5 +1,5 @@
-#@ scripts/benchlib/host/lock_box.sh.in: a template `blinx2 bench` fills, the text
-#@ scripts/bench.sh expanded, byte for byte. The #@ lines this file starts
+#@ bench/host/lock_box.sh.in: a template `<game> bench` fills, first the text
+#@ blinx2-recomp's scripts/bench.sh expanded. The #@ lines this file starts
 #@ with are this note and are not sent. It is not stdin: the ssh command argument in_box_locked runs, before
 #@ `distrobox enter`. @FL@ is -s (builds) or -x (tests), @WHAT@ the word the
 #@ waiting message names, @BENCH_BOX@ the distrobox. No final newline, on

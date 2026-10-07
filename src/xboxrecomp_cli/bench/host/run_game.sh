@@ -1,5 +1,5 @@
-#@ scripts/benchlib/host/run_game.sh: a host script `blinx2 bench` ships over ssh, moved
-#@ byte for byte from a scripts/bench.sh heredoc. The #@ lines this file starts
+#@ bench/host/run_game.sh: a host script `<game> bench` ships over ssh, first
+#@ moved from a blinx2-recomp scripts/bench.sh heredoc. The #@ lines this file starts
 #@ with are this note and are not sent. Runs as: remote (run, golden, pacing, all). After the prologue and STAMP, PROTONPATH,
 #@ GAME_ARGS (array), GAME_ENV (array, word-split from BENCH_ENV), TIMEOUT, FRAMES,
 #@ KILL_GAME, LOCK_HELD, PROTON_LOG_MODE (cap, full or off), PROTON_LOG_CAP (bytes).
