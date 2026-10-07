@@ -67,6 +67,10 @@ Troubleshooting
   config/launch.env turns it off.
 - Settings go in @DEFAULT_ROOT@/config/launch.env (KEY=value lines). The
   installer creates config/ and never changes what is in it.
+- Proton's own log for a bug report: PROTON_LOG=1 in config/launch.env
+  writes it to logs/ (steam-default.log). At each launch, a log in logs/
+  over LOG_MAX_MB (64) is cut to its first and last halves; LOG_MAX_MB=0
+  keeps them whole.
 
 Controls
 --------

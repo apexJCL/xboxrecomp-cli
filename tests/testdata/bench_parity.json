@@ -30,7 +30,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@attract RECOMP_DEBUG=fb_dump_at=259-343,1099-1183)\nTIMEOUT=75\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@attract RECOMP_DEBUG=fb_dump_at=259-343,1099-1183)\nTIMEOUT=75\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -55,6 +55,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -105,7 +124,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@stage1 RECOMP_DEBUG=fb_dump_at=827-855,1307-1335,2627-2655)\nTIMEOUT=105\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@stage1 RECOMP_DEBUG=fb_dump_at=827-855,1307-1335,2627-2655)\nTIMEOUT=105\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -130,6 +149,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -190,7 +228,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_SAVE_DIR=@run RECOMP_INPUT_SCRIPT=@story-hub RECOMP_DEBUG=fb_dump_at=1639-1723,3439-3523,4279-4363)\nTIMEOUT=100\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_SAVE_DIR=@run RECOMP_INPUT_SCRIPT=@story-hub RECOMP_DEBUG=fb_dump_at=1639-1723,3439-3523,4279-4363)\nTIMEOUT=100\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -215,6 +253,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -296,7 +353,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@attract RECOMP_DEBUG=fb_dump_at=259-343,1099-1183)\nTIMEOUT=75\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@attract RECOMP_DEBUG=fb_dump_at=259-343,1099-1183)\nTIMEOUT=75\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -321,6 +378,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -371,7 +447,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@stage1 RECOMP_DEBUG=fb_dump_at=827-855,1307-1335,2627-2655)\nTIMEOUT=105\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@stage1 RECOMP_DEBUG=fb_dump_at=827-855,1307-1335,2627-2655)\nTIMEOUT=105\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -396,6 +472,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -456,7 +551,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_SAVE_DIR=@run RECOMP_INPUT_SCRIPT=@story-hub RECOMP_DEBUG=fb_dump_at=1639-1723,3439-3523,4279-4363)\nTIMEOUT=100\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_SAVE_DIR=@run RECOMP_INPUT_SCRIPT=@story-hub RECOMP_DEBUG=fb_dump_at=1639-1723,3439-3523,4279-4363)\nTIMEOUT=100\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -481,6 +576,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -870,7 +984,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@attract RECOMP_DEBUG=fb_dump_at=259-343,1099-1183)\nTIMEOUT=75\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@attract RECOMP_DEBUG=fb_dump_at=259-343,1099-1183)\nTIMEOUT=75\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -895,6 +1009,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -945,7 +1078,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@stage1 RECOMP_DEBUG=fb_dump_at=827-855,1307-1335,2627-2655)\nTIMEOUT=105\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@stage1 RECOMP_DEBUG=fb_dump_at=827-855,1307-1335,2627-2655)\nTIMEOUT=105\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -970,6 +1103,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -1030,7 +1182,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_SAVE_DIR=@run RECOMP_INPUT_SCRIPT=@story-hub RECOMP_DEBUG=fb_dump_at=1639-1723,3439-3523,4279-4363)\nTIMEOUT=100\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_SAVE_DIR=@run RECOMP_INPUT_SCRIPT=@story-hub RECOMP_DEBUG=fb_dump_at=1639-1723,3439-3523,4279-4363)\nTIMEOUT=100\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -1055,6 +1207,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -1136,7 +1307,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@attract RECOMP_DEBUG=fb_dump_at=259-343,1099-1183)\nTIMEOUT=75\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@attract RECOMP_DEBUG=fb_dump_at=259-343,1099-1183)\nTIMEOUT=75\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -1161,6 +1332,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -1211,7 +1401,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@stage1 RECOMP_DEBUG=fb_dump_at=827-855,1307-1335,2627-2655)\nTIMEOUT=105\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@stage1 RECOMP_DEBUG=fb_dump_at=827-855,1307-1335,2627-2655)\nTIMEOUT=105\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -1236,6 +1426,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -1296,7 +1505,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_SAVE_DIR=@run RECOMP_INPUT_SCRIPT=@story-hub RECOMP_DEBUG=fb_dump_at=1639-1723,3439-3523,4279-4363)\nTIMEOUT=100\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_SAVE_DIR=@run RECOMP_INPUT_SCRIPT=@story-hub RECOMP_DEBUG=fb_dump_at=1639-1723,3439-3523,4279-4363)\nTIMEOUT=100\nFRAMES=1\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -1321,6 +1530,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -1403,7 +1631,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@stage1  RECOMP_TRACE=flip,pacing=all A=1)\nTIMEOUT=105\nFRAMES=0\nKILL_GAME=0\nLOCK_HELD=1\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@stage1  RECOMP_TRACE=flip,pacing=all A=1)\nTIMEOUT=105\nFRAMES=0\nKILL_GAME=0\nLOCK_HELD=1\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -1428,6 +1656,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -1447,7 +1694,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@stage1  RECOMP_TRACE=flip,pacing=all B=2)\nTIMEOUT=105\nFRAMES=0\nKILL_GAME=0\nLOCK_HELD=1\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_PB_BACKEND=d3d11 RECOMP_TRACE=flip RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1 RECOMP_ENHANCE_CONFIG=none RECOMP_RENDER_SCALE=1 RECOMP_PRESENT_PACING=spin RECOMP_INPUT_SCRIPT=@stage1  RECOMP_TRACE=flip,pacing=all B=2)\nTIMEOUT=105\nFRAMES=0\nKILL_GAME=0\nLOCK_HELD=1\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -1472,6 +1719,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -1557,7 +1823,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=(--arg two\\ words )\nGAME_ENV=()\nTIMEOUT=''\nFRAMES=0\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=(--arg two\\ words )\nGAME_ENV=()\nTIMEOUT=''\nFRAMES=0\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -1582,6 +1848,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -1607,7 +1892,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_TRACE=flip WINEDEBUG=+seh)\nTIMEOUT=30\nFRAMES=0\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=(RECOMP_TRACE=flip WINEDEBUG=+seh)\nTIMEOUT=30\nFRAMES=0\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -1632,6 +1917,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -1657,7 +1961,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=()\nTIMEOUT=''\nFRAMES=0\nKILL_GAME=1\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=()\nTIMEOUT=''\nFRAMES=0\nKILL_GAME=1\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -1682,6 +1986,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -1760,6 +2083,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/cat/bench-logs/",
      "TMP/cat/bench-logs/"
     ],
@@ -2001,7 +2343,7 @@
     ],
     "body": "run_game.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/b3\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=game2\nEXE=game2.exe\nEXE_REL=build-win/game2.exe\nGEN_DIR=src/game/recomp/gen\nGAME_FILES=Second\\ Game\\ Files\nXBE=Second\\ Game\\ Files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[FAULT\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=()\nTIMEOUT=30\nFRAMES=0\nKILL_GAME=0\nLOCK_HELD=0\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/b3\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=game2\nEXE=game2.exe\nEXE_REL=build-win/game2.exe\nGEN_DIR=src/game/recomp/gen\nGAME_FILES=Second\\ Game\\ Files\nXBE=Second\\ Game\\ Files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[FAULT\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=()\nTIMEOUT=30\nFRAMES=0\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
    },
    {
     "argv": [
@@ -2026,6 +2368,25 @@
      "-az",
      "--exclude",
      "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/b3/bench-logs/",
+     "TMP/b3/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
      "fakehost:~/bench-test/b3/bench-logs/",
      "TMP/b3/bench-logs/"
     ],
@@ -2761,5 +3122,198 @@
   ],
   "rc": 0,
   "stdout": "\n== setup: distrobox xbr-build (fedora:42) ==\n\n== setup: packages ==\n\n== setup: llvm-mingw 20260922 -> ~/bench-test/llvm-mingw ==\n"
+ },
+ "test_proton_log_modes#1 run": {
+  "calls": [
+   {
+    "argv": [
+     "-o",
+     "BatchMode=yes",
+     "-o",
+     "ServerAliveInterval=30",
+     "-o",
+     "ServerAliveCountMax=4",
+     "fakehost",
+     "bash",
+     "-s"
+    ],
+    "body": "run_game.sh",
+    "kind": "ssh",
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=()\nTIMEOUT=''\nFRAMES=0\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=cap\nPROTON_LOG_CAP=8388608\n"
+   },
+   {
+    "argv": [
+     "-o",
+     "BatchMode=yes",
+     "-o",
+     "ServerAliveInterval=30",
+     "-o",
+     "ServerAliveCountMax=4",
+     "fakehost",
+     "bash",
+     "-s"
+    ],
+    "body": "symbolize.sh",
+    "kind": "ssh",
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\n"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--exclude",
+     "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   }
+  ],
+  "rc": 1,
+  "stdout": "\n== run: under GE-Proton -> bench-logs/STAMP ==\nlocal: TMP/cat/bench-logs/STAMP\nend: FAIL no exit-code in TMP/cat/bench-logs/STAMP (host script died?)\n"
+ },
+ "test_proton_log_modes#2 run --proton-log": {
+  "calls": [
+   {
+    "argv": [
+     "-o",
+     "BatchMode=yes",
+     "-o",
+     "ServerAliveInterval=30",
+     "-o",
+     "ServerAliveCountMax=4",
+     "fakehost",
+     "bash",
+     "-s"
+    ],
+    "body": "run_game.sh",
+    "kind": "ssh",
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=()\nTIMEOUT=''\nFRAMES=0\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=full\nPROTON_LOG_CAP=8388608\n"
+   },
+   {
+    "argv": [
+     "-o",
+     "BatchMode=yes",
+     "-o",
+     "ServerAliveInterval=30",
+     "-o",
+     "ServerAliveCountMax=4",
+     "fakehost",
+     "bash",
+     "-s"
+    ],
+    "body": "symbolize.sh",
+    "kind": "ssh",
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\n"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--exclude",
+     "/*/frames/",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   }
+  ],
+  "rc": 1,
+  "stdout": "\n== run: under GE-Proton -> bench-logs/STAMP ==\nlocal: TMP/cat/bench-logs/STAMP\nend: FAIL no exit-code in TMP/cat/bench-logs/STAMP (host script died?)\n"
+ },
+ "test_proton_log_modes#3 run": {
+  "calls": [
+   {
+    "argv": [
+     "-o",
+     "BatchMode=yes",
+     "-o",
+     "ServerAliveInterval=30",
+     "-o",
+     "ServerAliveCountMax=4",
+     "fakehost",
+     "bash",
+     "-s"
+    ],
+    "body": "run_game.sh",
+    "kind": "ssh",
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\nPROTONPATH=GE-Proton\nGAME_ARGS=()\nGAME_ENV=()\nTIMEOUT=''\nFRAMES=0\nKILL_GAME=0\nLOCK_HELD=0\nPROTON_LOG_MODE=off\nPROTON_LOG_CAP=8388608\n"
+   },
+   {
+    "argv": [
+     "-o",
+     "BatchMode=yes",
+     "-o",
+     "ServerAliveInterval=30",
+     "-o",
+     "ServerAliveCountMax=4",
+     "fakehost",
+     "bash",
+     "-s"
+    ],
+    "body": "symbolize.sh",
+    "kind": "ssh",
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nSTAMP=STAMP\n"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--exclude",
+     "/*/frames/",
+     "--exclude",
+     "/*/steam-*.log",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   },
+   {
+    "argv": [
+     "-e",
+     "ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4",
+     "-az",
+     "--max-size=17825792",
+     "--include",
+     "/*/",
+     "--include",
+     "/*/steam-*.log",
+     "--exclude",
+     "*",
+     "fakehost:~/bench-test/cat/bench-logs/",
+     "TMP/cat/bench-logs/"
+    ],
+    "kind": "rsync"
+   }
+  ],
+  "rc": 1,
+  "stdout": "\n== run: under GE-Proton -> bench-logs/STAMP ==\nlocal: TMP/cat/bench-logs/STAMP\nend: FAIL no exit-code in TMP/cat/bench-logs/STAMP (host script died?)\n"
+ },
+ "test_proton_log_modes#4 run": {
+  "calls": [],
+  "rc": 1,
+  "stdout": "\n== run: under GE-Proton -> bench-logs/STAMP ==\n"
  }
 }

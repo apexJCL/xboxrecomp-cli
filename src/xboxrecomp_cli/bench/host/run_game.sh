@@ -2,7 +2,8 @@
 #@ byte for byte from a scripts/bench.sh heredoc. The #@ lines this file starts
 #@ with are this note and are not sent. Runs as: remote (run, golden, pacing, all). After the prologue and STAMP, PROTONPATH,
 #@ GAME_ARGS (array), GAME_ENV (array, word-split from BENCH_ENV), TIMEOUT, FRAMES,
-#@ KILL_GAME, LOCK_HELD. Takes the run lock on fd 9 itself.
+#@ KILL_GAME, LOCK_HELD, PROTON_LOG_MODE (cap, full or off), PROTON_LOG_CAP (bytes).
+#@ Takes the run lock on fd 9 itself.
 cd "$REMOTE_GAME"
 [ -f "$EXE_REL" ] || { echo "no $EXE_REL -- run build first" >&2; exit 1; }
 [ -f "$XBE" ]     || { echo "no $GAME_FILES/ in this tree -- run: sync --game-files" >&2; exit 1; }
@@ -70,7 +71,16 @@ fi
 rm -f xbox_kernel.log
 
 export WINEPREFIX="$BENCH_PREFIX" GAMEID=umu-default PROTONPATH
-export PROTON_LOG=1 PROTON_LOG_DIR="$PWD/$LOG"
+# Proton's own log (steam-default.log): its loader trace names where the exe
+# was loaded (symbolize's fallback), but with +seh on, a run that traps
+# often writes gigabytes of it. The game's evidence is game-stdio.log, so
+# by default only its head and tail are kept (cap_log, after the run);
+# BENCH_PROTON_LOG=full keeps all of it, =off does not write it.
+if [ "$PROTON_LOG_MODE" = off ]; then
+    unset PROTON_LOG PROTON_LOG_DIR
+else
+    export PROTON_LOG=1 PROTON_LOG_DIR="$PWD/$LOG"
+fi
 # RECOMP_TRACE and RECOMP_DEBUG are lists: a scenario's pins and BENCH_ENV
 # each add their keys (docs/env.md) instead of the last one winning. Start
 # from empty so a list left in the calling shell does not leak in.
@@ -256,6 +266,25 @@ if [ -n "$(survivors)" ]; then
     else
         echo "killed: none left after wineserver -k and kill -9" >> "$LOG/survived"
     fi
+fi
+
+# The first and last $2 bytes of $1, with a line between them saying how
+# much was cut; a file no larger than twice that is left alone. After the
+# sweep above: nothing of this run writes the log any more.
+cap_log() {
+    local f=$1 n=$2 size
+    size=$(wc -c < "$f" | tr -d ' ')
+    [ "$size" -gt $((2 * n)) ] || return 0
+    {
+        head -c "$n" "$f"
+        printf '\n[bench: %s bytes cut here; BENCH_PROTON_LOG=full keeps them]\n' $((size - 2 * n))
+        tail -c "$n" "$f"
+    } > "$f.cap" && mv -f "$f.cap" "$f" || rm -f "$f.cap"
+}
+if [ "$PROTON_LOG_MODE" = cap ]; then
+    for f in "$LOG"/steam-*.log; do
+        if [ -f "$f" ]; then cap_log "$f" "$PROTON_LOG_CAP"; fi
+    done
 fi
 [ -f xbox_kernel.log ] && cp xbox_kernel.log "$LOG/"
 echo "exit code $rc; logs in $REMOTE_GAME/$LOG"

@@ -24,7 +24,8 @@ pref=$(awk '/ImageBase:/ {print $2}' <<<"$hdr")
 size=$(awk '/SizeOfImage:/ {print $2}' <<<"$hdr")
 
 # Where the exe was loaded: the crash report's own image range, else Proton's
-# loader trace (PROTON_LOG=1).
+# loader trace (PROTON_LOG=1; near the log's start, which the run's cap keeps;
+# absent with BENCH_PROTON_LOG=off).
 base=$(grep -m1 -o 'return addrs in image [0-9A-Fa-fx]*' "$stdio" | awk '{print $NF}') || true
 [ -n "$base" ] && [ $((16#${base#0x})) -ne 0 ] ||
     base=$(grep -m1 -o "${EXE//./\\.}\" at [0-9A-Fa-f]*" "$LOG/steam-default.log" 2>/dev/null | awk '{print $NF}') || true

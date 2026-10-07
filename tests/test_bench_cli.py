@@ -36,6 +36,7 @@ and the record's diff is then reviewed line by line before it is committed:
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -416,6 +417,69 @@ def test_parity_run_logs_symbolize(d):
     assert_parity(d, ["symbolize"])
     assert_parity(d, ["symbolize", "20260101-000000"])
     assert_parity(d, ["logs"])
+
+
+@with_tree
+def test_proton_log_modes(d):
+    """Proton's log is capped by default, pulled only up to that cap, and
+    kept whole with --proton-log (or BENCH_PROTON_LOG=full)."""
+    from xboxrecomp_cli.bench import PROTON_LOG_CAP
+
+    def run(argv, env=None):
+        a, _ = assert_parity(d, argv, env)
+        prologue = [c[2] for c in a[3] if c[0] == "ssh" and c[2] and "PROTON_LOG_MODE=" in c[2]]
+        pulls = [c[1] for c in a[3] if c[0] == "rsync"]
+        return a, prologue, pulls
+
+    a, pro, pulls = run(["run"])
+    assert "PROTON_LOG_MODE=cap\nPROTON_LOG_CAP=%d\n" % PROTON_LOG_CAP in pro[0], pro
+    assert len(pulls) == 2, pulls
+    assert "/*/steam-*.log" in pulls[0] and not any(x.startswith("--max-size") for x in pulls[0])
+    assert "--max-size=%d" % (2 * PROTON_LOG_CAP + (1 << 20)) in pulls[1], pulls[1]
+    assert pulls[1][-4:-2] == ["--exclude", "*"], pulls[1]
+    a, pro, pulls = run(["run", "--proton-log"])
+    assert "PROTON_LOG_MODE=full\n" in pro[0], pro
+    assert len(pulls) == 1 and "/*/steam-*.log" not in pulls[0], pulls
+    a, pro, pulls = run(["run"], {"BENCH_PROTON_LOG": "off"})
+    assert "PROTON_LOG_MODE=off\n" in pro[0], pro
+    a, pro, pulls = run(["run"], {"BENCH_PROTON_LOG": "all"})
+    assert a[0] == 1 and "BENCH_PROTON_LOG=all: use one of cap, full, off" in a[2], a[2]
+    assert not pro and not pulls, (pro, pulls)
+
+
+def cap_log_fn():
+    """run_game.sh's cap_log, to run on its own."""
+    with open(os.path.join(HOST, "run_game.sh")) as f:
+        text = f.read()
+    m = re.search(r"^cap_log\(\) \{\n.*?^\}\n", text, re.M | re.S)
+    assert m, "no cap_log in run_game.sh"
+    return m.group(0)
+
+
+def test_run_game_cap_log():
+    if SKIP:
+        print("skip: %s" % SKIP)
+        return
+    fn = cap_log_fn()
+    with tempfile.TemporaryDirectory() as d:
+        big, small = os.path.join(d, "steam-default.log"), os.path.join(d, "small.log")
+        data = b"".join(b"line %06d\n" % i for i in range(1000))  # 12000 bytes
+        for p, body in ((big, data), (small, data[:200])):
+            with open(p, "wb") as f:
+                f.write(body)
+        script = "set -euo pipefail\n%scap_log %s 1000\ncap_log %s 1000\n" % (
+            fn,
+            shlex.quote(big),
+            shlex.quote(small),
+        )
+        subprocess.run(["bash", "-c", script], check=True)
+        with open(big, "rb") as f:
+            got = f.read()
+        cut = b"\n[bench: 10000 bytes cut here; BENCH_PROTON_LOG=full keeps them]\n"
+        assert got == data[:1000] + cut + data[-1000:], got[:200]
+        with open(small, "rb") as f:
+            assert f.read() == data[:200]
+        assert sorted(os.listdir(d)) == ["small.log", "steam-default.log"]
 
 
 @with_tree

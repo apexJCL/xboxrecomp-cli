@@ -771,3 +771,39 @@ def test_notice_notification_without_window_tools(d, home):
     assert r.returncode == 0, r.stdout
     with open(os.path.join(home, "notify.argv")) as f:
         assert "First launch" in f.read()
+
+
+def test_launch_caps_old_logs(d, home):
+    """A log an earlier launch left over LOG_MAX_MB is cut to its first and
+    last halves; smaller ones, and LOG_MAX_MB=0, leave them whole. With
+    PROTON_LOG set, Proton's log goes to logs/, not the home folder."""
+    root, launcher = fake_install(d, home)
+    logs = os.path.join(root, "logs")
+    os.makedirs(logs)
+    mib = 1 << 20
+    big = b"".join(b"%07d\n" % i for i in range(3 * mib // 8))  # 3 MiB
+    for name, body in (("steam-default.log", big), ("umu.log", b"small\n")):
+        with open(os.path.join(logs, name), "wb") as f:
+            f.write(body)
+    os.makedirs(os.path.join(root, "config"))
+    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+        f.write("LOG_MAX_MB=2\nPROTON_LOG=1\n")
+    env_dump = 'echo "$PROTON_LOG_DIR" > "$HOME/proton_log_dir"\n'
+    make_exe(os.path.join(home, ".local", "bin", "umu-run"), env_dump + FAKE_UMU)
+    r = launch(launcher, home, "/usr/bin:/bin")
+    assert r.returncode == 0, r.stdout
+    with open(os.path.join(logs, "steam-default.log"), "rb") as f:
+        got = f.read()
+    cut = b"\n[launcher: %d bytes cut here (LOG_MAX_MB)]\n" % (len(big) - 2 * mib)
+    assert got == big[:mib] + cut + big[-mib:], len(got)
+    assert not os.path.exists(os.path.join(logs, "steam-default.log.cap"))
+    with open(os.path.join(home, "proton_log_dir")) as f:
+        assert f.read().strip() == logs
+    # LOG_MAX_MB=0: nothing cut.
+    with open(os.path.join(logs, "steam-default.log"), "wb") as f:
+        f.write(big)
+    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+        f.write("LOG_MAX_MB=0\n")
+    assert launch(launcher, home, "/usr/bin:/bin").returncode == 0
+    with open(os.path.join(logs, "steam-default.log"), "rb") as f:
+        assert f.read() == big

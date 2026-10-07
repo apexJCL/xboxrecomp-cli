@@ -76,6 +76,12 @@ Commands:
 game running outside the bench once the run lock is held. Without it the
 run only warns, on stdout and in bench-logs/<stamp>/warnings.txt.
 
+--proton-log (any command that runs the game or pulls logs; or
+BENCH_PROTON_LOG=full): keep and pull Proton's whole log,
+bench-logs/<stamp>/steam-default.log. Without it the host keeps its first
+and last 8 MiB (a run with +seh can write gigabytes), and logs never pulls
+a Proton log larger than that.
+
 The run lock: every command that builds or runs takes the host's run lock
 (~/.recomp-run.lock) itself, inside its host script: shared for builds,
 exclusive for runs and tests, waiting up to an hour (exit 75). Never wrap
@@ -107,6 +113,10 @@ this machine's home, as it did when bench.sh sourced the file:
   BENCH_HOLD_MAX   pacing: the most seconds its hold of the run lock lasts if
                    this command dies without releasing it  (14400)
   BENCH_KILL_GAME  1: as --kill-game
+  BENCH_PROTON_LOG Proton's log (PROTON_LOG=1) per run: cap (the default:
+                   its first and last 8 MiB), full (as --proton-log) or off
+                   (not written; symbolize then needs the crash report's
+                   own load address)
   BENCH_GAME_DIR   the project tree to drive (default: this checkout)
   XBOXRECOMP_DIR   local toolkit checkout (external/xboxrecomp if present,
                    else ../xboxrecomp)
@@ -147,6 +157,19 @@ def render_help(game):
     for k, v in values.items():
         text = text.replace("@%s@" % k, v)
     return text
+
+
+# Bytes of Proton's log kept at each end by default (BENCH_PROTON_LOG=cap).
+# The loader trace symbolize reads sits in the first few hundred KB.
+PROTON_LOG_CAP = 8 << 20
+PROTON_LOG_MODES = ("cap", "full", "off")
+
+
+def proton_log_mode(cfg):
+    mode = cfg.get("BENCH_PROTON_LOG") or "cap"
+    if mode not in PROTON_LOG_MODES:
+        raise BenchError("BENCH_PROTON_LOG=%s: use one of %s" % (mode, ", ".join(PROTON_LOG_MODES)))
+    return mode
 
 
 class Exit(Exception):
@@ -230,7 +253,7 @@ class Bench:
         self.step("run: under %s -> bench-logs/%s" % (c["PROTONPATH"], stamp))
         assigns = (
             "STAMP=%s\nPROTONPATH=%s\nGAME_ARGS=(%s)\nGAME_ENV=(%s)\nTIMEOUT=%s\nFRAMES=%s\n"
-            "KILL_GAME=%s\nLOCK_HELD=%s\n"
+            "KILL_GAME=%s\nLOCK_HELD=%s\nPROTON_LOG_MODE=%s\nPROTON_LOG_CAP=%d\n"
             % (
                 shell_quote(stamp),
                 shell_quote(c["PROTONPATH"]),
@@ -241,6 +264,8 @@ class Bench:
                 shell_quote((c.get("BENCH_FRAMES") or "0") if frames is None else frames),
                 shell_quote(c.get("BENCH_KILL_GAME") or "0"),
                 shell_quote((c.get("BENCH_LOCK_HELD") or "0") if lock_held is None else lock_held),
+                proton_log_mode(c),
+                PROTON_LOG_CAP,
             )
         )
         self.r.remote(self.r.ship("run_game.sh", assigns))
@@ -295,14 +320,28 @@ class Bench:
             self.cmd_symbolize(args[:1])
         dst = os.path.join(self.cfg.game_dir, "bench-logs")
         os.makedirs(dst, exist_ok=True)
+        src = "%s:%s/bench-logs/" % (self.cfg.host, self.cfg.remote_game)
         # Frame dumps stay on the host (golden pulls the ones it needs). Pulls
         # keep -a's times: logs and frames are not build input.
+        if proton_log_mode(self.cfg) == "full":
+            return self.ok(rsync("-az", "--exclude", "/*/frames/", src, dst + "/"))
+        # Proton's logs apart, and none larger than a capped one: a run from
+        # before the cap (or with --proton-log) left gigabytes on the host,
+        # which a pull of the whole tree would copy again.
+        self.ok(
+            rsync("-az", "--exclude", "/*/frames/", "--exclude", "/*/steam-*.log", src, dst + "/")
+        )
         return self.ok(
             rsync(
                 "-az",
+                "--max-size=%d" % (2 * PROTON_LOG_CAP + (1 << 20)),
+                "--include",
+                "/*/",
+                "--include",
+                "/*/steam-*.log",
                 "--exclude",
-                "/*/frames/",
-                "%s:%s/bench-logs/" % (self.cfg.host, self.cfg.remote_game),
+                "*",
+                src,
                 dst + "/",
             )
         )
@@ -459,6 +498,10 @@ def main(argv, game):
     if "--kill-game" in argv:
         cfg.env["BENCH_KILL_GAME"] = "1"
         argv = [a for a in argv if a != "--kill-game"]
+    # --proton-log: as BENCH_PROTON_LOG=full.
+    if "--proton-log" in argv:
+        cfg.env["BENCH_PROTON_LOG"] = "full"
+        argv = [a for a in argv if a != "--proton-log"]
     b = Bench(cfg)
     try:
         return dispatch(b, cmd, argv) or 0

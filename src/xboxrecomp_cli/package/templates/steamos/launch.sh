@@ -78,6 +78,25 @@ log="$ROOT/logs/game-$stamp.log"
 # The newest LOG_KEEP logs, this one included.
 keep=${LOG_KEEP:-10}
 ls -1t "$ROOT"/logs/game-*.log 2>/dev/null | tail -n +"$keep" | while IFS= read -r old; do rm -f -- "$old"; done || true
+# And no log of an earlier launch over LOG_MAX_MB (64): a trace left on in
+# launch.env, or PROTON_LOG=1, can write gigabytes. Its first and last
+# halves are kept. The running launch's own logs are trimmed next time.
+cap_log() {   # $1: file, $2: bytes kept at each end
+    local f=$1 n=$2 size
+    size=$(wc -c < "$f" | tr -d ' ')
+    [ "$size" -gt $((2 * n)) ] || return 0
+    {
+        head -c "$n" "$f"
+        printf '\n[launcher: %s bytes cut here (LOG_MAX_MB)]\n' $((size - 2 * n))
+        tail -c "$n" "$f"
+    } > "$f.cap" && mv -f "$f.cap" "$f" || rm -f "$f.cap"
+}
+max_mb=${LOG_MAX_MB:-64}
+for old in "$ROOT"/logs/*.log; do
+    if [ -f "$old" ] && [ "$max_mb" -gt 0 ] 2>/dev/null; then
+        cap_log "$old" $((max_mb * 1024 * 1024 / 2)) || true
+    fi
+done
 
 # Paths the game opens are Windows paths: Wine maps the host's / to Z:.
 export RECOMP_GAME_FILES="Z:$ROOT/game_files"
@@ -85,6 +104,9 @@ export RECOMP_HDD_DIR="Z:$ROOT/hdd"
 export RECOMP_ENHANCE_CONFIG="Z:$ROOT/config/enhance.toml"
 export RECOMP_STDIO_LOG="Z:$log"
 export WINEPREFIX="$ROOT/prefix" GAMEID="${GAMEID:-umu-default}" PROTONPATH="${PROTONPATH:-GE-Proton}"
+# PROTON_LOG=1 in launch.env: Proton's log goes to logs/ (trimmed above),
+# not to the home folder.
+[ -z "${PROTON_LOG:-}" ] || export PROTON_LOG_DIR="${PROTON_LOG_DIR:-$ROOT/logs}"
 
 # The first launch shows nothing for minutes while umu-run downloads its
 # runtime and Proton and makes the Wine prefix. setup_pending says which
