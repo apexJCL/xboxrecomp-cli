@@ -79,6 +79,13 @@ Commands:
 game running outside the bench once the run lock is held. Without it the
 run only warns, on stdout and in bench-logs/<stamp>/warnings.txt.
 
+--keep-frames (golden; or BENCH_KEEP_FRAMES=1): keep every frame dump of a
+passing scenario. Without it, a scenario that passes (EXACT or CLOSE, its
+run clean) keeps only the images its check read: each frame's plain dump,
+the verdict images and the window's best flip; its run's frames/ on the
+host goes. A run that fails, is INCOMPLETE or INCONCLUSIVE, or --record,
+keeps everything.
+
 --proton-log (any command that runs the game or pulls logs; or
 BENCH_PROTON_LOG=full): keep and pull Proton's whole log,
 bench-logs/<stamp>/steam-default.log. Without it the host keeps its first
@@ -115,6 +122,7 @@ this machine's home, as it did when bench.sh sourced the file:
                    on the host (every 60th present; not pulled by logs)
   BENCH_HOLD_MAX   pacing: the most seconds its hold of the run lock lasts if
                    this command dies without releasing it  (14400)
+  BENCH_KEEP_FRAMES 1: as --keep-frames
   BENCH_KILL_GAME  1: as --kill-game
   BENCH_PROTON_LOG Proton's log (PROTON_LOG=1) per run: cap (the default:
                    its first and last 8 MiB), full (as --proton-log) or off
@@ -550,6 +558,10 @@ def main(argv, game):
     if "--kill-game" in argv:
         cfg.env["BENCH_KILL_GAME"] = "1"
         argv = [a for a in argv if a != "--kill-game"]
+    # --keep-frames: as BENCH_KEEP_FRAMES=1.
+    if "--keep-frames" in argv:
+        cfg.env["BENCH_KEEP_FRAMES"] = "1"
+        argv = [x for x in argv if x != "--keep-frames"]
     # --proton-log: as BENCH_PROTON_LOG=full.
     if "--proton-log" in argv:
         cfg.env["BENCH_PROTON_LOG"] = "full"

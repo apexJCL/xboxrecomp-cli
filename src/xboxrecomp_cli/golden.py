@@ -11,7 +11,7 @@ directory). Below, golden.json and frames/ are the game's.
   golden.py frames SCEN           the dump indexes (NNNN) SCEN checks
   golden.py diff A B [TOL]                     per-channel stats for two images (BMP or PNG)
   golden.py check [--window K] [--log SCEN=LOG]... [--allow-enhance KEY=VALUE]...
-                SCEN=DIR...
+                [--used FILE] SCEN=DIR...
                                   compare each scenario's dumped frames with
                                   analysis/golden/golden.json; exit 1 on a
                                   regression, 2 on a missing frame or reference.
@@ -21,6 +21,14 @@ directory). Below, golden.json and frames/ are the game's.
                                   FAILs unless that KEY=VALUE is allowed (an
                                   evaluation run, noted; record refuses the
                                   flag)
+                                  --used FILE: per scenario, the images its
+                                  verdict read, every frame's plain dump and
+                                  the verdict (what a prune keeps)
+  golden.py prune [--dry-run] [check options] SCEN=DIR...
+                                  for a scenario that passes, remove the
+                                  flip dumps the check did not read (plain
+                                  dumps, verdict images and the window's best
+                                  stay); bench golden does this on its own runs
   golden.py dumpat SCEN [--slack W] [--window K]
                                   the RECOMP_DEBUG=fb_dump_at= flip list that makes a
                                   run (Metal, CPU) dump SCEN's frames by flip
@@ -1186,7 +1194,8 @@ def frame_targets(d, fr, sc, batches):
 
 
 def window_report(d, img_path, ref, fr, th, k):
-    """Compare the flips within k of img_path's flip with ref; the best."""
+    """Compare the flips within k of img_path's flip with ref; the best, as
+    (offset, ok, stats, path)."""
     import re
 
     m = re.search(r"flip_(\d+)\.bmp$", img_path)
@@ -1200,18 +1209,20 @@ def window_report(d, img_path, ref, fr, th, k):
             continue
         ok, s, _ = compare(read_image(p), ref[2], fr, th)
         if s is not None and (best is None or s["bad_fraction"] < best[2]["bad_fraction"]):
-            best = (off, ok, s)
+            best = (off, ok, s, p)
     return best
 
 
 def cmd_check(args):
     g = load_golden()
     th = g["compare"]
-    window, logs, rest, allow = 2, {}, [], []
+    window, logs, rest, allow, used_file = 2, {}, [], [], None
     it = iter(args)
     for a in it:
         if a == "--window":
             window = int(next(it))
+        elif a == "--used":
+            used_file = next(it)
         elif a == "--log":
             logs.update(parse_scen_args([next(it)]))
         elif a == "--allow-enhance":
@@ -1226,186 +1237,286 @@ def cmd_check(args):
             rest.append(a)
     dirs = parse_scen_args(rest)
     rcs = []  # per frame: 1 FAIL, 2 INCOMPLETE (MISSING, NEWVIEW too)
+    # Per scenario, the images its verdict read and every frame's plain dump
+    # (what record and reference read): what a prune keeps (--used).
+    used, scen_rc = {}, {}
     for scen, d in dirs.items():
         sc = g["scenarios"].get(scen)
         if sc is None:
             sys.exit(f"golden: no scenario {scen} in {GOLDEN_JSON}")
-        log = run_log(d, logs, scen)
-        batches = flip_batches(log) if log else None
-        times = flip_times(log) if log else None
-        backend = run_backend(log) if log else None
-        nonstock = enhance_nonstock(log, allow) if log else None
-        if nonstock:
-            print(
-                f"FAIL     {scen}: not a stock run ({nonstock} in {log}); goldens run"
-                " at the stock resolution, aspect, pacing and frame rate, frames"
-                " not compared"
-            )
-            rcs.append(1)
-            continue
-        for kv in enhance_allowed(log, allow):
-            print(
-                f"NOTE     {scen}: evaluation run with {kv} (--allow-enhance);"
-                " not a stock run, never recorded"
-            )
+        first = len(rcs)
+        keep = used.setdefault(scen, [])
         for fr in sc["frames"]:
-            tag = f"{scen}/{fr['name']} (dump {fr['dump']}, present {fr['dump'] * 60 + 1})"
-            skip = fr.get("skip_backends", sc.get("skip_backends", []))
-            if backend in skip:
-                print(
-                    f"SKIP     {tag}: not checked on the {backend} backend "
-                    f"({fr.get('skip_why', sc.get('skip_why', 'see golden.json'))})"
-                )
-                continue
-            targets = frame_targets(d, fr, sc, batches)
-            refs = frame_refs(fr)
-            multi = len(refs) > 1 or refs[0][0] is not None
-            notes = sorted({n for _, n in targets.values() if n})
-            if any(p is None for p, _ in targets.values()):
-                print(f"INCOMPLETE {tag}: the anchored flip is not checkable in this run")
-                for n in notes:
-                    print("         " + n)
-                rcs.append(2)
-                continue
-            have = {lab: p for lab, (p, _) in targets.items() if os.path.exists(p)}
-            if not have:
-                p = targets[refs[0][0]][0]
-                print(f"MISSING  {tag}: {p} not dumped (run too short or crashed?)")
-                for n in notes:
-                    print("         " + n)
-                rcs.append(2)
-                continue
-            imgs = {p: read_image(p) for p in set(have.values())}
-            mismatch, pnotes = pace_report(fr, sc, th, batches, times)
-            notes += pnotes
-            hit = [r for r in refs if r[0] in have and pixel_sha(imgs[have[r[0]]]) == r[1]]
-            if hit:
-                print(f"EXACT    {tag}" + (f" = {hit[0][0]}" if multi else ""))
-                for n in notes:
-                    print("         " + n)
-                continue
-            floor = pace_fail_bad(fr, sc, th)
-            if "split" in fr:
-                if not mismatch:
-                    rcs.append(check_split(tag, fr, th, refs, have, imgs))
-                    for n in notes:
-                        print("         " + n)
-                    continue
-                # Pace mismatch: the split verdict stands when it passes
-                # (CLOSE) or is already INCOMPLETE (NEWVIEW); a FAIL is
-                # INCOMPLETE unless the frame is a wrong screen at any pace.
-                buf = io.StringIO()
-                with contextlib.redirect_stdout(buf):
-                    rc = check_split(tag, fr, th, refs, have, imgs)
-                raw = raw_compares(refs, have, imgs, fr, th)
-                if rc == 1:
-                    gross = bool(raw) and min(st["bad_fraction"] for _, st in raw) >= floor
-                    rc = 1 if gross else 2
-                    print(
-                        (
-                            f"FAIL     {tag}: wrong screen at any pace ({mismatch}): "
-                            f"every reference off by {100 * floor:.0f}%+ of pixels"
-                        )
-                        if gross
-                        else f"INCOMPLETE {tag}: {mismatch}; the split compare failed, not judged"
-                    )
-                    for line in buf.getvalue().splitlines():
-                        print("         for information: " + line.strip())
-                else:
-                    sys.stdout.write(buf.getvalue())
-                    if rc == 0:
-                        print(f"         {mismatch}, but within limits")
-                for n in notes:
-                    print("         " + n)
-                for lab, st in raw:
-                    print("         for information, whole frame vs %s: %s" % (lab, fmt(st)))
-                rcs.append(rc)
-                continue
-            tol = fr.get("pixel_tol", th["pixel_tol"])
-            mae_lim = fr.get("max_channel_mae", th["max_channel_mae"])
-            bad_lim = fr.get("max_bad_fraction", th["max_bad_fraction"])
-            tile_lim = fr.get("max_tile_bad_fraction", th["max_tile_bad_fraction"])
-            lims = f"(limits mae {mae_lim}, bad {100 * bad_lim:.2f}%, tile {100 * tile_lim:.0f}% at tol {tol})"
-            # One result per reference with a PNG and an image: (ok, s, tv, label).
-            results, absent = [], []
-            for ref in refs:
-                if not os.path.exists(ref[2]):
-                    absent.append(ref)
-                    continue
-                if ref[0] not in have:
-                    continue
-                ok, s, tv = compare(imgs[have[ref[0]]], ref[2], fr, th)
-                results.append((ok, s, tv, ref[0]))
-            for ref in absent:
-                sha = pixel_sha(next(iter(imgs.values())))
-                print(
-                    f"{'WARNING ' if results else 'FAIL    '} {tag}: no reference PNG at {ref[2]} "
-                    f"(got {sha[:16]}, want {ref[1][:16]})"
-                )
-                print("         " + missing_ref_hint(fr, ref))
-            if not results:
-                rcs.append(1)
-                continue
-            # Report the passing reference, else the closest one.
-            ok, s, tv, label = max(
-                results,
-                key=lambda r: (r[0], r[1] is not None, -(r[1]["bad_fraction"] if r[1] else 1)),
+            keep.append(dump_image_path(d, fr["dump"]))
+        check_scenario(scen, d, sc, g, th, window, logs, allow, rcs, keep)
+        part = rcs[first:]
+        scen_rc[scen] = 1 if 1 in part else 2 if 2 in part else 0
+    if used_file:
+        write_used(used_file, used, scen_rc)
+    return verdict(rcs)
+
+
+def write_used(path, used, scen_rc):
+    """SCEN<TAB>path per kept image, SCEN<TAB>#verdict<TAB>rc per scenario."""
+    with open(path, "w") as f:
+        for scen, paths in used.items():
+            for p in dict.fromkeys(paths):
+                f.write("%s\t%s\n" % (scen, p))
+            f.write("%s\t#verdict\t%d\n" % (scen, scen_rc[scen]))
+
+
+def read_used(path):
+    """{scen: (rc, [paths])} from a --used file."""
+    out = {}
+    with open(path) as f:
+        for line in f:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) == 3 and parts[1] == "#verdict":
+                rc, paths = out.get(parts[0], (None, []))
+                out[parts[0]] = (int(parts[2]), paths)
+            elif len(parts) == 2:
+                rc, paths = out.get(parts[0], (None, []))
+                paths.append(parts[1])
+                out[parts[0]] = (rc, paths)
+    return out
+
+
+FLIP_NAME_RE = re.compile(r"^flip_\d+\.bmp$")
+
+
+def prune_frames(d, keep, dry_run=False):
+    """Remove the flip dumps in run frames dir d that `keep` does not name;
+    plain frame dumps and every other file stay. (removed, bytes, kept)."""
+    real = os.path.realpath(d)
+    kept_names = {os.path.basename(p) for p in keep if os.path.realpath(os.path.dirname(p)) == real}
+    removed = size = kept = 0
+    for n in sorted(os.listdir(d)):
+        p = os.path.join(d, n)
+        if not FLIP_NAME_RE.match(n) or os.path.islink(p) or not os.path.isfile(p):
+            continue
+        if n in kept_names:
+            kept += 1
+            continue
+        size += os.path.getsize(p)
+        removed += 1
+        if dry_run:
+            print("would remove " + p)
+        else:
+            os.remove(p)
+    return removed, size, kept
+
+
+def cmd_prune(args):
+    """prune [--dry-run] [check options] SCEN=DIR...: check each scenario
+    quietly and, when its verdict is a pass, remove the flip dumps the
+    check did not read (the plain dumps, the verdict images and the
+    window's best stay). For runs made by hand; bench golden prunes its
+    own runs itself."""
+    import tempfile
+
+    dry = "--dry-run" in args
+    args = [a for a in args if a != "--dry-run"]
+    fd, tmp = tempfile.mkstemp(prefix="golden-used-")
+    os.close(fd)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            cmd_check(args + ["--used", tmp])
+        res = read_used(tmp)
+    finally:
+        os.remove(tmp)
+    dirs = parse_scen_args([a for a in args if "=" in a and not a.startswith("-")])
+    for scen, (rc, paths) in res.items():
+        if rc != 0:
+            print(f"golden: {scen}: verdict {rc}, nothing pruned (only a pass is)")
+            continue
+        n, size, kept = prune_frames(dirs[scen], paths, dry)
+        print(
+            "golden: %s: %s %d flip dumps (%.1f MB), kept %d"
+            % (scen, "would prune" if dry else "pruned", n, size / 1e6, kept)
+        )
+    return 0
+
+
+def check_scenario(scen, d, sc, g, th, window, logs, allow, rcs, keep):
+    """One scenario of check: print its frames' verdicts, append their rcs,
+    and add the images they read to keep."""
+    log = run_log(d, logs, scen)
+    batches = flip_batches(log) if log else None
+    times = flip_times(log) if log else None
+    backend = run_backend(log) if log else None
+    nonstock = enhance_nonstock(log, allow) if log else None
+    if nonstock:
+        print(
+            f"FAIL     {scen}: not a stock run ({nonstock} in {log}); goldens run"
+            " at the stock resolution, aspect, pacing and frame rate, frames"
+            " not compared"
+        )
+        rcs.append(1)
+        return
+    for kv in enhance_allowed(log, allow):
+        print(
+            f"NOTE     {scen}: evaluation run with {kv} (--allow-enhance);"
+            " not a stock run, never recorded"
+        )
+    for fr in sc["frames"]:
+        tag = f"{scen}/{fr['name']} (dump {fr['dump']}, present {fr['dump'] * 60 + 1})"
+        skip = fr.get("skip_backends", sc.get("skip_backends", []))
+        if backend in skip:
+            print(
+                f"SKIP     {tag}: not checked on the {backend} backend "
+                f"({fr.get('skip_why', sc.get('skip_why', 'see golden.json'))})"
             )
-            name = f" vs {label}" if multi else ""
-            if s is None:
-                img = imgs[have[label]]
-                print(f"FAIL     {tag}{name}: size {img[0]}x{img[1]} differs from the reference")
-                rcs.append(1)
-                continue
-            rc, why = (0 if ok else 1), ""
-            if ok:
-                head = "CLOSE   "
-                if mismatch:
-                    notes.append(f"{mismatch}, but within limits")
-            elif not mismatch:
-                head = "FAIL    "
-            elif min(r[1]["bad_fraction"] for r in results if r[1] is not None) >= floor:
-                # Off at every reference by this much: a wrong screen, which
-                # no flip rate explains.
-                head, why = "FAIL    ", f"wrong screen at any pace ({mismatch}): "
-            else:
-                # Wall-time content (the title's cloud movie) sits elsewhere
-                # at another flip rate: not a verdict on the rendering.
-                head, rc = "INCOMPLETE", 2
-                why = f"{mismatch}; outside limits, not judged: "
-            print(f"{head} {tag}{name}: {why}{fmt(s)} {lims}")
+            continue
+        targets = frame_targets(d, fr, sc, batches)
+        refs = frame_refs(fr)
+        multi = len(refs) > 1 or refs[0][0] is not None
+        notes = sorted({n for _, n in targets.values() if n})
+        if any(p is None for p, _ in targets.values()):
+            print(f"INCOMPLETE {tag}: the anchored flip is not checkable in this run")
             for n in notes:
                 print("         " + n)
-            if multi and not ok:
-                for o in results:
-                    if o[3] != label and o[1] is not None:
-                        print(f"         vs {o[3]}: {fmt(o[1])}")
-            if s.get("presence"):
-                print("         presence: " + s["presence"])
-            if tv:
+            rcs.append(2)
+            continue
+        have = {lab: p for lab, (p, _) in targets.items() if os.path.exists(p)}
+        if not have:
+            p = targets[refs[0][0]][0]
+            print(f"MISSING  {tag}: {p} not dumped (run too short or crashed?)")
+            for n in notes:
+                print("         " + n)
+            rcs.append(2)
+            continue
+        imgs = {p: read_image(p) for p in set(have.values())}
+        keep.extend(sorted(imgs))
+        mismatch, pnotes = pace_report(fr, sc, th, batches, times)
+        notes += pnotes
+        hit = [r for r in refs if r[0] in have and pixel_sha(imgs[have[r[0]]]) == r[1]]
+        if hit:
+            print(f"EXACT    {tag}" + (f" = {hit[0][0]}" if multi else ""))
+            for n in notes:
+                print("         " + n)
+            continue
+        floor = pace_fail_bad(fr, sc, th)
+        if "split" in fr:
+            if not mismatch:
+                rcs.append(check_split(tag, fr, th, refs, have, imgs))
+                for n in notes:
+                    print("         " + n)
+                continue
+            # Pace mismatch: the split verdict stands when it passes
+            # (CLOSE) or is already INCOMPLETE (NEWVIEW); a FAIL is
+            # INCOMPLETE unless the frame is a wrong screen at any pace.
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = check_split(tag, fr, th, refs, have, imgs)
+            raw = raw_compares(refs, have, imgs, fr, th)
+            if rc == 1:
+                gross = bool(raw) and min(st["bad_fraction"] for _, st in raw) >= floor
+                rc = 1 if gross else 2
                 print(
-                    "         tile %d,%d: %.1f%% of its pixels off (limit %.0f%%)"
-                    % (tv[0], tv[1], 100 * tv[2], 100 * tv[3])
-                )
-            else:
-                # The printed tile limit is the frame's; say so when a region
-                # set the worst tile's limit, or a pass looks like a bug.
-                wl, wr = tile_limit(*s["worst_tile_at"], tile_lim, fr.get("regions", []))
-                if wr is not None and s["worst_tile"] > tile_lim:
-                    print(
-                        "         worst tile is in region %s: limit %.0f%% there"
-                        % (",".join(map(str, wr["rect"])), 100 * wl)
+                    (
+                        f"FAIL     {tag}: wrong screen at any pace ({mismatch}): "
+                        f"every reference off by {100 * floor:.0f}%+ of pixels"
                     )
-            ref = [r for r in refs if r[0] == label][0]
-            best = window_report(d, have[label], ref, fr, th, window)
-            if best is not None:
-                print(
-                    "         window +-%d: best flip offset %+d: %s%s"
-                    % (window, best[0], fmt(best[2]), "" if best[1] else " (outside limits)")
+                    if gross
+                    else f"INCOMPLETE {tag}: {mismatch}; the split compare failed, not judged"
                 )
-            if rc:
-                rcs.append(rc)
-    return verdict(rcs)
+                for line in buf.getvalue().splitlines():
+                    print("         for information: " + line.strip())
+            else:
+                sys.stdout.write(buf.getvalue())
+                if rc == 0:
+                    print(f"         {mismatch}, but within limits")
+            for n in notes:
+                print("         " + n)
+            for lab, st in raw:
+                print("         for information, whole frame vs %s: %s" % (lab, fmt(st)))
+            rcs.append(rc)
+            continue
+        tol = fr.get("pixel_tol", th["pixel_tol"])
+        mae_lim = fr.get("max_channel_mae", th["max_channel_mae"])
+        bad_lim = fr.get("max_bad_fraction", th["max_bad_fraction"])
+        tile_lim = fr.get("max_tile_bad_fraction", th["max_tile_bad_fraction"])
+        lims = f"(limits mae {mae_lim}, bad {100 * bad_lim:.2f}%, tile {100 * tile_lim:.0f}% at tol {tol})"
+        # One result per reference with a PNG and an image: (ok, s, tv, label).
+        results, absent = [], []
+        for ref in refs:
+            if not os.path.exists(ref[2]):
+                absent.append(ref)
+                continue
+            if ref[0] not in have:
+                continue
+            ok, s, tv = compare(imgs[have[ref[0]]], ref[2], fr, th)
+            results.append((ok, s, tv, ref[0]))
+        for ref in absent:
+            sha = pixel_sha(next(iter(imgs.values())))
+            print(
+                f"{'WARNING ' if results else 'FAIL    '} {tag}: no reference PNG at {ref[2]} "
+                f"(got {sha[:16]}, want {ref[1][:16]})"
+            )
+            print("         " + missing_ref_hint(fr, ref))
+        if not results:
+            rcs.append(1)
+            continue
+        # Report the passing reference, else the closest one.
+        ok, s, tv, label = max(
+            results,
+            key=lambda r: (r[0], r[1] is not None, -(r[1]["bad_fraction"] if r[1] else 1)),
+        )
+        name = f" vs {label}" if multi else ""
+        if s is None:
+            img = imgs[have[label]]
+            print(f"FAIL     {tag}{name}: size {img[0]}x{img[1]} differs from the reference")
+            rcs.append(1)
+            continue
+        rc, why = (0 if ok else 1), ""
+        if ok:
+            head = "CLOSE   "
+            if mismatch:
+                notes.append(f"{mismatch}, but within limits")
+        elif not mismatch:
+            head = "FAIL    "
+        elif min(r[1]["bad_fraction"] for r in results if r[1] is not None) >= floor:
+            # Off at every reference by this much: a wrong screen, which
+            # no flip rate explains.
+            head, why = "FAIL    ", f"wrong screen at any pace ({mismatch}): "
+        else:
+            # Wall-time content (the title's cloud movie) sits elsewhere
+            # at another flip rate: not a verdict on the rendering.
+            head, rc = "INCOMPLETE", 2
+            why = f"{mismatch}; outside limits, not judged: "
+        print(f"{head} {tag}{name}: {why}{fmt(s)} {lims}")
+        for n in notes:
+            print("         " + n)
+        if multi and not ok:
+            for o in results:
+                if o[3] != label and o[1] is not None:
+                    print(f"         vs {o[3]}: {fmt(o[1])}")
+        if s.get("presence"):
+            print("         presence: " + s["presence"])
+        if tv:
+            print(
+                "         tile %d,%d: %.1f%% of its pixels off (limit %.0f%%)"
+                % (tv[0], tv[1], 100 * tv[2], 100 * tv[3])
+            )
+        else:
+            # The printed tile limit is the frame's; say so when a region
+            # set the worst tile's limit, or a pass looks like a bug.
+            wl, wr = tile_limit(*s["worst_tile_at"], tile_lim, fr.get("regions", []))
+            if wr is not None and s["worst_tile"] > tile_lim:
+                print(
+                    "         worst tile is in region %s: limit %.0f%% there"
+                    % (",".join(map(str, wr["rect"])), 100 * wl)
+                )
+        ref = [r for r in refs if r[0] == label][0]
+        best = window_report(d, have[label], ref, fr, th, window)
+        if best is not None:
+            keep.append(best[3])
+            print(
+                "         window +-%d: best flip offset %+d: %s%s"
+                % (window, best[0], fmt(best[2]), "" if best[1] else " (outside limits)")
+            )
+        if rc:
+            rcs.append(rc)
 
 
 def verdict(rcs):
@@ -1745,7 +1856,7 @@ def main(argv=None):
         print(__doc__)
         return 2
     cmd, args = argv[0], argv[1:]
-    if cmd in ("dumpat", "check"):
+    if cmd in ("dumpat", "check", "prune"):
         warn_running_game()
     return {
         "check": cmd_check,
@@ -1758,6 +1869,7 @@ def main(argv=None):
         "dumpat": cmd_dumpat,
         "anchors": cmd_anchors,
         "pulls": cmd_pulls,
+        "prune": cmd_prune,
     }.get(cmd, lambda a: (print(__doc__), 2)[1])(args)
 
 

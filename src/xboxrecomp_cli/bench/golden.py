@@ -7,11 +7,13 @@ busy host (the compare is printed but proves nothing)."""
 
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 
 from .checks import check_present_mismatch, check_run_end
-from .remote import BenchError
+from .remote import BenchError, quote_words
 from .sync import rsync
 
 
@@ -92,6 +94,45 @@ def golden_py(b, *args, stdout=None, capture=False):
     return subprocess.run(argv, stdout=stdout).returncode, ""
 
 
+STAMP_RE = re.compile(r"^\d{8}-\d{6}$")
+
+
+def keep_frames(cfg):
+    return (cfg.get("BENCH_KEEP_FRAMES") or "0") == "1"
+
+
+def prune(b, runs, used_file):
+    """After a check: for each scenario that passed (EXACT or CLOSE), whose
+    run ended cleanly and presented only the walker's surfaces, keep only
+    the images the check read (every frame's plain dump, the verdict
+    images, the window's best) and remove the run's frames/ on the host.
+    Anything short of a pass keeps every frame, here and there: a NEWVIEW's
+    are what `golden reference` records the new view from."""
+    from ..golden import prune_frames, read_used
+
+    if keep_frames(b.cfg):
+        b.say("golden: frames kept (BENCH_KEEP_FRAMES=1 or --keep-frames)")
+        return
+    try:
+        res = read_used(used_file)
+    except OSError:
+        return
+    stamps = []
+    for scen, (stamp, frames, clean) in runs.items():
+        rc, paths = res.get(scen, (None, []))
+        if rc != 0 or not clean:
+            continue
+        n, size, kept = prune_frames(frames, paths)
+        b.say("golden: %s: pruned %d flip dumps (%.1f MB), kept %d" % (scen, n, size / 1e6, kept))
+        if STAMP_RE.match(stamp):
+            stamps.append(stamp)
+    if stamps:
+        with b.no_errexit():
+            rc = b.r.remote(b.r.ship("prune_frames.sh", "STAMPS=(%s)\n" % quote_words(stamps)))[0]
+        if rc != 0:
+            b.say("golden: the host's frames/ were not all removed (exit %d)" % rc)
+
+
 def cmd_golden(b, args, bench_env=None):
     b.need_host()
     mode, force = "check", False
@@ -118,6 +159,9 @@ def cmd_golden(b, args, bench_env=None):
         trc = 1 if b.cmd_tests([]) != 0 else 0
     prc = erc = inc = grc = 0
     dirs = []
+    # Per scenario: (stamp, frames dir, whether its run ended cleanly and
+    # presented only the walker's surfaces), for the prune after the check.
+    runs = {}
     rows = plan.rstrip("\n").split("\n")
     for row in rows:
         scen, secs, minf, env = (row.split("\t", 3) + ["", "", "", ""])[:4]
@@ -145,7 +189,8 @@ def cmd_golden(b, args, bench_env=None):
             inc = 1
         elif e != 0:
             erc = 1
-        if check_present_mismatch(os.path.join(log, "game-stdio.log"), out=b.say) != 0:
+        pm = check_present_mismatch(os.path.join(log, "game-stdio.log"), out=b.say)
+        if pm != 0:
             prc = 1
         os.makedirs(os.path.join(log, "frames"), exist_ok=True)
         _, idxs = golden_py(b, "frames", scen, capture=True)
@@ -184,6 +229,7 @@ def cmd_golden(b, args, bench_env=None):
                 "needed them)" % scen
             )
         dirs.append("%s=%s" % (scen, os.path.join(log, "frames")))
+        runs[scen] = (stamp, os.path.join(log, "frames"), e == 0 and pm == 0)
     b.step("golden: %s" % mode)
     if mode == "record" and not force and (prc or erc or inc or trc):
         b.say(
@@ -191,8 +237,16 @@ def cmd_golden(b, args, bench_env=None):
             "slow or presented surfaces the walker did not draw (--force to record anyway)"
         )
         return 1
-    if golden_py(b, mode, *dirs)[0] != 0:
-        grc = 1
+    fd, used = tempfile.mkstemp(prefix="golden-used-")
+    os.close(fd)
+    try:
+        extra = ["--used", used] if mode == "check" else []
+        if golden_py(b, mode, *(extra + dirs))[0] != 0:
+            grc = 1
+        if mode == "check" and not trc:
+            prune(b, runs, used)
+    finally:
+        os.remove(used)
     if erc:
         b.say("golden: FAIL: a run crashed or ended early (see end: above)")
     if prc:
