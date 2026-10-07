@@ -25,6 +25,9 @@ class ManifestError(Exception):
 # table -> key -> (type, default). A default that is a function of the
 # manifest is filled after the plain ones (derived()).
 STR, INT, BOOL, STRS = "string", "integer", "boolean", "list of strings"
+# A table of string keys to string values, held as one key (not a table of
+# the schema): golden.enhance_stock.
+STRMAP = "table of strings"
 DERIVED = object()
 SPEC = {
     "": {"schema": (INT, REQUIRED)},
@@ -96,6 +99,7 @@ SPEC = {
         "json": (STR, ""),
         "frames": (STR, DERIVED),
         "audio": (STR, ""),
+        "enhance_stock": (STRMAP, {}),
     },
     "package": {
         "app": (STR, REQUIRED),
@@ -116,6 +120,13 @@ SPEC = {
         "sync_excludes": (STRS, []),
         "crash_tag": (STR, "[CRASH]"),
     },
+    # bench gc: the docs that name runs, past the ones every game keeps.
+    "bench.gc": {
+        "refs": (STRS, []),
+        "refs_exclude": (STRS, []),
+        "keep": (INT, 3),
+        "days": (INT, 7),
+    },
 }
 # Optional tables: a game without them still sets up, generates, builds and
 # benches (package says the manifest has no [package]).
@@ -126,6 +137,9 @@ BUILD_TARGETS = ("windows", "macos")
 CLI_TOOLCHAIN = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "cmake", "llvm-mingw-x86_64.cmake"
 )
+# The toolkit's own enhancement keys, which the golden check holds built in
+# (xboxrecomp_cli.golden.ENHANCE_STOCK); a game's table adds its own.
+TOOLKIT_ENHANCE_KEYS = ("render.scale", "display.aspect", "present.pacing")
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # The bootstrap reads [cli] with a line parser, and the help without uv
 # reads [game] name the same way: plain one-line strings there.
@@ -143,6 +157,10 @@ def _type_ok(kind, v):
         return isinstance(v, int) and not isinstance(v, bool)
     if kind == BOOL:
         return isinstance(v, bool)
+    if kind == STRMAP:
+        return isinstance(v, dict) and all(
+            isinstance(k, str) and isinstance(x, str) for k, x in v.items()
+        )
     return isinstance(v, list) and all(isinstance(x, str) for x in v)
 
 
@@ -162,6 +180,8 @@ def validate(doc):
     def walk(t, prefix):
         for k, v in t.items():
             name = prefix + k
+            if isinstance(v, dict) and SPEC.get(prefix[:-1], {}).get(k, (None,))[0] == STRMAP:
+                continue
             if isinstance(v, dict):
                 if name not in SPEC:
                     errors.append("%s: unknown table" % name)
@@ -182,15 +202,21 @@ def validate(doc):
             dst = dst.setdefault(part, {})
         for k, (kind, default) in keys.items():
             name = (tname + "." if tname else "") + k
-            if k in t and not isinstance(t[k], dict):
+            if k in t and (kind == STRMAP or not isinstance(t[k], dict)):
                 if not _type_ok(kind, t[k]):
                     errors.append("%s: must be a %s" % (name, kind))
                     continue
-                dst[k] = list(t[k]) if kind == STRS else t[k]
+                dst[k] = list(t[k]) if kind == STRS else dict(t[k]) if kind == STRMAP else t[k]
             elif default is REQUIRED:
                 errors.append("%s: required" % name)
             elif default is not DERIVED:
-                dst[k] = list(default) if isinstance(default, list) else default
+                dst[k] = (
+                    list(default)
+                    if isinstance(default, list)
+                    else dict(default)
+                    if isinstance(default, dict)
+                    else default
+                )
     if errors:
         raise ManifestError("; ".join(errors))
     if out["schema"] != SCHEMA:
@@ -251,6 +277,21 @@ def _check_values(m):
         for c in m["package"]["dylib_companions"]:
             if "=" not in c:
                 errors.append("package.dylib_companions: %r is not NAME=brew:FORMULA" % c)
+    for k in m["golden"]["enhance_stock"]:
+        if k in TOOLKIT_ENHANCE_KEYS:
+            errors.append(
+                "golden.enhance_stock: %r is a toolkit key, which the golden check knows already" % k
+            )
+    gc = m["bench"]["gc"]
+    for k in ("keep", "days"):
+        if gc[k] < 0:
+            errors.append("bench.gc.%s: must not be negative" % k)
+    for k in ("refs", "refs_exclude"):
+        for path in gc[k]:
+            # These may leave the game root on purpose (a workspace's notes
+            # beside it), but stay relative so every worktree resolves them.
+            if os.path.isabs(path) or path.startswith("~") or "\\" in path:
+                errors.append("bench.gc.%s: %r must be relative to the game root, with /" % (k, path))
     if m["pipeline"]["split"] <= 0:
         errors.append("pipeline.split: must be positive")
     for s in m["xbe"]["sha256"]:

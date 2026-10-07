@@ -52,7 +52,8 @@ def test_minimal_defaults():
     assert m["build"]["stock_cmake"] == ["-DXBOXRECOMP_ENHANCE=ON"]
     assert m["data"]["dir_env"] == "SOME_GAME_DATA_DIR"
     assert m["data"]["steamos"] == "~/Games/some-game"
-    assert m["golden"] == {"json": "", "frames": "", "audio": ""}
+    assert m["golden"] == {"json": "", "frames": "", "audio": "", "enhance_stock": {}}
+    assert m["bench"]["gc"] == {"refs": [], "refs_exclude": [], "keep": 3, "days": 7}
     assert m["bench"]["main_branch"] == "main" and m["bench"]["toolkit_tests"] is True
     assert "package" not in m  # optional: package says so when asked
 
@@ -90,11 +91,39 @@ def test_package_defaults():
             "package.app: 'Some_Recomp' names the same file as build.exe",
         ),
         (lambda t: t + '[xbe.extra]\nx = "y"\n', "xbe.extra: unknown table"),
+        (
+            lambda t: t + '[golden]\nenhance_stock = { "render.scale" = "1" }\n',
+            "golden.enhance_stock: 'render.scale' is a toolkit key",
+        ),
+        (
+            lambda t: t + '[golden]\nenhance_stock = { "fx.glow" = 1 }\n',
+            "golden.enhance_stock: must be a table of strings",
+        ),
+        (lambda t: t + '[bench.gc]\nkeep = "3"\n', "bench.gc.keep: must be a integer"),
+        (lambda t: t + '[bench.gc]\nrefs = ["/abs"]\n', "bench.gc.refs: '/abs' must be relative"),
+        (lambda t: t + '[bench.gc]\nother = 1\n', "bench.gc.other: unknown key"),
     ],
 )
 def test_errors_name_the_key(edit, key):
     with pytest.raises(manifest.ManifestError, match=key.replace("(", r"\(")):
         parse(edit(MINIMAL))
+
+
+def test_game_tables():
+    """enhance_stock is one key holding a table; bench.gc's refs may leave
+    the game root (the workspace's notes beside it), unlike other paths."""
+    m = parse(
+        MINIMAL
+        + '[golden]\nenhance_stock = { "fps.mode" = "lock30", "fx.glow" = "on" }\n'
+        + '[bench.gc]\nrefs = ["timeline", "../notes"]\nrefs_exclude = ["../notes/x/*"]\ndays = 3\n'
+    )
+    assert m["golden"]["enhance_stock"] == {"fps.mode": "lock30", "fx.glow": "on"}
+    assert m["bench"]["gc"] == {
+        "refs": ["timeline", "../notes"],
+        "refs_exclude": ["../notes/x/*"],
+        "keep": 3,
+        "days": 3,
+    }
 
 
 def test_path_with_a_space(d):

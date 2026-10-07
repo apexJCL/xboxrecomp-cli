@@ -128,6 +128,7 @@ BLiNX 2's manifest is the full example
 | `json` | `""` | The golden scenarios. Empty means no golden, pacing or `golden` command. |
 | `frames` | `<json dir>/frames` | The reference frames, which are game output: keep them out of git. |
 | `audio` | `""` | The audio thresholds. |
+| `enhance_stock` | `{}` | The game's own enhancement keys and their stock values, e.g. `{ "fps.mode" = "lock30", "fx.glow" = "on" }`. The golden check fails a run whose `[ENHANCE]` line shows another value for one of them (`--allow-enhance KEY=VALUE` lets an evaluation run through), as it does for the toolkit's `render.scale`, `display.aspect` and `present.pacing`, which it knows already and which may not be repeated here. Values that both read as numbers compare as numbers (`1` is `1.0`). |
 
 ## [package]
 
@@ -190,6 +191,17 @@ under `package.content`).
 | `pacing_scenario` | `""` | `pacing`'s default scenario. Empty uses the first in golden.json. |
 | `sync_excludes` | `[]` | More rsync excludes for `sync`, after the ones every game has: the game's own local output (rsync does not read `.gitignore`). |
 | `crash_tag` | `"[CRASH]"` | The start of the line the game's crash handler prints. `run`, `golden` and `symbolize` fail or symbolize a run whose `game-stdio.log` has a line starting with it. Symbolizing reads BLiNX 2's report format (`RIP=`, `[i] 0x...` frames); another format's report keeps its tagged lines only. |
+
+## [bench.gc]
+
+What `bench gc` reads to decide which bench runs are still named somewhere. Every game's `golden.json`, `audio.json`, `TASKS.md`, `OPEN_QUESTIONS.md`, `RESUME*.md` and `openspec/` are read anyway, in every worktree of the game's repository.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `refs` | `[]` | More files or directories whose `.md`, `.json` and `.txt` files name runs, relative to the game root. Unlike every other path here, these may leave the root with `../` (a workspace's notes beside it). In the main checkout each one must exist, or gc refuses to run. |
+| `refs_exclude` | `[]` | Glob patterns, relative to the game root, of files under `refs` not to read: inventories that list every run (a cleanup log), which would protect them all. |
+| `keep` | `3` | The newest runs kept per scenario and kind (golden, pacing, plain). |
+| `days` | `7` | Runs younger than this many days are kept. |
 
 Host settings are not part of the manifest: `BENCH_HOST`, `BENCH_DIR` and
 the rest come from the environment or the game's `scripts/bench.env`
