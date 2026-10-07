@@ -229,7 +229,14 @@ def stage_payload(target, a, lib):
     else:
         host.step("build %s (%s)" % (btarget, os.path.basename(bdir)))
         exe = build_mod.build(
-            btarget, icon_args, a.system_tools, bdir=bdir, stock=True, reconfigure=a.reconfigure
+            btarget,
+            icon_args,
+            a.system_tools,
+            bdir=bdir,
+            stock=True,
+            reconfigure=a.reconfigure,
+            # Its plan has regenerated a stale gen/ already, or refused.
+            stale_ok=True,
         )
     if not os.listdir(G.gen):
         raise CliError("%s/ is empty: run '%s recomp'" % (G.rel(G.gen), host.prog()))

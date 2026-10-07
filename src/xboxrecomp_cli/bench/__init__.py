@@ -69,6 +69,8 @@ Commands:
             integration checkout (@GAME_NAME@ @MAIN_BRANCH@@TOOLKIT_BRANCH@), clean trees only
             --golden  then run golden once
             --dirty   allow uncommitted changes in either tree
+            --stale-gen-ok  sync even when gen/ is stale against its key
+                      (run analyze and recomp instead)
   doctor    check the bench without changing anything: ssh, rsync, the
             host's umu-run and distrobox, the run lock's holder, the host's
             bench-provenance.txt
@@ -359,12 +361,14 @@ class Bench:
     # integrate
     def cmd_integrate(self, args):
         self.need_host()
-        golden = dirty = False
+        golden = dirty = stale_ok = False
         for a in args:
             if a == "--golden":
                 golden = True
             elif a == "--dirty":
                 dirty = True
+            elif a == "--stale-gen-ok":
+                stale_ok = True
             else:
                 raise BenchError("integrate: unknown option %s" % a)
         c = self.cfg
@@ -403,6 +407,17 @@ class Bench:
                 "integrate: no %s here (run %s recomp first)"
                 % (c.game.m["pipeline"]["gen"], c.game.slug)
             )
+        # Before a byte moves: a gen/ from before a toolkit or recomp_manual.c
+        # change syncs, builds for minutes and fails at link (a wrapped
+        # function's old gen/ defines it twice).
+        if not stale_ok:
+            why = gen_stale_reasons(c)
+            if why:
+                raise BenchError(
+                    "integrate: %s/ is stale: %s; run '%s analyze && %s recomp' "
+                    "(--stale-gen-ok to integrate anyway)"
+                    % (c.game.m["pipeline"]["gen"], ", ".join(why), c.game.slug, c.game.slug)
+                )
         self.ok(cmd_sync(self, []))
         self.step("integrate: gen/ check")
         lg = checks.gen_digest_local(gen)
@@ -459,6 +474,25 @@ class Bench:
         rc, out = self.r.remote(self.r.prologue() + host_text("doctor.sh"), capture=True)
         self.say(out, end="")
         return 0 if ok and rc == 0 else 1
+
+
+def gen_stale_reasons(cfg):
+    """pipeline.gen_stale_reasons() for the tree and toolkit the bench
+    drives (BENCH_GAME_DIR, XBOXRECOMP_DIR), which need not be the CLI's
+    current ones."""
+    from .. import manifest, pipeline
+
+    saved, saved_tk = manifest.current(), os.environ.get("XBOXRECOMP_DIR")
+    manifest.use(cfg.game)
+    os.environ["XBOXRECOMP_DIR"] = cfg.toolkit
+    try:
+        return pipeline.gen_stale_reasons()
+    finally:
+        manifest.use(saved)
+        if saved_tk is None:
+            os.environ.pop("XBOXRECOMP_DIR", None)
+        else:
+            os.environ["XBOXRECOMP_DIR"] = saved_tk
 
 
 def rsync_escapes_args(version_text):

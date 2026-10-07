@@ -803,7 +803,7 @@ def test_packaging_build_dir(d, monkeypatch):
         monkeypatch.setattr(host, "run", run)
         bdir = build.pkg_build_dir("macos")
         for _ in range(2):
-            exe = build.build("macos", (), False, bdir=bdir, stock=True)
+            exe = build.build("macos", (), False, bdir=bdir, stock=True, stale_ok=True)
         assert exe == os.path.join(root, "build-pkg-macos", "cat_recomp")
         monkeypatch.undo()
     configures = [c for c in calls if c[1] == "-S"]
@@ -818,6 +818,69 @@ def test_packaging_build_dir(d, monkeypatch):
     )
     with open(dev_cache) as f:
         assert f.read() == "XBOXRECOMP_ENHANCE:BOOL=OFF\n"
+
+
+def _git(repo, *args):
+    import subprocess
+
+    subprocess.run(
+        ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],
+        check=True,
+        capture_output=True,
+        env=dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1"),
+    )
+
+
+def test_gen_key_toolkit_trees(d):
+    """The key's toolkit field follows tools/ and templates/runtime/ only: a
+    runtime-only toolkit commit leaves gen/ fresh, a lifter or template
+    commit (or an edit under either) stales it."""
+    with fake_tree(d) as (root, tk):
+        for rel in ("tools/recomp/a.py", "templates/runtime/recomp_types.h", "src/k.c"):
+            write(os.path.join(tk, rel), "1\n")
+        _git(tk, "init", "-q")
+        _git(tk, "add", "-A")
+        _git(tk, "commit", "-q", "-m", "a")
+        state = toolkit.toolkit_state()
+        assert "+" in state and "-dirty" not in state
+        pipeline.write_gen_key()
+        assert pipeline.gen_stale_reasons() == []
+        write(os.path.join(tk, "src", "k.c"), "2\n")
+        _git(tk, "commit", "-q", "-am", "runtime only")
+        assert pipeline.gen_stale_reasons() == []
+        for rel in ("tools/recomp/a.py", "templates/runtime/recomp_types.h"):
+            write(os.path.join(tk, rel), "edit\n")
+            assert pipeline.gen_stale_reasons() == ["toolkit changed"], rel  # uncommitted
+            _git(tk, "commit", "-q", "-am", rel)
+            assert pipeline.gen_stale_reasons() == ["toolkit changed"], rel
+            pipeline.write_gen_key()
+        write(os.path.join(tk, "templates", "runtime", "new.h"), "x\n")  # untracked
+        assert pipeline.gen_stale_reasons() == ["toolkit changed"]
+
+
+def test_gen_key_version_1_is_stale(d):
+    with fake_tree(d):
+        pipeline.write_gen_key()
+        with open(host.g().gen_key) as f:
+            rec = json.load(f)
+        rec["version"] = 1
+        with open(host.g().gen_key, "w") as f:
+            json.dump(rec, f)
+        assert pipeline.gen_stale_reasons() == ["key format changed"]
+
+
+def test_build_refuses_stale_gen(d, monkeypatch):
+    with fake_tree(d) as (root, tk):
+        write(os.path.join(tk, "CMakeLists.txt"), "")
+        msg = raises(build.build, "macos", match="src/recomp/gen/ is stale: no key")
+        assert "analyze && " in msg and "--stale-gen-ok" in msg
+        ran = []
+        monkeypatch.setattr(build, "build_tools", lambda s, o=None: ("CMAKE", None))
+        monkeypatch.setattr(host, "run", lambda cmd, **kw: ran.append(cmd))
+        raises(build.build, "macos", (), False, None, False, False, True, match="is missing")
+        assert ran  # it got as far as cmake
+        a = main.make_parser()[0].parse_args(["build", "--stale-gen-ok"])
+        assert a.stale_gen_ok
 
 
 def test_stock_refusal_text():

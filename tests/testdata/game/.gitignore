@@ -12,6 +12,8 @@ analysis/golden/*
 !analysis/golden/audio.json
 analysis/golden/audio/
 src/recomp/gen/
+src/recomp/.gen-regenerating
+src/recomp/gen.key.json
 .venv-ghidra
 build-*/
 third_party

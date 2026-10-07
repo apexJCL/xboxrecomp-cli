@@ -431,7 +431,9 @@ def analyze():
 # arguments; recomp writes the key on success. A developer who reruns a
 # stage with other arguments has therefore always invalidated it.
 
-GEN_KEY_VERSION = 1
+# 2: the toolkit field holds the tree ids of tools/ and templates/runtime/,
+# not the toolkit's HEAD.
+GEN_KEY_VERSION = 2
 
 
 def _load_json(path, default):
@@ -550,6 +552,17 @@ def gen_stale_reasons():
         elif rec.get(k) != v:
             why.append(GEN_KEY_FIELD_NAMES.get(k, k))
     return why
+
+
+def refuse_stale_gen(override):
+    """Raise when gen/ is stale against its key, naming why and the
+    regenerate; `override` names the flag that builds anyway."""
+    why = gen_stale_reasons()
+    if why:
+        raise CliError(
+            "%s/ is stale: %s; run '%s analyze && %s recomp' (%s to build anyway)"
+            % (g().rel(g().gen), ", ".join(why), host.prog(), host.prog(), override)
+        )
 
 
 def stages():

@@ -122,7 +122,10 @@ def scratch(d, game=GAME, name="cat"):
     # as bench.sh had none; test_golden_refuses_unknown_dump covers it.
     if game != GAME:
         with open(os.path.join(cat, ".gitignore"), "w") as f:
-            f.write("/scripts/bench.env\n/src/game/recomp/gen/\n/bench-logs/\n")
+            f.write(
+                "/scripts/bench.env\n/src/game/recomp/gen/\n/src/game/recomp/gen.key.json\n"
+                "/bench-logs/\n"
+            )
     toml = os.path.join(cat, "game.toml")
     with open(toml) as f:
         text = re.sub(r"(?ms)^sha256 = \[.*?\]", "sha256 = []", f.read(), count=1)
@@ -172,6 +175,7 @@ def scratch_rest(d, cat, tk, bindir, gen):
     git(tk, "add", "-A")
     git(tk, "commit", "-qm", "tk")
     HEADS.append(head(tk))
+    write_fresh_gen_key(cat, tk)
     os.makedirs(bindir)
     for name, body in (("ssh", FAKE_SSH), ("rsync", FAKE_RSYNC)):
         p = os.path.join(bindir, name)
@@ -179,6 +183,24 @@ def scratch_rest(d, cat, tk, bindir, gen):
             f.write(body)
         os.chmod(p, 0o755)
     return cat, tk, bindir, package_lib.gen_digest(gen)[0]
+
+
+def write_fresh_gen_key(cat, tk):
+    """A gen key for the scratch gen/, so integrate finds it fresh (as
+    bench.sh never checked one)."""
+    from xboxrecomp_cli import manifest, pipeline
+
+    saved, saved_tk = manifest.current(), os.environ.get("XBOXRECOMP_DIR")
+    os.environ["XBOXRECOMP_DIR"] = tk
+    manifest.use(manifest.load(cat))
+    try:
+        pipeline.write_gen_key()
+    finally:
+        manifest.use(saved)
+        if saved_tk is None:
+            os.environ.pop("XBOXRECOMP_DIR", None)
+        else:
+            os.environ["XBOXRECOMP_DIR"] = saved_tk
 
 
 def run_side(d, side, argv, extra_env=None):
@@ -545,6 +567,28 @@ def test_parity_refusals(d):
     a, _ = assert_parity(d, ["golden", "--bogus"])
     assert a[0] == 1, a
     a, _ = assert_parity(d, ["build"], {"BENCH_HOST": ""})
+
+
+@with_tree
+def test_integrate_refuses_stale_gen(d):
+    """A gen/ stale against its key stops integrate before any host call
+    (the 2026-10-07 integrate shipped an old gen/ and failed at link);
+    --stale-gen-ok goes on as before."""
+    cat = d["tree"][0]
+    key = os.path.join(cat, "src", "recomp", "gen.key.json")
+    with open(key) as f:
+        rec = json.load(f)
+    rec["toolkit"] = "older"
+    with open(key, "w") as f:
+        json.dump(rec, f)
+    d["n"] += 1
+    rc, out, err, calls = run_side(d, "py", ["integrate"])
+    assert rc == 1 and not calls, (rc, calls)
+    assert "src/recomp/gen/ is stale: toolkit changed" in err, err
+    assert "blinx2 analyze && blinx2 recomp" in err and "--stale-gen-ok" in err, err
+    d["n"] += 1
+    rc, out, err, calls = run_side(d, "py", ["integrate", "--stale-gen-ok"])
+    assert rc == 0 and calls, (rc, err)
 
 
 @with_game2_tree

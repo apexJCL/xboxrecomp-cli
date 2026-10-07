@@ -51,9 +51,17 @@ def tool_python(env=None):
     )
 
 
+# What gen/ is made from and written against: the lifter (tools/) and the
+# runtime header templates its output includes (recomp_types.h and its
+# macros). A toolkit commit that touches neither leaves gen/ fresh.
+GEN_PATHS = ("tools", "templates/runtime")
+
+
 def toolkit_state():
-    """The toolkit commit, plus a hash of uncommitted and untracked changes
-    under tools/ (runtime-only toolkit edits do not stale gen/)."""
+    """The tree ids of tools/ and templates/runtime/ at the toolkit's HEAD
+    (`-` for a path the checkout lacks), plus a hash of uncommitted and
+    untracked changes under both: runtime-only toolkit commits and edits do
+    not stale gen/."""
     tk = toolkit_dir()
 
     def git(*args):
@@ -62,10 +70,13 @@ def toolkit_state():
         )
         return r.stdout if r.returncode == 0 else b""
 
-    head = git("rev-parse", "HEAD").decode().strip() or "unknown"
-    h = hashlib.sha256(git("diff", "HEAD", "--", "tools"))
+    if not git("rev-parse", "HEAD").strip():
+        return "unknown"
+    ids = [git("rev-parse", "HEAD:" + p).decode().strip() or "-" for p in GEN_PATHS]
+    head = "+".join(ids)
+    h = hashlib.sha256(git("diff", "HEAD", "--", *GEN_PATHS))
     for rel in sorted(
-        git("ls-files", "--others", "--exclude-standard", "--", "tools").decode().splitlines()
+        git("ls-files", "--others", "--exclude-standard", "--", *GEN_PATHS).decode().splitlines()
     ):
         p = os.path.join(tk, rel)
         if os.path.isfile(p):

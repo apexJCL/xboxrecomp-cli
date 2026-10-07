@@ -7,7 +7,7 @@ import re
 import shutil
 import sys
 
-from . import fetch, host, toolkit
+from . import fetch, host, pipeline, toolkit
 from .host import CliError
 
 
@@ -116,14 +116,26 @@ def reset_stale_toolchain(bdir, toolchain=None):
     return True
 
 
-def build(target, cmake_args=(), system_tools=False, bdir=None, stock=False, reconfigure=False):
+def build(
+    target,
+    cmake_args=(),
+    system_tools=False,
+    bdir=None,
+    stock=False,
+    reconfigure=False,
+    stale_ok=False,
+):
     """Configure once (the generator is fixed by the first configure; an
     existing tree keeps its own), then build incrementally. stock (package's
     own tree): configure on every run with the stock args; reconfigure
-    starts that tree's cache afresh."""
+    starts that tree's cache afresh. A gen/ stale against its key is refused
+    unless stale_ok: it compiles, then fails at link or misbehaves (a
+    wrapped function's gen/ from before the wrap links twice)."""
     g = host.g()
     check_build_target(target)
     host.require(os.path.join(g.gen, "recomp_funcs.h"), "recomp")
+    if not stale_ok:
+        pipeline.refuse_stale_gen("--stale-gen-ok")
     host.refuse_while_regenerating()
     cmake, ninja = build_tools(system_tools)
     env = host.build_env()

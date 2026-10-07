@@ -52,6 +52,11 @@ def _cfg_build(p):
         action="store_true",
         help="use the host's cmake and ninja instead of the venv's",
     )
+    p.add_argument(
+        "--stale-gen-ok",
+        action="store_true",
+        help="build even when gen/ is stale against its key (analyze and recomp to fix)",
+    )
     p.set_defaults(passthrough="extra CMake arguments")
 
 
@@ -67,7 +72,7 @@ def cmd_build(a):
     target = a.target or build_mod.default_build_target()
     args = [x for x in a.extra if x != "--"]
     host.step("build %s" % target)
-    host.say("built %s" % build_mod.build(target, args, a.system_tools))
+    host.say("built %s" % build_mod.build(target, args, a.system_tools, stale_ok=a.stale_gen_ok))
 
 
 def _stage_cmd(fn):
