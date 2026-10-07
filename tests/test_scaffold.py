@@ -10,6 +10,7 @@ change shows up here before a developer meets it.
 import contextlib
 import io
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -17,7 +18,19 @@ import sys
 import pytest
 from test_xbe import header
 
-from xboxrecomp_cli import cli_dir, doctor, env, fetch, host, main, manifest, scaffold, wrapper
+from xboxrecomp_cli import (
+    cli_dir,
+    doctor,
+    env,
+    fetch,
+    host,
+    main,
+    manifest,
+    pins,
+    scaffold,
+    toolkit,
+    wrapper,
+)
 from xboxrecomp_cli.host import CliError
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -25,7 +38,7 @@ CLI = "1" * 40
 TK = "2" * 40
 
 # The marks the template carries, as the toolkit's templates/new-game has
-# them at posix-host/portability cb43f7b.
+# them on 2026-10-07 (test_real_template_patches_match reads the real one).
 FAKE_CMAKE = """\
 cmake_minimum_required(VERSION 3.20)
 # YOUR_GAME_NAME - Static Recompilation
@@ -33,7 +46,8 @@ project(your_game_recomp C)
 add_executable(${PROJECT_NAME} WIN32 src/main.c src/recomp_manual.c)
 """
 FAKE_MAIN = """\
-/* XBE Details:
+/* YOUR_GAME_NAME - Recompiled Game Entry Point
+ *   Title:       YOUR_GAME_NAME
  *   Title ID:    0x00000000
  *   Entry point: 0x00000000
  */
@@ -41,7 +55,7 @@ FAKE_MAIN = """\
 #define YOUR_GAME_XBE_PATH      "game\\\\Your Game Title\\\\default.xbe"
 #define YOUR_GAME_DIR            "game\\\\Your Game Title"
 extern void xbe_entry_point(void);
-int main(void) { recomp_dispatch_init(); xbe_entry_point(); return 0; }
+int main(void) { puts("=== YOUR_GAME_NAME ==="); recomp_dispatch_init(); xbe_entry_point(); return 0; }
 """
 FAKE_MANUAL = "/* overrides */\n"
 
@@ -119,6 +133,7 @@ def test_offline_scaffold_loads_and_names_what_is_left(d, tk, game):
     assert '#define YOUR_GAME_DIR            "game_files"' in c
     assert "#define YOUR_GAME_ENTRY_POINT   0x00000000" in c  # no XBE: left at 0
     assert "extern int recomp_dispatch_init(void);" in c
+    assert "YOUR_GAME_NAME" not in c and c.count("my-game") == 3  # every occurrence
     assert read(os.path.join(root, "src", "recomp_manual.c")) == FAKE_MANUAL
     # Offline: the toolkit beside is used, the pins and the lock are named.
     assert "setup' clones" not in out
@@ -136,7 +151,7 @@ def test_the_xbe_fills_the_constants_and_is_not_copied(d, tk, game):
     rc, out, _ = new(root, "--offline", "--xbe", dump, "--cli-commit", CLI, "--toolkit-commit", TK)
     assert rc == 0
     G = manifest.load(root)
-    assert G.name == "Title: 'The' Game" and G.m["xbe"]["title_id"] == 0x4B4C0001
+    assert G.name == "Title:  The  Game" and G.m["xbe"]["title_id"] == 0x4B4C0001
     assert G.m["pipeline"]["game_name"] == G.name
     c = read(os.path.join(root, "src", "main.c"))
     assert "#define YOUR_GAME_ENTRY_POINT   0x00123456" in c
@@ -342,6 +357,9 @@ def test_real_template_patches_match(d, game, monkeypatch):
     assert "(the template changed)" not in out, out
     c = read(os.path.join(root, "src", "main.c"))
     assert c.count("recomp_dispatch_init(void)") == 1
+    assert "YOUR_GAME_NAME" not in c and "YOUR_GAME_NAME" not in read(
+        os.path.join(root, "CMakeLists.txt")
+    )
     for p in (os.path.join(root, "CMakeLists.txt"), os.path.join(root, "src", "recomp_manual.c")):
         assert os.path.getsize(p) > 0
 
@@ -371,3 +389,66 @@ def test_missing_dump_is_said_plainly(d, tk, game):
     assert new(root, "--offline", "--cli-commit", CLI, "--toolkit-commit", TK)[0] == 0
     with pytest.raises(CliError, match="put your dump .* in game_files/"):
         pipeline.require_dump()
+
+
+def test_title_is_made_a_plain_toml_string(d, tk, game):
+    """A certificate title with a backslash, a quote or a control character
+    would be an invalid basic string for the bootstrap's line parser: it is
+    cleaned, and the manifest is validated before anything is written."""
+    for title, want in (("a\\b", "a b"), ('Say "Hi"\x01', "Say  Hi"), ("\\\\", "g")):
+        root = os.path.join(d, "g")
+        dump = os.path.join(d, "default.xbe")
+        with open(dump, "wb") as f:
+            f.write(header(title=title))
+        rc, _, err = new(
+            root, "--offline", "--xbe", dump, "--cli-commit", CLI, "--toolkit-commit", TK
+        )
+        assert rc == 0, err
+        assert manifest.load(root).name == want, title
+        shutil.rmtree(root)
+    assert scaffold.clean_name("", "slug") == "slug"
+
+
+def test_ds_store_does_not_make_the_dir_full(d, tk, game):
+    root = os.path.join(d, "g")
+    os.makedirs(os.path.join(root, "game_files"))
+    write(os.path.join(root, ".DS_Store"), "")
+    assert new(root, "--offline", "--cli-commit", CLI, "--toolkit-commit", TK)[0] == 0
+
+
+def test_tree_state_ignores_an_enclosing_repository(monkeypatch):
+    """Under uvx the package runs from uv's cache; a $HOME that is a git
+    repository must not lend its HEAD to the CLI (the scaffold would pin a
+    commit the CLI's remote never had)."""
+    d = cli_dir.cli_dir()
+    monkeypatch.setattr(host, "git_head", lambda path: "b" * 40)
+    monkeypatch.setattr(cli_dir, "toplevel", lambda path: os.path.dirname(os.path.dirname(path)))
+    assert cli_dir.tree_state() == ("", 0)
+    assert cli_dir.doctor_line().endswith("(not a git checkout)")
+    monkeypatch.setattr(cli_dir, "toplevel", lambda path: path)
+    assert cli_dir.tree_state()[0] == "b" * 40
+    assert cli_dir.is_checkout(d) == (cli_dir.toplevel(d) == d)
+
+
+def test_online_failures_become_later_steps(d, tk, game, monkeypatch):
+    monkeypatch.setenv("XBOXRECOMP_DIR", os.path.join(d, "none"))
+    monkeypatch.setattr(
+        toolkit, "clone_toolkit", lambda: (_ for _ in ()).throw(CliError("no network"))
+    )
+    monkeypatch.setattr(pins, "pins_refresh", lambda: (_ for _ in ()).throw(CliError("no uv")))
+    rc, out, _ = new(os.path.join(d, "g"), "--cli-commit", CLI, "--toolkit-commit", TK)
+    assert rc == 0
+    assert "./g setup' clones the toolkit (no network)" in out
+    assert "./g pins refresh' writes config/setup-pins.json and uv.lock (no uv)" in out
+
+
+def test_toolkit_checkout_on_another_branch_is_said(d, monkeypatch):
+    t = os.path.join(d, "xboxrecomp")
+    os.makedirs(os.path.join(t, "tools"))
+    g = ["git", "-C", t, "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run(g + ["init", "-q", "-b", "other"], check=True)
+    subprocess.run(g + ["commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    monkeypatch.setenv("XBOXRECOMP_DIR", t)
+    sha, how = scaffold.resolve_toolkit_commit(d, "u", "wanted", offline=True)
+    assert len(sha) == 40 and how == t + " (not on wanted)"
+    assert scaffold.resolve_toolkit_commit(d, "u", "other", offline=True)[1] == t

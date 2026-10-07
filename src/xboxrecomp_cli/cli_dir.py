@@ -12,9 +12,30 @@ def cli_dir():
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def toplevel(d):
+    """The root of the repository d is in, or ''."""
+    r = subprocess.run(
+        ["git", "-C", d, "rev-parse", "--show-toplevel"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    return r.stdout.decode(errors="replace").strip() if r.returncode == 0 else ""
+
+
+def is_checkout(d):
+    """d is the root of a repository: its own, not an enclosing one. Under
+    uvx the package runs from uv's cache, and a $HOME that is a git
+    repository (dotfiles) would otherwise lend its HEAD to the CLI."""
+    top = toplevel(d)
+    return bool(top) and os.path.realpath(top) == os.path.realpath(d)
+
+
 def tree_state():
-    """(commit, dirty path count) of the CLI checkout, ('', 0) outside git."""
+    """(commit, dirty path count) of the CLI checkout, ('', 0) outside git
+    or inside someone else's repository."""
     d = cli_dir()
+    if not is_checkout(d):
+        return "", 0
     head = host.git_head(d)
     if not head:
         return "", 0
@@ -30,7 +51,7 @@ def doctor_line():
     "not the pin" instead: nothing moves it."""
     d = cli_dir()
     pin = host.g().m["cli"]["commit"]
-    head = host.git_head(d)
+    head = host.git_head(d) if is_checkout(d) else ""
     if not head:
         return "cli:        %s (not a git checkout)" % d
     note = toolkit.pin_note(d, pin)

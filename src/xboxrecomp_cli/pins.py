@@ -13,6 +13,9 @@ import urllib.request
 from . import env, fetch, host
 from .host import CliError
 
+# This CLI's public repository and the branch a game pins a commit of:
+# `pins refresh` reports its head, `new` writes it into [cli].
+CLI_URL = "https://github.com/apexJCL/xboxrecomp-cli.git"
 CLI_BRANCH = "main"
 
 # The umu-launcher release a steamos bundle's installer may download for a

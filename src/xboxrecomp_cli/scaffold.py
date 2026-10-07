@@ -22,13 +22,13 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 from importlib import metadata
 
 from . import cli_dir, host, manifest, pins, toolkit, wrapper, xbe
 from .host import CliError
 
-CLI_URL = "https://github.com/apexJCL/xboxrecomp-cli.git"
 # The toolkit every game the CLI builds pins: the fork's integration branch.
 TOOLKIT_URL = "https://github.com/apexJCL/xboxrecomp.git"
 TOOLKIT_BRANCH = "blinx2/portability"
@@ -193,6 +193,8 @@ scripts/bench.env
 *.wav
 *.bmp
 *.png
+# Screenshots of your own build for the README are the one exception.
+!docs/images/*.png
 *.ico
 *.icns
 *.ppm
@@ -271,7 +273,10 @@ the CLI's `docs/manifest.md`.
 """
 
 # What `new` patches in the toolkit's template: (file, old, new, what to do
-# by hand if the template changed). Each must match exactly once.
+# by hand if the template changed, every occurrence?). A patch for one
+# place must match exactly once; one marked for every occurrence (the
+# game's name, which the template prints and comments) needs at least one.
+ALL = True
 TEMPLATE_PATCHES = (
     (
         "CMakeLists.txt",
@@ -279,12 +284,8 @@ TEMPLATE_PATCHES = (
         "project(@EXE@ C)",
         "set project() to @EXE@ (the exe name game.toml builds)",
     ),
-    (
-        "CMakeLists.txt",
-        "# YOUR_GAME_NAME - Static Recompilation",
-        "# @NAME@ - Static Recompilation",
-        "",
-    ),
+    ("CMakeLists.txt", "YOUR_GAME_NAME", "@NAME@", "", ALL),
+    (os.path.join("src", "main.c"), "YOUR_GAME_NAME", "@NAME@", "", ALL),
     (
         os.path.join("src", "main.c"),
         "#define YOUR_GAME_ENTRY_POINT   0x00000000",
@@ -370,10 +371,19 @@ def resolve_cli_commit(override="", offline=False):
     if c:
         return c, "the installed distribution"
     if not offline:
-        c = pins.remote_head(CLI_URL, pins.CLI_BRANCH)
+        c = pins.remote_head(pins.CLI_URL, pins.CLI_BRANCH)
         if c:
-            return c, "%s %s" % (CLI_URL, pins.CLI_BRANCH)
+            return c, "%s %s" % (pins.CLI_URL, pins.CLI_BRANCH)
     return ZERO, "unresolved: fill in [cli] commit"
+
+
+def git_branch(d):
+    r = subprocess.run(
+        ["git", "-C", d, "rev-parse", "--abbrev-ref", "HEAD"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    return r.stdout.decode(errors="replace").strip() if r.returncode == 0 else ""
 
 
 def toolkit_checkout(root, environ=None):
@@ -392,7 +402,8 @@ def resolve_toolkit_commit(root, url, branch, override="", offline=False):
         return override, "--toolkit-commit"
     d = toolkit_checkout(root)
     if d and host.git_head(d):
-        return host.git_head(d), d
+        on = git_branch(d)
+        return host.git_head(d), d + ("" if on in (branch, "") else " (not on %s)" % branch)
     if not offline:
         c = pins.remote_head(url, branch)
         if c:
@@ -401,6 +412,13 @@ def resolve_toolkit_commit(root, url, branch, override="", offline=False):
 
 
 # ── the scaffold ─────────────────────────────────────────────────────────
+
+
+def clean_name(title, slug):
+    """A certificate title as a TOML basic string the bootstrap's line
+    parser reads: no backslash, quote or control character (LINE_KEYS
+    forbids escapes), else the slug."""
+    return re.sub(r'[\\\x00-\x1f\x7f"]', " ", title).strip() or slug
 
 
 def slug_from(path):
@@ -435,7 +453,7 @@ def check_dir(root):
     if os.path.exists(root):
         if not os.path.isdir(root):
             raise CliError("%s exists and is not a directory" % root)
-        if set(os.listdir(root)) - {"game_files"}:
+        if set(os.listdir(root)) - {"game_files", ".DS_Store"}:
             raise CliError(
                 "%s is not empty; new writes into an empty or absent directory "
                 "(game_files/ with your dump may already be there)" % root
@@ -458,11 +476,11 @@ def patch_template(src, dst, values):
             continue
         with open(s, encoding="utf-8", newline="") as f:
             text = f.read()
-        for file, old, new, hint in TEMPLATE_PATCHES:
+        for file, old, new, hint, *every in TEMPLATE_PATCHES:
             if file != rel:
                 continue
             n = text.count(old)
-            if n == 1:
+            if n == 1 or (every and n):
                 text = text.replace(old, fill(new, values))
             elif hint:
                 notes.append("%s: %s (the template changed)" % (rel, fill(hint, values)))
@@ -483,14 +501,14 @@ def scaffold(root, a):
     check_dir(root)
     xbe_path = a.xbe or os.path.join(root, "game_files", "default.xbe")
     h, xbe_note = xbe_values(xbe_path)
-    name = a.name or h.get("title") or slug
+    name = clean_name(a.name or h.get("title") or "", slug)
     cli_commit, cli_how = resolve_cli_commit(a.cli_commit, a.offline)
     tk_commit, tk_how = resolve_toolkit_commit(
         root, a.toolkit_url, a.toolkit_branch, a.toolkit_commit, a.offline
     )
     exe = slug.replace("-", "_") + "_recomp"
     v = {
-        "NAME": name.replace('"', "'"),
+        "NAME": name,
         "SLUG": slug,
         "EXE": exe,
         "APP": re.sub(r"[^A-Za-z0-9]", "", name.title()) or slug,
@@ -498,7 +516,7 @@ def scaffold(root, a):
         "TITLE_ID_HEX": "%08X" % h.get("title_id", 0),
         "ENTRY": "%08X" % h.get("entry", 0),
         "CLI_COMMIT": cli_commit,
-        "CLI_URL": CLI_URL,
+        "CLI_URL": pins.CLI_URL,
         "TOOLKIT_URL": a.toolkit_url,
         "TOOLKIT_BRANCH": a.toolkit_branch,
         "TOOLKIT_COMMIT": tk_commit,
@@ -517,8 +535,12 @@ def scaffold(root, a):
     def j(*p):
         return os.path.join(root, *p)
 
-    write(j("game.toml"), fill(GAME_TOML, v))
-    G = manifest.use(manifest.load(root))  # validates what was just written
+    # Validated before the first write: a manifest the CLI would refuse
+    # must not be left on disk for the retry to find "not empty".
+    text = fill(GAME_TOML, v)
+    manifest.parse_text(text, "game.toml")
+    write(j("game.toml"), text)
+    G = manifest.use(manifest.load(root))
     write(j(slug + ".py"), wrapper.template_text())
     write(j(slug), fill(SH_WRAPPER, v), executable=True)
     write(j(slug + ".cmd"), fill(CMD_WRAPPER, v), crlf=True)

@@ -10,7 +10,8 @@ first game that runs on it, Burnout 3 the second.
 
 **Your dump, your machines.** You supply the dump of a game you own. Nothing
 the CLI fetches is game data (the toolkit at a pinned commit, llvm-mingw and
-NSIS by sha256, Python wheels hashed in `uv.lock`), nothing it writes to a
+NSIS by sha256, Python wheels hashed in `uv.lock`, and a CPython from uv's
+own hashed downloads when the host has no 3.12), nothing it writes to a
 public place contains any, and a bundle, which has your dump inside, is for
 your own machines only. Enhancement assets (upscaled textures, fonts) are
 made locally from your dump and never distributed.
@@ -35,7 +36,7 @@ deep. Run `git config --global core.longpaths true`; `doctor` warns when the
 path is long or `LongPathsEnabled` is off. Defender scans every generated
 file, so an exclusion for the checkout folder speeds the build up (the CLI
 never adds one). The commands below read `mygame` instead of `./mygame`
-(the `mygame.cmd` wrapper), or `py -3 mygame.py`. Building on a Windows host
+(the `mygame.cmd` wrapper; `.\mygame` in PowerShell), or `py -3 mygame.py`. Building on a Windows host
 is supported and not yet verified on a real machine; macOS and Linux are.
 
 ## Quickstart: a new game in five steps
@@ -69,8 +70,9 @@ On a Mac it is the file you carry to one of those. "macOS as a target"
 below says what the macOS build needs.
 
 To read before running: the uvx line installs the CLI's `main` into uv's
-cache and runs it; `@<sha>` after the repository pins a commit
-(`…/xboxrecomp-cli@023c77e xbr new mygame`). The no-pipe way is the clone:
+cache and runs it; `@<sha>` after the repository pins a commit of `main`
+(`…/xboxrecomp-cli@<sha> xbr new mygame`; any commit that has `new`). The
+no-pipe way is the clone:
 
 ```sh
 git clone https://github.com/apexJCL/xboxrecomp-cli.git
