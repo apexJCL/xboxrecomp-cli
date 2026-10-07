@@ -97,7 +97,9 @@ and the loop is short:
    `recomp` alone misses new seeds. Never edit `src/recomp/gen/` by hand;
    it is regenerated, and `src/recomp/gen.key.json` records what from (the
    XBE, the toolkit's tools, the seed files, the exact stage commands), so
-   `package` knows when it is stale.
+   `package` knows when it is stale and `build` refuses it. Seeds marked
+   `"observed"` also reach `recomp` (`--seeds`), so its flag-fallback report
+   lists the sites inside them.
 3. **Override what the lifter got wrong** in `src/recomp_manual.c`:
    `recomp_lookup_manual()` runs before the generated dispatch, so a
    function can be wrapped, stubbed or replaced by a native one.
@@ -153,19 +155,20 @@ target and a run host for nothing, unless you port the host code.
 | `./mygame analyze` | parse, disasm, funcid, abi, and `names` when a Ghidra export exists |
 | `./mygame recomp` | lift x86 to C into `pipeline.gen` |
 | `./mygame all` | analyze, recomp, then build for this host's default target |
-| `./mygame build [windows\|macos]` | configure once, then compile incrementally; `--system-tools` uses the host's cmake and ninja |
+| `./mygame build [windows\|macos]` | configure once, then compile incrementally; refuses a stale `gen/` (`--stale-gen-ok` builds anyway); `--system-tools` uses the host's cmake and ninja |
 | `./mygame parse\|disasm\|funcid\|abi\|ghidra\|names` | one stage, with extra arguments passed to the tool |
 | `./mygame pins refresh` | maintainers: re-pin the downloads and the lock, print the newest heads |
 | `./mygame new DIR` | start another game |
 | `./mygame bench <command>` | the Proton bench host (below) |
 | `./mygame golden`, `pacing-stats`, `benchlog-retention`, `audio-check` | the developer tools, each with the game's paths from `game.toml` |
 
+`golden check` fails a run whose `[ENHANCE]` line shows a non-stock value
+for a toolkit key or one of the game's own (`golden.enhance_stock` in
+`game.toml`); `golden prune SCEN=DIR` drops the flip dumps a passing check
+did not read, for runs made by hand.
+
 `wrapper --check` compares the game's bootstrap with the CLI's template and
 `wrapper --print` prints the template, for when a game moves its CLI pin.
-
-Coming on the housekeeping branch: `bench gc` and golden pruning,
-`recomp --seeds`, the `enhance_stock` keys moving into `game.toml`, and a
-refusal in `build` and `integrate` when `gen/` is stale.
 
 ### How a game finds the CLI
 
@@ -199,6 +202,14 @@ the commands (`sync`, `build`, `run`, `golden`, `integrate`, `pacing`,
 `symbolize`, …) and `[bench]` in `docs/manifest.md` the per-game keys. A
 game with no `golden.json` can still `bench build` and `bench run`.
 
+`bench golden` keeps, for a scenario that passes, only the frames its check
+read (`--keep-frames` or `BENCH_KEEP_FRAMES=1` keeps them all).
+`bench gc` lists the runs in `bench-logs/` that nothing names any more
+(not in `golden.json`, `TASKS.md`, `RESUME*.md`, `openspec/` or
+`[bench.gc] refs`, in any worktree; not another game's, not young, not
+among the newest per scenario) with their sizes, and removes them with
+`--apply`; `--host` does the same for the host's store.
+
 ## Troubleshooting
 
 - **`no uv 0.5.31+ on PATH`**: install it (the table above) and open a new
@@ -226,6 +237,12 @@ game with no `golden.json` can still `bench build` and `bench run`.
 - **`title ID 0x... is not ...`**: the dump in `game_files/` is another
   game, or `xbe.title_id` is still `0` from a scaffold made without the
   dump.
+- **`gen/ is stale: ...`** (from `build` or `bench integrate`): the toolkit's
+  lifter, a seed file or `recomp_manual.c` changed since `recomp`; run
+  `./mygame analyze && ./mygame recomp`. `--stale-gen-ok` builds anyway.
+- **`gc: reference sources missing`**: a path in `[bench.gc] refs` (or
+  `TASKS.md`, `openspec/`, `golden.json`) is missing in the main checkout;
+  gc will not guess from a partial set. Fix the path or the key.
 - **`gen/ is being regenerated`**: the last `recomp` failed or is still
   running; run it again.
 - **Windows: a path error deep in the build**: the checkout path is long;
