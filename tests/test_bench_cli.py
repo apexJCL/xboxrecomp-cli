@@ -72,6 +72,8 @@ f="$FAKE_REC/$(printf %04d "$n")-ssh"
 printf '%s\0' "$@" > "$f.argv"
 cat > "$f.stdin"
 if grep -q 'sha256sum -- \*' "$f.stdin"; then echo "$FAKE_GEN_DIGEST"; fi
+# tests_key.sh: the host's parts of the tests key, when a case sets them.
+if grep -q '^# tests_key:' "$f.stdin"; then printf '%b' "${FAKE_TESTS_KEY:-}"; fi
 # A call whose argv or script matches FAKE_EXIT_RE exits FAKE_EXIT_RC: the
 # host failing, or its lock timing out (75), at that step.
 if [ -n "${FAKE_EXIT_RE:-}" ] && { tr '\0' ' ' < "$f.argv"; cat "$f.stdin"; } | grep -qE -- "$FAKE_EXIT_RE"; then
@@ -542,6 +544,82 @@ def test_parity_golden_record(d):
     assert a[0] == 1 and "not recording" in a[1], a[1][-500:]
     a, _ = assert_parity(d, ["golden", "--record", "--force"])
     assert "recorded with --force" in a[1], a[1][-500:]
+
+
+HOST_KEY = (
+    "toolkit: aa\\ntoolchain: bb\\ncmake: cc\\nproton: 1789520217 GE-Proton11-7\\nprefix: none\\n"
+)
+
+
+def side(d, argv, env=None):
+    """The CLI's bench alone (no record), as a case's next call."""
+    d["n"] += 1
+    return run_side(d, "py", argv, env)
+
+
+def golden_steps(out):
+    """The scenarios a golden ran, in order."""
+    return re.findall(r"^== golden: (\w+) \(", out, re.M)
+
+
+@with_tree
+def test_golden_skips_unchanged_tests(d):
+    env = {"FAKE_TESTS_KEY": HOST_KEY}
+    rc, out, err, _ = side(d, ["golden"], env)
+    assert "tests: pass" in out and "tests: skipped" not in out, out
+    rc, out, err, calls = side(d, ["golden"], env)
+    assert "tests: skipped: toolkit, CLI and Proton unchanged since the pass at" in out, out
+    assert not any(c[2] and "ctest" in c[2] for c in calls)
+    # --tests runs them; integrate passes it on.
+    rc, out, err, _ = side(d, ["golden", "--tests"], env)
+    assert "tests: pass" in out and "tests: skipped" not in out, out
+    rc, out, err, _ = side(d, ["integrate", "--golden", "--tests"], env)
+    assert "tests: pass" in out, out
+    # A part changed: the tests run again.
+    env2 = {"FAKE_TESTS_KEY": HOST_KEY.replace("GE-Proton11-7", "GE-Proton11-8")}
+    rc, out, err, _ = side(d, ["golden"], env2)
+    assert "tests: pass" in out and "tests: skipped" not in out, out
+    # No Proton version (unknown): never skipped.
+    env3 = {"FAKE_TESTS_KEY": HOST_KEY.replace("1789520217 GE-Proton11-7", "unknown")}
+    for _ in range(2):
+        rc, out, err, _ = side(d, ["golden"], env3)
+        assert "tests: pass" in out and "tests: skipped" not in out, out
+
+
+@with_tree
+def test_golden_only_and_kept_verdicts(d):
+    cat = d["tree"][0]
+    rc, out, err, _ = side(d, ["golden", "--only", "story"])
+    assert golden_steps(out) == ["story"], out
+    rc, out, err, _ = side(d, ["golden", "--only=stage1,attract"])
+    assert golden_steps(out) == ["attract", "stage1"], out
+    assert "golden: verdicts: attract FAIL-RUN, stage1 FAIL-RUN" in out, out
+    # Each run dir keeps its checks and verdict; the session file a line a pass.
+    logs = os.path.join(cat, "bench-logs")
+    texts = [
+        open(os.path.join(logs, n, "golden.txt")).read()
+        for n in sorted(os.listdir(logs))
+        if os.path.isfile(os.path.join(logs, n, "golden.txt"))
+    ]
+    # (The fake host's runs share a second, so their stamps, and dirs, may.)
+    assert texts, logs
+    assert texts[-1].startswith("end: FAIL") and texts[-1].endswith("verdict: stage1 FAIL-RUN\n")
+    assert "INCOMPLETE stage1/stage1-stick" in texts[-1], texts[-1]
+    sessions = open(os.path.join(logs, "golden-sessions.tsv")).read().splitlines()
+    assert len(sessions) == 2, sessions
+    f = sessions[1].split("\t")
+    assert f[1:3] == ["golden", "tests=pass"] and f[-1] == "rc=1", f
+    assert re.match(r"attract=\d{8}-\d{6}:FAIL-RUN$", f[3]) and f[4].startswith("stage1="), f
+    # A name not in golden.json stops before anything runs; integrate checks
+    # it before the sync.
+    rc, out, err, calls = side(d, ["golden", "--only", "stroy"])
+    assert rc == 1 and "--only: no scenario stroy" in err and not golden_steps(out), err
+    rc, out, err, calls = side(d, ["integrate", "--golden", "--only", "stroy"])
+    assert rc == 1 and "--only: no scenario stroy" in err and not calls, (err, calls)
+    rc, out, err, calls = side(d, ["integrate", "--only", "story"])
+    assert rc == 1 and "needs --golden" in err and not calls, err
+    rc, out, err, calls = side(d, ["golden", "--only"])
+    assert rc == 1 and "--only takes" in err, err
 
 
 @with_tree

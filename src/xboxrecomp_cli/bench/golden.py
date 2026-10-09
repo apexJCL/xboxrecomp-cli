@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 
 from .checks import check_present_mismatch, check_run_end
 from .remote import BenchError, quote_words
@@ -101,21 +102,18 @@ def keep_frames(cfg):
     return (cfg.get("BENCH_KEEP_FRAMES") or "0") == "1"
 
 
-def prune(b, runs, used_file):
+def prune(b, runs, res):
     """After a check: for each scenario that passed (EXACT or CLOSE), whose
     run ended cleanly and presented only the walker's surfaces, keep only
     the images the check read (every frame's plain dump, the verdict
     images, the window's best) and remove the run's frames/ on the host.
     Anything short of a pass keeps every frame, here and there: a NEWVIEW's
-    are what `golden reference` records the new view from."""
-    from ..golden import prune_frames, read_used
+    are what `golden reference` records the new view from. res: read_used()'s
+    {scen: (rc, paths)}."""
+    from ..golden import prune_frames
 
     if keep_frames(b.cfg):
         b.say("golden: frames kept (BENCH_KEEP_FRAMES=1 or --keep-frames)")
-        return
-    try:
-        res = read_used(used_file)
-    except OSError:
         return
     stamps = []
     for scen, (stamp, frames, clean) in runs.items():
@@ -133,16 +131,91 @@ def prune(b, runs, used_file):
             b.say("golden: the host's frames/ were not all removed (exit %d)" % rc)
 
 
-def cmd_golden(b, args, bench_env=None):
-    b.need_host()
-    mode, force = "check", False
-    for a in args:
+def parse_args(args):
+    """(mode, force, tests, only) from bench golden's arguments; only is
+    None (every scenario) or a list of names."""
+    mode, force, tests, only = "check", False, False, None
+    it = iter(args)
+    for a in it:
         if a == "--record":
             mode = "record"
         elif a == "--force":
             force = True
+        elif a == "--tests":
+            tests = True
+        elif a == "--only" or a.startswith("--only="):
+            v = a[len("--only=") :] if "=" in a else next(it, "")
+            names = [x for x in v.split(",") if x]
+            if not names:
+                raise BenchError("golden: --only takes SCEN[,SCEN]")
+            only = (only or []) + names
         else:
             raise BenchError("golden: unknown option %s" % a)
+    return mode, force, tests, only
+
+
+def select_rows(plan, only):
+    """golden plan's rows, only the named scenarios (in plan order) when
+    only is given; an unknown name is an error."""
+    rows = [r for r in plan.rstrip("\n").split("\n") if r]
+    if only is None:
+        return rows
+    names = [r.split("\t", 1)[0] for r in rows]
+    bad = [x for x in only if x not in names]
+    if bad:
+        raise BenchError(
+            "golden: --only: no scenario %s (golden.json has %s)"
+            % (", ".join(bad), ", ".join(names))
+        )
+    return [r for r in rows if r.split("\t", 1)[0] in only]
+
+
+def verdict_word(end_rc, present_rc, compare_rc):
+    """One word for a scenario, the hardest failure first: FAIL-RUN (crash
+    or early end), FAIL-PRESENT, REGRESSION, INCOMPLETE, INCONCLUSIVE (slow
+    on a busy host), pass."""
+    if end_rc not in (0, 3):
+        return "FAIL-RUN"
+    if present_rc:
+        return "FAIL-PRESENT"
+    if compare_rc == 1:
+        return "REGRESSION"
+    if compare_rc:
+        return "INCOMPLETE"
+    if end_rc == 3:
+        return "INCONCLUSIVE"
+    return "pass"
+
+
+SESSIONS = "golden-sessions.tsv"
+
+
+def session_line(kind, tests, words, rc, now=None):
+    """A line of bench-logs/golden-sessions.tsv: time, kind (golden or
+    integrate), tests (pass, skip, FAIL, off), scen=stamp:WORD per scenario,
+    exit code. What a flake count reads."""
+    t = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
+    return (
+        "\t".join(
+            [t, kind, "tests=" + tests]
+            + ["%s=%s:%s" % (scen, stamp, w) for scen, (stamp, w) in words.items()]
+            + ["rc=%d" % rc]
+        )
+        + "\n"
+    )
+
+
+def write_text(path, text):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    except OSError as e:
+        print("golden: warning: %s not written (%s)" % (path, e), file=sys.stderr)
+
+
+def cmd_golden(b, args, bench_env=None, kind="golden"):
+    b.need_host()
+    mode, force, force_tests, only = parse_args(args)
     check_dump(b.cfg.game)
     check_presets(b.cfg.game)
     if bench_env is None:
@@ -150,19 +223,21 @@ def cmd_golden(b, args, bench_env=None):
     rc, plan = golden_py(b, "plan", capture=True)
     if rc != 0:
         raise BenchError("golden: no plan")
+    rows = select_rows(plan, only)
     # Missing reference PNGs (gitignored: they are game frames) are named
     # now, not after the runs: a check without them can only FAIL, so it
     # stops here; --record makes them, so there it only warns.
     if golden_py(b, "refs")[0] != 0 and mode != "record":
         raise BenchError("golden: reference PNGs missing (see above)")
     with b.no_errexit():
-        trc = 1 if b.cmd_tests([]) != 0 else 0
+        trc, tests = b.tests_or_skip(force_tests)
+        trc = 1 if trc != 0 else 0
     prc = erc = inc = grc = 0
     dirs = []
     # Per scenario: (stamp, frames dir, whether its run ended cleanly and
-    # presented only the walker's surfaces), for the prune after the check.
-    runs = {}
-    rows = plan.rstrip("\n").split("\n")
+    # presented only the walker's surfaces), for the prune after the check;
+    # and its run checks' lines and rcs, for its golden.txt.
+    runs, notes = {}, {}
     for row in rows:
         scen, secs, minf, env = (row.split("\t", 3) + ["", "", "", ""])[:4]
         b.step("golden: %s (%ss)" % (scen, secs))
@@ -184,12 +259,18 @@ def cmd_golden(b, args, bench_env=None):
         log = os.path.join(b.cfg.game_dir, "bench-logs", stamp)
         if minf == "0":
             minf = ""
-        e = check_run_end(log, minf, out=b.say, crash_tag=b.cfg.game.m["bench"]["crash_tag"])
+        lines = []
+
+        def out(msg, lines=lines):
+            b.say(msg)
+            lines.append(msg)
+
+        e = check_run_end(log, minf, out=out, crash_tag=b.cfg.game.m["bench"]["crash_tag"])
         if e == 3:
             inc = 1
         elif e != 0:
             erc = 1
-        pm = check_present_mismatch(os.path.join(log, "game-stdio.log"), out=b.say)
+        pm = check_present_mismatch(os.path.join(log, "game-stdio.log"), out=out)
         if pm != 0:
             prc = 1
         os.makedirs(os.path.join(log, "frames"), exist_ok=True)
@@ -230,6 +311,7 @@ def cmd_golden(b, args, bench_env=None):
             )
         dirs.append("%s=%s" % (scen, os.path.join(log, "frames")))
         runs[scen] = (stamp, os.path.join(log, "frames"), e == 0 and pm == 0)
+        notes[scen] = (log, lines, e, pm)
     b.step("golden: %s" % mode)
     if mode == "record" and not force and (prc or erc or inc or trc):
         b.say(
@@ -237,16 +319,12 @@ def cmd_golden(b, args, bench_env=None):
             "slow or presented surfaces the walker did not draw (--force to record anyway)"
         )
         return 1
-    fd, used = tempfile.mkstemp(prefix="golden-used-")
-    os.close(fd)
-    try:
-        extra = ["--used", used] if mode == "check" else []
-        if golden_py(b, mode, *(extra + dirs))[0] != 0:
+    if mode == "record":
+        if golden_py(b, mode, *dirs)[0] != 0:
             grc = 1
-        if mode == "check" and not trc:
-            prune(b, runs, used)
-    finally:
-        os.remove(used)
+    else:
+        grc = check_each(b, runs, notes, prune_after=not trc)
+        b.say("golden: verdicts: %s" % ", ".join("%s %s" % (scen, notes[scen][4]) for scen in runs))
     if erc:
         b.say("golden: FAIL: a run crashed or ended early (see end: above)")
     if prc:
@@ -257,11 +335,55 @@ def cmd_golden(b, args, bench_env=None):
         b.say("golden: WARNING: recorded with --force from a bad run; re-record after a clean one")
     # A hard failure wins; then a slow run on a busy host; then the compare.
     if prc or erc or trc:
-        return 1
-    if inc:
+        rc = 1
+    elif inc:
         b.say(
             "golden: INCONCLUSIVE: a run was slow on a busy host (see end: above); run again "
             "on a quiet host"
         )
-        return 3
-    return grc
+        rc = 3
+    else:
+        rc = grc
+    if mode == "check":
+        words = {scen: (runs[scen][0], notes[scen][4]) for scen in runs}
+        sessions = os.path.join(b.cfg.game_dir, "bench-logs", SESSIONS)
+        try:
+            with open(sessions, "a", encoding="utf-8") as f:
+                f.write(session_line(kind, tests, words, rc))
+        except OSError as e:
+            print("golden: warning: %s not written (%s)" % (sessions, e), file=sys.stderr)
+    return rc
+
+
+def check_each(b, runs, notes, prune_after):
+    """golden check per scenario (the same compare as one call over all of
+    them), its output printed and written with the run's own checks to the
+    run's golden.txt, ending in its verdict line. Returns 1 on any FAIL,
+    else 2 on any INCOMPLETE, else 0; notes[scen] gains the verdict word."""
+    from ..golden import read_used
+
+    res, rcs = {}, []
+    for scen, (_stamp, frames, _clean) in runs.items():
+        fd, used = tempfile.mkstemp(prefix="golden-used-")
+        os.close(fd)
+        try:
+            rc, text = golden_py(b, "check", "--used", used, "%s=%s" % (scen, frames), capture=True)
+            try:
+                res.update(read_used(used))
+            except OSError:
+                pass
+        finally:
+            os.remove(used)
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        log, lines, e, pm = notes[scen]
+        word = verdict_word(e, pm, rc)
+        notes[scen] = (log, lines, e, pm, word)
+        write_text(
+            os.path.join(log, "golden.txt"),
+            "".join(x + "\n" for x in lines) + text + "verdict: %s %s\n" % (scen, word),
+        )
+        rcs.append(rc)
+    if prune_after:
+        prune(b, runs, res)
+    return 1 if 1 in rcs else 2 if any(rcs) else 0

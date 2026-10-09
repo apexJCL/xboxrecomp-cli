@@ -205,7 +205,7 @@ def test_bench_prunes_only_passing_clean_runs(tmp_path):
     with open(used, "w") as f:
         f.write("\n".join(lines) + "\n")
     b = FakeBench({})
-    bg.prune(b, runs, used)
+    bg.prune(b, runs, G.read_used(used))
     assert names(os.path.join(tmp, "a", "frames")) == [
         "flip_00061.bmp",
         "frame_0001.bmp",

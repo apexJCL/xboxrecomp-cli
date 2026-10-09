@@ -8,6 +8,7 @@ Loaded by main.py only for `<game> bench`.
 """
 
 import contextlib
+import hashlib
 import os
 import re
 import shutil
@@ -15,10 +16,11 @@ import subprocess
 import sys
 import time
 
-from . import checks
+from . import checks, tests_skip
 from .config import Config, ConfigError
 from .gc import cmd_gc
-from .golden import cmd_golden
+from .golden import cmd_golden, golden_py, select_rows
+from .golden import parse_args as golden_parse_args
 from .pacing import cmd_pacing
 from .remote import BenchError, Remote, fill, host_text, quote_words, shell_quote
 from .sync import cmd_sync, rsync
@@ -51,8 +53,16 @@ Commands:
                       after a crash, a present mismatch or a test failure
                       unless --force is also given); to record one frame, run
                       @SLUG@ golden record --only NAME SCEN=DIR
+            --only SCEN[,SCEN]  run only these scenarios (a rerun of the
+                      one that failed)
+            --tests   run the tests even when nothing they test changed
+            Each scenario's checks and verdict go to bench-logs/<stamp>/
+            golden.txt, one line per pass to bench-logs/golden-sessions.tsv.
+            The tests are skipped when the host's toolkit tree, the CLI, the
+            toolchain and the Proton and prefix versions are those of their
+            last pass on this host tree (bench-logs/tests-pass/)
   tests     build and ctest the toolkit's Proton tests, holding the run lock
-            exclusively
+            exclusively; a pass is recorded for golden's skip
   pacing    frame-pacing A/B (@SLUG@ pacing-stats): one golden scenario
             under two environments, alternating A B A B ..., all under one
             hold of the run lock; report in bench-logs/<stamp>-pacing/
@@ -77,7 +87,8 @@ Commands:
   all       sync, build, run
   integrate sync + build the integration heads into BENCH_DIR; run from the
             integration checkout (@GAME_NAME@ @MAIN_BRANCH@@TOOLKIT_BRANCH@), clean trees only
-            --golden  then run golden once
+            --golden  then run golden once (--only SCEN[,SCEN] and --tests
+                      as for golden)
             --dirty   allow uncommitted changes in either tree
             --stale-gen-ok  sync even when gen/ is stale against its key
                       (run analyze and recomp instead)
@@ -310,11 +321,44 @@ class Bench:
         return rc
 
     # tests
-    def cmd_tests(self, args):
+    def tests_key(self):
+        """(key or None, parts): what the toolkit's Proton tests depend on,
+        for skipping them when it has not changed (tests_skip.py)."""
+        from ..cli_dir import cli_dir
+
+        c = self.cfg
+        assigns = "PROTONPATH=%s\n" % shell_quote(c["PROTONPATH"])
+        rc, out = self.r.remote(self.r.ship("tests_key.sh", assigns), capture=True)
+        parts = tests_skip.parse_host_parts(out) if rc == 0 else {}
+        parts["cli"] = tests_skip.cli_part(cli_dir())
+        parts["script"] = hashlib.sha256(self.r.ship("tests.sh").encode()).hexdigest()
+        parts["llvm_mingw"] = c["LLVM_MINGW_TAG"]
+        return tests_skip.key_of(parts), parts
+
+    def tests_record(self):
+        return tests_skip.record_path(self.cfg.game_dir, self.cfg.host, self.cfg.remote_game)
+
+    def tests_or_skip(self, force=False):
+        """golden's tests: skipped when the key matches the last pass on
+        this host tree (and not force). Returns (rc, 'pass'|'skip'|'FAIL'|'off')."""
+        if not self.cfg.game.m["bench"]["toolkit_tests"]:
+            self.say("tests: skipped (game.toml: bench.toolkit_tests = false)")
+            return 0, "off"
+        key, parts = self.tests_key()
+        if not force:
+            why = tests_skip.skip_reason(key, tests_skip.read_record(self.tests_record()))
+            if why:
+                self.say("tests: skipped: %s (--tests runs them)" % why)
+                return 0, "skip"
+        rc = self.cmd_tests([], key=(key, parts))
+        return rc, "pass" if rc == 0 else "FAIL"
+
+    def cmd_tests(self, args, key=None):
         self.need_host()
         if not self.cfg.game.m["bench"]["toolkit_tests"]:
             self.say("tests: skipped (game.toml: bench.toolkit_tests = false)")
             return 0
+        key, parts = key or self.tests_key()
         self.step(
             "tests: d3d8_hlsl_split, d3d11_backend_smoke, input_map, input_keyboard, nv2a_zbuf, apu_irq, "
             "kernel_irql_abi, fp_precision, x87_trig, vblank_ack, vblank_schedule, spin_wait, rt_alias, irq_safe_points, "
@@ -324,6 +368,10 @@ class Bench:
         rc = self.r.in_box_locked(self.r.ship("tests.sh"), exclusive=True, what="tests")[0]
         if rc == 0:
             self.say("tests: pass")
+            if key:
+                tests_skip.write_record(
+                    self.tests_record(), key, parts, self.cfg.host, self.cfg.remote_game
+                )
         elif rc == 75:
             self.say("tests: FAIL the run lock was held for an hour; nothing run")
         else:
@@ -381,15 +429,31 @@ class Bench:
     def cmd_integrate(self, args):
         self.need_host()
         golden = dirty = stale_ok = False
-        for a in args:
+        # Options golden takes, passed on with --golden.
+        golden_args = []
+        it = iter(args)
+        for a in it:
             if a == "--golden":
                 golden = True
             elif a == "--dirty":
                 dirty = True
             elif a == "--stale-gen-ok":
                 stale_ok = True
+            elif a == "--tests" or a.startswith("--only="):
+                golden_args.append(a)
+            elif a == "--only":
+                golden_args += [a, next(it, "")]
             else:
                 raise BenchError("integrate: unknown option %s" % a)
+        if golden_args and not golden:
+            raise BenchError("integrate: %s needs --golden" % golden_args[0])
+        only = golden_parse_args(golden_args)[3]
+        if only is not None:
+            # A misspelt scenario stops here, not after the sync and build.
+            rc, plan = golden_py(self, "plan", capture=True)
+            if rc != 0:
+                raise BenchError("integrate: no golden plan")
+            select_rows(plan, only)
         c = self.cfg
 
         def git(d, *a):
@@ -461,7 +525,7 @@ class Bench:
             env + " " if env else ""
         ) + "RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1"
         with self.no_errexit():
-            return cmd_golden(self, [], bench_env=env)
+            return cmd_golden(self, golden_args, bench_env=env, kind="integrate")
 
     # doctor
     def cmd_doctor(self, args):
