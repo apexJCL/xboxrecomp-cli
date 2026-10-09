@@ -167,6 +167,15 @@ for a toolkit key or one of the game's own (`golden.enhance_stock` in
 `game.toml`); `golden prune SCEN=DIR` drops the flip dumps a passing check
 did not read, for runs made by hand.
 
+`golden run [SCEN...]` is the golden pass on a Mac's own build (Metal;
+`--backend cpu` for the CPU path): each scenario runs headless with dummy
+audio under the Mac run lock (`~/.recomp-mac-run.lock`), dumps its frames
+by flip, and stops as soon as the last frame its check reads is dumped
+(from the anchor it has seen, not a fixed flip count). It warns when the
+Mac is loaded (the pace check then says INCOMPLETE), then checks and prunes
+like `bench golden`. Each run is `bench-logs/<stamp>-metal-<scen>/` with
+its `golden.txt` verdict.
+
 `wrapper --check` compares the game's bootstrap with the CLI's template and
 `wrapper --print` prints the template, for when a game moves its CLI pin.
 
@@ -203,7 +212,13 @@ the commands (`sync`, `build`, `run`, `golden`, `integrate`, `pacing`,
 game with no `golden.json` can still `bench build` and `bench run`.
 
 `bench golden` keeps, for a scenario that passes, only the frames its check
-read (`--keep-frames` or `BENCH_KEEP_FRAMES=1` keeps them all).
+read (`--keep-frames` or `BENCH_KEEP_FRAMES=1` keeps them all). Each
+scenario's checks and verdict stay in its run's `golden.txt`, and every pass
+adds a line to `bench-logs/golden-sessions.tsv`; `--only SCEN` reruns one
+scenario. The toolkit's Proton tests that `golden` starts with are skipped
+when the host's toolkit tree, the CLI, the toolchain and the Proton and
+prefix versions are those of their last pass on that host tree
+(`--tests` runs them anyway).
 `bench gc` lists the runs in `bench-logs/` that nothing names any more
 (not in `golden.json`, `TASKS.md`, `RESUME*.md`, `openspec/` or
 `[bench.gc] refs`, in any worktree; not another game's, not young, not

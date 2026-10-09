@@ -36,6 +36,13 @@ directory). Below, golden.json and frames/ are the game's.
   golden.py pulls SCEN LOG [--window K]
                                   the flip_NNNNN.bmp files a check of SCEN
                                   reads, given the run's flip log
+  golden.py run [SCEN...] [--backend metal|cpu] [--secs S] [--exe PATH]
+                [--out DIR] [--keep-frames] [--lock-wait S] [VAR=val...]
+                                  macOS: run the scenarios on this machine's
+                                  build, headless and silent, under the Mac
+                                  run lock, each stopped once its last
+                                  checked frame is dumped, then check them
+                                  (golden_run.py has the details)
   golden.py refs                  name each frame whose reference PNG is
                                   missing, and a worktree that has it
                                   (exit 2 if any)
@@ -789,6 +796,23 @@ def cmd_refs(args):
                     print(f"golden: WARNING {scen}/{fr['name']}{lab}: " + missing_ref_hint(fr, ref))
                     miss += 1
     return 2 if miss else 0
+
+
+def refs_missing():
+    """cmd_refs' warnings printed; True if any reference PNG is missing."""
+    return cmd_refs([]) != 0
+
+
+def config_argv():
+    """The engine's configuration as arguments, for a subprocess of it."""
+    return [
+        "--golden-json",
+        GOLDEN_JSON,
+        "--golden-frames",
+        FRAMES_DIR,
+        "--game-root",
+        REPO,
+    ] + enhance_args(GAME_ENHANCE)
 
 
 # ---- golden.json ---------------------------------------------------------------
@@ -1795,15 +1819,21 @@ def cmd_reference(args):
     return 0
 
 
+def scenario_env(g, scen):
+    """golden.json's env for scen: the shared pins, then the scenario's."""
+    env = dict(g.get("env", {}))
+    for k, v in g["scenarios"][scen].get("env", {}).items():
+        # The list variables add up; any other pin is replaced.
+        if k in ("RECOMP_TRACE", "RECOMP_DEBUG") and env.get(k):
+            v = env[k] + "," + v
+        env[k] = v
+    return env
+
+
 def cmd_plan(args):
     g = load_golden()
     for scen, sc in g["scenarios"].items():
-        env = dict(g.get("env", {}))
-        for k, v in sc.get("env", {}).items():
-            # The list variables add up; any other pin is replaced.
-            if k in ("RECOMP_TRACE", "RECOMP_DEBUG") and env.get(k):
-                v = env[k] + "," + v
-            env[k] = v
+        env = scenario_env(g, scen)
         print(
             "%s\t%d\t%s\t%s"
             % (
@@ -1864,6 +1894,10 @@ def main(argv=None):
     cmd, args = argv[0], argv[1:]
     if cmd in ("dumpat", "check", "prune"):
         warn_running_game()
+    if cmd == "run":
+        from .golden_run import cmd_run
+
+        return cmd_run(args)
     return {
         "check": cmd_check,
         "record": cmd_record,
