@@ -547,7 +547,8 @@ def test_parity_golden_record(d):
 
 
 HOST_KEY = (
-    "toolkit: aa\\ntoolchain: bb\\ncmake: cc\\nproton: 1789520217 GE-Proton11-7\\nprefix: none\\n"
+    "toolkit: aa\\ntoolchain: bb\\ncmake: cc\\ngame_src: ee\\n"
+    "proton: 1789520217 GE-Proton11-7\\nprefix: none\\n"
 )
 
 
@@ -575,6 +576,11 @@ def test_golden_skips_unchanged_tests(d):
     assert "tests: pass" in out and "tests: skipped" not in out, out
     rc, out, err, _ = side(d, ["integrate", "--golden", "--tests"], env)
     assert "tests: pass" in out, out
+    # A game source the tests compile against changed (its env header):
+    # the tests run again.
+    env4 = {"FAKE_TESTS_KEY": HOST_KEY.replace("game_src: ee", "game_src: ef")}
+    rc, out, err, _ = side(d, ["golden"], env4)
+    assert "tests: pass" in out and "tests: skipped" not in out, out
     # A part changed: the tests run again.
     env2 = {"FAKE_TESTS_KEY": HOST_KEY.replace("GE-Proton11-7", "GE-Proton11-8")}
     rc, out, err, _ = side(d, ["golden"], env2)
@@ -593,7 +599,7 @@ def test_golden_only_and_kept_verdicts(d):
     assert golden_steps(out) == ["story"], out
     rc, out, err, _ = side(d, ["golden", "--only=stage1,attract"])
     assert golden_steps(out) == ["attract", "stage1"], out
-    assert "golden: verdicts: attract FAIL-RUN, stage1 FAIL-RUN" in out, out
+    assert "golden: verdicts: attract FAIL-RUN, stage1 FAIL-RUN (--only: not a full pass)" in out
     # Each run dir keeps its checks and verdict; the session file a line a pass.
     logs = os.path.join(cat, "bench-logs")
     texts = [
@@ -608,8 +614,9 @@ def test_golden_only_and_kept_verdicts(d):
     sessions = open(os.path.join(logs, "golden-sessions.tsv")).read().splitlines()
     assert len(sessions) == 2, sessions
     f = sessions[1].split("\t")
-    assert f[1:3] == ["golden", "tests=pass"] and f[-1] == "rc=1", f
-    assert re.match(r"attract=\d{8}-\d{6}:FAIL-RUN$", f[3]) and f[4].startswith("stage1="), f
+    assert f[1:4] == ["golden", "tests=pass", "only=stage1,attract"] and f[-1] == "rc=1", f
+    assert re.match(r"attract=\d{8}-\d{6}:FAIL-RUN$", f[4]) and f[5].startswith("stage1="), f
+    assert sessions[0].split("\t")[3] == "only=story", sessions[0]
     # A name not in golden.json stops before anything runs; integrate checks
     # it before the sync.
     rc, out, err, calls = side(d, ["golden", "--only", "stroy"])

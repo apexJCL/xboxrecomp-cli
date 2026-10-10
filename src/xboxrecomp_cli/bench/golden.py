@@ -170,10 +170,12 @@ def select_rows(plan, only):
     return [r for r in rows if r.split("\t", 1)[0] in only]
 
 
-def verdict_word(end_rc, present_rc, compare_rc):
+def verdict_word(end_rc, present_rc, compare_rc, text=""):
     """One word for a scenario, the hardest failure first: FAIL-RUN (crash
-    or early end), FAIL-PRESENT, REGRESSION, INCOMPLETE, INCONCLUSIVE (slow
-    on a busy host), pass."""
+    or early end), FAIL-PRESENT, REGRESSION, then for check's exit 2 the
+    first of INCOMPLETE, MISSING and NEWVIEW its output (text) shows (a hub
+    view nobody has recorded yet is not a flaky run), INCONCLUSIVE (slow on
+    a busy host), pass."""
     if end_rc not in (0, 3):
         return "FAIL-RUN"
     if present_rc:
@@ -181,7 +183,8 @@ def verdict_word(end_rc, present_rc, compare_rc):
     if compare_rc == 1:
         return "REGRESSION"
     if compare_rc:
-        return "INCOMPLETE"
+        tags = {line.split(" ", 1)[0] for line in text.splitlines()}
+        return next((t for t in ("INCOMPLETE", "MISSING", "NEWVIEW") if t in tags), "INCOMPLETE")
     if end_rc == 3:
         return "INCONCLUSIVE"
     return "pass"
@@ -190,14 +193,15 @@ def verdict_word(end_rc, present_rc, compare_rc):
 SESSIONS = "golden-sessions.tsv"
 
 
-def session_line(kind, tests, words, rc, now=None):
+def session_line(kind, tests, words, rc, only=None, now=None):
     """A line of bench-logs/golden-sessions.tsv: time, kind (golden or
-    integrate), tests (pass, skip, FAIL, off), scen=stamp:WORD per scenario,
-    exit code. What a flake count reads."""
+    integrate), tests (pass, skip, FAIL, off), only=all or the --only list
+    (a one-scenario rerun is not a full pass), scen=stamp:WORD per
+    scenario, exit code. What a flake count reads."""
     t = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
     return (
         "\t".join(
-            [t, kind, "tests=" + tests]
+            [t, kind, "tests=" + tests, "only=" + (",".join(only) if only else "all")]
             + ["%s=%s:%s" % (scen, stamp, w) for scen, (stamp, w) in words.items()]
             + ["rc=%d" % rc]
         )
@@ -324,7 +328,11 @@ def cmd_golden(b, args, bench_env=None, kind="golden"):
             grc = 1
     else:
         grc = check_each(b, runs, notes, prune_after=not trc)
-        b.say("golden: verdicts: %s" % ", ".join("%s %s" % (scen, notes[scen][4]) for scen in runs))
+        part = " (--only: not a full pass)" if only else ""
+        b.say(
+            "golden: verdicts: %s%s"
+            % (", ".join("%s %s" % (scen, notes[scen][4]) for scen in runs), part)
+        )
     if erc:
         b.say("golden: FAIL: a run crashed or ended early (see end: above)")
     if prc:
@@ -349,7 +357,7 @@ def cmd_golden(b, args, bench_env=None, kind="golden"):
         sessions = os.path.join(b.cfg.game_dir, "bench-logs", SESSIONS)
         try:
             with open(sessions, "a", encoding="utf-8") as f:
-                f.write(session_line(kind, tests, words, rc))
+                f.write(session_line(kind, tests, words, rc, only))
         except OSError as e:
             print("golden: warning: %s not written (%s)" % (sessions, e), file=sys.stderr)
     return rc
@@ -377,7 +385,7 @@ def check_each(b, runs, notes, prune_after):
         sys.stdout.write(text)
         sys.stdout.flush()
         log, lines, e, pm = notes[scen]
-        word = verdict_word(e, pm, rc)
+        word = verdict_word(e, pm, rc, text)
         notes[scen] = (log, lines, e, pm, word)
         write_text(
             os.path.join(log, "golden.txt"),

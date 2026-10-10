@@ -10,6 +10,7 @@ Loaded by main.py only for `<game> bench`.
 import contextlib
 import hashlib
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -327,7 +328,11 @@ class Bench:
         from ..cli_dir import cli_dir
 
         c = self.cfg
-        assigns = "PROTONPATH=%s\n" % shell_quote(c["PROTONPATH"])
+        env_header = c.game.m["game"]["env_header"]
+        assigns = "PROTONPATH=%s\nENV_DIR=%s\n" % (
+            shell_quote(c["PROTONPATH"]),
+            shell_quote(posixpath.dirname(env_header) or env_header),
+        )
         rc, out = self.r.remote(self.r.ship("tests_key.sh", assigns), capture=True)
         parts = tests_skip.parse_host_parts(out) if rc == 0 else {}
         parts["cli"] = tests_skip.cli_part(cli_dir())

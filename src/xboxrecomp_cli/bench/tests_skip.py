@@ -14,7 +14,7 @@ import time
 
 # Host parts tests_key.sh prints, one "name: value" line each. A part that
 # is missing or reads "unknown" makes the whole key unknown: never skipped.
-HOST_PARTS = ("toolkit", "toolchain", "cmake", "proton", "prefix")
+HOST_PARTS = ("toolkit", "toolchain", "cmake", "game_src", "proton", "prefix")
 
 
 def parse_host_parts(text):
@@ -27,8 +27,9 @@ def parse_host_parts(text):
 
 
 def cli_part(d):
-    """The CLI checkout's commit, plus a hash of its uncommitted diff when
-    it has one; 'unknown' outside git."""
+    """The CLI checkout's commit, plus a hash of its uncommitted diff and
+    its untracked files (names and contents) when it has any; 'unknown'
+    outside git."""
     from ..cli_dir import is_checkout
 
     if not is_checkout(d):
@@ -44,10 +45,19 @@ def cli_part(d):
     if rc or not head.strip():
         return "unknown"
     rc, diff = git("diff", "HEAD")
-    if rc:
+    rc2, others = git("ls-files", "-z", "--others", "--exclude-standard")
+    if rc or rc2:
         return "unknown"
+    h = hashlib.sha256(diff)
+    for name in sorted(x for x in others.split(b"\0") if x):
+        h.update(b"\0" + name + b"\0")
+        try:
+            with open(os.path.join(d, os.fsdecode(name)), "rb") as f:
+                h.update(f.read())
+        except OSError:
+            h.update(b"?")
     head = head.decode().strip()
-    return head + ("+" + hashlib.sha256(diff).hexdigest()[:16] if diff else "")
+    return head + ("+" + h.hexdigest()[:16] if diff or others else "")
 
 
 def key_of(parts):

@@ -1,7 +1,8 @@
 #@ bench/host/tests_key.sh: a host script `<game> bench` ships over ssh.
 #@ The #@ lines this file starts with are this note and are not sent.
-#@ Runs as: remote (golden, integrate, tests). After the prologue and
-#@ PROTONPATH. Prints the host's parts of the tests key (tests_skip.py),
+#@ Runs as: remote (golden, integrate, tests). After the prologue,
+#@ PROTONPATH and ENV_DIR (the dir of game.toml's game.env_header, or the
+#@ header itself at the game's root; empty when it names none). Prints the host's parts of the tests key (tests_skip.py),
 #@ "name: value" lines; a part it cannot read is "unknown".
 set +e
 # tests_key: the toolkit tree as sync sends it (no .git, build trees, venvs).
@@ -16,6 +17,22 @@ hash_of() { if [ -f "$1" ]; then sha256sum "$1" | cut -d' ' -f1; else echo unkno
 cd "$REMOTE_GAME" 2>/dev/null || { echo "cmake: unknown"; exit 0; }
 echo "toolchain: $(hash_of "$TOOLCHAIN")"
 echo "cmake: $(hash_of CMakeLists.txt)"
+# The game sources the tests compile against in build-win: the toolkit's
+# recomp_env.h includes the game's env header, and a cmake/ dir holds what
+# CMakeLists.txt includes. Synced content, so a dirty tree counts.
+paths=() gone=0
+if [ -n "$ENV_DIR" ]; then
+    if [ -e "$ENV_DIR" ]; then paths+=("$ENV_DIR"); else gone=1; fi
+fi
+if [ -d cmake ]; then paths+=(cmake); fi
+if [ "$gone" = 1 ]; then
+    echo "game_src: unknown"
+elif [ ${#paths[@]} -eq 0 ]; then
+    echo "game_src: none"
+else
+    echo "game_src: $(find "${paths[@]}" \( -name __pycache__ -o -name .DS_Store \) -prune -o -type f -print0 \
+        | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+fi
 # The Proton umu-run resolves: PROTONPATH itself when it is a directory,
 # else the newest install of that name (GE-Proton: the latest it fetched).
 if [ -d "$PROTONPATH" ]; then

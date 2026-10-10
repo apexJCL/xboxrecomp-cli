@@ -15,7 +15,7 @@
     ],
     "body": "tests_key.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\nENV_DIR=src/env\n"
    },
    {
     "argv": [
@@ -354,7 +354,7 @@
     ],
     "body": "tests_key.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\nENV_DIR=src/env\n"
    },
    {
     "argv": [
@@ -735,7 +735,7 @@
     ],
     "body": "tests_key.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\nENV_DIR=src/env\n"
    },
    {
     "argv": [
@@ -772,7 +772,7 @@
     ],
     "body": "tests_key.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\nENV_DIR=src/env\n"
    },
    {
     "argv": [
@@ -1033,7 +1033,7 @@
     ],
     "body": "tests_key.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\nENV_DIR=src/env\n"
    },
    {
     "argv": [
@@ -1372,7 +1372,7 @@
     ],
     "body": "tests_key.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\nENV_DIR=src/env\n"
    },
    {
     "argv": [
@@ -3136,7 +3136,7 @@
     ],
     "body": "tests_key.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\nENV_DIR=src/env\n"
    },
    {
     "argv": [

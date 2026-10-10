@@ -546,7 +546,7 @@ def check_and_prune(d, scen, erc, lines, keep):
         res = G.read_used(used) if os.path.getsize(used) else {}
     finally:
         os.remove(used)
-    word = verdict_word(erc, 0, r.returncode)
+    word = verdict_word(erc, 0, r.returncode, text)
     with open(os.path.join(d, "golden.txt"), "w") as f:
         f.write("".join(x + "\n" for x in lines) + text + "verdict: %s %s\n" % (scen, word))
     if word == "pass" and not keep:
