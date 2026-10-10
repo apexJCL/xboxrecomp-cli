@@ -187,11 +187,17 @@ def doctor_report():
         lines.append("tools py:   %s" % e)
         problems.append("no tools Python (%s setup)" % slug)
     lines.append(cli_dir.doctor_line())
+    w = cli_dir.drift_warning()
+    if w:
+        lines.append("warning:    " + w)
     tk = toolkit.toolkit_dir()
     if os.path.isdir(os.path.join(tk, "tools")):
         head = host.git_head(tk) or "?"
-        note = toolkit.pin_note(tk, g.m["toolkit"]["commit"])
+        note = toolkit.pin_note(tk, g.m["toolkit"])
         lines.append("toolkit:    %s @ %s%s" % (tk, head[:12], note))
+        w = toolkit.drift_warning("toolkit", tk, g.m["toolkit"])
+        if w:
+            lines.append("warning:    " + w)
     else:
         lines.append("toolkit:    missing at %s (run '%s setup')" % (tk, slug))
         problems.append("no toolkit (%s setup)" % slug)

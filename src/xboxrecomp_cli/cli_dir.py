@@ -4,7 +4,7 @@ is the commit the game pins (doctor's cli: row)."""
 import os
 import subprocess
 
-from . import host, toolkit
+from . import gitpin, host, toolkit
 
 
 def cli_dir():
@@ -50,17 +50,29 @@ def doctor_line():
     the bootstrap did not clone (no .xbr-pin) is a developer's, and says
     "not the pin" instead: nothing moves it."""
     d = cli_dir()
-    pin = host.g().m["cli"]["commit"]
+    pin = host.g().m["cli"]
     head = host.git_head(d) if is_checkout(d) else ""
     if not head:
         return "cli:        %s (not a git checkout)" % d
     note = toolkit.pin_note(d, pin)
     if not note:
-        note = " (pinned)" if head == pin else " (not the pin %s)" % pin[:12]
+        tag = " " + pin["tag"] if pin["tag"] else ""
+        note = (
+            " (pinned%s)" % tag
+            if head == gitpin.expected(d, pin)
+            else " (not the pin %s)" % gitpin.describe(pin)
+        )
     return "cli:        %s @ %s%s" % (d, head[:12], note)
+
+
+def drift_warning():
+    """doctor: this checkout's copy of the pinned tag is not the lock."""
+    return (
+        toolkit.drift_warning("cli", cli_dir(), host.g().m["cli"]) if is_checkout(cli_dir()) else ""
+    )
 
 
 def checkout_pin():
     """setup: a clone the bootstrap made at an older pin moves to the new
     one (takes effect from the next command)."""
-    toolkit.checkout_pin(cli_dir(), host.g().m["cli"]["commit"], "xboxrecomp-cli")
+    toolkit.checkout_pin(cli_dir(), host.g().m["cli"], "xboxrecomp-cli")

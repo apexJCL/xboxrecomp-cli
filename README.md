@@ -51,7 +51,8 @@ cd mygame
 ```
 
 `xbr new` writes a complete starter game and nothing else: `game.toml` with
-every pin filled in (the CLI commit it ran from, the toolkit branch head),
+every pin filled in (the CLI release it ran from, or its commit; the
+toolkit branch head),
 the `mygame` bootstrap and its wrappers, the tools environment
 (`pyproject.toml`, `uv.lock`), `.gitignore` (the dump, the generated code,
 the toolchain and the bundles never enter git), the toolkit's
@@ -70,9 +71,9 @@ On a Mac it is the file you carry to one of those. "macOS as a target"
 below says what the macOS build needs.
 
 To read before running: the uvx line installs the CLI's `main` into uv's
-cache and runs it; `@<sha>` after the repository pins a commit of `main`
-(`…/xboxrecomp-cli@<sha> xbr new mygame`; any commit that has `new`). The
-no-pipe way is the clone:
+cache and runs it; `@<tag>` or `@<sha>` after the repository pins a release
+or a commit of `main` (`…/xboxrecomp-cli@v0.2.0 xbr new mygame`; any commit
+that has `new`). The no-pipe way is the clone:
 
 ```sh
 git clone https://github.com/apexJCL/xboxrecomp-cli.git
@@ -189,13 +190,15 @@ in this order, then runs `uv run --project <cli> --locked --no-dev xbr
 --game <root> --prog <slug> …`:
 
 1. `$XBOXRECOMP_CLI_DIR`, used as it is.
-2. `external/xboxrecomp-cli` in the game's tree, only at `cli.commit`. A
-   clone the bootstrap made (marked `.xbr-pin`) is moved to a new pin;
-   another checkout there at another commit is refused.
+2. `external/xboxrecomp-cli` in the game's tree, only at the pin
+   (`cli.tag`, locked by `cli.commit` when both are set). A clone the
+   bootstrap made (marked `.xbr-pin`) is moved to a new pin; another
+   checkout there at another commit is refused.
 3. `../xboxrecomp-cli` beside the game's checkout, used as it is.
-4. A clone of `cli.url` into `external/xboxrecomp-cli` at `cli.commit`. A
-   failed clone or checkout leaves nothing behind and prints how to get
-   the CLI.
+4. A clone of `cli.url` into `external/xboxrecomp-cli` at the pin. A tag
+   that names another commit than `cli.commit` is refused, and a failed
+   clone or checkout leaves nothing behind and prints how to get the CLI.
+   A clone already at the pin needs no network.
 
 Without uv, `<slug> --help` still prints the help and the uv install
 command for the host.
@@ -229,10 +232,15 @@ among the newest per scenario) with their sizes, and removes them with
 
 - **`no uv 0.5.31+ on PATH`**: install it (the table above) and open a new
   shell. `<slug> --help` works without it; nothing else does.
-- **`xboxrecomp-cli: the pin moved` / `git checkout failed`**: the game
-  pins a CLI commit the remote does not have (a pin that was never pushed).
+- **`xboxrecomp-cli: the pin moved` / `git checkout failed` / `git fetch
+  failed`**: the game pins a CLI commit or tag the remote does not have (a
+  pin that was never pushed), or there is no network for a new pin.
   Clone the CLI beside the game or set `XBOXRECOMP_CLI_DIR`, and fix
-  `cli.commit`.
+  `[cli]`.
+- **`tag v0.2.0 is …, not the pinned commit …: the tag moved`**: the tag
+  and the `commit` that locks it disagree. Either the tag was moved or
+  re-pushed (check the release), or `game.toml` names the wrong pair. The
+  same holds for `[toolkit]` in `setup`.
 - **`no config/setup-pins.json`**: `./mygame pins refresh` writes it (and
   `uv.lock`); it needs the network.
 - **`uv lock --check failed`**: `uv.lock` is out of date with
@@ -289,11 +297,24 @@ this one or `XBOXRECOMP_DIR` names one.
 
 ### Releases and pins
 
-There are no releases. A game pins a commit of `main` in its `game.toml`,
-as it pins the toolkit. `<slug> pins refresh` refreshes the game's download
-hashes and `uv.lock` and prints the toolkit's and this CLI's newest heads
-next to the pinned ones; the maintainer then edits the two `commit` lines
-by hand.
+Releases are annotated `v*` tags on `main` (`v0.2.0`), never moved once
+pushed. A game pins one in its `game.toml` with the commit it names:
+
+```toml
+[cli]
+tag = "v0.2.0"
+commit = "<the commit v0.2.0 names>"
+```
+
+The commit locks the tag, so a moved tag is refused rather than run. The
+toolkit is pinned the same way (`[toolkit] tag`, a fork's release such as
+`blinx2-v0.1.0`), or by `branch` and `commit` as before; a commit alone
+still pins the CLI. `<slug> pins refresh` refreshes the game's download
+hashes and `uv.lock` and prints, for a tag pin, the newest release with the
+same prefix (and a warning when the remote's tag is not the lock), else the
+branch's newest head; the maintainer then edits the pins by hand.
+`xbr new` writes the release its checkout is at, or the newest one on
+`[cli] url` (`--cli-tag` picks another).
 
 ### Before a public push
 

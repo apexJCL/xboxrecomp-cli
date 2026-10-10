@@ -142,6 +142,24 @@ def test_offline_scaffold_loads_and_names_what_is_left(d, tk, game):
     assert "(the template changed)" not in out
 
 
+def test_cli_tag_pins(d, tk, game):
+    root = os.path.join(d, "g1")
+    args = ("--offline", "--cli-tag", "v0.2.0", "--toolkit-commit", TK)
+    rc, out, err = new(root, *args, "--cli-commit", CLI)
+    assert rc == 0, err
+    G = manifest.load(root)
+    assert (G.m["cli"]["tag"], G.m["cli"]["commit"]) == ("v0.2.0", CLI)
+    assert "cli v0.2.0 (%s)" % CLI[:12] in out
+    assert wrapper.check(G) == (True, [])
+    # A tag alone, offline: no commit locks it, and it still loads.
+    root = os.path.join(d, "g2")
+    rc, out, err = new(root, *args)
+    assert rc == 0, err
+    G = manifest.load(root)
+    assert (G.m["cli"]["tag"], G.m["cli"]["commit"]) == ("v0.2.0", "")
+    assert 'tag = "v0.2.0"\nurl = ' in read(os.path.join(root, "game.toml"))
+
+
 def test_the_xbe_fills_the_constants_and_is_not_copied(d, tk, game):
     root = os.path.join(d, "g")
     dump = os.path.join(d, "dump", "default.xbe")

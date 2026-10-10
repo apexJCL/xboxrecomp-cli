@@ -12,7 +12,7 @@ import os
 import re
 import tomllib
 
-from . import SCHEMA
+from . import SCHEMA, gitpin
 
 REQUIRED = object()
 FILE = "game.toml"
@@ -42,14 +42,18 @@ SPEC = {
         "title_id": (INT, REQUIRED),
         "sha256": (STRS, []),
     },
+    # A pin is a release tag, a commit, or both (the commit then locks the
+    # tag); _check_values requires one of them (gitpin.py).
     "cli": {
-        "commit": (STR, REQUIRED),
+        "tag": (STR, ""),
+        "commit": (STR, ""),
         "url": (STR, ""),
     },
     "toolkit": {
         "url": (STR, REQUIRED),
-        "branch": (STR, REQUIRED),
-        "commit": (STR, REQUIRED),
+        "tag": (STR, ""),
+        "branch": (STR, ""),
+        "commit": (STR, ""),
     },
     "toolchain": {
         "llvm_mingw": (STR, ""),
@@ -144,7 +148,7 @@ SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # The bootstrap reads [cli] with a line parser, and the help without uv
 # reads [game] name the same way: plain one-line strings there.
 LINE_KEYS = {
-    "cli": ("commit", "url"),
+    "cli": ("tag", "commit", "url"),
     "game": ("name", "slug"),
     "build": ("windows_dir", "macos_dir"),
 }
@@ -254,9 +258,21 @@ def _check_values(m):
     if not SLUG.match(m["game"]["slug"]):
         errors.append("game.slug: lower-case letters, digits and '-' only")
     for k in ("cli", "toolkit"):
-        c = m[k]["commit"]
-        if not re.match(r"^[0-9a-f]{40}$", c):
+        p = m[k]
+        if p["commit"] and not re.match(r"^[0-9a-f]{40}$", p["commit"]):
             errors.append("%s.commit: a full 40-character commit sha" % k)
+        if p["tag"] and not gitpin.tag_ok(p["tag"]):
+            errors.append("%s.tag: %r is not a plain tag name" % (k, p["tag"]))
+        if p["url"].startswith("-"):
+            # git would read it as an option (clone, ls-remote).
+            errors.append("%s.url: %r starts with '-'" % (k, p["url"]))
+    if not m["cli"]["tag"] and not m["cli"]["commit"]:
+        errors.append("cli: tag or commit required")
+    if not m["toolkit"]["tag"]:
+        # Without a tag the clone follows the branch to the commit, as before.
+        for k in ("branch", "commit"):
+            if not m["toolkit"][k]:
+                errors.append("toolkit.%s: required without a tag" % k)
     for t in m["build"]["targets"]:
         if t not in BUILD_TARGETS:
             errors.append("build.targets: %r is not one of %s" % (t, ", ".join(BUILD_TARGETS)))

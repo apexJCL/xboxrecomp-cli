@@ -1,7 +1,8 @@
 """pins refresh (maintainers): the download hashes in config/setup-pins.json
-and the game's uv.lock, then the newer heads of the toolkit branch and of
-the CLI next to the shas game.toml pins. game.toml itself is never written:
-moving a pin is an edit a maintainer makes and the game's commit reviews."""
+and the game's uv.lock, then the newer releases (a tag pin) or heads (a
+commit pin) of the toolkit and of the CLI next to what game.toml pins.
+game.toml itself is never written: moving a pin is an edit a maintainer
+makes and the game's commit reviews."""
 
 import json
 import os
@@ -10,13 +11,15 @@ import subprocess
 import tempfile
 import urllib.request
 
-from . import env, fetch, host
+from . import env, fetch, gitpin, host
 from .host import CliError
 
-# This CLI's public repository and the branch a game pins a commit of:
-# `pins refresh` reports its head, `new` writes it into [cli].
+# This CLI's public repository, the branch a commit pin follows (`pins
+# refresh` reports its head) and its release tags' prefix (`new` writes
+# the newest into [cli]).
 CLI_URL = "https://github.com/apexJCL/xboxrecomp-cli.git"
 CLI_BRANCH = "main"
+CLI_TAG_PREFIX = "v"
 
 # The umu-launcher release a steamos bundle's installer may download for a
 # host without umu-run (a stock Steam Deck): `install.sh --fetch-umu`, or a
@@ -45,7 +48,7 @@ def remote_head(url, branch):
     if not url or not shutil.which("git"):
         return None
     r = subprocess.run(
-        ["git", "ls-remote", url, "refs/heads/" + branch],
+        ["git", "ls-remote", "--", url, "refs/heads/" + branch],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
     )
@@ -70,6 +73,48 @@ def head_report(what, url, branch, pinned):
         branch,
         head[:12],
     )
+
+
+def tag_report(what, url, tag, lock):
+    """A tag pin against the remote's tags: the newest release with the
+    pinned tag's prefix, and a WARNING when the pinned tag is gone or no
+    longer resolves to the lock."""
+    w = "%-8s" % (what + ":")
+    tags = gitpin.remote_tags(url)
+    if tags is None:
+        return "%s pinned %s; %s: not reachable" % (w, tag, url or "(no url)")
+    at = tags.get(tag)
+    pinned = "%s (%s)" % (tag, (lock or at)[:12]) if (lock or at) else tag
+    sv = gitpin.split_version(tag)
+    if not sv:
+        lines = [
+            "%s pinned %s; not a release tag (no trailing version), no newer one to name"
+            % (w, pinned)
+        ]
+    else:
+        new = gitpin.newest_with_prefix(tags, sv[0])
+        if new is None or new[0] == tag:
+            lines = ["%s pinned %s = newest %s* tag" % (w, pinned, sv[0])]
+        else:
+            lines = [
+                "%s pinned %s; newest %s* tag is %s (%s) (move the pin in game.toml if you want it)"
+                % (w, pinned, sv[0], new[0], new[1][:12])
+            ]
+    if at is None:
+        lines.append("%s WARNING pinned %s is not on %s" % (w, tag, url))
+    elif lock and at != lock:
+        lines.append(
+            "%s WARNING pinned %s is %s on the remote, not the lock %s"
+            % (w, tag, at[:12], lock[:12])
+        )
+    return "\n".join(lines)
+
+
+def pin_report(what, pin, branch):
+    """tag_report for a tag pin, head_report (the branch) for a commit pin."""
+    if pin.get("tag"):
+        return tag_report(what, pin.get("url", ""), pin["tag"], pin.get("commit", ""))
+    return head_report(what, pin.get("url", ""), branch, pin["commit"])
 
 
 def pins_refresh():
@@ -128,5 +173,5 @@ def pins_refresh():
     host.run([uv, "lock", "--upgrade", "--project", g.root], env=env.uv_env())
     host.say("wrote %s, %s" % (os.path.relpath(g.pins, g.root), os.path.relpath(g.uv_lock, g.root)))
     tk, cli = g.m["toolkit"], g.m["cli"]
-    host.say(head_report("toolkit", tk["url"], tk["branch"], tk["commit"]))
-    host.say(head_report("cli", cli["url"], CLI_BRANCH, cli["commit"]))
+    host.say(pin_report("toolkit", tk, tk["branch"]))
+    host.say(pin_report("cli", cli, CLI_BRANCH))

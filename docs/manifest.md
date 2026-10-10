@@ -17,8 +17,8 @@ one (every required key filled in, the defaults written out with their
 comments) and never touches it again.
 
 Three tables are also read by the bootstrap and by the help that prints
-without uv, using a line parser instead of a TOML parser: `[cli]` (`commit`,
-`url`), `[game]` (`name`, `slug`) and `[build]` (`windows_dir`,
+without uv, using a line parser instead of a TOML parser: `[cli]` (`tag`,
+`commit`, `url`), `[game]` (`name`, `slug`) and `[build]` (`windows_dir`,
 `macos_dir`). Write those keys as plain one-line strings: `key = "value"`.
 
 BLiNX 2's manifest is the full example
@@ -51,16 +51,25 @@ BLiNX 2's manifest is the full example
 
 | Key | Default | Meaning |
 |---|---|---|
-| `commit` | required | The xboxrecomp-cli commit this game is tested with (40 hex). `doctor` compares the running CLI with it. |
+| `tag` | `""` | The xboxrecomp-cli release this game is tested with (`v0.2.0`). The bootstrap clones and checks out that tag; `pins refresh` names a newer `v*` release. |
+| `commit` | `""` | The commit (40 hex). Alone, it is the pin. With `tag`, it locks the tag: a tag that names another commit (moved, or re-pushed) is refused. `doctor` compares the running CLI with it. |
 | `url` | `""` | Where the bootstrap clones the CLI from, when it finds none (see the README). |
+
+`tag` or `commit` is required; both is the safe form. A tag alone trusts
+the tag: the bootstrap fetches it when the clone lacks it, and a clone that
+already has it uses its own copy (a tag moved on the remote is never
+fetched over it). `tag` needs xboxrecomp-cli 0.2.0 or newer: an older CLI
+stops on `cli.tag: unknown key`, so pin a 0.2.0+ release (or commit) when
+you add it. A `url` may not start with `-`.
 
 ## [toolkit]
 
 | Key | Default | Meaning |
 |---|---|---|
 | `url` | required | The toolkit repository `setup` clones. |
-| `branch` | required | Its branch; `pins refresh` prints that branch's head. |
-| `commit` | required | The pinned toolkit commit (40 hex). |
+| `tag` | `""` | The toolkit release (`blinx2-v0.1.0`). `setup` clones and checks out that tag; `pins refresh` names a newer release with the same prefix. |
+| `branch` | `""` | Its branch; `pins refresh` prints that branch's head. Required without `tag`. |
+| `commit` | `""` | The pinned toolkit commit (40 hex). Required without `tag`; with it, it locks the tag as in `[cli]`. |
 
 ## [toolchain]
 

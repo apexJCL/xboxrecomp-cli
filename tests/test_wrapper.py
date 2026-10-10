@@ -35,9 +35,9 @@ FAKE_GIT = """#!/bin/sh
 echo "$@" >> "$GIT_LOG"
 fail() { echo "fatal: $1" >&2; exit 128; }
 if [ "$1" = clone ]; then
-  [ -n "$FAKE_OFFLINE" ] && fail "unable to access '$4': Could not resolve host"
-  /bin/mkdir -p "$5/.git/info"; : > "$5/pyproject.toml"
-  echo "$FAKE_MAIN" > "$5/.git/fake-head"; exit 0
+  [ -n "$FAKE_OFFLINE" ] && fail "unable to access '$5': Could not resolve host"
+  /bin/mkdir -p "$6/.git/info"; : > "$6/pyproject.toml"
+  echo "$FAKE_MAIN" > "$6/.git/fake-head"; exit 0
 fi
 [ "$1" = -C ] || exit 0
 dir="$2"; shift 2
@@ -216,7 +216,7 @@ def test_clone_at_the_pin(d):
     tmp = dest + ".partial"
     pin = tomllib.load(open(os.path.join(root, "game.toml"), "rb"))["cli"]
     calls = git_calls(d)
-    assert calls[0] == "clone --quiet --no-checkout %s %s" % (pin["url"], tmp), calls
+    assert calls[0] == "clone --quiet --no-checkout -- %s %s" % (pin["url"], tmp), calls
     assert calls[1] == "-C %s checkout --quiet %s" % (tmp, pin["commit"]), calls
     with open(os.path.join(dest, ".xbr-pin")) as f:
         assert f.read() == pin["commit"] + "\n"

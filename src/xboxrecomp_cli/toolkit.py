@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 
-from . import host
+from . import gitpin, host
 from .host import CliError
 
 # Written into a clone this CLI made at a pin (the toolkit's, and the
@@ -121,22 +121,47 @@ def rename_legacy_mark(d):
     exclude_pin_mark(d)
 
 
-def pin_note(d, pinned):
-    """' (pinned)', ' (differs from the pin X)', or '' for a checkout this
-    CLI did not clone at a pin (a developer's own)."""
+def pin_note(d, pin):
+    """' (pinned v0.2.0)', ' (differs from the pin X)', or '' for a checkout
+    this CLI did not clone at a pin (a developer's own). Offline: a tag
+    pin is answered from the lock, else from the checkout's own tags."""
     if not host.read_text(os.path.join(d, PIN_MARK)):
         return ""
     head = host.git_head(d) or "?"
-    return " (pinned)" if head == pinned else " (differs from the pin %s)" % pinned[:12]
+    want = gitpin.expected(d, pin)
+    if not want:
+        return " (pin %s: not in this checkout's tags)" % pin["tag"]
+    if head == want:
+        return " (pinned%s)" % (" " + pin["tag"] if pin.get("tag") else "")
+    return " (differs from the pin %s)" % gitpin.describe(pin)
 
 
-def checkout_pin(d, commit, what):
-    """A marked clone at another commit: the game moved its pin, so fetch
-    if needed and check the new one out. A developer's checkout (no mark)
-    is left alone."""
-    if not host.read_text(os.path.join(d, PIN_MARK)) or host.git_head(d) == commit:
+def drift_warning(what, d, pin):
+    """doctor's warning when d's own copy of the pinned tag is not the
+    lock (fetching refuses it on its own), else ''."""
+    c = gitpin.drift(d, pin)
+    if not c:
+        return ""
+    return "%s tag %s here is %s, not the lock %s" % (what, pin["tag"], c[:12], pin["commit"][:12])
+
+
+def checkout_pin(d, pin, what):
+    """A marked clone not at the pin: the game moved it, so resolve the pin
+    (a tag from the clone's tags, else fetched; checked against the lock),
+    fetch the commit if needed, and check it out. A developer's checkout
+    (no mark) is left alone, and a clone at the lock needs no tag lookup."""
+    if not host.read_text(os.path.join(d, PIN_MARK)):
         return
-    host.say("%s: the pin moved; checking out %s" % (what, commit[:12]))
+    head = host.git_head(d)
+    if pin.get("commit") and head == pin["commit"]:
+        return
+    commit = gitpin.resolve(d, pin, what)
+    if head == commit:
+        return
+    host.say(
+        "%s: the pin moved; checking out %s"
+        % (what, gitpin.describe({"tag": pin.get("tag", ""), "commit": commit}))
+    )
     if (
         subprocess.run(
             ["git", "-C", d, "cat-file", "-e", commit + "^{commit}"],
@@ -156,16 +181,38 @@ def clone_toolkit():
     tk = toolkit_dir()
     if os.path.isdir(os.path.join(tk, "tools")):
         rename_legacy_mark(tk)
-        checkout_pin(tk, pin["commit"], "toolkit")
+        checkout_pin(tk, pin, "toolkit")
         host.say("toolkit: %s (left as it is)" % tk)
         return tk
     if not shutil.which("git"):
         raise CliError("git is needed to fetch the toolkit")
     dest = os.path.join(host.g().root, "external", "xboxrecomp")
-    host.say("toolkit: cloning %s %s into external/xboxrecomp" % (pin["url"], pin["commit"][:12]))
-    host.run(["git", "clone", "--branch", pin["branch"], pin["url"], dest])
-    host.run(["git", "-C", dest, "checkout", "--quiet", pin["commit"]])
-    with open(os.path.join(dest, PIN_MARK), "w") as f:
-        f.write(pin["commit"] + "\n")
-    exclude_pin_mark(dest)
+    if os.path.isdir(dest) and os.listdir(dest):
+        raise CliError(
+            "toolkit: %s is not empty and has no tools/: move it away, or set "
+            "XBOXRECOMP_DIR to a toolkit checkout" % dest
+        )
+    # Cloned aside and moved into place only at the pin: a moved tag or a
+    # failed checkout leaves nothing for the next setup to take as a clone.
+    tmp = dest + ".partial"
+    shutil.rmtree(tmp, ignore_errors=True)
+    host.say("toolkit: cloning %s %s into external/xboxrecomp" % (pin["url"], gitpin.describe(pin)))
+    try:
+        if pin["tag"]:
+            host.run(["git", "clone", "--no-checkout", "--", pin["url"], tmp])
+            commit = gitpin.resolve(tmp, pin, "toolkit", fresh=True)
+        else:
+            host.run(["git", "clone", "--branch", pin["branch"], "--", pin["url"], tmp])
+            commit = pin["commit"]
+        host.run(["git", "-C", tmp, "checkout", "--quiet", commit])
+        if host.git_head(tmp) != commit:
+            raise CliError("toolkit: the clone is not at the pin %s" % commit[:12])
+        with open(os.path.join(tmp, PIN_MARK), "w") as f:
+            f.write(commit + "\n")
+        exclude_pin_mark(tmp)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        os.rename(tmp, dest)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
     return dest

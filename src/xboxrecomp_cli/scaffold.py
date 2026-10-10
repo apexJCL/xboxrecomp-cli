@@ -26,7 +26,7 @@ import subprocess
 import sys
 from importlib import metadata
 
-from . import cli_dir, host, manifest, pins, toolkit, wrapper, xbe
+from . import cli_dir, gitpin, host, manifest, pins, toolkit, wrapper, xbe
 from .host import CliError
 
 # The toolkit every game the CLI builds pins: the fork's integration branch.
@@ -61,13 +61,14 @@ title_id = @TITLE_ID@
 sha256 = []
 
 [cli]
-# The xboxrecomp-cli commit ./@SLUG@ runs: the bootstrap clones it at this
-# commit when it finds none. `@SLUG@ pins refresh` prints the newest head.
-commit = "@CLI_COMMIT@"
-url = "@CLI_URL@"
+# The xboxrecomp-cli ./@SLUG@ runs: the bootstrap clones it at this release
+# tag (or commit) when it finds none; with both, the commit locks the tag.
+# `@SLUG@ pins refresh` prints the newest release.
+@CLI_PIN@url = "@CLI_URL@"
 
 [toolkit]
-# `@SLUG@ setup` clones it into external/xboxrecomp at this commit.
+# `@SLUG@ setup` clones it into external/xboxrecomp at this commit. A
+# release tag pins it too: tag = "..." (branch is then optional).
 url = "@TOOLKIT_URL@"
 branch = "@TOOLKIT_BRANCH@"
 commit = "@TOOLKIT_COMMIT@"
@@ -377,6 +378,52 @@ def resolve_cli_commit(override="", offline=False):
     return ZERO, "unresolved: fill in [cli] commit"
 
 
+def resolve_cli_pin(tag="", commit="", offline=False):
+    """(tag, commit, how) for [cli]: --cli-tag (its commit from
+    --cli-commit, else the remote's tag, else none offline), --cli-commit,
+    this checkout (with the release tag on its HEAD, if any), the installed
+    distribution (no tag), else the remote's newest release, else
+    resolve_cli_commit's answer."""
+    if tag:
+        if not gitpin.tag_ok(tag):
+            raise CliError("--cli-tag %r is not a plain tag name" % tag)
+        why = ""
+        if not commit and not offline:
+            tags = gitpin.remote_tags(pins.CLI_URL)
+            if tags is None:
+                why = "%s unreachable; " % pins.CLI_URL
+            elif tag not in tags:
+                raise CliError("--cli-tag %s is not on %s" % (tag, pins.CLI_URL))
+            commit = (tags or {}).get(tag, "")
+        return tag, commit, "--cli-tag" + ("" if commit else " (%sno commit to lock it)" % why)
+    head, _ = cli_dir.tree_state()
+    if not commit and head:
+        t = gitpin.version_tag_at(cli_dir.cli_dir(), pins.CLI_TAG_PREFIX)
+        if t:
+            c, how = resolve_cli_commit()
+            how += ", release " + t
+            if not offline:
+                # A release tagged here but not pushed: a fresh clone of the
+                # game could not find it.
+                tags = gitpin.remote_tags(pins.CLI_URL)
+                if tags is None:
+                    how += " (%s unreachable: is the tag pushed?)" % pins.CLI_URL
+                elif tags.get(t) != c:
+                    how += " (local only: push the tag to %s before the game)" % pins.CLI_URL
+            return t, c, how
+    if not commit and not head and not installed_commit() and not offline:
+        new = gitpin.newest_with_prefix(gitpin.remote_tags(pins.CLI_URL) or {}, pins.CLI_TAG_PREFIX)
+        if new:
+            return new[0], new[1], "%s, the newest release" % pins.CLI_URL
+    c, how = resolve_cli_commit(commit, offline)
+    return "", c, how
+
+
+def cli_pin_lines(tag, commit):
+    """game.toml's [cli] pin lines, before url."""
+    return "".join('%s = "%s"\n' % (k, v) for k, v in (("tag", tag), ("commit", commit)) if v)
+
+
 def git_branch(d):
     r = subprocess.run(
         ["git", "-C", d, "rev-parse", "--abbrev-ref", "HEAD"],
@@ -502,7 +549,7 @@ def scaffold(root, a):
     xbe_path = a.xbe or os.path.join(root, "game_files", "default.xbe")
     h, xbe_note = xbe_values(xbe_path)
     name = clean_name(a.name or h.get("title") or "", slug)
-    cli_commit, cli_how = resolve_cli_commit(a.cli_commit, a.offline)
+    cli_tag, cli_commit, cli_how = resolve_cli_pin(a.cli_tag, a.cli_commit, a.offline)
     tk_commit, tk_how = resolve_toolkit_commit(
         root, a.toolkit_url, a.toolkit_branch, a.toolkit_commit, a.offline
     )
@@ -515,7 +562,7 @@ def scaffold(root, a):
         "TITLE_ID": "0x%08X" % h.get("title_id", 0),
         "TITLE_ID_HEX": "%08X" % h.get("title_id", 0),
         "ENTRY": "%08X" % h.get("entry", 0),
-        "CLI_COMMIT": cli_commit,
+        "CLI_PIN": cli_pin_lines(cli_tag, cli_commit),
         "CLI_URL": pins.CLI_URL,
         "TOOLKIT_URL": a.toolkit_url,
         "TOOLKIT_BRANCH": a.toolkit_branch,
@@ -529,7 +576,10 @@ def scaffold(root, a):
         "WINDOWS_DIR": "build-win",
         "MACOS_DIR": "build",
     }
-    notes = [xbe_note, "cli commit %s: %s" % (cli_commit[:12], cli_how)]
+    notes = [
+        xbe_note,
+        "cli %s: %s" % (gitpin.describe({"tag": cli_tag, "commit": cli_commit}), cli_how),
+    ]
     notes.append("toolkit commit %s: %s" % (tk_commit[:12], tk_how))
 
     def j(*p):
@@ -634,6 +684,11 @@ def make_parser(prog):
         "--toolkit-commit", default="", help="default: a checkout beside DIR, else the branch head"
     )
     ap.add_argument("--cli-commit", default="", help="default: the commit this CLI runs from")
+    ap.add_argument(
+        "--cli-tag",
+        default="",
+        help="pin this CLI release tag (default: the release this CLI runs at, if any)",
+    )
     ap.add_argument("--llvm-mingw", default=LLVM_MINGW, help="the llvm-mingw release tag")
     ap.add_argument(
         "--offline",
