@@ -9,6 +9,15 @@ job count), re-renders the Latin atlas from a font (--font, else the
 font game.toml names when this host has it installed), and
 writes <out>/hud.pack and <out>/hud-pack.toml. The dump is read, never
 written; the output goes under dist/ by default, which is gitignored.
+
+Each entry has a kind the runtime can switch off on its own: the font
+atlas is FONT; baked text is TEXT, which is every entry of a language's
+archives ([enhance.hud] languages, only the languages picked with
+--language are read) and every entry the [enhance.hud] text patterns
+name; the rest is art. Text is built at TEXT_SCALE in BC3 (a quarter of
+the bytes, and the sources are DXT already), art and the atlas at the
+scale given, raw. The MIX container alone does not make an entry text:
+the game keeps pictures in .mix files too.
 """
 
 import concurrent.futures
@@ -20,7 +29,12 @@ import time
 
 from .. import host
 from ..host import CliError
-from . import atlas, dds, font, ipk, pack, scaler, texhash, xpr
+from . import atlas, bc3, dds, font, ipk, pack, scaler, texhash, xpr
+
+# Baked text: 2x is sharp at the native 640x480 layout's sizes up to 4K
+# and a quarter of 4x's bytes; BC3 quarters it again.
+TEXT_SCALE = 2
+TEXT_BC3 = True
 
 
 def font_hint(name):
@@ -71,6 +85,14 @@ def configure(p):
         help="narrow the set to entries matching this pattern (repeatable)",
     )
     p.add_argument(
+        "--language",
+        action="append",
+        default=[],
+        metavar="LANG",
+        help="a language of game.toml's [enhance.hud] languages to build the text of "
+        "(repeatable; default: the first listed)",
+    )
+    p.add_argument(
         "--list", action="store_true", help="print the set and its hashes, write nothing"
     )
 
@@ -90,12 +112,43 @@ def _match(path, patterns):
     return any(fnmatch.fnmatchcase(path, p) for p in patterns)
 
 
-def select(game_files, cfg, only=()):
+def languages(cfg, picked=()):
+    """The language names to build, checked against game.toml's table:
+    `picked` (--language), else the first one listed, else none."""
+    table = cfg.get("languages", {})
+    for lang in picked:
+        if lang not in table:
+            raise CliError(
+                "--language %s: game.toml [enhance.hud] languages has %s"
+                % (lang, ", ".join(table) or "none")
+            )
+    if picked:
+        return list(dict.fromkeys(picked))
+    return list(table)[:1]
+
+
+def archive_languages(cfg):
+    """{archive: language} of every language's archives."""
+    return {a: lang for lang, arcs in cfg.get("languages", {}).items() for a in arcs}
+
+
+def archives(cfg, langs):
+    """The archives to read: game.toml's archives that belong to no
+    language, then those of the languages picked, each once."""
+    by = archive_languages(cfg)
+    names = [a for a in cfg["archives"] if a not in by]
+    for lang in langs:
+        names += cfg["languages"][lang]
+    return list(dict.fromkeys(names))
+
+
+def select(game_files, cfg, only=(), langs=None):
     """[(archive, entry)] of the set, in archive and index order."""
     patterns = [p.lower().replace("\\", "/") for p in cfg["textures"]]
     only = [p.lower().replace("\\", "/") for p in only]
     out = []
-    for name in cfg["archives"]:
+    names = archives(cfg, languages(cfg) if langs is None else langs)
+    for name in names:
         try:
             arc = ipk.Archive(game_files, name)
         except (OSError, ipk.ArchiveError) as e:
@@ -110,7 +163,7 @@ def select(game_files, cfg, only=()):
 
 
 class Item:
-    __slots__ = ("archive", "entry", "sub", "dds", "hash", "rgba", "note")
+    __slots__ = ("archive", "entry", "sub", "dds", "hash", "rgba", "note", "kind", "language")
 
     def __init__(self, archive, entry, sub=""):
         self.archive = archive
@@ -120,6 +173,8 @@ class Item:
         self.hash = 0
         self.rgba = None
         self.note = ""
+        self.kind = pack.KIND_ART
+        self.language = ""
 
     @property
     def label(self):
@@ -129,6 +184,29 @@ class Item:
     @property
     def name(self):
         return "%s:%s" % (self.archive.name, self.entry.name) + ("/" + self.sub if self.sub else "")
+
+
+def assign_kinds(items, cfg):
+    """Each item's kind and language (see the module doc)."""
+    font_atlas = cfg.get("font_atlas", "").lower().replace("\\", "/")
+    text = [p.lower().replace("\\", "/") for p in cfg.get("text", [])]
+    by = archive_languages(cfg)
+    for it in items:
+        it.language = by.get(it.archive.name, "") if it.archive else ""
+        if font_atlas and it.entry.path == font_atlas and not it.sub:
+            it.kind = pack.KIND_FONT
+        elif it.language or _match(it.label, text):
+            it.kind = pack.KIND_TEXT
+        else:
+            it.kind = pack.KIND_ART
+    return items
+
+
+def policy(it, art_scale):
+    """(scale, bc3) of an item's kind."""
+    if it.kind == pack.KIND_TEXT:
+        return TEXT_SCALE, TEXT_BC3
+    return art_scale, False
 
 
 def _check(it, d, max_texels):
@@ -201,12 +279,14 @@ def _scale_task(args):
 
 
 def upscale_all(items, s, jobs):
-    """Each item's rgba at s x, in item order whatever the job count."""
+    """Each item's rgba at its scale (s: one for all, or one per item), in
+    item order whatever the job count."""
+    scales = s if isinstance(s, (list, tuple)) else [s] * len(items)
     work = []
-    for it in items:
+    for it, si in zip(items, scales):
         w, h, rgba = dds.decode(it.dds)
         it.rgba = (w, h, rgba)
-        work.append((w, h, rgba, s))
+        work.append((w, h, rgba, si))
     if jobs == 1 or len(work) <= 1:
         return [_scale_task(a) for a in work]
     with concurrent.futures.ProcessPoolExecutor(max_workers=jobs or None) as ex:
@@ -242,18 +322,39 @@ def run(a):
     out_dir = os.path.abspath(a.out) if a.out else os.path.join(G.dist, "enhance", "hud")
     host.require(G.xbe, "enhance hud")
     t0 = time.time()
-    items = load_items(select(G.game_files, cfg, a.only), cfg["max_texels"])
+    langs = languages(cfg, getattr(a, "language", []))
+    for lang, arcs in cfg.get("languages", {}).items():
+        if lang not in langs:
+            host.say("language %s (%s): not picked, its text is left out" % (lang, ", ".join(arcs)))
+    items = load_items(select(G.game_files, cfg, a.only, langs), cfg["max_texels"])
+    assign_kinds(items, cfg)
     usable = [it for it in items if it.dds]
     if a.list:
         for it in items:
+            kind = pack.KINDS[it.kind] + ("/" + it.language if it.language else "")
             if it.dds:
                 host.say(
-                    "%016X  %-40s %s %dx%d"
-                    % (it.hash, it.label, it.dds.fourcc.decode(), it.dds.width, it.dds.height)
+                    "%016X  %-40s %-7s %s %dx%d"
+                    % (
+                        it.hash,
+                        it.label,
+                        kind,
+                        it.dds.fourcc.decode(),
+                        it.dds.width,
+                        it.dds.height,
+                    )
                 )
             else:
-                host.say("%16s  %-40s %s" % ("-", it.label, it.note))
-        host.say("%d entries, %d usable" % (len(items), len(usable)))
+                host.say("%16s  %-40s %-7s %s" % ("-", it.label, kind, it.note))
+        counts = [sum(1 for it in usable if it.kind == k) for k in range(len(pack.KINDS))]
+        host.say(
+            "%d entries, %d usable (%s)"
+            % (
+                len(items),
+                len(usable),
+                ", ".join("%d %s" % (n, k) for n, k in zip(counts, pack.KINDS)),
+            )
+        )
         return 0
     if not usable:
         raise CliError("no DXT texture matched [enhance.hud] textures in %s" % G.game_files)
@@ -268,45 +369,74 @@ def run(a):
         host.say(font_hint(face))
     elif not a.font or not os.path.isfile(a.font):
         host.say("font: %s, %s" % (face, font_path))
-    host.say("upscaling %d textures %dx (%s)..." % (len(usable), s, scaler.KERNEL))
-    ups = upscale_all(usable, s, a.jobs)
+    plans = [policy(it, s) for it in usable]
+    n_text = sum(1 for it in usable if it.kind == pack.KIND_TEXT)
+    host.say(
+        "upscaling %d textures (%s): art and font %dx, %d text %dx%s..."
+        % (len(usable), scaler.KERNEL, s, n_text, TEXT_SCALE, " BC3" if TEXT_BC3 else "")
+    )
+    ups = upscale_all(usable, [p[0] for p in plans], a.jobs)
     entries = []
-    for it, up in zip(usable, ups):
+    for it, up, (si, want_bc3) in zip(usable, ups, plans):
         w, h, _ = it.rgba
         rgba = up
         source = "xbr"
-        if font_path and font_atlas and it.entry.path == font_atlas:
-            rgba, n, font_info = render_font(it, up, cfg, font_path, face, s)
+        if it.kind == pack.KIND_FONT and font_path:
+            rgba, n, font_info = render_font(it, up, cfg, font_path, face, si)
             source = "font (%d glyphs)" % n
             host.say(
                 "%s: %d glyphs rendered from %s"
                 % (it.entry.path, n, font_info.get("face") or font_info["name"])
             )
+        uw, uh = w * si, h * si
+        # The runtime takes BC3 in whole blocks only.
+        use_bc3 = want_bc3 and uw % 4 == 0 and uh % 4 == 0
+        if want_bc3 and not use_bc3:
+            host.say("%s: %dx%d is not whole BC3 blocks, kept raw" % (it.label, uw, uh))
+        texels = bc3.encode(uw, uh, rgba) if use_bc3 else pack.rgba_to_argb(rgba)
         entries.append(
             pack.PackEntry(
                 it.hash,
-                w * s,
-                h * s,
-                pack.rgba_to_argb(rgba),
+                uw,
+                uh,
+                texels,
                 name=it.name,
                 source=source,
                 guest=(w, h),
+                kind=it.kind,
+                bc3=use_bc3,
             )
         )
+    text_scale = TEXT_SCALE if n_text else 0
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "hud.pack")
-    sha = pack.write(path, entries, s)
+    sha = pack.write(path, entries, s, text_scale)
     with open(G.xbe, "rb") as f:
         xbe_sha = hashlib.sha256(f.read()).hexdigest()
     with open(os.path.join(out_dir, "hud-pack.toml"), "w", newline="\n") as f:
         f.write(
             pack.manifest_text(
-                entries, s, scaler.KERNEL, "xboxrecomp-cli " + __version__, xbe_sha, font_info
+                entries,
+                s,
+                scaler.KERNEL,
+                "xboxrecomp-cli " + __version__,
+                xbe_sha,
+                font_info,
+                text_scale,
+                langs,
             )
         )
+    stats = pack.kind_stats(entries)
     host.say(
-        "wrote %s: %d entries at %dx, sha256 %s, %.0f s"
-        % (G.rel(path), len(entries), s, sha[:12], time.time() - t0)
+        "wrote %s: %d entries (%s), %.1f MB, sha256 %s, %.0f s"
+        % (
+            G.rel(path),
+            len(entries),
+            ", ".join("%d %s" % (stats[k][0], k) for k in pack.KINDS),
+            os.path.getsize(path) / 1e6,
+            sha[:12],
+            time.time() - t0,
+        )
     )
     host.say("the pack is made from your game files: keep it private (see hud-pack.toml beside it)")
     return 0

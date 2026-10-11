@@ -28,6 +28,9 @@ STR, INT, BOOL, STRS = "string", "integer", "boolean", "list of strings"
 # A table of string keys to string values, held as one key (not a table of
 # the schema): golden.enhance_stock.
 STRMAP = "table of strings"
+# The same with a list of strings per key: enhance.hud.languages.
+STRSMAP = "table of string lists"
+MAPS = (STRMAP, STRSMAP)
 DERIVED = object()
 SPEC = {
     "": {"schema": (INT, REQUIRED)},
@@ -155,6 +158,16 @@ SPEC = {
         # looked up in the host's font folders when --font is not given.
         # The user installs it; the CLI never ships a font.
         "font": (STR, ""),
+        # Per language, the archives (basenames, like archives) holding its
+        # text; `xbr enhance hud --language` picks which are built (default
+        # the first). An archive named here is read only when its language
+        # is picked, whether or not archives lists it.
+        "languages": (STRSMAP, {}),
+        # Entry-name patterns (fnmatch over '<entry>' or '<entry>/<mix
+        # name>', lower case) of baked text outside the language archives.
+        # Text is built at 2x with BC3; everything else that is not the
+        # font atlas is art.
+        "text": (STRS, []),
     },
 }
 # Optional tables: a game without them still sets up, generates, builds and
@@ -190,6 +203,10 @@ def _type_ok(kind, v):
         return isinstance(v, dict) and all(
             isinstance(k, str) and isinstance(x, str) for k, x in v.items()
         )
+    if kind == STRSMAP:
+        return isinstance(v, dict) and all(
+            isinstance(k, str) and _type_ok(STRS, x) for k, x in v.items()
+        )
     return isinstance(v, list) and all(isinstance(x, str) for x in v)
 
 
@@ -209,7 +226,7 @@ def validate(doc):
     def walk(t, prefix):
         for k, v in t.items():
             name = prefix + k
-            if isinstance(v, dict) and SPEC.get(prefix[:-1], {}).get(k, (None,))[0] == STRMAP:
+            if isinstance(v, dict) and SPEC.get(prefix[:-1], {}).get(k, (None,))[0] in MAPS:
                 continue
             if isinstance(v, dict):
                 if name not in SPEC:
@@ -231,11 +248,18 @@ def validate(doc):
             dst = dst.setdefault(part, {})
         for k, (kind, default) in keys.items():
             name = (tname + "." if tname else "") + k
-            if k in t and (kind == STRMAP or not isinstance(t[k], dict)):
+            if k in t and (kind in MAPS or not isinstance(t[k], dict)):
                 if not _type_ok(kind, t[k]):
                     errors.append("%s: must be a %s" % (name, kind))
                     continue
-                dst[k] = list(t[k]) if kind == STRS else dict(t[k]) if kind == STRMAP else t[k]
+                if kind == STRS:
+                    dst[k] = list(t[k])
+                elif kind == STRSMAP:
+                    dst[k] = {n: list(x) for n, x in t[k].items()}
+                elif kind == STRMAP:
+                    dst[k] = dict(t[k])
+                else:
+                    dst[k] = t[k]
             elif default is REQUIRED:
                 errors.append("%s: required" % name)
             elif default is not DERIVED:
@@ -335,6 +359,16 @@ def _check_values(m):
         for i, row in enumerate(hud["font_rows"]):
             if not row.strip():
                 errors.append("enhance.hud.font_rows: row %d names no glyph" % i)
+        seen = {}
+        for lang, arcs in hud["languages"].items():
+            if not arcs:
+                errors.append("enhance.hud.languages.%s: names no archive" % lang)
+            for arc in arcs:
+                if arc in seen:
+                    errors.append(
+                        "enhance.hud.languages.%s: %s is %s's already" % (lang, arc, seen[arc])
+                    )
+                seen[arc] = lang
     gc = m["bench"]["gc"]
     for k in ("keep", "days"):
         if gc[k] < 0:

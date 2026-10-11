@@ -18,6 +18,7 @@ from xboxrecomp_cli import host, manifest  # noqa: E402
 from xboxrecomp_cli import package as pkg  # noqa: E402
 from xboxrecomp_cli.enhance import (  # noqa: E402
     atlas,
+    bc3,
     dds,
     font,
     hud,
@@ -380,6 +381,86 @@ def test_pack_write_and_read(d):
     assert text.index('hash = "0000000000000010"') < text.index('hash = "0000000000000020"')
 
 
+def test_pack_v2_kinds_and_bc3(d):
+    """v2: the kind in flag bits 0-1, FLAG_BC3, the text scale in the
+    header; a BC3 entry must be whole blocks; v1 still reads."""
+    p = os.path.join(d, "hud.pack")
+    art = pack.PackEntry(0x30, 1, 1, b"\0\0\0\xff", name="art")
+    fnt = pack.PackEntry(0x20, 1, 1, b"\0\0\0\xff", name="font", kind=pack.KIND_FONT)
+    txt = pack.PackEntry(
+        0x10, 4, 4, bytes(16), name="text", source="xbr", kind=pack.KIND_TEXT, bc3=True
+    )
+    pack.write(p, [art, fnt, txt], 4, 2)
+    with open(p, "rb") as f:
+        data = f.read()
+    magic, version, count, scale, index_off, text_scale = pack.HEADER.unpack_from(data)
+    assert (version, count, scale, text_scale) == (2, 3, 4, 2)
+    flags = [pack.ENTRY.unpack_from(data, index_off + 32 * i)[4] for i in range(3)]
+    assert flags == [pack.KIND_TEXT | pack.FLAG_BC3, pack.KIND_FONT, pack.KIND_ART]
+    assert len(data) == index_off + 3 * 32 + 16 + 4 + 4
+    assert pack.read_header(p) == (3, 4)
+    odd = pack.PackEntry(1, 6, 4, bytes(32), kind=pack.KIND_TEXT, bc3=True, name="odd")
+    with pytest.raises(ValueError, match="BC3 entry odd is 6x4"):
+        pack.write(p, [odd], 4)
+    v1 = bytearray(data)
+    struct.pack_into("<I", v1, 4, 1)
+    write(os.path.join(d, "v1.pack"), "")
+    with open(os.path.join(d, "v1.pack"), "wb") as f:
+        f.write(v1)
+    assert pack.read_header(os.path.join(d, "v1.pack")) == (3, 4)
+    struct.pack_into("<I", v1, 4, 3)
+    with open(os.path.join(d, "v3.pack"), "wb") as f:
+        f.write(v1)
+    with pytest.raises(ValueError, match="version 3"):
+        pack.read_header(os.path.join(d, "v3.pack"))
+    text = pack.manifest_text([art, fnt, txt], 4, "k", "t", "x" * 64, None, 2, ["us"])
+    assert 'languages = ["us"]' in text
+    assert "[kinds.text]\nentries = 1\nscale = 2\nbc3 = 1\nbytes = 16\n" in text
+    assert "[kinds.art]\nentries = 1\nscale = 4\nbc3 = 0\nbytes = 4\n" in text
+    assert 'kind = "text"\nbc3 = true' in text
+    assert pack.kind_stats([art, fnt, txt]) == {
+        "art": (1, 0, 4),
+        "font": (1, 0, 4),
+        "text": (1, 1, 16),
+    }
+
+
+# The block vector the toolkit's tests/tex_pack decodes too: RGBA texels in
+# row order, the encoder's 16 bytes, and what the DXT5 decoder draws.
+BC3_P = bytes.fromhex(
+    "0aff00002ff2031f54e50c2f79d81b3f9ecb304fc3be4b00e8b16c6f0da4937f"
+    "3297c08f578af39f7c7d2cafa1706bbfc663b0cfeb56fbdf10494cef353ca3ff"
+)
+BC3_B = bytes.fromhex("ff00f9ed94e42601ffe98017d5efbbb2")
+BC3_D = bytes.fromhex(
+    "10f3000010f3002410f300245ab655485ab655485ab65500a479aa6d5ab65591"
+    "5ab65591a479aa915ab655b6a479aab6a479aadaef3cffda5ab655ffa479aaff"
+)
+
+
+def test_bc3_vector():
+    assert bc3.encode(4, 4, BC3_P) == BC3_B
+    assert dds.decode_level(b"DXT5", 4, 4, BC3_B) == BC3_D
+    # Flat blocks: equal endpoints, every index 0.
+    flat = bytes((200, 100, 50, 255)) * 16
+    blk = bc3.encode(4, 4, flat)
+    assert blk[0:2] == bytes((255, 255)) and blk[2:8] == bytes(6) and blk[12:] == bytes(4)
+    assert dds.decode_level(b"DXT5", 4, 4, blk) == bytes((198, 101, 49, 255)) * 16
+    # Four-colour mode always: c0 > c1 when the colours differ.
+    ramp = b"".join(bytes((i * 16, 0, 0, 255)) for i in range(16))
+    c0, c1 = struct.unpack_from("<HH", bc3.encode(4, 4, ramp), 8)
+    assert c0 > c1
+    # Anti-aliased white text: alpha within one step of the eight-value table.
+    aa = b"".join(bytes((255, 255, 255, (i * 17) & 255)) for i in range(16))
+    out = dds.decode_level(b"DXT5", 4, 4, bc3.encode(4, 4, aa))
+    assert max(abs(a - b) for a, b in zip(aa[3::4], out[3::4])) <= 19
+    assert out[0::4] == bytes((255,)) * 16
+    # Edge blocks repeat the last row and column; the size is whole blocks.
+    assert bc3.size(6, 2) == 32 and len(bc3.encode(6, 2, bytes(6 * 2 * 4))) == 32
+    with pytest.raises(ValueError, match="needs 64 RGBA bytes"):
+        bc3.encode(4, 4, bytes(8))
+
+
 # ---- font and atlas ---------------------------------------------------------
 
 
@@ -547,7 +628,7 @@ def hud_game(d):
 
 
 def hud_args(**kw):
-    a = A(scale=None, out=None, font=None, jobs=1, only=[], list=False)
+    a = A(scale=None, out=None, font=None, jobs=1, only=[], list=False, language=[])
     a.__dict__.update(kw)
     return a
 
@@ -808,6 +889,128 @@ def test_hud_mix_textures(d, capsys):
         assert hud.run(hud_args()) == 0
         man = open(os.path.join(G.dist, "enhance", "hud", "hud-pack.toml")).read()
         assert 'name = "lng:mis/mis_one.mix/mis_one"' in man
+
+
+def read_pack(path):
+    """{hash: (w, h, flags, payload)} of a pack."""
+    with open(path, "rb") as f:
+        data = f.read()
+    _, _, count, _, index_off, _ = pack.HEADER.unpack_from(data)
+    recs = [pack.ENTRY.unpack_from(data, index_off + 32 * i) for i in range(count)]
+    out = {}
+    for i, (h, w, hh, _, flags, off) in enumerate(recs):
+        end = recs[i + 1][5] if i + 1 < count else len(data)
+        out[h] = (w, hh, flags, data[off:end])
+    return out
+
+
+def kinds_game(d):
+    """hud_game plus two language archives of .mix text, a picture .mix in
+    media (art: a MIX alone is not text) and a baked-text .dds in media the
+    text patterns name."""
+    G = hud_game(d)
+    us = dxt1_blocks(8, 4, idx=1)
+    jp = dxt1_blocks(8, 4, idx=2)
+    pic = dxt1_blocks(8, 8, idx=3)
+    sm = dxt1_blocks(4, 4, idx=1)
+    write_archive(
+        G.game_files, "lng_us", [("mis\\m.mix", mix_file([("m_us", 0x0C, 8, 4, us)]), True)]
+    )
+    write_archive(
+        G.game_files, "lng_jp", [("mis\\m.mix", mix_file([("m_jp", 0x0C, 8, 4, jp)]), True)]
+    )
+    write_archive(
+        G.game_files,
+        "media",
+        [
+            ("dds\\ui_bar.dds", dds_file(8, 4, b"DXT1", dxt1_blocks(8, 4)), False),
+            (
+                "dds\\font_test.dds",
+                dds_file(ATLAS_W, ATLAS_H, b"DXT5", dxt5_blocks(ATLAS_W, ATLAS_H, stock_ink)),
+                True,
+            ),
+            ("dds\\ui_pic.mix", mix_file([("pic", 0x0C, 8, 8, pic)]), True),
+            ("dds\\ui_sm_go.dds", dds_file(4, 4, b"DXT1", sm), False),
+        ],
+    )
+    cfg = G.m["enhance"]["hud"]
+    cfg["archives"] = ["media", "lng_us"]
+    cfg["textures"] = cfg["textures"] + ["mis/*"]
+    cfg["languages"] = {"us": ["lng_us"], "jp": ["lng_jp"]}
+    cfg["text"] = ["dds/ui_sm_*"]
+    return G, {"us": us, "jp": jp, "pic": pic, "sm": sm}
+
+
+def test_hud_kinds_and_languages(d, capsys):
+    with fake_tree(d):
+        G, tex = kinds_game(d)
+        assert hud.run(hud_args(list=True)) == 0
+        out = capsys.readouterr().out
+        h = texhash.tex_hash
+        assert "language jp (lng_jp): not picked" in out
+        assert "%016X  %-40s %-7s DXT1" % (h(tex["us"]), "mis/m.mix/m_us", "text/us") in out
+        assert "%016X  %-40s %-7s DXT1" % (h(tex["pic"]), "dds/ui_pic.mix/pic", "art") in out
+        assert "%016X  %-40s %-7s DXT1" % (h(tex["sm"]), "dds/ui_sm_go.dds", "text") in out
+        assert "dds/font_test.dds" in out and " font    DXT5" in out
+        assert "m_jp" not in out
+        assert "(2 art, 1 font, 2 text)" in out
+        assert hud.run(hud_args(list=True, language=["jp"])) == 0
+        out = capsys.readouterr().out
+        assert "m_jp" in out and "text/jp" in out and "m_us" not in out
+        assert hud.run(hud_args(list=True, language=["us", "jp"])) == 0
+        out = capsys.readouterr().out
+        assert "m_jp" in out and "m_us" in out and "not picked" not in out
+        raises(hud.run, hud_args(language=["fr"]), match="languages has us, jp")
+        # The pack: text at 2x in BC3, art and the atlas at the scale, raw.
+        assert hud.run(hud_args()) == 0
+        out = capsys.readouterr().out
+        assert "(2 art, 1 font, 2 text)" in out
+        p = os.path.join(G.dist, "enhance", "hud", "hud.pack")
+        with open(p, "rb") as f:
+            assert pack.HEADER.unpack_from(f.read())[5] == hud.TEXT_SCALE
+        entries = read_pack(p)
+        w, hh, flags, payload = entries[h(tex["us"])]
+        assert (w, hh, flags) == (16, 8, pack.KIND_TEXT | pack.FLAG_BC3)
+        assert len(payload) == bc3.size(16, 8)
+        _, _, rgba = dds.decode(dds.Dds(8, 4, 1, b"DXT1", tex["us"]))
+        assert payload == bc3.encode(16, 8, scaler.scale(8, 4, rgba, 2))
+        assert entries[h(tex["pic"])][:3] == (16, 16, pack.KIND_ART)
+        assert entries[h(tex["sm"])][2] == pack.KIND_TEXT | pack.FLAG_BC3
+        assert entries[h(dxt5_blocks(ATLAS_W, ATLAS_H, stock_ink))][2] == pack.KIND_FONT
+        man = open(os.path.join(G.dist, "enhance", "hud", "hud-pack.toml")).read()
+        assert (
+            'languages = ["us"]' in man and "[kinds.text]\nentries = 2\nscale = 2\nbc3 = 2" in man
+        )
+
+
+def test_hud_art_payload_unchanged(d, capsys):
+    """Without languages or text patterns every entry is art or the atlas,
+    built as before: xBR at the scale, A8R8G8B8, no BC3 (the v1 payload
+    bytes; only the header version and the kind flags differ)."""
+    with fake_tree(d):
+        G = hud_game(d)
+        assert hud.run(hud_args()) == 0
+        capsys.readouterr()
+        p = os.path.join(G.dist, "enhance", "hud", "hud.pack")
+        with open(p, "rb") as f:
+            assert pack.HEADER.unpack_from(f.read())[5] == 0
+        entries = read_pack(p)
+        bar = dxt1_blocks(8, 4)
+        _, _, rgba = dds.decode(dds.Dds(8, 4, 1, b"DXT1", bar))
+        assert entries[texhash.tex_hash(bar)] == (
+            16,
+            8,
+            pack.KIND_ART,
+            pack.rgba_to_argb(scaler.scale(8, 4, rgba, 2)),
+        )
+        atlas_blocks = dxt5_blocks(ATLAS_W, ATLAS_H, stock_ink)
+        _, _, rgba = dds.decode(dds.Dds(ATLAS_W, ATLAS_H, 1, b"DXT5", atlas_blocks))
+        assert entries[texhash.tex_hash(atlas_blocks)] == (
+            ATLAS_W * 2,
+            ATLAS_H * 2,
+            pack.KIND_FONT,
+            pack.rgba_to_argb(scaler.scale(ATLAS_W, ATLAS_H, rgba, 2)),
+        )
 
 
 # ---- package --hud-pack -----------------------------------------------------

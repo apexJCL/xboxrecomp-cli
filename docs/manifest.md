@@ -202,6 +202,10 @@ This table is optional. Without it, `enhance hud` says the game names no HUD set
 | `font_atlas` | `""` | The Latin font atlas's entry name. With a font (`font` or `--font`), it is re-rendered from the font instead of upscaled. |
 | `font_rows` | `[]` | Required with `font_atlas`: one string per band of ink rows in the atlas, the glyphs of that band in atlas order (spaces are ignored; `\uFFFD` keeps the stock glyph, for an icon the game draws at a code). Read off the dump. |
 | `font` | `""` | The font the atlas is redrawn from, by its full name (`"PT Sans Narrow Bold"`): `enhance hud` looks for it in the host's font folders (a `.ttf`, or a face of a `.ttc` collection) when `--font` is not given. `--font` takes a file or another installed font's full name; in a collection file it picks this face. The user installs the font; the CLI never ships one. |
+| `languages` | `{}` | Per language, the archives holding its text: `{ us = ["lng_us"], jp = ["lng_jp"] }`. `enhance hud --language us` (repeatable; default the first listed) picks the languages built; an archive named here is read only when its language is picked, whether or not `archives` lists it. Every entry of a picked language's archives is text. |
+| `text` | `[]` | fnmatch patterns over `<entry>` or `<entry>/<name in the MIX>`, lower case, of baked text outside the language archives (`"dds/sm_*"`). A `.mix` is not text by itself: games keep pictures in them too. |
+
+Each pack entry has a kind the runtime switches off on its own (`textures.font`, `textures.text`): the `font_atlas` entry is **font**, the language archives' entries and the `text` patterns' are **text**, the rest is **art**. Text is built at 2x in BC3 (a quarter of the raw bytes; the sources are DXT already), art and the atlas at `scale` as A8R8G8B8. `hud-pack.toml` beside the pack gives per kind the entries, scale, BC3 count and bytes.
 
 ## [bench]
 

@@ -123,7 +123,17 @@ def test_enhance_hud_table():
         "font_atlas": "",
         "font_rows": [],
         "font": "",
+        "languages": {},
+        "text": [],
     }
+    m = parse(
+        MINIMAL
+        + hud
+        + 'text = ["sm_*"]\n[enhance.hud.languages]\nus = ["lng_us"]\njp = ["lng_jp"]\n'
+    )
+    assert m["enhance"]["hud"]["languages"] == {"us": ["lng_us"], "jp": ["lng_jp"]}
+    assert list(m["enhance"]["hud"]["languages"]) == ["us", "jp"]
+    assert m["enhance"]["hud"]["text"] == ["sm_*"]
     m = parse(
         MINIMAL
         + hud
@@ -137,6 +147,9 @@ def test_enhance_hud_table():
         ('font_atlas = "dds/f.dds"\n', "enhance.hud.font_rows: required with font_atlas"),
         ('font_atlas = "dds/f.dds"\nfont_rows = ["AB", " "]\n', "font_rows: row 1 names no glyph"),
         ("font_grid = 16\n", "enhance.hud.font_grid: unknown key"),
+        ("languages = { us = [] }\n", "enhance.hud.languages.us: names no archive"),
+        ('languages = { us = ["a"], uk = ["a"] }\n', "languages.uk: a is us's already"),
+        ('languages = { us = "a" }\n', "enhance.hud.languages: must be a table of string lists"),
     ):
         with pytest.raises(manifest.ManifestError, match=key):
             parse(MINIMAL + hud + extra)
