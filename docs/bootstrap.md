@@ -42,8 +42,8 @@ game pins one with the commit it names:
 
 ```toml
 [cli]
-tag = "v0.4.0"
-commit = "<the commit v0.4.0 names>"
+tag = "v0.5.0"
+commit = "<the commit v0.5.0 names>"
 url = "https://github.com/apexJCL/xboxrecomp-cli.git"
 ```
 

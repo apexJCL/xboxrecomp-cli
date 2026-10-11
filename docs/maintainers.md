@@ -20,7 +20,7 @@ toolkit's real template runs when a toolkit checkout is beside this one or
 
 ## Releases
 
-Releases are annotated `v*` tags on `main` (`v0.4.0`), never moved once
+Releases are annotated `v*` tags on `main` (`v0.5.0`), never moved once
 pushed; `src/xboxrecomp_cli/__init__.py` carries the version. A game pins a
 release by tag and commit ([bootstrap.md](bootstrap.md), "Pins"): the
 commit locks the tag, so a moved tag is refused rather than run.
