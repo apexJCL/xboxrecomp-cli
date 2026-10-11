@@ -16,7 +16,17 @@ from test_cli import A, fake_tree, raises, write  # noqa: E402
 
 from xboxrecomp_cli import host, manifest  # noqa: E402
 from xboxrecomp_cli import package as pkg  # noqa: E402
-from xboxrecomp_cli.enhance import atlas, dds, font, hud, ipk, pack, scaler, texhash  # noqa: E402
+from xboxrecomp_cli.enhance import (  # noqa: E402
+    atlas,
+    dds,
+    font,
+    hud,
+    ipk,
+    pack,
+    scaler,
+    texhash,
+    xpr,
+)
 
 # ---- fixtures ---------------------------------------------------------------
 
@@ -634,6 +644,170 @@ def test_hud_dedupe(capsys):
     assert "a.dds: same texels as b.dds, one copy kept" in capsys.readouterr().out
     raises(hud.dedupe, [a, item("z.dds", 4, 4, b"z" * 8)], match="hash alike")
     raises(hud.dedupe, [a, item("w.dds", 8, 2, b"x" * 8)], match="hash alike")
+
+
+def mix_file(textures):
+    """A MIXF with one XPR0 of textures [(name, colour format, w, h, data)
+    and optionally (low format bits, size word)], laid out as the game's:
+    names, then the XPR0 at a 0x800 boundary with its texels after a 0x800
+    header. A name may be str or raw bytes."""
+    n = len(textures)
+    head = bytearray(b"MIXF" + struct.pack("<IIIIIII", 0x20, 32 * n, 0x800, 0, 0, 0, n))
+    for name, *_ in textures:
+        raw = name if isinstance(name, bytes) else name.encode("latin-1")
+        head += raw.ljust(32, b"\0")
+    head = head.ljust(0x800, b"\0")
+    hdrs = bytearray()
+    body = bytearray()
+    for _, color, w, h, data, *extra in textures:
+        low, size = extra if extra else (0x29, 0)  # 2D, as the game's
+        fmt = (color << 8) | (1 << 16) | ((w.bit_length() - 1) << 20) | ((h.bit_length() - 1) << 24)
+        hdrs += struct.pack("<5I", 0x00040001, len(body), 0, fmt | low, size)
+        body += data
+    hdrs += struct.pack("<I", 0xFFFFFFFF)
+    xhead = bytearray(b"XPR0" + struct.pack("<II", 0x800 + len(body), 0x800)) + hdrs
+    return bytes(head + xhead.ljust(0x800, b"\xad") + body)
+
+
+def test_mix_parse():
+    a, b = dxt1_blocks(8, 4), dxt5_blocks(4, 4, lambda x, y: x < 2)
+    data = mix_file(
+        [("mis_a", 0x0C, 8, 4, a), ("mis_b", 0x0F, 4, 4, b), ("mis_c", 0x06, 4, 4, b"\0" * 64)]
+    )
+    assert xpr.is_mix(data) and not xpr.is_mix(b"DDS ")
+    (n0, d0, _), (n1, d1, _), (n2, d2, note) = xpr.parse_mix(data)
+    assert (n0, d0.width, d0.height, d0.fourcc, d0.data) == ("mis_a", 8, 4, b"DXT1", a)
+    assert (n1, d1.fourcc, d1.data) == ("mis_b", b"DXT5", b)
+    assert n2 == "mis_c" and d2 is None and "not DXT (format 0x06)" in note
+    # The runtime hashes the data block as the game uploads it.
+    assert texhash.tex_hash(d0.data) == texhash.tex_hash(a)
+    with pytest.raises(xpr.XprError, match="not a MIXF"):
+        xpr.parse_mix(b"XPR0")
+    with pytest.raises(xpr.XprError, match="no XPR0"):
+        xpr.parse_mix(data[:0x800] + b"nope" + data[0x804:])
+
+
+def test_mix_truncated(monkeypatch):
+    """A cut-off or malformed MIX is an XprError, never a struct.error."""
+    data = mix_file([("mis_a", 0x0C, 8, 4, dxt1_blocks(8, 4))])
+    for cut in (0x10, 0x24, 0x40, 0x802, 0x806, 0x80A, 0x80C, 0x820, 0x1000, len(data) - 1):
+        with pytest.raises(xpr.XprError):
+            xpr.parse_mix(data[:cut])
+    # An XPR0 header size under its 12 fixed bytes, or a header size or
+    # total past the end.
+    for hsize, total in ((4, 0x820), (0x10000, 0x820), (0x800, 0x10000)):
+        bad = bytearray(data)
+        struct.pack_into("<II", bad, 0x804, total, hsize)
+        with pytest.raises(xpr.XprError):
+            xpr.parse_mix(bytes(bad))
+    # A MIX header size under 0x20 would put the name table in the header.
+    bad = bytearray(data)
+    struct.pack_into("<I", bad, 4, 0x10)
+    with pytest.raises(xpr.XprError, match="header size"):
+        xpr.parse_mix(bytes(bad))
+    # The backstop: a short read that slips past the checks.
+    monkeypatch.setattr(xpr, "parse_xpr", lambda data, base: struct.unpack_from("<I", b""))
+    with pytest.raises(xpr.XprError, match="MIXF truncated"):
+        xpr.parse_mix(data)
+
+
+def test_hud_corrupt_mix_skipped():
+    """load_items notes a corrupt .mix as skipped and goes on."""
+    good = dxt1_blocks(8, 4)
+    blobs = {"mis/bad.mix": mix_file([("bad", 0x0C, 8, 4, good)])[:0x806], "mis/ok.mix": None}
+    blobs["mis/ok.mix"] = mix_file([("ok", 0x0C, 8, 4, good)])
+    arc = type("A", (), {"name": "lng", "read": lambda self, e: blobs[e.path]})()
+    entries = [type("E", (), {"path": p, "name": p})() for p in blobs]
+    bad, ok = hud.load_items([(arc, e) for e in entries])
+    assert bad.dds is None and bad.note.startswith("skipped:") and bad.label == "mis/bad.mix"
+    assert ok.dds is not None and ok.label == "mis/ok.mix/ok"
+
+
+def test_mix_names_sanitised():
+    """Names come from the dump: empty, unprintable or path-like ones become
+    their index, repeats get one, and the label is lower case."""
+    t = dxt1_blocks(4, 4)
+    data = mix_file(
+        [
+            (b"", 0x0C, 4, 4, t),
+            (b"a\x01b", 0x0C, 4, 4, t),
+            (b"caf\xe9", 0x0C, 4, 4, t),
+            (b"../up", 0x0C, 4, 4, t),
+            (b"dir\\x", 0x0C, 4, 4, t),
+            (b"Mis_A", 0x0C, 4, 4, t),
+            (b"Mis_A", 0x0C, 4, 4, t),
+            (b'q"uote', 0x0C, 4, 4, t),
+        ]
+    )
+    names = [n for n, _, _ in xpr.parse_mix(data)]
+    assert names == ["#0", "#1", "#2", "#3", "#4", "Mis_A", "Mis_A#6", 'q"uote']
+    arc = type("A", (), {"name": "lng"})()
+    it = hud.Item(arc, type("E", (), {"path": "mis/x.mix", "name": "MIS\\X.MIX"})(), "Mis_A")
+    assert it.label == "mis/x.mix/mis_a" and it.name == "lng:MIS\\X.MIX/Mis_A"
+
+
+def test_manifest_name_escaped():
+    """A name with a quote stays a valid TOML string in hud-pack.toml."""
+    import tomllib
+
+    e = pack.PackEntry(1, 1, 1, b"\0\0\0\xff", name='lng:a\\b.mix/q"u\xe9', guest=(1, 1))
+    text = pack.manifest_text([e], 4, "k", "t", "0" * 64)
+    assert tomllib.loads(text)["entry"][0]["name"] == 'lng:a/b.mix/q"u\xe9'
+
+
+def test_mix_not_2d_swizzled():
+    """Cube maps, volumes and linear textures are left out."""
+    t = dxt1_blocks(4, 4)
+    data = mix_file(
+        [
+            ("cube", 0x0C, 4, 4, t, 0x2D, 0),
+            ("vol", 0x0C, 4, 4, t, 0x39, 0),
+            ("linear", 0x0C, 4, 4, t, 0x29, 0x1234),
+            ("ok", 0x0C, 4, 4, t),
+        ]
+    )
+    out = xpr.parse_mix(data)
+    for name, d, note in out[:3]:
+        assert d is None and "not a 2D swizzled texture" in note, name
+    assert out[3][0] == "ok" and out[3][1] is not None
+
+
+def test_mix_no_textures(d, capsys):
+    """A MIX whose XPR0 holds no texture is one skipped item, so --list
+    shows it."""
+    assert xpr.parse_mix(mix_file([])) == [("", None, "skipped: no textures")]
+    with fake_tree(d):
+        G = hud_game(d)
+        write_archive(G.game_files, "lng", [("mis\\empty.mix", mix_file([]), True)])
+        cfg = G.m["enhance"]["hud"]
+        cfg["archives"] = cfg["archives"] + ["lng"]
+        cfg["textures"] = cfg["textures"] + ["mis/*"]
+        assert hud.run(hud_args(list=True)) == 0
+        out = capsys.readouterr().out
+        assert "mis/empty.mix" in out and "skipped: no textures" in out
+
+
+def test_hud_mix_textures(d, capsys):
+    """Pre-rendered text in a .mix of a second archive joins the pack, one
+    entry per texture, named after the MIX's name table."""
+    with fake_tree(d):
+        G = hud_game(d)
+        text = dxt1_blocks(8, 4, idx=1)
+        write_archive(
+            G.game_files,
+            "lng",
+            [("mis\\mis_one.mix", mix_file([("mis_one", 0x0C, 8, 4, text)]), True)],
+        )
+        cfg = G.m["enhance"]["hud"]
+        cfg["archives"] = cfg["archives"] + ["lng"]
+        cfg["textures"] = cfg["textures"] + ["mis/*"]
+        assert hud.run(hud_args(list=True)) == 0
+        out = capsys.readouterr().out
+        assert "%016X  mis/mis_one.mix/mis_one" % texhash.tex_hash(text) in out
+        assert "5 entries, 3 usable" in out
+        assert hud.run(hud_args()) == 0
+        man = open(os.path.join(G.dist, "enhance", "hud", "hud-pack.toml")).read()
+        assert 'name = "lng:mis/mis_one.mix/mis_one"' in man
 
 
 # ---- package --hud-pack -----------------------------------------------------

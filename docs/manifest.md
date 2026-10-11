@@ -196,7 +196,7 @@ This table is optional. Without it, `enhance hud` says the game names no HUD set
 | Key | Default | Meaning |
 |---|---|---|
 | `archives` | required | The IPK1 archives to scan, as basenames under `data.game_files` (`["media"]` reads `media.iph` and `media.ipk`). |
-| `textures` | required | fnmatch patterns, `/` separators, lower case, of the entry names to upscale (`"dds/font_*"`). Only DXT1/3/5 textures without mip chains are taken; the rest are listed as skipped. |
+| `textures` | required | fnmatch patterns, `/` separators, lower case, of the entry names to upscale (`"dds/font_*"`). An entry is a DDS file, or a MIXF container (`.mix`) whose XPR0 textures each become an entry named `<entry>/<name in the MIX>`. Only DXT1/3/5 textures without mip chains are taken; the rest are listed as skipped. |
 | `scale` | `4` | The upscale factor, 2 or 4 (`--scale` overrides). |
 | `max_texels` | `0` | Entries over this many guest texels are left out; 0 is no limit. Full-screen backgrounds are not HUD, and a 1024x512 one at 4x is 32 MB of texels. |
 | `font_atlas` | `""` | The Latin font atlas's entry name. With a font (`font` or `--font`), it is re-rendered from the font instead of upscaled. |

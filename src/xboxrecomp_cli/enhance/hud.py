@@ -20,7 +20,7 @@ import time
 
 from .. import host
 from ..host import CliError
-from . import atlas, dds, font, ipk, pack, scaler, texhash
+from . import atlas, dds, font, ipk, pack, scaler, texhash, xpr
 
 
 def font_hint(name):
@@ -110,36 +110,63 @@ def select(game_files, cfg, only=()):
 
 
 class Item:
-    __slots__ = ("archive", "entry", "dds", "hash", "rgba", "note")
+    __slots__ = ("archive", "entry", "sub", "dds", "hash", "rgba", "note")
 
-    def __init__(self, archive, entry):
+    def __init__(self, archive, entry, sub=""):
         self.archive = archive
         self.entry = entry
+        self.sub = sub  # the texture's name inside a .mix, else ""
         self.dds = None
         self.hash = 0
         self.rgba = None
         self.note = ""
 
+    @property
+    def label(self):
+        # entry.path is lower-cased for matching; the label follows it.
+        return self.entry.path + ("/" + self.sub.lower() if self.sub else "")
+
+    @property
+    def name(self):
+        return "%s:%s" % (self.archive.name, self.entry.name) + ("/" + self.sub if self.sub else "")
+
+
+def _check(it, d, max_texels):
+    """Set it.dds and it.hash, or it.note with why the texture is left out."""
+    if not d.dxt:
+        it.note = "skipped: not DXT (%s)" % (d.fourcc.decode("latin-1") or "uncompressed")
+    elif d.levels != 1:
+        it.note = "skipped: %d mip levels" % d.levels
+    elif max_texels and d.width * d.height > max_texels:
+        it.note = "skipped: %dx%d is over max_texels %d" % (d.width, d.height, max_texels)
+    else:
+        it.dds = d
+        it.hash = texhash.tex_hash(d.data)
+
 
 def load_items(selected, max_texels=0):
     items = []
     for arc, e in selected:
-        it = Item(arc, e)
         try:
-            d = dds.parse(arc.read(e))
-        except (ipk.ArchiveError, dds.DdsError) as ex:
+            data = arc.read(e)
+            if xpr.is_mix(data):
+                # Pre-rendered text: one texture per name in the MIX.
+                for sub, d, note in xpr.parse_mix(data):
+                    it = Item(arc, e, sub)
+                    if d is None:
+                        it.note = note
+                    else:
+                        _check(it, d, max_texels)
+                    items.append(it)
+                continue
+            d = dds.parse(data)
+        except (ipk.ArchiveError, dds.DdsError, xpr.XprError) as ex:
+            it = Item(arc, e)
             it.note = "skipped: %s" % ex
             items.append(it)
             continue
-        if not d.dxt:
-            it.note = "skipped: not DXT (%s)" % (d.fourcc.decode("latin-1") or "uncompressed")
-        elif d.levels != 1:
-            it.note = "skipped: %d mip levels" % d.levels
-        elif max_texels and d.width * d.height > max_texels:
-            it.note = "skipped: %dx%d is over max_texels %d" % (d.width, d.height, max_texels)
-        else:
-            it.dds = d
-            it.hash = texhash.tex_hash(d.data)
+        it = Item(arc, e)
+        _check(it, d, max_texels)
         items.append(it)
     return items
 
@@ -158,13 +185,13 @@ def dedupe(usable, font_atlas=""):
         if (a.width, a.height, a.data) != (b.width, b.height, b.data):
             raise CliError(
                 "%s and %s hash alike (%016X) but differ; a pack holds one texture per hash"
-                % (prev.entry.path, it.entry.path, it.hash)
+                % (prev.label, it.label, it.hash)
             )
         keep, drop = prev, it
         if font_atlas and it.entry.path == font_atlas:
             keep, drop = it, prev
             kept[it.hash] = it
-        host.say("%s: same texels as %s, one copy kept" % (drop.entry.path, keep.entry.path))
+        host.say("%s: same texels as %s, one copy kept" % (drop.label, keep.label))
     return list(kept.values())
 
 
@@ -222,17 +249,17 @@ def run(a):
             if it.dds:
                 host.say(
                     "%016X  %-40s %s %dx%d"
-                    % (it.hash, it.entry.path, it.dds.fourcc.decode(), it.dds.width, it.dds.height)
+                    % (it.hash, it.label, it.dds.fourcc.decode(), it.dds.width, it.dds.height)
                 )
             else:
-                host.say("%16s  %-40s %s" % ("-", it.entry.path, it.note))
+                host.say("%16s  %-40s %s" % ("-", it.label, it.note))
         host.say("%d entries, %d usable" % (len(items), len(usable)))
         return 0
     if not usable:
         raise CliError("no DXT texture matched [enhance.hud] textures in %s" % G.game_files)
     for it in items:
         if it.note:
-            host.say("%s: %s" % (it.entry.path, it.note))
+            host.say("%s: %s" % (it.label, it.note))
     font_atlas = cfg.get("font_atlas", "").lower().replace("\\", "/")
     usable = dedupe(usable, font_atlas)
     font_info = None
@@ -261,7 +288,7 @@ def run(a):
                 w * s,
                 h * s,
                 pack.rgba_to_argb(rgba),
-                name="%s:%s" % (it.archive.name, it.entry.name),
+                name=it.name,
                 source=source,
                 guest=(w, h),
             )

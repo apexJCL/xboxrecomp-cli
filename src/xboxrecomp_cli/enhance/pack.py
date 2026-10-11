@@ -10,6 +10,7 @@ the manifest written beside it for people.
 """
 
 import hashlib
+import json
 import struct
 
 MAGIC = b"XRTP"
@@ -108,7 +109,9 @@ def manifest_text(entries, scale, kernel, tool, xbe_sha256, font=None):
     for e in sorted(entries, key=lambda e: e.hash):
         lines.append("[[entry]]")
         lines.append('hash = "%016X"' % e.hash)
-        lines.append('name = "%s"' % e.name.replace("\\", "/"))
+        # The name holds bytes from the dump (MIX names): an escaped JSON
+        # string is a valid TOML basic string.
+        lines.append("name = %s" % json.dumps(e.name.replace("\\", "/"), ensure_ascii=True))
         lines.append('source = "%s"' % e.source)
         lines.append("guest = [%d, %d]" % e.guest)
         lines.append("size = [%d, %d]" % (e.width, e.height))
