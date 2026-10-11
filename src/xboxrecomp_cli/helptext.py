@@ -22,6 +22,9 @@ Commands:
                                         whatever is missing or out of date
   @slug@ package windows|steamos|macos  the same, for a given target: dist/
   @slug@ doctor                         what this host has, and what it can package
+  @slug@ enhance hud [--font FONT]      your HUD texture pack from your own dump
+                                        (dist/enhance/hud/; package --hud-pack
+                                        puts it in your bundle; never share it)
   @slug@ setup [--dev] [--no-toolkit]   fetch the pinned toolchain into this tree
 
 Developer commands:

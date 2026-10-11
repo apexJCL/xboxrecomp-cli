@@ -258,7 +258,55 @@ def stage_payload(target, a, lib):
     return stage, payload, version, overrides, exe
 
 
-def write_common(payload, target, version, lib):
+def hud_pack_path(arg):
+    """The pack `--hud-pack [DIR]` names (the CLI's default output when DIR
+    is omitted), checked: this runs before anything is built."""
+    from ..enhance import pack as pack_mod
+
+    d = arg or os.path.join(g().dist, "enhance", "hud")
+    path = os.path.join(os.path.abspath(d), "hud.pack")
+    if not os.path.isfile(path):
+        raise CliError(
+            "--hud-pack: no %s; make it with '%s enhance hud' first" % (path, host.cli_name())
+        )
+    try:
+        count, scale = pack_mod.read_header(path)
+    except (OSError, ValueError) as e:
+        raise CliError("--hud-pack: %s: %s" % (path, e)) from e
+    return {"path": path, "entries": count, "scale": scale}
+
+
+# The pack of this package run (hud_pack_path's result plus its sha256),
+# recorded in the manifest; None without --hud-pack.
+HUD_PACK = None
+
+
+def stage_hud_pack(payload, target, info):
+    """The pack into the payload's enhance/ and the key into the staged
+    enhance.toml.default. On macOS the executable sits in Contents/MacOS
+    and the payload in Contents/Resources, so the path is relative to
+    that; elsewhere the payload is the executable's directory."""
+    d = os.path.join(payload, "enhance")
+    os.makedirs(d, exist_ok=True)
+    shutil.copy2(info["path"], os.path.join(d, "hud.pack"))
+    rel = "../Resources/enhance/hud.pack" if target == "macos" else "enhance/hud.pack"
+    with open(os.path.join(payload, "enhance.toml.default"), "a", newline="\n") as f:
+        f.write(
+            "\n[textures]\n"
+            'pack = "%s"      # your HUD texture pack (%d entries at %dx), made by\n'
+            "                                     # enhance hud from your own game files; comment\n"
+            "                                     # the line out for the stock HUD\n"
+            % (rel, info["entries"], info["scale"])
+        )
+    return {
+        "sha256": host.sha256_path(info["path"]),
+        "scale": info["scale"],
+        "entries": info["entries"],
+        "path": rel,
+    }
+
+
+def write_common(payload, target, version, lib, hud_pack=None):
     G = g()
     fam = "macos" if target == "macos" else "windows"
     copy_lf(
@@ -269,6 +317,8 @@ def write_common(payload, target, version, lib):
         os.path.join(G.content, "enhance.toml.default"),
         os.path.join(payload, "enhance.toml.default"),
     )
+    global HUD_PACK
+    HUD_PACK = stage_hud_pack(payload, target, hud_pack) if hud_pack else None
     # LICENSE always; NOTICE when the game has one (third-party notices).
     for n in ("LICENSE", "NOTICE"):
         if n == "LICENSE" or os.path.isfile(os.path.join(G.root, n)):
@@ -290,6 +340,8 @@ def write_manifest(root, target, version, overrides, lib, extra=None, dump_unkno
         # A dump game.toml does not list (xbe.sha256): it builds and plays,
         # but no golden reference was recorded on it.
         ex["xbe"] = "unknown"
+    if HUD_PACK:
+        ex["enhance"] = {"hud_pack": dict(HUD_PACK)}
     ex.update(extra or {})
     man = lib.build_manifest(
         root,
@@ -392,13 +444,18 @@ def package(a):
     if blockers:
         raise CliError("cannot package %s on this host:\n  %s" % (a.target, "\n  ".join(blockers)))
     toolkit.exclude_pin_mark(toolkit.toolkit_dir())
+    # The pack is checked before the plan runs: a missing one must not
+    # cost a build.
+    hud_pack = hud_pack_path(a.hud_pack) if getattr(a, "hud_pack", None) is not None else None
     plan = package_plan(a)
     host.VIEW.plan = [n for n, _ in plan]
     host.say(plan_line(plan))
     run_plan_prefix(a, plan)
     os.makedirs(a.out, exist_ok=True)
     stage, payload, version, overrides, exe = stage_payload(a.target, a, lib)
-    write_common(payload, a.target, version, lib)
+    write_common(payload, a.target, version, lib, hud_pack)
+    if hud_pack:
+        host.say("hud pack: %d entries at %dx" % (hud_pack["entries"], hud_pack["scale"]))
     unknown = getattr(a, "dump_unknown", False)
     if a.target == "macos":
         check_staged(payload, lib)

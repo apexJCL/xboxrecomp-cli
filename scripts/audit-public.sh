@@ -10,7 +10,8 @@
 # Checked: added lines and commit messages for private paths (home
 # directories on macOS and Linux, an immutable host's /var/home), links into Claude's web app and
 # the private patterns below; the files the range adds for binaries and
-# game data (*.xbe *.iso *.xiso *.bmp *.png *.wav *.sav); every author and
+# game data (*.xbe *.iso *.xiso *.bmp *.png *.wav *.sav, and *.pack, a
+# texture pack made from game data); every author and
 # committer address, which must be the noreply one. Exit 1 on any hit.
 #
 # Private patterns (the bench host's name, the personal email, anything
@@ -30,7 +31,7 @@ PUBLIC_PATTERNS=(
     '/var/[h]ome/'
     '[c]laude\.ai'
 )
-DATA_EXT='\.(xbe|iso|xiso|bmp|png|wav|sav)$'
+DATA_EXT='\.(xbe|iso|xiso|bmp|png|wav|sav|pack)$'
 # Synthetic fixtures that may be binary or carry a data extension (extended
 # regexes on the path). None yet: the tests build theirs in temp dirs.
 ALLOW=()

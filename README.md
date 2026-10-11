@@ -131,7 +131,11 @@ keys in a header named by `game.env_header` and documents them in
 `game.env_doc`. The toolkit's opt-in enhancements layer (`XBOXRECOMP_ENHANCE`,
 render scale, present filter, pacing, read from `enhance.toml`) is off by
 default and never changes stock behaviour; a game that builds it lists the
-option in `build.stock_cmake`.
+option in `build.stock_cmake`. `enhance hud` makes a texture pack of the
+game's HUD from the owner's own files (`[enhance.hud]` names the set; a
+TrueType font the owner installs, named there, re-renders the Latin atlas)
+and `package --hud-pack` puts it in their private bundle; packs are game
+data and are never published.
 
 ### macOS as a target
 
@@ -152,6 +156,7 @@ target and a run host for nothing, unless you port the host code.
 | `./mygame` | package for this computer (macos on a Mac, steamos on Linux, windows on Windows): sets up, generates and builds whatever is missing or stale |
 | `./mygame package windows\|steamos\|macos` | the same for a target, into `dist/`; needs `[package]` in `game.toml` |
 | `./mygame doctor` | what this host has, what it can package, and `next:` the first thing to do |
+| `./mygame enhance hud [--font FONT]` | the HUD texture pack into `dist/enhance/hud/`; needs `[enhance.hud]` in `game.toml` |
 | `./mygame setup [--dev] [--no-toolkit]` | fetch the pinned toolchain into this tree; `--dev` adds pytest, ruff and the toolkit's test dependencies |
 | `./mygame analyze` | parse, disasm, funcid, abi, and `names` when a Ghidra export exists |
 | `./mygame recomp` | lift x86 to C into `pipeline.gen` |

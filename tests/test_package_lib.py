@@ -316,14 +316,23 @@ def test_nsis_lists(d):
     assert names == ["BLiNX2.exe", "cat_recomp.exe"]
     assert "pay$$load" in inst and "game_files" not in inst
     assert uninst == '  Delete "$INSTDIR\\BLiNX2.exe"\n  Delete "$INSTDIR\\cat_recomp.exe"\n'
-    os.makedirs(os.path.join(root, "extra"))
-    with open(os.path.join(root, "extra", "x"), "w") as f:
-        f.write("x")
-    try:
-        pl.nsis_lists(root)
-        raise AssertionError("a payload subdirectory was dropped silently")
-    except ValueError as e:
-        assert "extra/x" in str(e)
+    # A subdirectory (enhance/ from --hud-pack) is installed under its own
+    # SetOutPath and removed file by file, then with a plain RMDir.
+    os.makedirs(os.path.join(root, "enhance", "sub"))
+    for n in ("enhance/hud.pack", "enhance/sub/y"):
+        with open(os.path.join(root, n), "w") as f:
+            f.write("x")
+    names, inst, uninst = pl.nsis_lists(root)
+    assert names == ["BLiNX2.exe", "cat_recomp.exe", "enhance/hud.pack", "enhance/sub/y"]
+    lines = inst.splitlines()
+    assert lines[2] == '  SetOutPath "$INSTDIR\\enhance"', lines
+    assert lines[3].endswith('enhance/hud.pack"'), lines
+    assert lines[4] == '  SetOutPath "$INSTDIR\\enhance\\sub"', lines
+    assert lines[-1] == '  SetOutPath "$INSTDIR"', lines
+    assert '  Delete "$INSTDIR\\enhance\\hud.pack"\n' in uninst
+    assert uninst.endswith('  RMDir "$INSTDIR\\enhance\\sub"\n  RMDir "$INSTDIR\\enhance"\n'), (
+        uninst
+    )
 
 
 def main():

@@ -189,6 +189,20 @@ under `package.content`).
   `install.sh status`.
 - **macos**: still the game's own, in `<package.templates>/macos/`.
 
+## [enhance.hud]
+
+This table is optional. Without it, `enhance hud` says the game names no HUD set. The pack it makes is the owner's own (made from their game files, never distributed; `package --hud-pack` puts it in their private bundle).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `archives` | required | The IPK1 archives to scan, as basenames under `data.game_files` (`["media"]` reads `media.iph` and `media.ipk`). |
+| `textures` | required | fnmatch patterns, `/` separators, lower case, of the entry names to upscale (`"dds/font_*"`). Only DXT1/3/5 textures without mip chains are taken; the rest are listed as skipped. |
+| `scale` | `4` | The upscale factor, 2 or 4 (`--scale` overrides). |
+| `max_texels` | `0` | Entries over this many guest texels are left out; 0 is no limit. Full-screen backgrounds are not HUD, and a 1024x512 one at 4x is 32 MB of texels. |
+| `font_atlas` | `""` | The Latin font atlas's entry name. With a font (`font` or `--font`), it is re-rendered from the font instead of upscaled. |
+| `font_rows` | `[]` | Required with `font_atlas`: one string per band of ink rows in the atlas, the glyphs of that band in atlas order (spaces are ignored; `\uFFFD` keeps the stock glyph, for an icon the game draws at a code). Read off the dump. |
+| `font` | `""` | The font the atlas is redrawn from, by its full name (`"PT Sans Narrow Bold"`): `enhance hud` looks for it in the host's font folders (a `.ttf`, or a face of a `.ttc` collection) when `--font` is not given. `--font` takes a file or another installed font's full name; in a collection file it picks this face. The user installs the font; the CLI never ships one. |
+
 ## [bench]
 
 | Key | Default | Meaning |

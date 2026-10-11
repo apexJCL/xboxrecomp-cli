@@ -400,6 +400,7 @@ def test_command_table():
         "doctor",
         "pins",
         "package",
+        "enhance",
     ], names
 
 

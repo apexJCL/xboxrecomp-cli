@@ -131,10 +131,35 @@ SPEC = {
         "keep": (INT, 3),
         "days": (INT, 7),
     },
+    # Owner-made enhancement assets (xbr enhance). A game without the
+    # table has no HUD set to build.
+    "enhance": {},
+    "enhance.hud": {
+        # IPK1 archives (basenames under data.game_files) to scan, and the
+        # entry-name patterns (fnmatch, '/' separators, lower case) of the
+        # UI set to upscale.
+        "archives": (STRS, []),
+        "textures": (STRS, []),
+        "scale": (INT, 4),
+        # Textures over this many guest texels are left out (0: no limit):
+        # full-screen backgrounds are not HUD, and a 1024x512 one at 4x is
+        # 32 MB of texels.
+        "max_texels": (INT, 0),
+        # The Latin font atlas: its entry name and, per band of ink rows in
+        # it, the glyphs packed left to right in that band (spaces are
+        # ignored; U+FFFD keeps the stock glyph, an icon the game draws
+        # for that code).
+        "font_atlas": (STR, ""),
+        "font_rows": (STRS, []),
+        # The font the atlas is redrawn from, by its full name (name ID 4),
+        # looked up in the host's font folders when --font is not given.
+        # The user installs it; the CLI never ships a font.
+        "font": (STR, ""),
+    },
 }
 # Optional tables: a game without them still sets up, generates, builds and
 # benches (package says the manifest has no [package]).
-OPTIONAL = {"package"}
+OPTIONAL = {"package", "enhance"}
 TARGETS = ("windows", "steamos", "macos")
 BUILD_TARGETS = ("windows", "macos")
 # The windows target's toolchain file when build.toolchain_file is unset.
@@ -143,7 +168,7 @@ CLI_TOOLCHAIN = os.path.join(
 )
 # The toolkit's own enhancement keys, which the golden check holds built in
 # (xboxrecomp_cli.golden.ENHANCE_STOCK); a game's table adds its own.
-TOOLKIT_ENHANCE_KEYS = ("render.scale", "display.aspect", "present.pacing")
+TOOLKIT_ENHANCE_KEYS = ("render.scale", "display.aspect", "present.pacing", "textures.pack")
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # The bootstrap reads [cli] with a line parser, and the help without uv
 # reads [game] name the same way: plain one-line strings there.
@@ -299,6 +324,17 @@ def _check_values(m):
                 "golden.enhance_stock: %r is a toolkit key, which the golden check knows already"
                 % k
             )
+    hud = m.get("enhance", {}).get("hud")
+    if hud:
+        if hud["scale"] not in (2, 4):
+            errors.append("enhance.hud.scale: 2 or 4")
+        if hud["max_texels"] < 0:
+            errors.append("enhance.hud.max_texels: 0 (no limit) or positive")
+        if hud["font_atlas"] and not hud["font_rows"]:
+            errors.append("enhance.hud.font_rows: required with font_atlas")
+        for i, row in enumerate(hud["font_rows"]):
+            if not row.strip():
+                errors.append("enhance.hud.font_rows: row %d names no glyph" % i)
     gc = m["bench"]["gc"]
     for k in ("keep", "days"):
         if gc[k] < 0:

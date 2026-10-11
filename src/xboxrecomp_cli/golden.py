@@ -1005,6 +1005,9 @@ def run_backend(log):
 ENHANCE_SCALE_RE = re.compile(r"\[ENHANCE\] render\.scale=(\d+) ")
 ENHANCE_ASPECT_RE = re.compile(r"\[ENHANCE\].*display\.aspect=([0-9:]+)")
 ENHANCE_PACING_RE = re.compile(r"\[ENHANCE\].* present\.pacing=(\w+)")
+# "[ENHANCE] textures.pack=none", or "=<path> (N entries, scale S)", or
+# "=<path>: <reason>; no pack" (refused, so stock: the value is "none").
+ENHANCE_PACK_RE = re.compile(r"\[ENHANCE\] textures\.pack=(?!.*; no pack$)(\S+?):?(?:\s|$)")
 
 # The toolkit's keys: key -> (pattern, stock value). A game's own keys
 # (fps.mode, fx.glow for BLiNX 2) come from its game.toml (GAME_ENHANCE).
@@ -1012,6 +1015,7 @@ ENHANCE_STOCK = (
     ("render.scale", ENHANCE_SCALE_RE, "1"),
     ("display.aspect", ENHANCE_ASPECT_RE, "4:3"),
     ("present.pacing", ENHANCE_PACING_RE, "spin"),
+    ("textures.pack", ENHANCE_PACK_RE, "none"),
 )
 
 

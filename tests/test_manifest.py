@@ -109,6 +109,39 @@ def test_errors_name_the_key(edit, key):
         parse(edit(MINIMAL))
 
 
+def test_enhance_hud_table():
+    """Optional; defaults; the font needs its rows; validation names keys."""
+    m = parse(MINIMAL)
+    assert "enhance" not in m
+    hud = '[enhance.hud]\narchives = ["media"]\ntextures = ["dds/ui_*"]\n'
+    m = parse(MINIMAL + hud)
+    assert m["enhance"]["hud"] == {
+        "archives": ["media"],
+        "textures": ["dds/ui_*"],
+        "scale": 4,
+        "max_texels": 0,
+        "font_atlas": "",
+        "font_rows": [],
+        "font": "",
+    }
+    m = parse(
+        MINIMAL
+        + hud
+        + 'font_atlas = "dds/f.dds"\nfont_rows = ["AB", "c\\uFFFD"]\nfont = "PT Sans Narrow Bold"\n'
+    )
+    assert m["enhance"]["hud"]["font_rows"] == ["AB", "c\ufffd"]
+    assert m["enhance"]["hud"]["font"] == "PT Sans Narrow Bold"
+    for extra, key in (
+        ("scale = 3\n", "enhance.hud.scale: 2 or 4"),
+        ("max_texels = -1\n", "enhance.hud.max_texels"),
+        ('font_atlas = "dds/f.dds"\n', "enhance.hud.font_rows: required with font_atlas"),
+        ('font_atlas = "dds/f.dds"\nfont_rows = ["AB", " "]\n', "font_rows: row 1 names no glyph"),
+        ("font_grid = 16\n", "enhance.hud.font_grid: unknown key"),
+    ):
+        with pytest.raises(manifest.ManifestError, match=key):
+            parse(MINIMAL + hud + extra)
+
+
 def test_game_tables():
     """enhance_stock is one key holding a table; bench.gc's refs may leave
     the game root (the workspace's notes beside it), unlike other paths."""

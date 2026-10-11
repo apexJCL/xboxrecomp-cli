@@ -158,6 +158,15 @@ def _cfg_package(p):
     p.add_argument(
         "--archive", action="store_true", help="windows: also a stored .zip of the folder"
     )
+    p.add_argument(
+        "--hud-pack",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="DIR",
+        help="put your HUD texture pack (enhance hud; default dist/enhance/hud/) in the "
+        "bundle and enable it in its enhance.toml.default",
+    )
     p.add_argument("--out", default=host.g().dist, help="output directory (default dist/)")
     p.add_argument("--keep-stage", action="store_true", help=argparse.SUPPRESS)
     p.add_argument(
@@ -192,6 +201,26 @@ def cmd_package(a):
     package.cmd_package(a)
 
 
+def _cfg_enhance(p):
+    from .enhance import hud
+
+    sub = p.add_subparsers(dest="asset", metavar="asset")
+    sub.required = True
+    h = sub.add_parser(
+        "hud",
+        description="the HUD texture pack from your own dump: dist/enhance/hud/hud.pack "
+        "(game.toml [enhance.hud]); never share it",
+    )
+    hud.configure(h)
+
+
+def cmd_enhance(a):
+    from .enhance import hud
+
+    assert a.asset == "hud", a.asset
+    return hud.run(a)
+
+
 def register():
     """The command table, in --help order (the old blinx2.py's)."""
     COMMANDS.clear()
@@ -215,6 +244,11 @@ def register():
         "generation and the build first when they are needed",
         _cfg_package,
     )(cmd_package)
+    command(
+        "enhance",
+        "owner-made enhancement assets from your own dump (enhance hud: the HUD texture pack)",
+        _cfg_enhance,
+    )(cmd_enhance)
 
 
 class Parser(argparse.ArgumentParser):

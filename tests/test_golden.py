@@ -290,6 +290,29 @@ def test_enhance_stock_passes():
         assert rc == 0 and "EXACT" in out, out
 
 
+def test_enhance_pack_fails():
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = enhance_case(
+            tmp, [STOCK, "[ENHANCE] textures.pack=enhance/hud.pack (268 entries, scale 4)"]
+        )
+        assert rc == 1 and "textures.pack=enhance/hud.pack" in out, out
+
+
+def test_enhance_pack_none_or_refused_passes():
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = enhance_case(tmp, [STOCK, "[ENHANCE] textures.pack=none"])
+        assert rc == 0 and "EXACT" in out, out
+        rc, out = enhance_case(
+            tmp,
+            [
+                STOCK,
+                "[ENHANCE] textures.pack=enhance/hud.pack: not a texture pack "
+                "(/opt/game/enhance/hud.pack); no pack",
+            ],
+        )
+        assert rc == 0 and "EXACT" in out, out
+
+
 def test_enhance_no_line_passes():
     with tempfile.TemporaryDirectory() as tmp:
         rc, out = enhance_case(tmp, [])
@@ -399,6 +422,13 @@ def test_allow_enhance_game_key():
     with tempfile.TemporaryDirectory() as tmp:
         rc, out = check_allowing(tmp, [STOCK, GLOW.format("off", "1")], "fx.glow=off")
         assert rc == 0 and "NOTE" in out and "fx.glow=off" in out, out
+
+
+def test_allow_enhance_pack():
+    with tempfile.TemporaryDirectory() as tmp:
+        pack = "[ENHANCE] textures.pack=enhance/hud.pack (268 entries, scale 4)"
+        rc, out = check_allowing(tmp, [STOCK, pack], "textures.pack=enhance/hud.pack")
+        assert rc == 0 and "NOTE" in out and "textures.pack=enhance/hud.pack" in out, out
 
 
 def test_allow_enhance_evaluates_with_a_note():

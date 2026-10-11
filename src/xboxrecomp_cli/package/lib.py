@@ -563,16 +563,32 @@ def dylib_plan(exe, companions=(), run=otool_runner, realpath=os.path.realpath):
 def nsis_lists(root):
     """The program files (everything but game_files/) as NSIS File and
     Delete lines, so the uninstaller removes exactly what was installed."""
-    files = [r for r in list_files(root) if not r.startswith("game_files/")]
-    nested = [r for r in files if "/" in r]
-    if nested:
-        # The installer copies top-level files only; a subdirectory would be
-        # silently missing from the install.
-        raise ValueError("unexpected payload subdirectory: %s" % ", ".join(nested))
-    names = files
-    install = "".join('  File "%s"\n' % os.path.join(root, n).replace("$", "$$") for n in names)
-    uninstall = "".join('  Delete "$INSTDIR\\%s"\n' % n for n in names)
-    return names, install, uninstall
+    names = [r for r in list_files(root) if not r.startswith("game_files/")]
+    # File puts a file in the current SetOutPath, so each subdirectory
+    # (enhance/ when --hud-pack stages a pack) gets its own; the template
+    # set $INSTDIR before this block and expects it again after.
+    install, cur = [], ""
+    for n in sorted(names, key=lambda n: (os.path.dirname(n), n)):
+        d = os.path.dirname(n)
+        if d != cur:
+            install.append('  SetOutPath "%s"\n' % win_dir(d))
+            cur = d
+        install.append('  File "%s"\n' % os.path.join(root, n).replace("$", "$$"))
+    if cur:
+        install.append('  SetOutPath "$INSTDIR"\n')
+    uninstall = ['  Delete "$INSTDIR\\%s"\n' % n.replace("/", "\\") for n in names]
+    # Plain RMDir, deepest first: a directory the player put files in stays.
+    dirs = {os.path.dirname(n) for n in names} - {""}
+    for d in list(dirs):
+        while "/" in d:
+            d = os.path.dirname(d)
+            dirs.add(d)
+    uninstall += ['  RMDir "%s"\n' % win_dir(d) for d in sorted(dirs, reverse=True)]
+    return names, "".join(install), "".join(uninstall)
+
+
+def win_dir(rel):
+    return "$INSTDIR" + ("\\" + rel.replace("/", "\\") if rel else "")
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────
