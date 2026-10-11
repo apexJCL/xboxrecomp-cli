@@ -8,12 +8,16 @@ install, update and uninstall:
 @DATA_PATHS@
 
   hdd/      the emulated Xbox hard disk: your save games
-  config/   enhance.toml (graphics options) and launch.env (your own
+  config/   config.toml (graphics options) and launch.env (your own
             launcher settings, KEY=value lines, e.g. RECOMP_PB_BACKEND=cpu)
   logs/     one log per launch, the newest @LOG_KEEP@ kept
 
-config/enhance.toml is copied from enhance.toml.default on the first launch
-and then left alone. The launcher refreshes config/enhance.toml.default on
-every launch, so it always shows the installed version's options: compare
-the two to pick up new ones.
+The options come from two files. config.default.toml, in the program
+files, lists every option at its default; the game reads it on each launch
+and an update replaces it, so new options and defaults reach you. Your
+config/config.toml holds only the options you change (copy a line from
+config.default.toml and edit it); the game creates it with a short comment
+on the first launch and never overwrites it. Environment variables, such
+as the lines in config/launch.env, override both. An earlier version's
+config/enhance.toml is renamed to config.toml once.
 

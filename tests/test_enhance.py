@@ -1033,12 +1033,27 @@ def test_package_hud_pack(d):
             ("macos", "../Resources/enhance/hud.pack"),
         ):
             payload = os.path.join(d, "payload-" + target)
-            write(os.path.join(payload, "enhance.toml.default"), "[render]\nscale = 1\n")
+            write(os.path.join(payload, "config.default.toml"), "[render]\nscale = 1\n")
             os.makedirs(os.path.join(payload, "enhance"))  # a payload that has one
             staged = pkg.stage_hud_pack(payload, target, info)
             assert staged["path"] == rel and staged["entries"] == 1
             assert pack.read_header(os.path.join(payload, "enhance", "hud.pack")) == (1, 4)
-            with open(os.path.join(payload, "enhance.toml.default")) as f:
+            with open(os.path.join(payload, "config.default.toml")) as f:
                 text = f.read()
             assert text.startswith("[render]\nscale = 1\n") and "[textures]" in text
             assert 'pack = "%s"' % rel in text
+            # The defaults file is read under the player's config.toml, so
+            # the key applies to an upgrade; the comment says how to opt out.
+            assert "applies to an upgrade" in text and 'pack = "none"' in text
+            assert "config/config.toml" in text
+            assert not os.path.exists(os.path.join(payload, "enhance.toml.default"))
+            # The appended table parses: one [textures], the pack key in it.
+            assert text.count("[textures]") == 2  # the header and the comment's mention
+            assert text.rstrip().endswith('pack = "%s"' % rel)
+        # A defaults file that already opens [textures] would get a second
+        # header, and the layer would reject the whole file: refused.
+        payload = os.path.join(d, "payload-dup")
+        write(os.path.join(payload, "config.default.toml"), '[textures]\npack = "none"\n')
+        raises(pkg.stage_hud_pack, payload, "windows", info, match="already has a")
+        write(os.path.join(payload, "config.default.toml"), '# [textures]\n# pack = "x"\n')
+        assert pkg.stage_hud_pack(payload, "windows", info)["entries"] == 1

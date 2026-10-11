@@ -53,7 +53,8 @@ The runtime reads its environment through one table (`recomp_env`;
 keys in a header named by `game.env_header` and documents them in
 `game.env_doc`. The toolkit's opt-in enhancements layer
 (`XBOXRECOMP_ENHANCE`: render scale, present filter, pacing, read from
-`enhance.toml`) is off by default and never changes stock behaviour; a game
+the player's `config.toml` over the `config.default.toml` the bundle
+ships beside the executable, `package.content`'s copy) is off by default and never changes stock behaviour; a game
 that builds it lists the option in `build.stock_cmake`.
 
 `enhance hud` makes a texture pack of the game's HUD from the owner's own

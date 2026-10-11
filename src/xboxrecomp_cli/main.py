@@ -165,7 +165,7 @@ def _cfg_package(p):
         default=None,
         metavar="DIR",
         help="put your HUD texture pack (enhance hud; default dist/enhance/hud/) in the "
-        "bundle and enable it in its enhance.toml.default",
+        "bundle and enable it in its config.default.toml (first installs and upgrades)",
     )
     p.add_argument("--out", default=host.g().dist, help="output directory (default dist/)")
     p.add_argument("--keep-stage", action="store_true", help=argparse.SUPPRESS)

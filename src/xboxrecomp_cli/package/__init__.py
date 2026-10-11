@@ -10,6 +10,7 @@ that copy wins (template())."""
 
 import json
 import os
+import re
 import shutil
 
 from .. import build as build_mod
@@ -281,22 +282,56 @@ def hud_pack_path(arg):
 HUD_PACK = None
 
 
+def has_textures_table(path):
+    """Whether the TOML file at `path` already opens a [textures] table
+    outside a comment. --hud-pack appends one, and a second header makes
+    the layer reject the whole defaults file."""
+    with open(path, encoding="utf-8") as f:
+        return any(re.match(r"\s*\[\s*textures\s*\]", line) for line in f)
+
+
+def check_content(hud_pack=None):
+    """Refuse, before anything is built, a game whose packaging content
+    still has the old defaults file: the runtime reads config.default.toml
+    beside the executable, and a bundle without it would ship no
+    defaults. With --hud-pack, also refuse defaults that already have a
+    [textures] table, which the appended key would duplicate."""
+    G = g()
+    old = os.path.join(G.content, "enhance.toml.default")
+    new = os.path.join(G.content, "config.default.toml")
+    if os.path.isfile(old) and not os.path.isfile(new):
+        raise CliError(
+            "%s: the defaults file is config.default.toml now; rename it "
+            "(git mv %s %s)" % (G.rel(old), G.rel(old), G.rel(new))
+        )
+    if hud_pack and os.path.isfile(new) and has_textures_table(new):
+        raise CliError(
+            "--hud-pack: %s already has a [textures] table; comment it out "
+            "(--hud-pack writes the pack key there)" % G.rel(new)
+        )
+
+
 def stage_hud_pack(payload, target, info):
     """The pack into the payload's enhance/ and the key into the staged
-    enhance.toml.default. On macOS the executable sits in Contents/MacOS
+    config.default.toml. On macOS the executable sits in Contents/MacOS
     and the payload in Contents/Resources, so the path is relative to
-    that; elsewhere the payload is the executable's directory."""
+    that; elsewhere the payload is the executable's directory. The game
+    reads that file under the player's config.toml, so the key reaches
+    an upgrade as well as a first install."""
     d = os.path.join(payload, "enhance")
     os.makedirs(d, exist_ok=True)
     shutil.copy2(info["path"], os.path.join(d, "hud.pack"))
     rel = "../Resources/enhance/hud.pack" if target == "macos" else "enhance/hud.pack"
-    with open(os.path.join(payload, "enhance.toml.default"), "a", newline="\n") as f:
+    defaults = os.path.join(payload, "config.default.toml")
+    if os.path.isfile(defaults) and has_textures_table(defaults):
+        raise CliError("--hud-pack: the staged config.default.toml already has a [textures] table")
+    with open(defaults, "a", newline="\n") as f:
         f.write(
             "\n[textures]\n"
-            'pack = "%s"      # your HUD texture pack (%d entries at %dx), made by\n'
-            "                                     # enhance hud from your own game files; comment\n"
-            "                                     # the line out for the stock HUD\n"
-            % (rel, info["entries"], info["scale"])
+            "# Your HUD texture pack (%d entries at %dx), made by enhance hud from\n"
+            "# your own game files. It applies to an upgrade too; for the stock HUD\n"
+            '# put pack = "none" under [textures] in config/config.toml.\n'
+            'pack = "%s"\n' % (info["entries"], info["scale"], rel)
         )
     return {
         "sha256": host.sha256_path(info["path"]),
@@ -313,9 +348,11 @@ def write_common(payload, target, version, lib, hud_pack=None):
         os.path.join(G.content, "launch.env.default." + fam),
         os.path.join(payload, "launch.env.default"),
     )
+    # Read by the game beside its executable (Contents/Resources on macOS,
+    # where the payload goes), never copied to the player's config/.
     copy_lf(
-        os.path.join(G.content, "enhance.toml.default"),
-        os.path.join(payload, "enhance.toml.default"),
+        os.path.join(G.content, "config.default.toml"),
+        os.path.join(payload, "config.default.toml"),
     )
     global HUD_PACK
     HUD_PACK = stage_hud_pack(payload, target, hud_pack) if hud_pack else None
@@ -447,6 +484,7 @@ def package(a):
     # The pack is checked before the plan runs: a missing one must not
     # cost a build.
     hud_pack = hud_pack_path(a.hud_pack) if getattr(a, "hud_pack", None) is not None else None
+    check_content(hud_pack)
     plan = package_plan(a)
     host.VIEW.plan = [n for n, _ in plan]
     host.say(plan_line(plan))

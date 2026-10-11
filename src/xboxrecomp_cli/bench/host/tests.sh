@@ -44,6 +44,24 @@ for t in $standalone; do
         -DCMAKE_CROSSCOMPILING_EMULATOR="$emu" >/dev/null
     cmake --build "build-win/tests/$t"
 done
+# Tests an older toolkit does not have yet (another game's pin): built and run
+# when their directory exists, skipped with a line otherwise.
+optional="enhance_cfg"
+have_optional=
+for t in $optional; do
+    src=../xboxrecomp/tests/$t
+    if [ ! -f "$src/CMakeLists.txt" ]; then
+        echo "tests: $t skipped (not in this toolkit)"
+        continue
+    fi
+    fresh_if_stale "build-win/tests/$t"
+    cmake -S "$src" -B "build-win/tests/$t" -G Ninja \
+        -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
+        -DLLVM_MINGW_ROOT="$LLVM_MINGW_ROOT" -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CROSSCOMPILING_EMULATOR="$emu" >/dev/null
+    cmake --build "build-win/tests/$t"
+    have_optional="$have_optional $t"
+done
 unset PROTON_RUN_LOCK
 export WINEPREFIX="$BENCH_PREFIX"
 fail=0
@@ -55,7 +73,7 @@ for d in src/d3d/d3d8_hlsl_split src/d3d/d3d11_backend_smoke src/input/input_map
         echo "tests: FAIL $t"; fail=1
     fi
 done
-for t in $standalone; do
+for t in $standalone $have_optional; do
     if ctest --test-dir "build-win/tests/$t" --output-on-failure --no-tests=error; then
         echo "tests: $t pass"
     else

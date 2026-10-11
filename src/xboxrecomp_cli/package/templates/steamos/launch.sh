@@ -9,7 +9,10 @@
 # and outside the Wine prefix (Steam or a Proton update may recreate a
 # prefix): game_files/ (the dump), hdd/ (saves), config/, logs/. Settings:
 # launch.env.default beside this script, then <root>/config/launch.env
-# (KEY=value lines, yours win).
+# (KEY=value lines, yours win). Options: the game reads config.default.toml
+# beside its executable, then <root>/config/config.toml, which holds only
+# the keys you change; it writes that file's comment header itself, and
+# renames an earlier version's config/enhance.toml to it once.
 #
 # No lock: this is the game for play. A bench on the same machine checks for
 # a running game itself (scripts/running_game.py).
@@ -66,12 +69,9 @@ find_umu() {
 UMU=$(find_umu) || fail "umu-run is not installed; it runs the game under Proton. In Desktop Mode, run './install.sh --fetch-umu' from the unpacked bundle folder."
 
 mkdir -p "$ROOT/config" "$ROOT/logs" "$ROOT/prefix"
-# Your enhance.toml is made once and never touched again; the .default
-# beside it follows the installed version (refreshed here, not by the
-# installer, which writes nothing in config/).
-[ -e "$ROOT/config/enhance.toml" ] || cp "$HERE/enhance.toml.default" "$ROOT/config/enhance.toml"
-cmp -s "$HERE/enhance.toml.default" "$ROOT/config/enhance.toml.default" \
-    || cp "$HERE/enhance.toml.default" "$ROOT/config/enhance.toml.default"
+# An earlier version kept a reference copy of the defaults here; the game
+# reads them beside its executable now, so the copy would only mislead.
+rm -f "$ROOT/config/enhance.toml.default"
 
 stamp=$(date +%Y%m%d-%H%M%S)
 log="$ROOT/logs/game-$stamp.log"
@@ -101,7 +101,7 @@ done
 # Paths the game opens are Windows paths: Wine maps the host's / to Z:.
 export RECOMP_GAME_FILES="Z:$ROOT/game_files"
 export RECOMP_HDD_DIR="Z:$ROOT/hdd"
-export RECOMP_ENHANCE_CONFIG="Z:$ROOT/config/enhance.toml"
+export RECOMP_CONFIG="Z:$ROOT/config/config.toml"
 export RECOMP_STDIO_LOG="Z:$log"
 export WINEPREFIX="$ROOT/prefix" GAMEID="${GAMEID:-umu-default}" PROTONPATH="${PROTONPATH:-GE-Proton}"
 # PROTON_LOG=1 in launch.env: Proton's log goes to logs/ (trimmed above),

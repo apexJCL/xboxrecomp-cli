@@ -13,9 +13,11 @@
  *   RECOMP_GAME_FILES      <exe dir>\game_files
  *   RECOMP_HDD_DIR         <data>\hdd      (saves; never touched by install
  *                                          or uninstall)
- *   RECOMP_ENHANCE_CONFIG  <data>\config\enhance.toml, copied from
- *                          enhance.toml.default when absent; the .default
- *                          beside it is refreshed on every launch
+ *   RECOMP_CONFIG          <data>\config\config.toml, the keys the user
+ *                          changed; the game reads config.default.toml
+ *                          beside its exe under it, writes the file's
+ *                          comment header itself and renames an earlier
+ *                          version's config\enhance.toml to it once
  *   RECOMP_STDIO_LOG       <data>\logs\game-<stamp>.log, the newest
  *                          LOG_KEEP (10) kept
  *
@@ -85,24 +87,6 @@ static int file_exists(const wchar_t *p)
     return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-/* True when a and b differ (or b is missing). */
-static int files_differ(const wchar_t *a, const wchar_t *b)
-{
-    FILE *fa = _wfopen(a, L"rb"), *fb = _wfopen(b, L"rb");
-    int differ = 1;
-    if (fa && fb) {
-        int ca, cb;
-        do {
-            ca = fgetc(fa);
-            cb = fgetc(fb);
-        } while (ca == cb && ca != EOF);
-        differ = ca != cb;
-    }
-    if (fa) fclose(fa);
-    if (fb) fclose(fb);
-    return differ;
-}
-
 /* Keep the newest `keep` game-*.log files (names sort by time). */
 static void rotate_logs(const wchar_t *logs, int keep)
 {
@@ -150,7 +134,7 @@ static void data_dir(void)
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show)
 {
-    wchar_t p[PATH_CHARS], q[PATH_CHARS], logs[PATH_CHARS], log[PATH_CHARS];
+    wchar_t p[PATH_CHARS], logs[PATH_CHARS], log[PATH_CHARS];
     wchar_t exe[PATH_CHARS], *cmd, *slash, keep_s[32];
     STARTUPINFOW si = { 0 };
     PROCESS_INFORMATION pi;
@@ -186,17 +170,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show)
     swprintf(p, PATH_CHARS, L"%ls\\game_files", g_exe_dir);
     SetEnvironmentVariableW(L"RECOMP_GAME_FILES", p);
 
-    /* enhance.toml: the user's copy is made once and never touched again;
-     * the .default beside it follows the installed version. */
-    swprintf(p, PATH_CHARS, L"%ls\\enhance.toml.default", g_exe_dir);
-    swprintf(q, PATH_CHARS, L"%ls\\config\\enhance.toml", g_data);
-    if (!file_exists(q))
-        CopyFileW(p, q, TRUE);
-    swprintf(q, PATH_CHARS, L"%ls\\config\\enhance.toml.default", g_data);
-    if (files_differ(p, q))
-        CopyFileW(p, q, FALSE);
-    swprintf(q, PATH_CHARS, L"%ls\\config\\enhance.toml", g_data);
-    SetEnvironmentVariableW(L"RECOMP_ENHANCE_CONFIG", q);
+    /* An earlier version kept a reference copy of the defaults in config;
+     * the game reads them beside its exe now, so the copy would only
+     * mislead. */
+    swprintf(p, PATH_CHARS, L"%ls\\config\\enhance.toml.default", g_data);
+    DeleteFileW(p);
+    swprintf(p, PATH_CHARS, L"%ls\\config\\config.toml", g_data);
+    SetEnvironmentVariableW(L"RECOMP_CONFIG", p);
 
     keep = 10;
     if (GetEnvironmentVariableW(L"LOG_KEEP", keep_s, 32) && _wtoi(keep_s) > 0)

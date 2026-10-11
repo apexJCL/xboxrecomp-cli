@@ -129,7 +129,7 @@ def snapshot(il, root):
 def plant_user_data(root):
     for rel, data in (
         ("hdd/UDATA/4d530065/save.xsv", b"save"),
-        ("config/enhance.toml", b"[render]\n"),
+        ("config/config.toml", b"[render]\n"),
         ("config/launch.env", b"LOG_KEEP=3\n"),
         ("logs/game-1.log", b"log"),
     ):
@@ -642,7 +642,7 @@ def fake_install(d, home):
     render("launch.sh", os.path.join(v, "launch.sh"), 0o755)
     with open(os.path.join(v, "launch.env.default"), "w") as f:
         f.write("RECOMP_KEYBOARD=1\n")
-    with open(os.path.join(v, "enhance.toml.default"), "w") as f:
+    with open(os.path.join(v, "config.default.toml"), "w") as f:
         f.write("[render]\n")
     os.makedirs(os.path.join(root, "game_files"))
     open(os.path.join(root, "game_files", "default.xbe"), "w").close()
@@ -709,6 +709,38 @@ def test_launch_umu_search(d, home):
     assert launch(launcher, home, "/usr/bin:/bin").returncode == 0
     with open(os.path.join(home, "umu.argv")) as f:
         assert f.read().startswith(mine + " ")
+
+
+def test_launch_config_layering(d, home):
+    """The launcher sets RECOMP_CONFIG to the player's config.toml, removes
+    an earlier version's config/enhance.toml.default, and leaves the rest
+    of config/ to the game: an old enhance.toml is renamed by the game
+    itself, and launch.env is never touched."""
+    root, launcher = fake_install(d, home)
+    umu = FAKE_UMU.replace(
+        'echo "$0 $*"', 'echo "$RECOMP_CONFIG" > "$HOME/umu.config"; echo "$0 $*"'
+    )
+    make_exe(os.path.join(home, ".local", "bin", "umu-run"), umu)
+    cfg = os.path.join(root, "config")
+    os.makedirs(cfg)
+    old = {"enhance.toml": b"[render]\nscale = 2\n", "launch.env": b"LOG_KEEP=3\n"}
+    for n, data in old.items():
+        with open(os.path.join(cfg, n), "wb") as f:
+            f.write(data)
+    with open(os.path.join(cfg, "enhance.toml.default"), "w") as f:
+        f.write("[render]\nscale = 1\n")
+    r = launch(launcher, home, "/usr/bin:/bin")
+    assert r.returncode == 0, r.stdout
+    with open(os.path.join(home, "umu.config")) as f:
+        assert f.read().strip() == "Z:%s/config/config.toml" % root
+    assert not os.path.exists(os.path.join(cfg, "enhance.toml.default"))
+    assert not os.path.exists(os.path.join(cfg, "config.toml"))
+    for n, data in old.items():
+        with open(os.path.join(cfg, n), "rb") as f:
+            assert f.read() == data, n
+    with open(launcher) as f:
+        text = f.read()
+    assert "RECOMP_ENHANCE_CONFIG" not in text and 'cp "$HERE' not in text
 
 
 # The fake zenity: records its arguments and every line it reads, and when

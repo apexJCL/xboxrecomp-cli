@@ -27,7 +27,7 @@ A private bundle for one target in `dist/`. Needs `[package]` in `game.toml`.
 | `--allow-debug` | package a non-Release build |
 | `--allow-nonstock` | package with a non-stock CMake value (`build.nonstock_vars`, or the enhancements layer off); recorded in `manifest.json` |
 | `--archive` | windows: also a stored `.zip` of the folder |
-| `--hud-pack [DIR]` | put the HUD texture pack (default `dist/enhance/hud/`) in the bundle and enable it in its `enhance.toml.default` |
+| `--hud-pack [DIR]` | put the HUD texture pack (default `dist/enhance/hud/`) in the bundle and enable it in its `config.default.toml`, which the game reads on first installs and upgrades alike |
 | `--out OUT` | output directory (default `dist/`) |
 | `--plain` | plain line output, no live progress (also when not a terminal, or `CI=1`) |
 | `--verbose` | show every tool's output as it runs (implies `--plain`); it always goes to `build-logs/` too |

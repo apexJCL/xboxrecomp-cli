@@ -80,12 +80,38 @@ def test_launcher_cat_values(d):
     assert "#ifndef APP_NAME" in text
 
 
+def test_launcher_config_layering(d):
+    """The launcher points RECOMP_CONFIG at the player's config.toml, drops
+    an earlier version's reference copy of the defaults, and copies no
+    file: the game reads config.default.toml beside its exe itself."""
+    text = render_launcher(os.path.join(d, "launcher.c"))
+    assert 'SetEnvironmentVariableW(L"RECOMP_CONFIG", p)' in text
+    assert 'L"%ls\\\\config\\\\config.toml", g_data' in text
+    assert 'L"%ls\\\\config\\\\enhance.toml.default", g_data);\n    DeleteFileW(p);' in text
+    assert "CopyFileW" not in text and "RECOMP_ENHANCE_CONFIG" not in text
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith(("*", "/*")))
+    assert 'enhance.toml"' not in code and "enhance.toml\\" not in code
+
+
 def test_installer_cat_values(d):
     text = render_installer(os.path.join(d, "installer.nsi"))
     assert not PLACEHOLDER.findall(text)
     assert 'InstallDir "$LOCALAPPDATA\\Programs\\BLiNX2"' in text
     assert "kept in $LOCALAPPDATA\\BLiNX2 and" in text
     assert '"$SMPROGRAMS\\BLiNX2\\BLiNX 2.lnk" "$INSTDIR\\BLiNX2.exe"' in text
+
+
+def test_installer_drops_old_defaults(d):
+    # An upgrade in place keeps a file the new payload does not list; the
+    # old enhance.toml.default goes on install and on uninstall, so
+    # uninstall's RMDir "$INSTDIR" succeeds.
+    text = render_installer(os.path.join(d, "installer.nsi"))
+    main = text[text.index('Section "BLiNX 2" SecMain') : text.index("SectionEnd")]
+    uninst = text[text.index('Section "Uninstall"') :]
+    uninst = uninst[: uninst.index("SectionEnd")]
+    drop = 'Delete "$INSTDIR\\enhance.toml.default"'
+    assert drop in main and main.index("  File a\n") < main.index(drop)
+    assert drop in uninst and uninst.index(drop) < uninst.index('RMDir "$INSTDIR"')
 
 
 def test_second_game_values(d, game2):

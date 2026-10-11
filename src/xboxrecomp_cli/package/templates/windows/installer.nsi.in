@@ -77,6 +77,9 @@ Section "@NAME@" SecMain
   SectionIn RO
   SetOutPath "$INSTDIR"
 @INSTALL_FILES@
+  ; Versions before config.default.toml shipped enhance.toml.default; an
+  ; install over one would keep it, and uninstall's RMDir would then fail.
+  Delete "$INSTDIR\enhance.toml.default"
   ; The dump: replaced on every install, the same way every version.
   RMDir /r "$INSTDIR\game_files"
   CreateDirectory "$INSTDIR\game_files"
@@ -107,6 +110,7 @@ Section "Uninstall"
   ; Only what the installer wrote, by name. The data folder (saves,
   ; settings, logs) is never touched.
 @UNINSTALL_FILES@
+  Delete "$INSTDIR\enhance.toml.default"
   Delete "$INSTDIR\uninstall.exe"
   RMDir /r "$INSTDIR\game_files"
   RMDir "$INSTDIR"

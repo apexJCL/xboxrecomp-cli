@@ -197,7 +197,7 @@ def test_notice_optional(d, monkeypatch):
         host.g().m["package"] = {"content": "packaging"}
         G.content = G.path("packaging")
         write(os.path.join(G.content, "launch.env.default.windows"), "LOG_KEEP=10\n")
-        write(os.path.join(G.content, "enhance.toml.default"), "# none\n")
+        write(os.path.join(G.content, "config.default.toml"), "# none\n")
         write(G.path("LICENSE"), "MIT\n")
         monkeypatch.setattr(pkg, "readme", lambda *a: None)
         monkeypatch.setattr(pl, "stage_game_files", lambda src, dst: 0)
@@ -206,12 +206,124 @@ def test_notice_optional(d, monkeypatch):
         pkg.write_common(payload, "windows", "v", pl)
         assert sorted(os.listdir(payload)) == [
             "LICENSE",
-            "enhance.toml.default",
+            "config.default.toml",
             "launch.env.default",
         ]
         write(G.path("NOTICE"), "third parties\n")
         pkg.write_common(payload, "windows", "v", pl)
         assert "NOTICE" in os.listdir(payload)
+
+
+# The package table the two tests below need (game2 has none).
+PKG2 = {
+    "content": "packaging",
+    "targets": ["windows"],
+    "dylib_companions": [],
+    "app": "Game2",
+    "product": "game2-recomp",
+}
+
+
+def test_old_defaults_file_refused(d, monkeypatch):
+    """A game whose packaging content still has enhance.toml.default and no
+    config.default.toml is refused before anything is built, the message
+    naming the rename; with config.default.toml it goes on."""
+    with game2_tree(d) as (G, _):
+        host.g().m["package"] = dict(PKG2)
+        G.content = G.path("packaging")
+        write(os.path.join(G.content, "enhance.toml.default"), "# old\n")
+        try:
+            pkg.check_content()
+        except host.CliError as e:
+            msg = str(e)
+        else:
+            raise AssertionError("not refused")
+        assert "config.default.toml" in msg and "git mv" in msg, msg
+        assert "packaging/enhance.toml.default" in msg, msg
+        # package() refuses before its plan (the build) runs.
+        monkeypatch.setattr(pkg.setup, "host_blockers", lambda t: [])
+        monkeypatch.setattr(pkg.toolkit, "exclude_pin_mark", lambda t: None)
+
+        def no_plan(a):
+            raise AssertionError("the plan ran")
+
+        monkeypatch.setattr(pkg, "package_plan", no_plan)
+        a = type("A", (), {"target": "windows", "out": d, "hud_pack": None})()
+        try:
+            pkg.package(a)
+        except host.CliError as e:
+            assert "config.default.toml" in str(e)
+        else:
+            raise AssertionError("not refused")
+        # Both present (a game mid-rename): the new file wins, no refusal.
+        write(os.path.join(G.content, "config.default.toml"), "# new\n")
+        pkg.check_content()
+        os.remove(os.path.join(G.content, "enhance.toml.default"))
+        pkg.check_content()
+
+
+def test_hud_pack_textures_table_refused(d):
+    """--hud-pack appends a [textures] table to the defaults; one already
+    there (not commented) would be a duplicate header that makes the
+    runtime reject the whole file, so package refuses before building."""
+    with game2_tree(d) as (G, _):
+        host.g().m["package"] = dict(PKG2)
+        G.content = G.path("packaging")
+        new = os.path.join(G.content, "config.default.toml")
+        write(new, '[render]\nscale = 1\n\n[textures]\npack = "none"\n')
+        info = {"path": "x", "entries": 1, "scale": 4}
+        try:
+            pkg.check_content(info)
+        except host.CliError as e:
+            msg = str(e)
+        else:
+            raise AssertionError("not refused")
+        assert "[textures]" in msg and "packaging/config.default.toml" in msg, msg
+        pkg.check_content()  # without --hud-pack the table is fine
+        write(new, '[render]\nscale = 1\n\n# [textures]\n# pack = "x"\n')
+        pkg.check_content(info)
+
+
+def test_macos_defaults_in_resources(d, monkeypatch):
+    """On macOS write_common's payload, config.default.toml with the hud
+    pack's key included, lands in Contents/Resources: the runtime's Apple
+    fallback (<exe dir>/../Resources), beside the read-only content."""
+    from xboxrecomp_cli.package import macos
+
+    with game2_tree(d) as (G, _):
+        host.g().m["package"] = dict(PKG2)
+        G.content = G.path("packaging")
+        write(os.path.join(G.content, "launch.env.default.macos"), "LOG_KEEP=10\n")
+        write(os.path.join(G.content, "config.default.toml"), "[render]\nscale = 1\n")
+        write(G.path("LICENSE"), "MIT\n")
+        monkeypatch.setattr(pkg, "readme", lambda *a: None)
+        monkeypatch.setattr(pl, "stage_game_files", lambda src, dst: 0)
+        stage = os.path.join(d, "stage")
+        payload = os.path.join(stage, "payload")
+        os.makedirs(payload)
+        pk = os.path.join(d, "hud.pack")
+        write(pk, "pack")
+        info = {"path": pk, "entries": 3, "scale": 4}
+        pkg.write_common(payload, "macos", "v", pl, info)
+        exe = os.path.join(d, "exe")
+        write(exe, "exe")
+        # Everything after the move (relink, sign, dmg) is the host's tools.
+        monkeypatch.setattr(macos, "templates", lambda: d)
+        monkeypatch.setattr(macos, "render", lambda src, vals, dst, *m: write(dst, ""))
+        monkeypatch.setattr(macos, "write_manifest", lambda *a, **k: None)
+        monkeypatch.setattr(macos, "_otool", lambda f: "")
+        monkeypatch.setattr(host, "run", lambda *a, **k: None)
+        monkeypatch.setattr(pl, "dylib_plan", lambda exe, comp: {"libs": [], "changes": []})
+        icns = os.path.join(d, "a.icns")
+        write(icns, "icns")
+        macos.wrap_macos(stage, payload, "v", exe, d, [], pl, icns)
+        res = os.path.join(stage, "dmg", pkg.app() + ".app", "Contents", "Resources")
+        with open(os.path.join(res, "config.default.toml")) as f:
+            text = f.read()
+        assert text.startswith("[render]\nscale = 1\n"), text
+        assert 'pack = "../Resources/enhance/hud.pack"' in text
+        assert os.path.isfile(os.path.join(res, "enhance", "hud.pack"))
+        assert not os.path.exists(os.path.join(res, "enhance.toml.default"))
 
 
 def test_host_path():

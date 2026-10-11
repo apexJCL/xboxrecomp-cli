@@ -150,7 +150,7 @@ This table is optional. Without it, `package` says so.
 | `targets` | `["windows", "steamos"]` | The bundles: `windows`, `steamos`, `macos`. `macos` needs `build.targets` to include it. The command with no arguments packages this host's own bundle when it is listed, else the first listed one this host can make. |
 | `brew` | `[]` | The Homebrew formulae the macos target links. `doctor` checks them. |
 | `dylib_companions` | `[]` | `NAME=brew:FORMULA`: libraries loaded with dlopen, bundled too. |
-| `content` | `"packaging"` | The game's own packaging content: `launch.env.default.<windows\|macos>`, `enhance.toml.default`, `<target>/README.part` for windows and macos, and optionally `README.intro`. |
+| `content` | `"packaging"` | The game's own packaging content: `launch.env.default.<windows\|macos>`, `config.default.toml` (the option defaults the game reads beside its executable; a game that still has `enhance.toml.default` is refused until it renames it), `<target>/README.part` for windows and macos, and optionally `README.intro`. |
 | `templates` | `""` | The game's own packaging templates: the macos ones (required for `macos`), and any copy of a CLI template that must differ, at the same path (`README.txt.in`, `windows/launcher.c`, `steamos/launch.sh`, ...), which then wins. |
 | `icon` | `"xbe"` | The XBE's title image, or the generic icon. |
 
@@ -171,7 +171,7 @@ under `package.content`).
   The target's install section `<target>/README.part` follows.
 - **windows** (`launcher.c`, `installer.nsi.in`, `app.rc.in`): the
   launcher `<app>.exe`, with the icon compiled in, sets the game's
-  environment (`RECOMP_HDD_DIR`, `RECOMP_GAME_FILES`, `RECOMP_ENHANCE_CONFIG`,
+  environment (`RECOMP_HDD_DIR`, `RECOMP_GAME_FILES`, `RECOMP_CONFIG`,
   `RECOMP_STDIO_LOG`) below `data.windows` (or the folder that the
   `data.dir_env` variable names, when set)
   and starts `build.exe`. `data.windows` must be a folder below
