@@ -97,7 +97,7 @@ text_only = true
 # The CMake target and file name: build-win/@EXE@.exe
 exe = "@EXE@"
 # windows builds on every host (llvm-mingw). macos needs a main.c with the
-# POSIX host code: the CLI's README, "macOS as a target".
+# POSIX host code: the CLI's docs/porting.md, "macOS as a target".
 targets = ["windows"]
 # No enhancements layer: the stock build is the plain one.
 stock_cmake = []
@@ -269,8 +269,8 @@ every host. It will crash the first time: that is where the port starts.
 `src/recomp_manual.c` takes hand-written overrides, `config/seed_functions.json`
 the function starts the disassembler missed, and `./@SLUG@ analyze` then
 `./@SLUG@ recomp` regenerate `src/recomp/gen/` (never edit it by hand).
-The CLI's README has the loop; `game.toml` has every setting, documented in
-the CLI's `docs/manifest.md`.
+The CLI's `docs/porting.md` has the loop; `game.toml` has every setting,
+documented in the CLI's `docs/manifest.md`.
 """
 
 # What `new` patches in the toolkit's template: (file, old, new, what to do

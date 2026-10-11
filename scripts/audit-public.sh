@@ -59,7 +59,7 @@ if [ ! -s "$private" ]; then
     echo "Write one extended regex per line (the bench host's name, the personal email)," >&2
     echo "once per clone:" >&2
     echo "    printf '%s\n' 'hostname' 'name@example[.]com' > \"\$(git rev-parse --git-path info/audit-private)\"" >&2
-    echo "or set XBR_AUDIT_PRIVATE to a file that has them. See README.md, Releases and pins." >&2
+    echo "or set XBR_AUDIT_PRIVATE to a file that has them. See docs/maintainers.md, Before a public push." >&2
     exit 2
 fi
 patterns=("${PUBLIC_PATTERNS[@]}")
