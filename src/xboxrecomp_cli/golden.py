@@ -83,7 +83,11 @@ Event anchors. A frame may name an anchor, "anchor": {"event": E,
 or after `after_flip` where the run's flip log (RECOMP_TRACE=flip lines
 "[D3D11] flip N batches B" or "[METAL] flip N batches B") crosses into at
 least `min_batches` (or at most `max_batches`) batches: this flip and the
-next qualify, the one before does not. R is that flip in the reference run (a reference in
+next qualify, the one before does not. An anchor with "after": NAME
+starts past the scenario's anchor NAME instead of (or as well as) a fixed
+after_flip, so a run at another pace still finds its own screen (an input
+script that waits on wall time puts an event at a lower flip on a slower
+run). R is that flip in the reference run (a reference in
 `references` may carry its own "anchor_flip"). With the run's log (--log, or
 DIR/../game-stdio.log, or DIR.log) giving the run's anchor A, the frame is
 checked at flip A + (60*dump + 1 - R): the same distance from the event as
@@ -922,7 +926,7 @@ def pace_report(fr, sc, th, batches, times):
     if "anchor" not in fr or not batches:
         return None, []
     ev = sc.get("anchors", {}).get(fr["anchor"]["event"])
-    A = find_anchor(batches, ev) if ev else None
+    A = find_anchor(batches, ev, sc.get("anchors")) if ev else None
     if A is None:
         return None, []
     lim = DEFAULT_MAX_PACE_DIFF
@@ -1092,14 +1096,31 @@ def enhance_allowed(log, allow):
     return seen
 
 
-def find_anchor(batches, ev):
+def find_anchor(batches, ev, anchors=None, _seen=()):
     """The first flip at or after ev's after_flip where the batch count
     crosses into the event: at least min_batches (or, with max_batches
     instead, at most that many) on this flip and the next, and not on the
     flip before. One stray flip (a black or loading frame, or a flip whose
     backend line is missing so the walker's "batches 0" stands in) is not an
-    event; flips missing from the log break a run of hits."""
+    event; flips missing from the log break a run of hits.
+
+    With "after": NAME, the search also starts past the flip of the
+    scenario's anchor NAME (anchors: the scenario's "anchors"), and there is
+    no event without it. A fixed after_flip only holds while the run keeps
+    the reference's pace: input scripts that wait on wall time put an event
+    at a lower flip on a slower run, and an after_flip above it then picks
+    the next screen that matches. Chained to the event before it, an anchor
+    finds its own screen at any pace."""
     lo = ev.get("after_flip", 0)
+    if "after" in ev:
+        name = ev["after"]
+        prior = (anchors or {}).get(name)
+        if prior is None or name in _seen:
+            sys.exit(f"golden: anchor 'after': {name!r} is not another anchor of the scenario")
+        p = find_anchor(batches, prior, anchors, _seen + (name,))
+        if p is None:
+            return None
+        lo = max(lo, p + 1)
 
     def hit(n):
         if "min_batches" in ev:
@@ -1197,7 +1218,7 @@ def frame_targets(d, fr, sc, batches):
                 f"golden: {fr['name']}: no anchor event {fr['anchor']['event']!r} in its scenario"
             )
         R = ref_anchor_flip(fr, label)
-        A = find_anchor(batches, ev) if batches else None
+        A = find_anchor(batches, ev, sc.get("anchors")) if batches else None
         if A is None:
             why = (
                 "not in the run's flip log" if batches else "no flip log (RECOMP_TRACE=flip; --log)"
@@ -1635,7 +1656,7 @@ def cmd_pulls(args):
         centres = [60 * fr["dump"] + 1]
         if "anchor" in fr and batches:
             ev = sc.get("anchors", {}).get(fr["anchor"]["event"])
-            A = find_anchor(batches, ev) if ev else None
+            A = find_anchor(batches, ev, sc.get("anchors")) if ev else None
             if A is not None:
                 centres += [
                     A + 60 * fr["dump"] + 1 - ref_anchor_flip(fr, lab)
@@ -1658,7 +1679,7 @@ def cmd_anchors(args):
         sys.exit(f"golden: no flip-log lines in {args[0]} (RECOMP_TRACE=flip)")
     for scen, sc in load_golden()["scenarios"].items():
         for name, ev in sc.get("anchors", {}).items():
-            print("%s\t%s\t%s" % (scen, name, find_anchor(b, ev)))
+            print("%s\t%s\t%s" % (scen, name, find_anchor(b, ev, sc.get("anchors"))))
     return 0
 
 
@@ -1673,7 +1694,7 @@ def record_anchor(fr, sc, d, scen):
         sys.exit(f"golden: {fr['name']}: no anchor event {fr['anchor']['event']!r} in its scenario")
     log = run_log(d, {}, scen)
     batches = flip_batches(log) if log else None
-    A = find_anchor(batches, ev) if batches else None
+    A = find_anchor(batches, ev, sc.get("anchors")) if batches else None
     if A is None:
         sys.exit(
             f"golden: {scen}/{fr['name']}: anchor {fr['anchor']['event']} not found in "

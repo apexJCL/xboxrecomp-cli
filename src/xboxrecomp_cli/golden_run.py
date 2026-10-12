@@ -84,7 +84,7 @@ def frame_needs(sc, batches, window=WINDOW, slack=None):
             continue
         end = f + window + slack
         ev = sc.get("anchors", {}).get(fr["anchor"]["event"])
-        A = G.find_anchor(batches, ev) if ev and batches else None
+        A = G.find_anchor(batches, ev, sc.get("anchors")) if ev and batches else None
         if A is None:
             out.append((fr["name"], end, False))
             continue

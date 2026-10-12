@@ -160,7 +160,8 @@ def checkpoint(run, scen, event, after_flip):
     if after_flip is not None:
         return after_flip
     ev = anchor_event(scen, event)[1]
-    return golden.find_anchor(run["batches"], ev) if ev else None
+    anchors = golden.load_golden()["scenarios"].get(scen, {}).get("anchors", {})
+    return golden.find_anchor(run["batches"], ev, anchors) if ev else None
 
 
 def first_scenario():

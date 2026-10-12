@@ -90,6 +90,66 @@ def test_anchor_gap_breaks_a_run():
     assert G.find_anchor(b, ev) == 30
 
 
+def menu_timeline(menu):
+    """A story-like flip log: an opening movie (600 batches) from flip 50, a
+    locker room (90) from 160, the slot list (40) at `menu`, its full list
+    (140) 10 flips later, then a 1-batch saving screen 30 flips later."""
+    b = {f: 5 for f in range(1, 400)}
+    for f in range(50, 150):
+        b[f] = 600
+    for f in range(150, menu):
+        b[f] = 90 if f >= 160 else 600
+    for f in range(menu, menu + 30):
+        b[f] = 40 if f < menu + 10 else 140
+    for f in range(menu + 30, 400):
+        b[f] = 1
+    return b
+
+
+CHAIN = {
+    "opening": {"after_flip": 20, "min_batches": 500},
+    "locker": {"after": "opening", "max_batches": 100},
+    "menu": {"after": "locker", "max_batches": 60},
+}
+
+
+def test_anchor_after_finds_its_screen_at_any_pace():
+    # A fixed after_flip set from a normal run (menu at 300) skips the menu of
+    # a slow run (at 250) and anchors on the next low screen; chained to the
+    # locker room, it finds the menu at both.
+    fixed = {"after_flip": 280, "max_batches": 60}
+    assert G.find_anchor(menu_timeline(300), fixed) == 300
+    assert G.find_anchor(menu_timeline(250), fixed) == 280  # the saving screen
+    for menu in (250, 300):
+        assert G.find_anchor(menu_timeline(menu), CHAIN["menu"], CHAIN) == menu
+
+
+def test_anchor_after_needs_the_prior_event():
+    b = {f: 90 for f in range(1, 400)}  # no opening movie: no locker, no menu
+    b[300] = b[301] = 40
+    assert G.find_anchor(b, CHAIN["menu"], CHAIN) is None
+
+
+def test_anchor_after_keeps_after_flip_as_a_floor():
+    ev = {"after": "locker", "after_flip": 350, "max_batches": 60}
+    assert G.find_anchor(menu_timeline(250), ev, CHAIN) is None
+
+
+def exits(fn):
+    try:
+        fn()
+    except SystemExit:
+        return True
+    return False
+
+
+def test_anchor_after_unknown_or_cyclic_exits():
+    b = menu_timeline(250)
+    assert exits(lambda: G.find_anchor(b, {"after": "nope", "max_batches": 60}, CHAIN))
+    loop = {"a": {"after": "b", "max_batches": 60}, "b": {"after": "a", "max_batches": 60}}
+    assert exits(lambda: G.find_anchor(b, loop["a"], loop))
+
+
 # ---- check: INCOMPLETE, masks, skip -----------------------------------------------
 
 
