@@ -66,6 +66,12 @@ Troubleshooting
 - The notice window gets in the way: LAUNCH_NOTICE=0 in
   config/launch.env turns it off. It closes by itself when the game
   starts, or after NOTICE_MAX seconds (1200; set it there too).
+- Steam's scaling filter (FSR): under gamescope (Game Mode) the launcher
+  sets RECOMP_HOST_GAMESCOPE=1 and the game hands gamescope the frame at
+  its internal resolution to scale. FSR applies only when that is smaller
+  than the screen (render scale 1 on a Steam Deck).
+  RECOMP_HOST_GAMESCOPE=0 in config/launch.env goes back to a window the
+  size of the screen.
 - Settings go in @DEFAULT_ROOT@/config/launch.env (KEY=value lines). The
   installer creates config/ and never changes what is in it.
 - Proton's own log for a bug report: PROTON_LOG=1 in config/launch.env

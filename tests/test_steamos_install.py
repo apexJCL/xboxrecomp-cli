@@ -835,9 +835,11 @@ def fake_install(d, home):
     return root, os.path.join(v, "launch.sh")
 
 
-# The fake umu-run: records its argv and PATH, then plays the game: after
-# a moment it writes the game's log (RECOMP_STDIO_LOG, a Z: path) and exits.
+# The fake umu-run: records its argv and the gamescope hint, then plays the
+# game: after a moment it writes the game's log (RECOMP_STDIO_LOG, a Z:
+# path) and exits.
 FAKE_UMU = """echo "$0 $*" > "$HOME/umu.argv"
+echo "${RECOMP_HOST_GAMESCOPE:-unset}" > "$HOME/umu.env"
 sleep "${FAKE_DELAY:-0}"
 echo started > "${RECOMP_STDIO_LOG#Z:}"
 sleep "${FAKE_DELAY:-0}"
@@ -895,6 +897,29 @@ def test_launch_umu_search(d, home):
     assert launch(launcher, home, "/usr/bin:/bin").returncode == 0
     with open(os.path.join(home, "umu.argv")) as f:
         assert f.read().startswith(mine + " ")
+
+
+def test_launch_gamescope_hint(d, home):
+    """Under gamescope (Game Mode sets XDG_CURRENT_DESKTOP, a nested one
+    GAMESCOPE_WAYLAND_DISPLAY) the launcher tells the game, so
+    present.surface=auto hands gamescope the frame; a config/launch.env
+    line wins."""
+    root, launcher = fake_install(d, home)
+    make_exe(os.path.join(home, ".local", "bin", "umu-run"), FAKE_UMU)
+
+    def hint(**env):
+        r = launch(launcher, home, "/usr/bin:/bin", **env)
+        assert r.returncode == 0, r.stdout
+        with open(os.path.join(home, "umu.env")) as f:
+            return f.read().strip()
+
+    assert hint(XDG_CURRENT_DESKTOP="gamescope") == "1"
+    assert hint(GAMESCOPE_WAYLAND_DISPLAY="gamescope-0") == "1"
+    assert hint() == "unset"
+    assert hint(XDG_CURRENT_DESKTOP="KDE") == "unset"
+    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+        f.write("RECOMP_HOST_GAMESCOPE=0\n")
+    assert hint(XDG_CURRENT_DESKTOP="gamescope") == "0"
 
 
 def test_launch_config_layering(d, home):

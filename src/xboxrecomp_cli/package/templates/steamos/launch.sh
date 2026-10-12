@@ -44,6 +44,14 @@ load_env() {
     done < "$file"
 }
 
+# Steam's Game Mode, or a nested gamescope on a desktop. The game then
+# hands gamescope the frame to scale (present.surface=auto -> internal),
+# so Steam's scaling filter (FSR) applies. A line in config/launch.env wins.
+if [ -z "${RECOMP_HOST_GAMESCOPE:-}" ] \
+    && { [ "${XDG_CURRENT_DESKTOP:-}" = gamescope ] || [ -n "${GAMESCOPE_WAYLAND_DISPLAY:-}" ]; }; then
+    export RECOMP_HOST_GAMESCOPE=1
+fi
+
 load_env "$HERE/launch.env.default"
 load_env "$ROOT/config/launch.env"
 
