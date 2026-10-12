@@ -789,6 +789,28 @@ def test_verdict_window_wrong_screen_everywhere_fails():
         assert rc == 1 and out.startswith("FAIL"), out
 
 
+def test_verdict_window_never_rescues_a_garbage_target():
+    with tempfile.TemporaryDirectory() as tmp:
+        gj = paced_golden(tmp, verdict_window={"flips": 8, "why": "art clock"})
+        d = phase_run(tmp, {87: flat(101)})
+        write_bmp(os.path.join(d, "flip_00081.bmp"), flat(0))  # a black present
+        rc, out = run_check(tmp, gj, d)
+        assert rc == 1 and out.startswith("FAIL") and "verdict_window" not in out, out
+
+
+def test_anchor_chains_checked_at_load():
+    with tempfile.TemporaryDirectory() as tmp:
+        frame = paced_frame(tmp)
+        for anchors in (
+            {"e": {"after": "nope", "min_batches": 5}},
+            {"e": {"after": "f", "min_batches": 5}, "f": {"after": "e", "max_batches": 9}},
+        ):
+            G.GOLDEN_JSON = make_golden(tmp, frame, anchors)
+            assert exits(G.load_golden)
+        G.GOLDEN_JSON = make_golden(tmp, frame, {"e": {"min_batches": 5}, "f": {"after": "e"}})
+        assert G.load_golden()["scenarios"]["s"]["anchors"]["f"]["after"] == "e"
+
+
 def test_verdict_window_widens_dumps_and_needs():
     from xboxrecomp_cli import golden_run as GR
 

@@ -100,7 +100,10 @@ diagnostic, the verdict is the target's. A frame whose content runs on a
 clock the anchor does not follow (a menu's animated background) may set
 "verdict_window": {"flips": K, "why": ...}: when the target is outside its limits,
 the frame passes (CLOSE, the passing offset noted) if a flip within K of it
-is within them. dumpat and pulls widen that frame's range by K.
+is within them, unless the target is off by pace_fail_bad (default 0.5) of
+its pixels or more (a black or torn present stays FAIL). Split frames
+ignore it. dumpat, pulls and golden run's stop point widen that frame's
+range by K.
 
 Pace. Some content follows wall time, not flips (the title's cloud movie),
 so a run flipping at another rate lands elsewhere in it. The run's pace
@@ -828,7 +831,28 @@ def config_argv():
 
 def load_golden():
     with open(GOLDEN_JSON) as f:
-        return json.load(f)
+        g = json.load(f)
+    check_anchor_chains(g)
+    return g
+
+
+def check_anchor_chains(g):
+    """Exit on an anchor whose "after" names no other anchor of its scenario
+    or leads round to itself: found at load, not mid-run at the first
+    find_anchor."""
+    for scen, sc in g.get("scenarios", {}).items():
+        anchors = sc.get("anchors", {})
+        for name in anchors:
+            seen, cur = [name], anchors[name]
+            while "after" in cur:
+                nxt = cur["after"]
+                if nxt not in anchors or nxt in seen:
+                    sys.exit(
+                        f"golden: {scen} anchor {name!r}: 'after' chain "
+                        f"{' -> '.join(seen + [str(nxt)])} does not end at another anchor"
+                    )
+                seen.append(nxt)
+                cur = anchors[nxt]
 
 
 def frame_path(d, index):
@@ -1534,10 +1558,14 @@ def check_scenario(scen, d, sc, g, th, window, logs, allow, rcs, keep):
             rcs.append(1)
             continue
         k = verdict_window(fr)
-        if not ok and k:
+        target_bad = min((r[1]["bad_fraction"] for r in results if r[1] is not None), default=1)
+        if not ok and k and target_bad < floor:
             # Content on its own clock (a menu's background art) sits a few
             # flips either side of the anchored target from run to run: the
-            # frame passes when a flip within k of the target does.
+            # frame passes when a flip within k of the target does. Not when
+            # the target itself is off by pace_fail_bad or more: a black,
+            # torn or flickering present on that flip is a regression a
+            # clean neighbour must not hide.
             near = []
             for r in refs:
                 if r[0] in have and os.path.exists(r[2]):
