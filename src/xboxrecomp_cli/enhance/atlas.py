@@ -23,7 +23,9 @@ the band's. A glyph that would overrun the region its quad samples (the
 stock ink box grown by `font_margin`, or the slot between its
 neighbours) is shifted inside it where there is slack, else shrunk by one
 factor on both axes, about the stock centre and the baseline: never
-stretched on one axis, never enlarged. A shrink beyond FIT is named. The
+stretched on one axis, never enlarged. Descenders and overshoots keep the
+baseline; only a mark the font draws clear of it (a dash, an underscore,
+a quote) may move up or down to fit. A shrink beyond FIT is named. The
 ink is white with the coverage in alpha, which the game tints with the
 vertex colour as it does the stock glyphs. A glyph the font lacks, one
 written as U+FFFD in `font_rows` (an icon the game draws for that code,
@@ -201,23 +203,6 @@ def group_runs(runs, expected):
     return out
 
 
-def _coverage_box(cov, width, height):
-    left = top = None
-    right = bottom = 0
-    for y in range(height):
-        base = y * width
-        for x in range(width):
-            if cov[base + x] >= INK:
-                if left is None or x < left:
-                    left = x
-                if top is None:
-                    top = y
-                if x + 1 > right:
-                    right = x + 1
-                bottom = y + 1
-    return None if left is None else (left, top, right, bottom)
-
-
 class Glyph:
     """One glyph of the fit: `char`, its slot (the band's rows between the
     midpoints to its neighbours, in stock pixels) and its stock ink box."""
@@ -328,8 +313,8 @@ def render(stock, rows, font, scale, fallback, margin=None):
     """The atlas at `scale`: stock is (w, h, rgba) of the stock atlas,
     fallback the upscaled stock rgba (the same size as the result) that a
     glyph keeps when the font has no glyph for it. `margin` is [left,
-    top, right, bottom] in stock pixels: how far past its stock ink box a
-    glyph may draw (None: its whole slot). Returns (rgba, rendered,
+    top, right, bottom] in stock atlas texels: how far past its stock
+    ink box a glyph may draw (None: its whole slot). Returns (rgba, rendered,
     notes): the number of glyphs drawn from the font, then a line on the
     fit and what it left as it was or shrank by more than FIT."""
     w, h, rgba = stock
@@ -391,9 +376,11 @@ def render(stock, rows, font, scale, fallback, margin=None):
         # baseline on the band's.
         cx = (bl + br) * scale / 2
         base = baseline * scale
-        # A glyph whose stock ink sits off the baseline (an underscore, an
-        # inverted mark) may move down or up to fit; one on it keeps it.
-        floats = bb_ != baseline
+        # Anchored on the baseline unless the font draws the glyph clear of
+        # it (a dash, a quote, an underscore), which may move up or down to
+        # fit. The stock ink cannot tell: Arial's descenders and overshoots
+        # end off the baseline too, and moving those lifts `g` off the line.
+        floats = bb[1] > 0 or bb[3] <= 0
         # The shrink that fits it, about the stock centre across and the
         # baseline down; a shift alone does when there is slack.
         f = min(1.0, (a1 - a0) / fw)

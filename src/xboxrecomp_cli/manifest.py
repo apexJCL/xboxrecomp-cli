@@ -155,8 +155,9 @@ SPEC = {
         # for that code).
         "font_atlas": (STR, ""),
         "font_rows": (STRS, []),
-        # How far, in guest px [left, top, right, bottom], the game's quads
-        # sample past a glyph's stock ink box: the region a redrawn glyph
+        # How far, in stock atlas texels [left, top, right, bottom] (guest
+        # px only when the game draws text 1:1), the game's quads sample
+        # past a glyph's stock ink box: the region a redrawn glyph
         # may fill. Empty: the glyph's whole slot (the gaps to its
         # neighbours), clipped to the slot either way.
         "font_margin": (INTS, []),
@@ -367,7 +368,7 @@ def _check_values(m):
         fm = hud["font_margin"]
         if fm and (len(fm) != 4 or min(fm) < 0):
             errors.append(
-                "enhance.hud.font_margin: four guest px [left, top, right, bottom], none negative"
+                "enhance.hud.font_margin: four texel counts [left, top, right, bottom], none negative"
             )
         for i, row in enumerate(hud["font_rows"]):
             if not row.strip():

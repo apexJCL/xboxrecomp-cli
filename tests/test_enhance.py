@@ -464,6 +464,13 @@ def test_bc3_vector():
 # ---- font and atlas ---------------------------------------------------------
 
 
+def coverage_box(cov, width, height):
+    """(left, top, right, bottom) of the coverage at alpha >= INK."""
+    rgba = bytearray(width * height * 4)
+    rgba[3::4] = cov
+    return atlas.ink_box(width, rgba, 0, width, 0, height)
+
+
 def test_font_reader_and_rasteriser():
     f = font.Font(ttf())
     assert f.upem == 1000 and f.cap_height() == 700
@@ -471,12 +478,12 @@ def test_font_reader_and_rasteriser():
     assert f.bbox(f.glyph_index(ord("i"))) == (0, 0, 200, 700)
     # H at 10 px per em, origin (2, 9): a 6x7 block whose edges are exact.
     cov = f.render(f.glyph_index(ord("H")), 10, 10, 2, 9, 12, 12)
-    box = atlas._coverage_box(cov, 12, 12)
+    box = coverage_box(cov, 12, 12)
     assert box == (2, 2, 8, 9), box
     assert cov[4 * 12 + 4] == 255 and cov[0] == 0
     # Condensed: half as wide, as tall.
     cov = f.render(f.glyph_index(ord("H")), 5, 10, 2, 9, 12, 12)
-    assert atlas._coverage_box(cov, 12, 12) == (2, 2, 5, 9)
+    assert coverage_box(cov, 12, 12) == (2, 2, 5, 9)
     with pytest.raises(font.FontError):
         font.Font(b"OTTO" + b"\0" * 100)
 
@@ -661,15 +668,26 @@ def test_atlas_overrun_shrinks_proportionally():
     assert size(boxes["I"]) == (8, 28)
 
 
+def outline_ratio(contours):
+    pts = [p for c in contours for p in c]
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    return (max(xs) - min(xs)) / (max(ys) - min(ys))
+
+
 def test_atlas_no_distortion():
-    """Ink width over height is the outline's, wherever the box is."""
+    """Ink width over height is the outline's, wherever the box is and
+    whichever way the glyph is fitted."""
     for margin in (None, [0, 0, 0, 0], [1, 0, 1, 0]):
         _, _, boxes = fit_render(margin)
         for c in "HIlNM":
-            pts = FIT_GLYPHS[c][0]
-            ratio = (max(p[0] for p in pts) - min(p[0] for p in pts)) / 700
+            ratio = outline_ratio(FIT_GLYPHS[c])
             w, h = size(boxes[c])
             assert abs(w - h * ratio) <= 1 + ratio, (margin, c, w, h)
+    _, boxes = vfit_render()
+    for c, (_slot, box) in boxes.items():
+        ratio = outline_ratio(VFIT_GLYPHS[c])
+        w, h = size(box)
+        assert abs(w - h * ratio) <= 1 + ratio, (c, w, h)
 
 
 def test_atlas_margin():
@@ -681,6 +699,98 @@ def test_atlas_margin():
     assert size(slot["M"]) == size(grown["M"]) == (30, 28)
     assert size(tight["M"])[0] == 24
     assert all("shrunk 0" not in x for x in notes)
+
+
+# A one-band atlas for the other fits, 12 px tall with the baseline at 9:
+# the slot has 36 px above the baseline at 4x and 12 below. V and W are
+# H's outline in 3 px boxes, one with little slack on the left, one with
+# none on the right; o's box is taller than the glyph; p's descender and
+# I-acute's accent overrun the slot; _ and ' are drawn clear of the
+# baseline, past the slot bottom and top.
+VFIT_GLYPHS = {
+    "H": [rect(0, 0, 600, 700)],
+    "V": [rect(0, 0, 600, 700)],
+    "W": [rect(0, 0, 600, 700)],
+    "o": [rect(0, 0, 500, 500)],
+    "p": [rect(0, -400, 200, 500)],
+    "\u00cd": [rect(0, 0, 200, 1000)],
+    "_": [rect(0, -350, 300, -250)],
+    "'": [rect(0, 800, 200, 950)],
+}
+VFIT_STOCK = {
+    "H": (1, 2, 7, 9),
+    "V": (8, 2, 11, 9),
+    "W": (17, 2, 20, 9),
+    "o": (21, 2, 26, 9),
+    "p": (28, 4, 30, 12),
+    "\u00cd": (32, 0, 34, 9),
+    "_": (36, 10, 39, 11),
+    "'": (41, 0, 43, 2),
+}
+VFIT_ROW = "".join(VFIT_STOCK)
+
+
+def vfit_render():
+    """The second fit atlas at 4x: (notes, {char: (slot, pack ink box)})."""
+
+    def ink(x, y):
+        return any(x0 <= x < x1 and y0 <= y < y1 for x0, y0, x1, y1 in VFIT_STOCK.values())
+
+    w, h, rgba = dds.decode(dds.parse(dds_file(48, 12, b"DXT5", dxt5_blocks(48, 12, ink))))
+    f = font.Font(ttf(VFIT_GLYPHS))
+    glyphs, metrics = atlas.measure(w, h, rgba, [VFIT_ROW], f)
+    assert [g.box for g in glyphs] == list(VFIT_STOCK.values())
+    assert metrics == [(9, 7)]
+    fallback = scaler.scale_nearest(w, h, rgba, 4)
+    out, n, notes = atlas.render((w, h, rgba), [VFIT_ROW], f, 4, fallback)
+    assert n == 8
+    boxes = {}
+    for g in glyphs:
+        slot = tuple(v * 4 for v in g.slot)
+        boxes[g.char] = (slot, atlas.ink_box(w * 4, out, slot[0], slot[2], slot[1], slot[3]))
+    return notes, boxes
+
+
+def test_atlas_shift_across():
+    """A glyph wider than its stock box but not its slot moves inward at
+    its natural size, from either side, and is not named."""
+    notes, boxes = vfit_render()
+    for c in "VW":
+        slot, box = boxes[c]
+        assert size(box) == (24, 28), c
+        assert slot[0] <= box[0] and box[2] <= slot[2] and box[3] == 36, c
+    # V's centre is 2 px right of its stock box's, W's 6 px left.
+    assert boxes["V"][1][0] == boxes["V"][0][0] == 28
+    assert boxes["W"][1][2] == boxes["W"][0][2] == 80
+    assert not any("'V'" in x or "'W'" in x for x in notes)
+
+
+def test_atlas_vertical_fit():
+    """An accent past the slot top and a descender past its bottom shrink
+    uniformly about the baseline; a mark drawn clear of the baseline moves
+    instead; a box taller than its glyph does not enlarge it."""
+    notes, boxes = vfit_render()
+    # The accent: 40 px above the baseline into 36, f = 0.90.
+    slot, box = boxes["\u00cd"]
+    assert box[1] == slot[1] == 0 and box[3] == 36
+    assert abs(size(box)[0] - 8 * 0.9) <= 1
+    # The descender: 16 px below into 12, f = 0.75; the baseline stays at
+    # 36, so 15 px of it above and 12 below.
+    slot, box = boxes["p"]
+    assert box[3] == slot[3] == 48 and box[1] == 36 - 15
+    assert size(box)[0] == 6
+    # The underscore and the quote: shifted 2 px into the slot, unshrunk.
+    slot, box = boxes["_"]
+    assert box[3] == slot[3] == 48 and size(box) == (12, 4)
+    slot, box = boxes["'"]
+    assert box[1] == slot[1] == 0 and size(box) == (8, 6)
+    # o: 20 px tall in a 28 px stock box, on the baseline.
+    assert size(boxes["o"][1]) == (20, 20) and boxes["o"][1][3] == 36
+    assert notes == [
+        "font: cap 7 px, one proportional scale; 0 glyphs shrunk within 8% to fit their slot",
+        "'p': shrunk 0.75 to stay in its slot (more than 8%: it is thinner and shorter)",
+        "'\u00cd': shrunk 0.90 to stay in its slot (more than 8%: it is thinner and shorter)",
+    ]
 
 
 def test_atlas_glyph_without_run():
