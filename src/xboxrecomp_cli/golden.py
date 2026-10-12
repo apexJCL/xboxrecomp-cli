@@ -96,7 +96,11 @@ is compared with the frame it means. That needs flip_NNNNN.bmp dumps; a run
 with no flip dumps, no anchor in its log, or not the target flip is
 INCOMPLETE (exit 2) for that frame, never compared at the plain dump. --window K (default 2) also
 compares the flips within K of the target and prints the best one: a
-diagnostic, the verdict is the target's.
+diagnostic, the verdict is the target's. A frame whose content runs on a
+clock the anchor does not follow (a menu's animated background) may set
+"verdict_window": {"flips": K, "why": ...}: when the target is outside its limits,
+the frame passes (CLOSE, the passing offset noted) if a flip within K of it
+is within them. dumpat and pulls widen that frame's range by K.
 
 Pace. Some content follows wall time, not flips (the title's cloud movie),
 so a run flipping at another rate lands elsewhere in it. The run's pace
@@ -1242,6 +1246,12 @@ def frame_targets(d, fr, sc, batches):
     return out
 
 
+def verdict_window(fr):
+    """A frame's verdict_window in flips: {"flips": K, "why": ...} or K; 0 off."""
+    v = fr.get("verdict_window", 0)
+    return v.get("flips", 0) if isinstance(v, dict) else v
+
+
 def window_report(d, img_path, ref, fr, th, k):
     """Compare the flips within k of img_path's flip with ref; the best, as
     (offset, ok, stats, path)."""
@@ -1523,6 +1533,27 @@ def check_scenario(scen, d, sc, g, th, window, logs, allow, rcs, keep):
             print(f"FAIL     {tag}{name}: size {img[0]}x{img[1]} differs from the reference")
             rcs.append(1)
             continue
+        k = verdict_window(fr)
+        if not ok and k:
+            # Content on its own clock (a menu's background art) sits a few
+            # flips either side of the anchored target from run to run: the
+            # frame passes when a flip within k of the target does.
+            near = []
+            for r in refs:
+                if r[0] in have and os.path.exists(r[2]):
+                    b = window_report(d, have[r[0]], r, fr, th, k)
+                    if b is not None and b[1]:
+                        near.append((b, r[0]))
+            if near:
+                (off, _, ws, wp), label = min(near, key=lambda n: n[0][2]["bad_fraction"])
+                notes.insert(
+                    0,
+                    "verdict_window +-%d: flip offset %+d passes (%s); the target gave %s"
+                    % (k, off, os.path.basename(wp), fmt(s)),
+                )
+                keep.append(wp)
+                ok, s, tv = True, ws, None
+                name = f" vs {label}" if multi else ""
         rc, why = (0 if ok else 1), ""
         if ok:
             head = "CLOSE   "
@@ -1621,7 +1652,7 @@ def dumpat_ranges(sc, slack=None, window=2):
     ranges = []
     for fr in sc["frames"]:
         f = 60 * fr["dump"] + 1
-        w = window + (slack if "anchor" in fr else 0)
+        w = max(window, verdict_window(fr)) + (slack if "anchor" in fr else 0)
         ranges.append((max(1, f - w), f + w))
     ranges.sort()
     merged = []
@@ -1662,8 +1693,9 @@ def cmd_pulls(args):
                     A + 60 * fr["dump"] + 1 - ref_anchor_flip(fr, lab)
                     for lab, _, _ in frame_refs(fr)
                 ]
+        w = max(window, verdict_window(fr))
         for c in centres:
-            want.update(range(max(1, c - window), c + window + 1))
+            want.update(range(max(1, c - w), c + w + 1))
     for f in sorted(want):
         if any(a <= f <= b for a, b in dumped):  # only what the run dumped
             print("flip_%05d.bmp" % f)

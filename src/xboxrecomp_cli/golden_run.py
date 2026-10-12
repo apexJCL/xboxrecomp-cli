@@ -79,10 +79,11 @@ def frame_needs(sc, batches, window=WINDOW, slack=None):
     out = []
     for fr in sc["frames"]:
         f = 60 * fr["dump"] + 1
+        w = max(window, G.verdict_window(fr))
         if "anchor" not in fr:
-            out.append((fr["name"], f + window, True))
+            out.append((fr["name"], f + w, True))
             continue
-        end = f + window + slack
+        end = f + w + slack
         ev = sc.get("anchors", {}).get(fr["anchor"]["event"])
         A = G.find_anchor(batches, ev, sc.get("anchors")) if ev and batches else None
         if A is None:
@@ -91,7 +92,7 @@ def frame_needs(sc, batches, window=WINDOW, slack=None):
         # Each reference's own anchor flip, else the frame's (ref_anchor_flip).
         refs = [r.get("anchor_flip", fr["anchor"]["ref_flip"]) for r in fr.get("references", [])]
         need = max(A + f - R for R in refs or [fr["anchor"]["ref_flip"]])
-        out.append((fr["name"], min(need + window, end), True))
+        out.append((fr["name"], min(need + w, end), True))
     return out
 
 

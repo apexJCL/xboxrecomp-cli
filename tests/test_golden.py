@@ -753,6 +753,56 @@ def test_pace_of_a_log():
     assert G.pace(t, 10, 71) is None and G.pace(None, 10, 70) is None
 
 
+# ---- verdict_window: content on its own clock near the anchored target ---------
+
+
+def phase_run(tmp, near):
+    """Anchor e at flip 30 (target 81, outside limits there); `near` maps
+    other flips to images."""
+    b = {f: (5 if f >= 30 else 1) for f in range(1, 120)}
+    return setup_run(tmp, metal_log(b), {81: OFF, **near})
+
+
+def test_verdict_window_passes_on_a_near_flip():
+    with tempfile.TemporaryDirectory() as tmp:
+        gj = paced_golden(tmp, verdict_window={"flips": 8, "why": "art clock"})
+        rc, out = run_check(tmp, gj, phase_run(tmp, {87: flat(101)}))
+        assert rc == 0 and out.startswith("CLOSE"), out
+        assert "verdict_window +-8: flip offset +6 passes (flip_00087.bmp)" in out, out
+
+
+def test_verdict_window_off_or_too_narrow_fails():
+    with tempfile.TemporaryDirectory() as tmp:
+        gj = paced_golden(tmp)
+        rc, out = run_check(tmp, gj, phase_run(tmp, {87: flat(101)}))
+        assert rc == 1 and out.startswith("FAIL"), out
+    with tempfile.TemporaryDirectory() as tmp:
+        gj = paced_golden(tmp, verdict_window=4)
+        rc, out = run_check(tmp, gj, phase_run(tmp, {87: flat(101)}))
+        assert rc == 1 and out.startswith("FAIL") and "verdict_window" not in out, out
+
+
+def test_verdict_window_wrong_screen_everywhere_fails():
+    with tempfile.TemporaryDirectory() as tmp:
+        gj = paced_golden(tmp, verdict_window=8)
+        rc, out = run_check(tmp, gj, phase_run(tmp, {f: flat(200) for f in range(73, 90)}))
+        assert rc == 1 and out.startswith("FAIL"), out
+
+
+def test_verdict_window_widens_dumps_and_needs():
+    from xboxrecomp_cli import golden_run as GR
+
+    fr = {"name": "f", "dump": 1, "anchor": {"event": "e", "ref_flip": 10}}
+    sc = {"frames": [fr], "anchors": ANCHORS, "dump_slack": 5}
+    assert G.dumpat_ranges(sc) == "54-68"
+    fr["verdict_window"] = 9
+    assert G.dumpat_ranges(sc) == "47-75"
+    b = {f: (5 if f >= 30 else 1) for f in range(1, 60)}
+    assert GR.frame_needs(sc, b) == [("f", 75, True)]  # target 81 + 9, capped at the dumps
+    b = {f: (5 if f >= 10 else 1) for f in range(1, 60)}
+    assert GR.frame_needs(sc, b) == [("f", 70, True)]  # target 61 + 9
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):
