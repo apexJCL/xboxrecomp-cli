@@ -61,13 +61,14 @@ def setup_needs(target, system_tools=False):
     return needs
 
 
-def host_blockers(target):
+def host_blockers(target, importing=False):
     """What stops this target on this host that setup cannot install, each
-    with its one-line fix: [] when nothing."""
+    with its one-line fix: [] when nothing. importing: package --dump,
+    which puts the XBE in place itself."""
     g = host.g()
     out = []
-    if not os.path.isfile(g.xbe):
-        out.append("no %s: dump the disc into %s/" % (g.rel(g.xbe), g.rel(g.game_files)))
+    if not importing and not os.path.isfile(g.xbe):
+        out.append("no %s: %s" % (g.rel(g.xbe), doctor.dump_fix()))
     os_name = host.host_os()
     if target == "macos":
         if os_name != "macos":

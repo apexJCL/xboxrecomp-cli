@@ -210,7 +210,13 @@ def test_blinx2_constants():
     pkg.plib()
     assert pl.TITLE_ID == 0x4D530065
     assert pl.PRODUCT == "blinx2-recomp" and pl.PRODUCT_NAME == "BLiNX 2"
-    assert pl.GAME_FILES_EXCLUDE == ("default_analysis.json", "UDATA", "TDATA", ".DS_Store")
+    assert pl.GAME_FILES_EXCLUDE == (
+        "default_analysis.json",
+        "UDATA",
+        "TDATA",
+        ".DS_Store",
+        ".xbr-dump.json",
+    )
     assert m["data"]["dir_env"] == "BLINX2_DATA_DIR"
     assert m["build"]["exe"] == "cat_recomp" and g.exe_name == "cat_recomp"
     assert pipeline.split_size() == "250" or os.environ.get("SPLIT")

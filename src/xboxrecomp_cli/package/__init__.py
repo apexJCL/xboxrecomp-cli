@@ -405,16 +405,20 @@ def write_manifest(root, target, version, overrides, lib, extra=None, dump_unkno
     return man
 
 
-def package_plan(a):
+def package_plan(a, imp=None):
     """[(step, why)] for this package run, before anything runs. Generation
-    is judged again after setup (the key needs the toolkit)."""
-    plan = []
+    is judged again after setup (the key needs the toolkit) and after an
+    import (the key hashes the XBE). imp: --dump's prepared import."""
+    importing = imp is not None and imp.writes
+    plan = [("import", imp.plan_why())] if importing else []
     needs = [] if a.no_setup else setup.setup_needs(a.target, a.system_tools)
     if needs:
         plan.append(("setup", ", ".join(needs)))
     if not a.no_build:
         if "no toolkit" in needs:
             plan.append(("generate", "checked after setup"))
+        elif importing:
+            plan.append(("generate", "checked after import"))
         else:
             why = pipeline.gen_stale_reasons()
             if why:
@@ -470,6 +474,7 @@ def cmd_package(a):
 
 
 def package(a):
+    from .. import dump
     from . import macos, steamos, windows
 
     G = g()
@@ -477,17 +482,36 @@ def package(a):
         raise CliError("game.toml's package.targets has no %s" % a.target)
     lib = plib()
     a.out = os.path.abspath(a.out)
-    blockers = setup.host_blockers(a.target)
+    dump_path = getattr(a, "dump", None)
+    blockers = setup.host_blockers(a.target, importing=bool(dump_path))
     if blockers:
         raise CliError("cannot package %s on this host:\n  %s" % (a.target, "\n  ".join(blockers)))
+    # --dump is judged whole (title, names, space, what game_files/ holds)
+    # before the plan, so a wrong disc or a refusal costs nothing.
+    imp = None
+    if dump_path:
+        imp = dump.prepare(dump_path, a.replace)
+    else:
+        note = dump.leftover_note()
+        if note:
+            host.say(note)
     toolkit.exclude_pin_mark(toolkit.toolkit_dir())
     # The pack is checked before the plan runs: a missing one must not
     # cost a build.
     hud_pack = hud_pack_path(a.hud_pack) if getattr(a, "hud_pack", None) is not None else None
-    check_content(hud_pack)
-    plan = package_plan(a)
+    try:
+        check_content(hud_pack)
+        plan = package_plan(a, imp)
+    except BaseException:
+        if imp is not None:
+            imp.src.close()
+        raise
     host.VIEW.plan = [n for n, _ in plan]
     host.say(plan_line(plan))
+    if imp is not None:
+        host.mark("import")
+        # stage_payload warns about an unknown dump; once is enough.
+        imp.run(warn_unknown=False)
     run_plan_prefix(a, plan)
     os.makedirs(a.out, exist_ok=True)
     stage, payload, version, overrides, exe = stage_payload(a.target, a, lib)

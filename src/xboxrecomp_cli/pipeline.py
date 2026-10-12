@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import sys
 
-from . import host, toolkit
+from . import doctor, host, toolkit
 from .host import CliError
 
 
@@ -244,7 +244,7 @@ def recomp_cmds(extra=()):
 
 
 def dump_hint():
-    return "(dump the disc into %s/)" % g().rel(g().game_files)
+    return "(%s)" % doctor.dump_fix()
 
 
 def require_dump():
@@ -252,10 +252,7 @@ def require_dump():
     no stage that makes a dump."""
     G = g()
     if not os.path.isfile(G.xbe):
-        raise CliError(
-            "no %s: put your dump (default.xbe and the game's files) in %s/"
-            % (G.rel(G.xbe), G.rel(G.game_files))
-        )
+        raise CliError("no %s: %s" % (G.rel(G.xbe), doctor.dump_fix()))
 
 
 def stage_parse(extra=()):

@@ -146,8 +146,12 @@ GITIGNORE = """\
 # Written by `xbr new`. Game data, generated code, the toolchain and the
 # bundles never enter git.
 
-# Your dump, and the analysis the pipeline writes beside it.
+# Your dump, and the analysis the pipeline writes beside it; `import`
+# builds the dump beside it first and keeps the old one there until the
+# new one is in place.
 @GAME_FILES@/
+@GAME_FILES@.partial/
+@GAME_FILES@.old/
 
 # Generated code and its key (`@SLUG@ package` regenerates when it differs).
 @GEN@/
@@ -658,8 +662,11 @@ def summary(root, v, notes, later):
         for n in later:
             host.say("  - " + n)
     host.say("next:")
-    host.say("  1. put your dump (default.xbe and the game's files) in %s/" % v["GAME_FILES"])
-    host.say("  2. cd %s && %s setup" % (root, cmd))
+    host.say(
+        "  1. cd %s && %s import PATH with your disc image or folder, or put the files "
+        "in %s/" % (root, cmd, v["GAME_FILES"])
+    )
+    host.say("  2. %s setup" % cmd)
     host.say("  3. %s all        -> %s/%s.exe" % (cmd, v["WINDOWS_DIR"], v["EXE"]))
     host.say("Commit the directory when you like: the dump, gen/ and the toolchain are ignored.")
 

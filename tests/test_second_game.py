@@ -188,8 +188,11 @@ def test_sync_excludes_last(d):
         ex = sync.game_excludes(G)
     assert ex[-2:] == ["/bin/", "/runs/"]
     assert "/Second Game Files" in ex and "/build/xr" in ex
-    # BLiNX 2's list is exactly the one every recorded sync sent.
+    # An import's staging and swapped-out trees hold the dump too.
+    assert "/Second Game Files.partial" in ex and "/Second Game Files.old" in ex
+    # BLiNX 2's list is exactly the one every recorded sync sent, plus those.
     assert sync.game_excludes(cat)[-1] == "*.tar"
+    assert {"/game_files.partial", "/game_files.old"} <= set(sync.game_excludes(cat))
 
 
 def test_notice_optional(d, monkeypatch):
@@ -241,7 +244,7 @@ def test_old_defaults_file_refused(d, monkeypatch):
         assert "config.default.toml" in msg and "git mv" in msg, msg
         assert "packaging/enhance.toml.default" in msg, msg
         # package() refuses before its plan (the build) runs.
-        monkeypatch.setattr(pkg.setup, "host_blockers", lambda t: [])
+        monkeypatch.setattr(pkg.setup, "host_blockers", lambda t, importing=False: [])
         monkeypatch.setattr(pkg.toolkit, "exclude_pin_mark", lambda t: None)
 
         def no_plan(a):

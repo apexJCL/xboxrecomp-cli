@@ -236,6 +236,8 @@ def test_gitignore_and_attributes(d, tk, game):
     ign = read(os.path.join(root, ".gitignore")).split("\n")
     for want in (
         "game_files/",
+        "game_files.partial/",
+        "game_files.old/",
         "src/recomp/gen/",
         "src/recomp/gen.key.json",
         "analysis/",
@@ -276,7 +278,8 @@ def test_windows_wrapper_and_messages(d, tk, game, monkeypatch):
     # Every other file is LF.
     for f in ("g", "g.py", "game.toml", "pyproject.toml", "src/main.c"):
         assert "\r" not in read(os.path.join(root, f), newline=""), f
-    assert "cd %s && g setup" % root in out and "  3. g all" in out
+    assert "cd %s && g import PATH with your disc image or folder" % root in out
+    assert "  2. g setup" in out and "  3. g all" in out
     # fopen takes / on Windows: the patched paths never need escaping.
     assert '"game_files/default.xbe"' in read(os.path.join(root, "src", "main.c"))
 
@@ -299,7 +302,7 @@ def test_doctor_next_line(d, tk, game, monkeypatch):
     assert nxt(
         ["no cmake in .venv (g setup)", "no g/game_files/default.xbe"], False, "game_files"
     ) == ("'g setup' (no cmake in .venv)")
-    assert nxt(["no game_files/default.xbe"], False, "game_files").startswith("put your dump")
+    assert nxt(["no game_files/default.xbe"], False, "game_files").startswith("run '")
     assert nxt([], False, "game_files") == "'g analyze', then 'g recomp' ('g all' builds too)"
     assert nxt([], True, "game_files") == "'g build', or 'g package <target>'"
 
@@ -405,7 +408,11 @@ def test_missing_dump_is_said_plainly(d, tk, game):
 
     root = os.path.join(d, "g")
     assert new(root, "--offline", "--cli-commit", CLI, "--toolkit-commit", TK)[0] == 0
-    with pytest.raises(CliError, match="put your dump .* in game_files/"):
+    with pytest.raises(
+        CliError,
+        match="no game_files/default.xbe: run '.*g import PATH' with your disc image or "
+        "folder, or put the files in game_files/",
+    ):
         pipeline.require_dump()
 
 

@@ -119,9 +119,17 @@ you add it. A `url` may not start with `-`.
 | Key | Default | Meaning |
 |---|---|---|
 | `game_files` | `"game_files"` | The dumped disc. |
-| `game_files_exclude` | `["default_analysis.json", "UDATA", "TDATA"]` | Left out of a bundle. |
+| `game_files_exclude` | `["default_analysis.json", "UDATA", "TDATA"]` | Left out of a bundle; an import carries them into the new tree. |
 | `dir_env` | `<APP>_DATA_DIR` | The variable that moves the player's data. |
 | `windows`, `steamos`, `macos` | `%LOCALAPPDATA%\<app>`, `~/Games/<app>`, `~/Library/Application Support/<app>` | The data folder on each target, as the bundle's README names it. |
+
+`import` writes `.xbr-dump.json` into `game_files` (where the dump came
+from, its size and its XBE's sha256): it is never bundled, and like
+`game_files_exclude` it does not count when a source is compared with the
+folder. While it runs, `import` uses two folders beside `game_files`,
+`<game_files>.partial` and `<game_files>.old`; a game's `.gitignore` (the
+one `xbr new` writes has them) and the bench sync leave them out, as they
+do `game_files`.
 
 ## [input]
 

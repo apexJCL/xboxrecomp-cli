@@ -9,6 +9,41 @@ options of one. A game is a directory with a `game.toml`
 
 ## Player commands
 
+### `mygame PATH`
+
+`mygame package <this computer's target> --dump PATH`: imports the disc
+image or dump folder at `PATH` (as `import` below), then packages. Any
+other `package` option follows the path (`mygame PATH --replace`,
+`mygame PATH --hud-pack`). A command name wins over a folder of the same
+name; a path that does not exist is an error, not a command.
+
+### `mygame import PATH`
+
+Put the dump in `game_files/` from a disc image (`.iso`, `.xiso`, any
+extension: the image is recognised by its XDVDFS descriptor, at any of the
+usual partition offsets) or a folder holding `default.xbe` (the disc's
+root). Before anything is written it checks the XBE's title ID against
+`xbe.title_id` (another game is refused by name), every file name (one
+Windows refuses, a directory loop, nesting deeper than 32) and the free
+space. The files land in `game_files.partial/` first and are renamed into
+place, so an interrupted import leaves the old `game_files/` as it was; the
+next run tidies up. A folder is cloned on APFS (no extra space on the same
+volume) and copied elsewhere.
+
+`game_files/.xbr-dump.json` records the source, so running it again with
+the same source is a size check and nothing more. A `game_files/` that
+already holds the same files is adopted (the record is written, nothing is
+copied). One that holds anything else is never replaced unasked:
+
+| Option | Effect |
+|---|---|
+| `--replace` | replace a `game_files/` that holds another dump; the old one moves to `game_files.old/` and is removed once the new one is in place. Saves and the pipeline's files (`game_files_exclude` names) carry over, unless the source has its own |
+| `--check` | compare the source with `game_files/` by name, size and sha256 and list the differences; writes nothing, exit 1 on a difference |
+| `--link` | developers: make `game_files/` a link to the folder instead of a copy (no record, not on Windows); the pipeline then writes its analysis into that folder |
+
+An archive (`.zip`, `.7z`, `.rar`) has to be extracted first, and a
+`.cue`/`.bin` set is imported through its `.bin`.
+
 ### `mygame`
 
 Package for this computer: `macos` on a Mac, `steamos` on Linux, `windows`
@@ -23,6 +58,8 @@ A private bundle for one target in `dist/`. Needs `[package]` in `game.toml`.
 
 | Option | Effect |
 |---|---|
+| `--dump PATH` | import the disc image or dump folder first, as `import PATH`; the plan shows it as its first step |
+| `--replace` | with `--dump`: as `import --replace` |
 | `--no-build` | package the existing build as it is |
 | `--allow-debug` | package a non-Release build |
 | `--allow-nonstock` | package with a non-stock CMake value (`build.nonstock_vars`, or the enhancements layer off); recorded in `manifest.json` |

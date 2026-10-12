@@ -16,11 +16,17 @@ DOC = """\
 @slug@: set up, generate, build and package @name@ on this host.
 
 Commands:
+  @slug@ /path/to/dump                  your disc image (.iso) or the folder
+                                        with default.xbe: checks it is @name@,
+                                        puts its files in place, then the same
+                                        as the line below
   @slug@                                package for this computer (macos on a
                                         Mac, steamos on Linux, windows on
                                         Windows): sets up, generates and builds
                                         whatever is missing or out of date
   @slug@ package windows|steamos|macos  the same, for a given target: dist/
+  @slug@ import PATH [--replace]        only the import (--check compares, writes
+                                        nothing)
   @slug@ doctor                         what this host has, and what it can package
   @slug@ enhance hud [--font FONT]      your HUD texture pack from your own dump
                                         (dist/enhance/hud/; package --hud-pack

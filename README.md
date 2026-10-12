@@ -47,8 +47,8 @@ Windows host is supported and not yet verified on a real machine.
 
 ```sh
 uvx --from git+https://github.com/apexJCL/xboxrecomp-cli xbr new mygame
-# put your dump (default.xbe and the game's files) in mygame/game_files/
 cd mygame
+./mygame import /path/to/game.iso   # or the dump's folder, or copy it to game_files/
 ./mygame setup     # .venv, llvm-mingw, the toolkit; ends with doctor
 ./mygame all       # analyze, recomp, build: build-win/mygame_recomp.exe
 ```
@@ -60,7 +60,7 @@ generated code, the toolchain and the bundles out of git, the toolkit's
 `templates/new-game/` with the game's constants, and `config/setup-pins.json`.
 The title, title ID and entry point come from the XBE header, which is read
 and never copied. `@<tag>` after the repository URL pins a release, `@<sha>`
-a commit (`…/xboxrecomp-cli@v0.5.1 xbr new mygame`); the no-pipe way is a
+a commit (`…/xboxrecomp-cli@v0.6.0 xbr new mygame`); the no-pipe way is a
 clone and `uv run xbr new ../mygame`.
 
 The first build is a Windows x86-64 executable that runs natively on Windows
@@ -75,8 +75,10 @@ reference: [docs/commands.md](docs/commands.md).
 | Command | Summary |
 |---|---|
 | `xbr new DIR` | a new game's workbench |
+| `mygame PATH` | import the disc image or dump folder at `PATH`, then the same as `mygame` |
 | `mygame` | package for this computer, building whatever is missing or stale |
-| `mygame package <target>` | the same for `windows`, `steamos` or `macos`, into `dist/` |
+| `mygame package <target>` | the same for `windows`, `steamos` or `macos`, into `dist/` (`--dump PATH` imports first) |
+| `mygame import PATH` | put the dump in `game_files/` from a disc image or a folder, checking its title first |
 | `mygame doctor` | what this host has, what it can package, and the next thing to do |
 | `mygame enhance hud` | the owner's HUD texture pack from their own dump (`package --hud-pack` bundles it) |
 | `mygame setup` | fetch the pinned toolchain into the game's tree |

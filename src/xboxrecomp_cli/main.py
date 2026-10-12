@@ -148,6 +148,16 @@ def _cfg_package(p):
     b = host.g().m["build"]
     nonstock = pkg_lib.nonstock_help(b["nonstock_vars"], b["stock_cmake"])
     p.add_argument("target", choices=("windows", "steamos", "macos"))
+    p.add_argument(
+        "--dump",
+        metavar="PATH",
+        help="import your disc image or dump folder first (as '%s import PATH')" % host.g().slug,
+    )
+    p.add_argument(
+        "--replace",
+        action="store_true",
+        help="with --dump: replace a %s/ that holds another dump" % _gf(),
+    )
     p.add_argument("--no-build", action="store_true", help="package the existing build as it is")
     p.add_argument("--allow-debug", action="store_true", help="package a non-Release build")
     p.add_argument(
@@ -201,6 +211,37 @@ def cmd_package(a):
     package.cmd_package(a)
 
 
+def _gf():
+    return host.g().rel(host.g().game_files)
+
+
+def _cfg_import(p):
+    p.add_argument("path", metavar="PATH", help="your disc image (.iso), or the dump's folder")
+    p.add_argument(
+        "--replace",
+        action="store_true",
+        help="replace a %s/ that holds another dump (removed once the new one is in)" % _gf(),
+    )
+    p.add_argument(
+        "--link",
+        action="store_true",
+        help="developers: link %s/ to the folder instead of copying it (not on Windows)" % _gf(),
+    )
+    p.add_argument(
+        "--check",
+        action="store_true",
+        help="compare the source with %s/ by name, size and sha256; write nothing" % _gf(),
+    )
+
+
+def cmd_import(a):
+    from . import dump
+
+    if a.check and (a.replace or a.link):
+        raise CliError("--check writes nothing: it takes no --replace or --link")
+    return dump.run_import(a.path, a.replace, a.link, a.check)
+
+
 def _cfg_enhance(p):
     from .enhance import hud
 
@@ -245,6 +286,12 @@ def register():
         _cfg_package,
     )(cmd_package)
     command(
+        "import",
+        "put your dump in %s/ from your disc image or a folder: checks the "
+        "title first, never replaces a dump unasked" % _gf(),
+        _cfg_import,
+    )(cmd_import)
+    command(
         "enhance",
         "owner-made enhancement assets from your own dump (enhance hud: the HUD texture pack)",
         _cfg_enhance,
@@ -259,6 +306,12 @@ class Parser(argparse.ArgumentParser):
         G = host.g()
         b = G.m["build"]
         return helptext.top_help(self.prog, G.name, b["windows_dir"], b["macos_dir"])
+
+    def error(self, message):
+        # Not a command and not a path: it may be a mistyped dump path.
+        if message.startswith("argument command: invalid choice"):
+            message += "\nto import a disc image or a folder, pass a path that exists"
+        super().error(message)
 
 
 def make_parser(prog=None):
@@ -409,9 +462,15 @@ def main(argv=None):
     ap, sub = make_parser(name)
     if not argv or (argv[0].startswith("-") and argv[0] not in ("-h", "--help")):
         argv = ["package", native_target()] + argv
+    elif argv[0] not in sub.choices and os.path.exists(argv[0]):
+        # `<game> PATH`: the one line the README shows. A command name
+        # wins over a folder of that name (the table is checked first).
+        argv = ["package", native_target(), "--dump", argv[0]] + argv[1:]
     a, extra = ap.parse_known_args(argv)
     if extra and not getattr(a, "passthrough", None):
         ap.error("unrecognized arguments: %s" % " ".join(extra))
+    if getattr(a, "replace", False) and a.cmd == "package" and not a.dump:
+        sub.choices["package"].error("--replace goes with --dump PATH")
     a.extra = extra
     try:
         return a.func(a) or 0

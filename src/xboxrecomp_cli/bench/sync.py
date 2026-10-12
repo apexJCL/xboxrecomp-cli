@@ -29,6 +29,8 @@ GAME_EXCLUDES = [
     None,  # "/" + pipeline.out
     "/.venv-ghidra",
     None,  # "/" + data.game_files
+    None,  # "/" + data.game_files + ".partial" (an import's staging tree)
+    None,  # "/" + data.game_files + ".old" (the tree an import --replace swaps out)
     "/third_party",
     ".claude/",
     "/bench-provenance.txt",
@@ -65,6 +67,8 @@ def game_excludes(game):
         [
             "/" + game.m["pipeline"]["out"],
             "/" + game.m["data"]["game_files"],
+            "/" + game.m["data"]["game_files"] + ".partial",
+            "/" + game.m["data"]["game_files"] + ".old",
             game.rel(game.regen_marker),
         ]
     )

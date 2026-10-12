@@ -254,6 +254,7 @@ def test_game_files_exclusions(d):
         ".DS_Store",
         "media/a.xpr",
         "media/.DS_Store",
+        ".xbr-dump.json",
     ):
         p = os.path.join(src, rel)
         os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -262,6 +263,8 @@ def test_game_files_exclusions(d):
     dst = os.path.join(d, "dst")
     pl.stage_game_files(src, dst)
     assert pl.list_files(dst) == ["default.xbe", "media/a.xpr"], pl.list_files(dst)
+    # The import's marker names a path on the player's machine: never shipped.
+    assert pl.game_file_excluded(".xbr-dump.json")
 
 
 def test_game_files_read_only_dump(d):

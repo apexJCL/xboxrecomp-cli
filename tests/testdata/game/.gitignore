@@ -1,5 +1,7 @@
 build/
 game_files
+game_files.partial/
+game_files.old/
 # analysis/ is per-worktree scratch, except the golden-frame hashes
 # (golden.json); the reference frames in analysis/golden/frames/ are game
 # output and stay local.

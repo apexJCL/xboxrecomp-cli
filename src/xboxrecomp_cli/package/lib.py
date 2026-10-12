@@ -51,8 +51,9 @@ SCHEMA = 1
 DATA_LAYOUT = 1
 
 # game_files/ entries that are not the dump: the pipeline's XBE analysis and
-# any save tree a dev run left there (data.game_files_exclude), and Finder's.
-GAME_FILES_EXCLUDE = (".DS_Store",)
+# any save tree a dev run left there (data.game_files_exclude), Finder's, and
+# the marker `import` writes (it names a path on the player's machine).
+GAME_FILES_EXCLUDE = (".DS_Store", ".xbr-dump.json")
 
 TARGETS = ("windows-x86_64", "steamos-x86_64-proton", "macos-arm64")
 
@@ -71,7 +72,7 @@ def configure(
     global PRODUCT, PRODUCT_NAME, TITLE_ID, SOURCE_NAME, APP, GAME_FILES_EXCLUDE
     global NONSTOCK_VARS, STOCK_CMAKE, LF_ONLY, ICON_FILES
     PRODUCT, PRODUCT_NAME, TITLE_ID, SOURCE_NAME, APP = product, name, title_id, source_name, app
-    GAME_FILES_EXCLUDE = tuple(game_files_exclude) + (".DS_Store",)
+    GAME_FILES_EXCLUDE = tuple(game_files_exclude) + (".DS_Store", ".xbr-dump.json")
     NONSTOCK_VARS = tuple(nonstock_vars)
     STOCK_CMAKE = tuple(stock_cmake)
     LF_ONLY = lf_only(app)

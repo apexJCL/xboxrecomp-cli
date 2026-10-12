@@ -10,6 +10,7 @@ dynamic = ["version"]
 description = "Set up, generate, build, package and bench a statically recompiled Xbox game from its game.toml"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE", "LICENSES/*"]
 requires-python = ">=3.12"
 dependencies = []
 
@@ -53,6 +54,8 @@ ignore = [
 "src/xboxrecomp_cli/helptext.py" = ["UP"]
 # The steamos installer runs on the target's system Python (3.9 is enough).
 "src/xboxrecomp_cli/package/templates/**/*.py" = ["UP"]
+# The toolkit's XDVDFS reader, kept as upstream wrote it (docs/origin.md).
+"src/xboxrecomp_cli/xdvdfs.py" = ["E741"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

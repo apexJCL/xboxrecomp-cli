@@ -126,6 +126,15 @@ def dump_state():
     return sha, (not known or sha in known)
 
 
+def dump_fix(game_files=None):
+    """The two ways to a dump, for every message that finds none."""
+    g = host.g()
+    return "run '%s import PATH' with your disc image or folder, or put the files in %s/" % (
+        host.cli_name(),
+        game_files or g.rel(g.game_files),
+    )
+
+
 def unknown_dump_note(sha):
     known = host.g().m["xbe"]["sha256"]
     return "unknown dump: sha256 %s is not one game.toml lists (%s)" % (
@@ -141,6 +150,8 @@ PROBLEMS = []
 
 def doctor_report():
     """(lines, packageable targets, blocked {target: reason})."""
+    from . import dump
+
     g = host.g()
     slug = host.prog()
     os_name, arch = host.host_os(), host.host_arch()
@@ -226,9 +237,13 @@ def doctor_report():
         % (
             (xbe_rel + ("" if known else " (%s)" % unknown_dump_note(sha)))
             if sha
-            else "MISSING: put your dump in %s/" % gf_rel
+            else "MISSING: " + dump_fix()
         )
+        + (dump.origin_note() if sha else "")
     )
+    left = dump.leftover_note()
+    if left:
+        lines.append("            " + left)
     lines.append(
         "gen/:       %s"
         % ("present" if gen_ok else "not generated yet (%s analyze, %s recomp)" % (slug, slug))
@@ -289,7 +304,7 @@ def next_step(problems, gen_ok, game_files):
     if fixes:
         return "'%s setup' (%s)" % (cmd, "; ".join(p.split(" (")[0] for p in fixes))
     if any(p.startswith("no ") and p.endswith(".xbe") for p in problems):
-        return "put your dump (default.xbe and the game's files) in %s/" % game_files
+        return dump_fix(game_files)
     if not gen_ok:
         return "'%s analyze', then '%s recomp' ('%s all' builds too)" % (cmd, cmd, cmd)
     return "'%s build', or '%s package <target>'" % (cmd, cmd)

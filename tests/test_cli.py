@@ -379,6 +379,105 @@ def test_native_target(monkeypatch):
     assert seen == [main.native_target()]
 
 
+def _package_args(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        main, "cmd_package", lambda a: seen.append((a.target, a.dump, a.replace, a.hud_pack))
+    )
+    return seen
+
+
+def test_a_path_is_package_dump(d, monkeypatch):
+    seen = _package_args(monkeypatch)
+    iso = os.path.join(d, "BLiNX 2.iso")
+    write(iso, "x")
+    native = main.native_target()
+    assert main.main(["--game", GAME, iso]) == 0
+    assert main.main(["--game", GAME, iso, "--replace"]) == 0
+    assert main.main(["--game", GAME, d, "--hud-pack"]) == 0
+    assert seen == [
+        (native, iso, False, None),
+        (native, iso, True, None),
+        (native, d, False, ""),
+    ]
+
+
+def test_a_command_wins_over_a_folder_of_its_name(d, monkeypatch):
+    os.makedirs(os.path.join(d, "doctor"))
+    ran = []
+    monkeypatch.setattr(main, "cmd_doctor", lambda a: ran.append("doctor"))
+    monkeypatch.chdir(d)
+    assert main.main(["--game", GAME, "doctor"]) == 0
+    assert ran == ["doctor"]
+
+
+def test_a_missing_path_is_an_error_with_the_hint(d):
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        try:
+            main.main(["--game", GAME, os.path.join(d, "BLiNX2.iso")])
+            raise AssertionError("accepted a missing path")
+        except SystemExit as e:
+            assert e.code == 2
+    text = err.getvalue()
+    assert "invalid choice" in text
+    assert text.endswith("\nto import a disc image or a folder, pass a path that exists\n")
+
+
+def test_replace_needs_dump(monkeypatch):
+    seen = _package_args(monkeypatch)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        try:
+            main.main(["--game", GAME, "package", "macos", "--replace"])
+            raise AssertionError("accepted --replace alone")
+        except SystemExit as e:
+            assert e.code == 2
+    assert "--replace goes with --dump PATH" in err.getvalue() and seen == []
+
+
+def test_import_check_takes_no_replace(d):
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        assert main.main(["--game", GAME, "import", d, "--check", "--replace"]) == 1
+    assert "--check writes nothing" in err.getvalue()
+
+
+def test_package_dump_refuses_a_hand_placed_dump(d, monkeypatch):
+    from test_xbe import header
+
+    with fake_tree(d) as (root, tk):
+        G = manifest.current()
+        src = os.path.join(d, "disc")
+        os.makedirs(src)
+        with open(os.path.join(src, "default.xbe"), "wb") as f:
+            f.write(header("BLiNX 2", G.m["xbe"]["title_id"]))
+        monkeypatch.setattr(setup, "host_blockers", lambda t, importing=False: [])
+        a = A(target="macos", dump=src, replace=False, hud_pack=None, out=os.path.join(d, "o"))
+        e = raises(pkg.package, a, match="already holds a dump that was put there by hand")
+        assert "rerun with --replace to replace it, or run %s alone" % host.cli_name() in e
+        with open(G.xbe) as f:
+            assert f.read() == "xbe"  # untouched
+
+
+def test_package_plan_with_an_import(d, monkeypatch):
+    class Imp:
+        writes = True
+
+        def plan_why(self):
+            return "g.iso, ISO, 3.1 GB, 486 files"
+
+    with fake_tree(d):
+        monkeypatch.setattr(setup, "setup_needs", lambda t, s: [])
+        monkeypatch.setattr(pipeline, "gen_stale_reasons", lambda: [])
+        plan = pkg.package_plan(A(target="macos"), Imp())
+        assert [n for n, _ in plan] == ["import", "generate", "build", "package"]
+        assert plan[0][1] == "g.iso, ISO, 3.1 GB, 486 files"
+        assert plan[1] == ("generate", "checked after import")
+        Imp.writes = False  # already in place: only build and package
+        assert [n for n, _ in pkg.package_plan(A(target="macos"), Imp())] == ["build", "package"]
+
+
 def test_command_table():
     main.register()
     funcs = {name: f.__name__ for name, _, _, f in main.COMMANDS}
@@ -400,6 +499,7 @@ def test_command_table():
         "doctor",
         "pins",
         "package",
+        "import",
         "enhance",
     ], names
 

@@ -52,3 +52,20 @@ These are new here and have no earlier history: `manifest.py`,
 `cli_dir.py`, `wrapper/`, `scripts/audit-public.sh`, `tests/conftest.py`,
 `tests/test_manifest.py`, `tests/test_wrapper.py`,
 `tests/test_audit_public.py` and `docs/`.
+
+## From the toolkit
+
+`src/xboxrecomp_cli/xdvdfs.py` is the XDVDFS (Xbox disc image) reader from
+[sp00nznet/xboxrecomp](https://github.com/sp00nznet/xboxrecomp) `main`,
+`tools/xiso/xdvdfs.py` at 6d69551, under the MIT licence in
+`LICENSES/xboxrecomp-MIT.txt`. `import` reads the disc with it before the
+toolkit is cloned, so the copy lives here. It is upstream's file with a
+two-line header and this repository's formatting, nothing else; this
+reproduces it (only the header differs):
+
+    git -C XBOXRECOMP show 6d69551:tools/xiso/xdvdfs.py \
+      | uv run ruff format --stdin-filename src/xboxrecomp_cli/xdvdfs.py - \
+      | diff - src/xboxrecomp_cli/xdvdfs.py
+
+A bug found in it is fixed in both copies and offered upstream. The checks
+upstream's reader leaves out (names, loops, depth) are `dump.py`'s.
