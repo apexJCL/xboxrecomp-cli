@@ -302,8 +302,8 @@ class Font:
 
     def render(self, gid, px_x, px_y, ox, oy, width, height):
         """8-bit coverage (width x height, row-major) of the glyph drawn at
-        px_x pixels per em across and px_y down (the atlas fit condenses or
-        widens a glyph to the stock ink width) with its origin at (ox, oy)."""
+        px_x pixels per em across and px_y down with its origin at (ox, oy),
+        which may be fractional."""
         return rasterize(
             self.segments(gid, px_x / self.upem, px_y / self.upem, ox, oy), width, height
         )

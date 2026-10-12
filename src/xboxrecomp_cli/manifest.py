@@ -25,6 +25,7 @@ class ManifestError(Exception):
 # table -> key -> (type, default). A default that is a function of the
 # manifest is filled after the plain ones (derived()).
 STR, INT, BOOL, STRS = "string", "integer", "boolean", "list of strings"
+INTS = "list of integers"
 # A table of string keys to string values, held as one key (not a table of
 # the schema): golden.enhance_stock.
 STRMAP = "table of strings"
@@ -154,6 +155,11 @@ SPEC = {
         # for that code).
         "font_atlas": (STR, ""),
         "font_rows": (STRS, []),
+        # How far, in guest px [left, top, right, bottom], the game's quads
+        # sample past a glyph's stock ink box: the region a redrawn glyph
+        # may fill. Empty: the glyph's whole slot (the gaps to its
+        # neighbours), clipped to the slot either way.
+        "font_margin": (INTS, []),
         # The font the atlas is redrawn from, by its full name (name ID 4),
         # looked up in the host's font folders when --font is not given.
         # The user installs it; the CLI never ships a font.
@@ -199,6 +205,8 @@ def _type_ok(kind, v):
         return isinstance(v, int) and not isinstance(v, bool)
     if kind == BOOL:
         return isinstance(v, bool)
+    if kind == INTS:
+        return isinstance(v, list) and all(_type_ok(INT, x) for x in v)
     if kind == STRMAP:
         return isinstance(v, dict) and all(
             isinstance(k, str) and isinstance(x, str) for k, x in v.items()
@@ -252,7 +260,7 @@ def validate(doc):
                 if not _type_ok(kind, t[k]):
                     errors.append("%s: must be a %s" % (name, kind))
                     continue
-                if kind == STRS:
+                if kind in (STRS, INTS):
                     dst[k] = list(t[k])
                 elif kind == STRSMAP:
                     dst[k] = {n: list(x) for n, x in t[k].items()}
@@ -356,6 +364,11 @@ def _check_values(m):
             errors.append("enhance.hud.max_texels: 0 (no limit) or positive")
         if hud["font_atlas"] and not hud["font_rows"]:
             errors.append("enhance.hud.font_rows: required with font_atlas")
+        fm = hud["font_margin"]
+        if fm and (len(fm) != 4 or min(fm) < 0):
+            errors.append(
+                "enhance.hud.font_margin: four guest px [left, top, right, bottom], none negative"
+            )
         for i, row in enumerate(hud["font_rows"]):
             if not row.strip():
                 errors.append("enhance.hud.font_rows: row %d names no glyph" % i)

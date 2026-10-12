@@ -536,6 +536,8 @@ def test_group_runs():
 
 
 def test_atlas_fit():
+    """Measure, then draw: the font's glyphs in their slots, U+FFFD and the
+    glyph the font lacks untouched, the i's dot a mark of its own."""
     w, h, rgba = stock_atlas()
     f = font.Font(ttf())
     assert atlas.bands(w, h, rgba) == [(2, 11), (16, 28)]
@@ -545,30 +547,140 @@ def test_atlas_fit():
     assert metrics == [(11, 9), (28, 9)]
     fallback = scaler.scale_nearest(w, h, rgba, 4)
     out, n, notes = atlas.render((w, h, rgba), ROWS, f, 4, fallback)
-    assert n == 5 and len(notes) == 1 and "'z'" in notes[0]
+    assert n == 5 and len(notes) == 2, notes
+    assert notes[0].startswith("font: cap 9 px, one proportional scale; 0 glyphs shrunk")
+    assert "'z'" in notes[1]
     ow = w * 4
     for g in glyphs:
         sl, vt, sr, vb = g.slot
-        got = atlas.ink_box(ow, out, sl * 4, sr * 4, vt * 4, vb * 4)
-        want = tuple(v * 4 for v in g.box)
         if g.char in ("z", atlas.KEEP):
             # Untouched: the xBR pixels of the slot.
             for y in range(vt * 4, vb * 4):
                 a, b = (y * ow + sl * 4) * 4, (y * ow + sr * 4) * 4
                 assert out[a:b] == fallback[a:b]
         else:
-            assert got == want, (g.char, got, want)
+            got = atlas.ink_box(ow, out, sl * 4, sr * 4, vt * 4, vb * 4)
+            assert got is not None, g.char
     # The i's dot stays a separate mark: a gap row between dot and stem.
-    i_box = stock_box("i")
+    sl, vt, sr, vb = glyphs[3].slot
     ys = [
         y
-        for y in range(i_box[1] * 4, i_box[3] * 4)
-        if out[((y * ow) + i_box[0] * 4) * 4 + 3] >= atlas.INK
+        for y in range(vt * 4, vb * 4)
+        if any(out[(y * ow + x) * 4 + 3] >= atlas.INK for x in range(sl * 4, sr * 4))
     ]
-    assert len(ys) < (i_box[3] - i_box[1]) * 4
+    assert ys and len(ys) < ys[-1] - ys[0] + 1
     assert out[((2 * 4 * ow) + 2 * 4) * 4 : ((2 * 4 * ow) + 2 * 4) * 4 + 4] == bytes(
         (255, 255, 255, 255)
     )
+
+
+# A one-band atlas for the fit: H sets the cap (7 px, so 28 at 4x and 0.04
+# px per unit); I and l are the same outline in boxes of different widths;
+# N and M overrun their 6 px boxes by 5% and 25%. Gaps of 3 px leave each
+# slot wider than its box.
+FIT_GLYPHS = {
+    "H": [rect(0, 0, 600, 700)],
+    "I": [rect(0, 0, 200, 700)],
+    "l": [rect(0, 0, 200, 700)],
+    "N": [rect(0, 0, 630, 700)],
+    "M": [rect(0, 0, 750, 700)],
+}
+FIT_STOCK = {
+    "H": (2, 2, 8, 9),
+    "I": (11, 2, 14, 9),
+    "l": (17, 2, 22, 9),
+    "N": (25, 2, 31, 9),
+    "M": (34, 2, 40, 9),
+}
+FIT_W, FIT_H = 44, 12
+
+
+def fit_render(margin=None):
+    """The fit atlas at 4x: (out, notes, {char: pack ink box})."""
+
+    def ink(x, y):
+        return any(x0 <= x < x1 and y0 <= y < y1 for x0, y0, x1, y1 in FIT_STOCK.values())
+
+    w, h, rgba = dds.decode(
+        dds.parse(dds_file(FIT_W, FIT_H, b"DXT5", dxt5_blocks(FIT_W, FIT_H, ink)))
+    )
+    f = font.Font(ttf(FIT_GLYPHS))
+    glyphs, metrics = atlas.measure(w, h, rgba, ["HIlNM"], f)
+    assert [g.box for g in glyphs] == list(FIT_STOCK.values())
+    assert metrics == [(9, 7)]
+    fallback = scaler.scale_nearest(w, h, rgba, 4)
+    out, n, notes = atlas.render((w, h, rgba), ["HIlNM"], f, 4, fallback, margin)
+    assert n == 5
+    boxes = {}
+    for g in glyphs:
+        sl, vt, sr, vb = g.slot
+        boxes[g.char] = atlas.ink_box(w * 4, out, sl * 4, sr * 4, vt * 4, vb * 4)
+    return out, notes, boxes
+
+
+def size(box):
+    return box[2] - box[0], box[3] - box[1]
+
+
+def test_atlas_one_weight():
+    """One outline in boxes of different widths draws the same: the scale
+    is the font's, not the box's."""
+    _, notes, boxes = fit_render()
+    assert size(boxes["I"]) == size(boxes["l"]) == (8, 28)
+    # Centred on the stock box across, the bottom on the baseline.
+    for c in "HIlNM":
+        left, _t, right, b = boxes[c]
+        x0, _y0, x1, _y1 = FIT_STOCK[c]
+        assert abs((left + right) / 2 - (x0 + x1) * 2) <= 1, c
+        assert b == 9 * 4, c
+    # Nothing overruns its slot: no shrink, the natural sizes.
+    assert size(boxes["H"]) == (24, 28)
+    assert size(boxes["M"]) == (30, 28)
+    assert notes == [
+        "font: cap 7 px, one proportional scale; 0 glyphs shrunk within 8% to fit their slot"
+    ]
+
+
+def test_atlas_overrun_shrinks_proportionally():
+    """Held to the stock ink box: 5% over shrinks silently, 25% over is
+    named; both keep their proportions and the baseline."""
+    _, notes, boxes = fit_render([0, 0, 0, 0])
+    # N: 25.2 px into 24, f = 0.952, so 26.7 px tall.
+    w, h = size(boxes["N"])
+    assert w == 24 and abs(h - 28 * 24 / 25.2) <= 1
+    assert boxes["N"][3] == 36 and boxes["N"][0] == 25 * 4
+    # M: 30 px into 24, f = 0.80.
+    w, h = size(boxes["M"])
+    assert w == 24 and abs(h - 28 * 0.8) <= 1 and boxes["M"][3] == 36
+    assert notes[0].startswith("font: cap 7 px, one proportional scale; 1 glyphs shrunk within 8%")
+    assert notes[1:] == [
+        "'M': shrunk 0.80 to stay in its stock ink box and margin "
+        "(more than 8%: it is thinner and shorter)"
+    ]
+    # No glyph is enlarged toward its box.
+    assert size(boxes["I"]) == (8, 28)
+
+
+def test_atlas_no_distortion():
+    """Ink width over height is the outline's, wherever the box is."""
+    for margin in (None, [0, 0, 0, 0], [1, 0, 1, 0]):
+        _, _, boxes = fit_render(margin)
+        for c in "HIlNM":
+            pts = FIT_GLYPHS[c][0]
+            ratio = (max(p[0] for p in pts) - min(p[0] for p in pts)) / 700
+            w, h = size(boxes[c])
+            assert abs(w - h * ratio) <= 1 + ratio, (margin, c, w, h)
+
+
+def test_atlas_margin():
+    """font_margin sets the region: the stock ink box grown by it, not the
+    slot; without it, the slot."""
+    _, _, slot = fit_render()
+    _, _, tight = fit_render([0, 0, 0, 0])
+    _, notes, grown = fit_render([1, 0, 1, 0])
+    assert size(slot["M"]) == size(grown["M"]) == (30, 28)
+    assert size(tight["M"])[0] == 24
+    assert all("shrunk 0" not in x for x in notes)
 
 
 def test_atlas_glyph_without_run():

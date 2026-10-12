@@ -3,9 +3,9 @@ a font file onto the stock layout at the pack's scale.
 
 The game lays text out from its own metrics (a table the HUD spike did not
 locate) and keeps the stock atlas in guest memory, so a replacement only
-has to put each glyph's ink where the stock glyph's ink is. The atlas is
-not a grid: each text row is a band of ink rows (BLiNX 2's Latin atlas has
-ten, 1-3 px apart) holding the glyphs of one `font_rows` string packed
+has to keep each glyph's ink inside the texels its quad samples. The atlas
+is not a grid: each text row is a band of ink rows (BLiNX 2's Latin atlas
+has ten, 1-3 px apart) holding the glyphs of one `font_rows` string packed
 left to right with 1-3 px gaps. The fit finds the bands from the alpha
 projection, splits each band into column runs, groups the runs into the
 string's glyphs (a glyph like `"` is two runs, touching accents can merge
@@ -13,15 +13,22 @@ two) by the dynamic programme that best matches the font's ink widths,
 and measures each glyph's ink box at alpha >= INK. Per band the baseline
 is the most common bottom edge of its capitals and digits (else of every
 glyph) and the cap height the most common ink height of its unaccented
-capitals (else the atlas-wide one). Each glyph is drawn at the size whose
-cap height is the stock cap height times the scale, condensed or widened
-then condensed or widened, and shortened or lengthened, so its ink box
-is the stock ink box times the scale (an accented capital's accent thus
-sits as low as the stock one's, inside the band), white with the
-coverage in alpha, which the game tints with the vertex colour as it does
-the stock glyphs. A glyph the font lacks, one written as U+FFFD in
-`font_rows` (an icon the game draws for that code, kept as it is), and a
-run the fit cannot match keep their upscaled stock pixels.
+capitals (else the atlas-wide one).
+
+Every glyph is drawn at one scale on both axes, the one that makes the
+font's cap height the stock cap height times the scale, so the stems,
+counters and curves are the font's own and the weight is even. Its
+outline box is centred across on the stock ink box and its baseline is
+the band's. A glyph that would overrun the region its quad samples (the
+stock ink box grown by `font_margin`, or the slot between its
+neighbours) is shifted inside it where there is slack, else shrunk by one
+factor on both axes, about the stock centre and the baseline: never
+stretched on one axis, never enlarged. A shrink beyond FIT is named. The
+ink is white with the coverage in alpha, which the game tints with the
+vertex colour as it does the stock glyphs. A glyph the font lacks, one
+written as U+FFFD in `font_rows` (an icon the game draws for that code,
+kept as it is), and a run the fit cannot match keep their upscaled stock
+pixels.
 """
 
 from collections import Counter
@@ -36,6 +43,10 @@ STRETCH = (0.4, 2.5)
 # The share of a band, from its top, that accents and dots live in: the
 # runs that separate glyphs are taken below it.
 ACCENT = 0.4
+# The largest shrink a glyph gets silently to stay inside the region its
+# quad samples: 8% of a stem is under a fifth of a guest pixel. A larger
+# one is still applied, so no glyph overruns, but the build names it.
+FIT = 0.08
 
 CAPS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ÆÐØÞ")
 BASE = CAPS | set("ÀÁÂÃÄÅÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝŸ")
@@ -304,12 +315,23 @@ def measure(w, h, rgba, rows, font):
     return [g for band in glyphs for g in band], metrics
 
 
-def render(stock, rows, font, scale, fallback):
+def _fit(lo, hi, a0, a1):
+    """The shift that moves [lo, hi] inside [a0, a1], 0 when it is."""
+    if lo < a0:
+        return a0 - lo
+    if hi > a1:
+        return a1 - hi
+    return 0.0
+
+
+def render(stock, rows, font, scale, fallback, margin=None):
     """The atlas at `scale`: stock is (w, h, rgba) of the stock atlas,
     fallback the upscaled stock rgba (the same size as the result) that a
-    glyph keeps when the font has no glyph for it. Returns (rgba,
-    rendered, notes): the number of glyphs drawn from the font and what
-    the fit left as it was."""
+    glyph keeps when the font has no glyph for it. `margin` is [left,
+    top, right, bottom] in stock pixels: how far past its stock ink box a
+    glyph may draw (None: its whole slot). Returns (rgba, rendered,
+    notes): the number of glyphs drawn from the font, then a line on the
+    fit and what it left as it was or shrank by more than FIT."""
     w, h, rgba = stock
     glyphs, metrics = measure(w, h, rgba, rows, font)
     color = ink_color(w, h, rgba)
@@ -317,7 +339,9 @@ def render(stock, rows, font, scale, fallback):
     ow = w * scale
     cap_units = font.cap_height()
     rendered = 0
+    shrunk = 0
     notes = []
+    where = "slot" if margin is None else "stock ink box and margin"
     for g in glyphs:
         if g.char == KEEP:
             continue
@@ -332,48 +356,91 @@ def render(stock, rows, font, scale, fallback):
             continue
         baseline, cap = metrics[g.band]
         sl, vt, sr, vb = g.slot
-        px = cap * scale * font.upem / cap_units
-        # The glyph at the band's cap height, then condensed or widened and
-        # shortened or lengthened to the stock ink box (from its outline
-        # box, which is exact; the coverage box only places the result).
-        k = px / font.upem
+        bl, bt, br, bb_ = g.box
+        # One scale on both axes, from the band's cap height: the glyph
+        # keeps the font's proportions, so every stem is the font's own.
+        k = cap * scale / cap_units
         bb = font.bbox(gid)
         fw, fh = (bb[2] - bb[0]) * k, (bb[3] - bb[1]) * k
         if fw <= 0 or fh <= 0:
             notes.append("%r: the font glyph is blank, stock pixels kept" % g.char)
             continue
-        want_w = (g.box[2] - g.box[0]) * scale
-        want_h = (g.box[3] - g.box[1]) * scale
-        rx, ry = want_w / fw, want_h / fh
+        # A run whose ink the font would have to stretch this much is not
+        # the glyph: the grouping went wrong, or the shapes differ.
+        rx = (br - bl) * scale / fw
+        ry = (bb_ - bt) * scale / fh
         if not (STRETCH[0] <= rx <= STRETCH[1] and STRETCH[0] <= ry <= STRETCH[1]):
             notes.append(
                 "%r: stock ink %dx%d px, the font's %dx%d: not matched, stock pixels kept"
-                % (g.char, g.box[2] - g.box[0], g.box[3] - g.box[1], fw / scale, fh / scale)
+                % (g.char, br - bl, bb_ - bt, fw / scale, fh / scale)
             )
             continue
-        # Scratch: the slot at scale plus a margin for the ink that lands
-        # outside it before the shift.
-        margin = int(cap * scale * 1.5) + 2
-        sw = (sr - sl) * scale + 2 * margin
-        sh = (vb - vt) * scale + 2 * margin
-        oy = margin + (baseline - vt) * scale
-        cov = font.render(gid, px * rx, px * ry, margin, oy, sw, sh)
-        cb = _coverage_box(cov, sw, sh)
-        if cb is None:
-            notes.append("%r: the font glyph is blank, stock pixels kept" % g.char)
-            continue
-        dx = (g.box[0] - sl) * scale + margin - cb[0]
-        dy = (g.box[1] - vt) * scale + margin - cb[1]
-        for y in range((vb - vt) * scale):
-            sy = y + margin - dy
-            orow = (vt * scale + y) * ow
-            for x in range((sr - sl) * scale):
-                sx = x + margin - dx
-                v = cov[sy * sw + sx] if 0 <= sx < sw and 0 <= sy < sh else 0
-                o = (orow + sl * scale + x) * 4
+        # The allowed box, in pack pixels: what the game's quad samples,
+        # never past the slot (a neighbour's ink).
+        if margin is None:
+            a = (sl, vt, sr, vb)
+        else:
+            a = (
+                max(sl, bl - margin[0]),
+                max(vt, bt - margin[1]),
+                min(sr, br + margin[2]),
+                min(vb, bb_ + margin[3]),
+            )
+        a0, at, a1, ab = (v * scale for v in a)
+        # The outline box centred across on the stock ink box, the font's
+        # baseline on the band's.
+        cx = (bl + br) * scale / 2
+        base = baseline * scale
+        # A glyph whose stock ink sits off the baseline (an underscore, an
+        # inverted mark) may move down or up to fit; one on it keeps it.
+        floats = bb_ != baseline
+        # The shrink that fits it, about the stock centre across and the
+        # baseline down; a shift alone does when there is slack.
+        f = min(1.0, (a1 - a0) / fw)
+        if floats:
+            f = min(f, (ab - at) / fh)
+        else:
+            above, below = bb[3] * k, -bb[1] * k
+            if above > 0:
+                f = min(f, (base - at) / above)
+            if below > 0:
+                f = min(f, (ab - base) / below)
+        f = max(f, 0.0)
+        kf = k * f
+        x0 = cx - (bb[2] - bb[0]) * kf / 2
+        x0 += _fit(x0, x0 + fw * f, a0, a1)
+        top = base - bb[3] * kf
+        if floats:
+            top += _fit(top, top + fh * f, at, ab)
+        if f < 1.0 - 1e-9:
+            if f < 1.0 - FIT:
+                notes.append(
+                    "%r: shrunk %.2f to stay in its %s (more than %d%%: it is thinner and shorter)"
+                    % (g.char, f, where, round(FIT * 100))
+                )
+            else:
+                shrunk += 1
+        # Straight into the slot at scale: the origin is a float, so the
+        # placement is exact and the same on every host.
+        sw, sh = (sr - sl) * scale, (vb - vt) * scale
+        ox = x0 - bb[0] * kf - sl * scale
+        oy = top + bb[3] * kf - vt * scale
+        px = kf * font.upem
+        cov = font.render(gid, px, px, ox, oy, sw, sh)
+        for y in range(sh):
+            orow = (vt * scale + y) * ow + sl * scale
+            for x in range(sw):
+                o = (orow + x) * 4
                 out[o] = color[0]
                 out[o + 1] = color[1]
                 out[o + 2] = color[2]
-                out[o + 3] = v
+                out[o + 3] = cov[y * sw + x]
         rendered += 1
+    caps = sorted({cap for _b, cap in metrics})
+    capstr = str(caps[0]) if len(caps) == 1 else "%d-%d" % (caps[0], caps[-1])
+    notes.insert(
+        0,
+        "font: cap %s px, one proportional scale; %d glyphs shrunk within %d%% to fit their %s"
+        % (capstr, shrunk, round(FIT * 100), where),
+    )
     return bytes(out), rendered, notes

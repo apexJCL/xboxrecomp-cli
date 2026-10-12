@@ -122,6 +122,7 @@ def test_enhance_hud_table():
         "max_texels": 0,
         "font_atlas": "",
         "font_rows": [],
+        "font_margin": [],
         "font": "",
         "languages": {},
         "text": [],
@@ -141,12 +142,18 @@ def test_enhance_hud_table():
     )
     assert m["enhance"]["hud"]["font_rows"] == ["AB", "c\ufffd"]
     assert m["enhance"]["hud"]["font"] == "PT Sans Narrow Bold"
+    assert parse(MINIMAL + hud + "font_margin = [1, 0, 1, 2]\n")["enhance"]["hud"][
+        "font_margin"
+    ] == [1, 0, 1, 2]
     for extra, key in (
         ("scale = 3\n", "enhance.hud.scale: 2 or 4"),
         ("max_texels = -1\n", "enhance.hud.max_texels"),
         ('font_atlas = "dds/f.dds"\n', "enhance.hud.font_rows: required with font_atlas"),
         ('font_atlas = "dds/f.dds"\nfont_rows = ["AB", " "]\n', "font_rows: row 1 names no glyph"),
         ("font_grid = 16\n", "enhance.hud.font_grid: unknown key"),
+        ("font_margin = [1, 1]\n", "enhance.hud.font_margin: four guest px"),
+        ("font_margin = [1, -1, 1, 1]\n", "enhance.hud.font_margin: four guest px"),
+        ('font_margin = ["1", 1, 1, 1]\n', "enhance.hud.font_margin: must be a list of integers"),
         ("languages = { us = [] }\n", "enhance.hud.languages.us: names no archive"),
         ('languages = { us = ["a"], uk = ["a"] }\n', "languages.uk: a is us's already"),
         ('languages = { us = "a" }\n', "enhance.hud.languages: must be a table of string lists"),

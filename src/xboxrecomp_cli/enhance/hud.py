@@ -300,7 +300,9 @@ def render_font(it, up, cfg, font_path, face, s):
     except (OSError, font.FontError, struct.error) as e:
         raise CliError("font %s: %s" % (font_path, e)) from e
     try:
-        rgba, n, notes = atlas.render(it.rgba, cfg["font_rows"], f, s, up)
+        rgba, n, notes = atlas.render(
+            it.rgba, cfg["font_rows"], f, s, up, cfg.get("font_margin") or None
+        )
     except atlas.AtlasError as e:
         raise CliError("%s: %s (game.toml [enhance.hud] font_rows)" % (it.entry.path, e)) from e
     for note in notes:
