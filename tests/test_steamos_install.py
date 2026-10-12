@@ -68,8 +68,9 @@ def make_exe(path, body="exit 0\n"):
     return path
 
 
-def make_bundle(base, version, exe=b"MZ program", game=None):
-    """A payload like `package steamos` stages, with a real manifest."""
+def make_bundle(base, version, exe=b"MZ program", game=None, extra=None):
+    """A payload like `package steamos` stages, with a real manifest;
+    extra: more program files by relative path (enhance/hud.pack)."""
     b = os.path.join(base, "%s-%s-steamos" % (APP, version))
     os.makedirs(os.path.join(b, "game_files", "media"))
     files = {
@@ -81,7 +82,9 @@ def make_bundle(base, version, exe=b"MZ program", game=None):
         "README.txt": b"readme\n",
     }
     game = game or {"default.xbe": b"XBEH game", "media/a.xpr": b"asset a"}
+    files.update(extra or {})
     for n, data in files.items():
+        os.makedirs(os.path.dirname(os.path.join(b, n)), exist_ok=True)
         with open(os.path.join(b, n), "wb") as f:
             f.write(data)
     for n, data in game.items():
@@ -332,6 +335,189 @@ def test_switch_is_one_rename(il, d, monkeypatch):
     a = os.stat(os.path.join(root, "versions", "20261001.0000-ca-tb-g1", "launch.sh"))
     b = os.stat(os.path.join(root, "versions", "20261002.0000-ca-tb-g2", "launch.sh"))
     assert a.st_ino == b.st_ino
+
+
+# ── program subdirectories (enhance/hud.pack) ───────────────────────────
+
+PACK = "enhance/hud.pack"
+V1, V2, V3 = "20261001.0000-ca-tb-g1", "20261002.0000-ca-tb-g2", "20261003.0000-ca-tb-g3"
+
+
+def read(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def test_subdir_installed(il, d):
+    """A --hud-pack bundle's enhance/hud.pack lands in versions/<v>/enhance/,
+    where config.default.toml's relative key finds it; .DS_Store does not."""
+    b = make_bundle(d, V1, extra={PACK: b"pack 1"})
+    with open(os.path.join(b, "enhance", ".DS_Store"), "wb") as f:
+        f.write(b"finder, after unpacking")
+    root = os.path.join(d, "r")
+    rc, out = run(il, b, root, "install")
+    assert rc == 0, out
+    assert read(os.path.join(root, "current", PACK)) == b"pack 1"
+    assert not os.path.exists(os.path.join(root, "current", "enhance", ".DS_Store"))
+    assert not os.path.exists(os.path.join(root, "current", "game_files"))
+    names = il.Bundle(b).program_files()
+    assert PACK in names and not [n for n in names if n.startswith("game_files/")]
+
+
+def test_subdir_tampered(il, d):
+    b = make_bundle(d, V1, extra={PACK: b"pack 1"})
+    with open(os.path.join(b, PACK), "ab") as f:
+        f.write(b"damage")
+    root = os.path.join(d, "r")
+    rc, out = run(il, b, root, "install")
+    assert rc == 1 and "(checksum mismatch): %s" % PACK in out, out
+    assert not os.path.exists(os.path.join(root, "versions", V1))
+
+
+def test_subdir_copy_checked(il, d, monkeypatch):
+    """The copy in versions/<v>.partial is checked file by file, the
+    subdirectory's too."""
+    b = make_bundle(d, V1, extra={PACK: b"pack 1"})
+    real = il.sha256_file
+
+    def flaky(p, *a):
+        return "0" * 64 if p.endswith(".partial/" + PACK) else real(p, *a)
+
+    monkeypatch.setattr(il, "sha256_file", flaky)
+    rc, out = run(il, b, os.path.join(d, "r"), "install")
+    assert rc == 1 and "copy damaged (checksum mismatch): %s" % PACK in out, out
+
+
+def test_subdir_unlisted_skipped(il, d):
+    """Only what SHA256SUMS lists is taken from a subdirectory: a
+    __pycache__/ or a stray file in the unpacked bundle stays there."""
+    b = make_bundle(d, V1, extra={PACK: b"pack 1"})
+    for rel in ("enhance/extra.bin", "__pycache__/install_lib.cpython-314.pyc"):
+        os.makedirs(os.path.dirname(os.path.join(b, rel)), exist_ok=True)
+        with open(os.path.join(b, rel), "wb") as f:
+            f.write(b"not in the sums")
+    root = os.path.join(d, "r")
+    rc, out = run(il, b, root, "install")
+    assert rc == 0, out
+    assert os.listdir(os.path.join(root, "current", "enhance")) == ["hud.pack"]
+    assert not os.path.exists(os.path.join(root, "current", "__pycache__"))
+
+
+def test_subdir_symlink_refused(il, d):
+    b = make_bundle(d, V1, extra={PACK: b"pack 1"})
+    root = os.path.join(d, "r")
+    # A listed file as a link (verify() follows it and passes).
+    shutil.move(os.path.join(b, PACK), os.path.join(d, "elsewhere.pack"))
+    os.symlink(os.path.join(d, "elsewhere.pack"), os.path.join(b, PACK))
+    rc, out = run(il, b, root, "install")
+    assert rc == 1 and "symlink in the bundle: %s" % PACK in out, out
+    # The whole directory as a link: os.walk would not enter it.
+    shutil.rmtree(os.path.join(b, "enhance"))
+    os.makedirs(os.path.join(d, "enh"))
+    shutil.move(os.path.join(d, "elsewhere.pack"), os.path.join(d, "enh", "hud.pack"))
+    os.symlink(os.path.join(d, "enh"), os.path.join(b, "enhance"))
+    rc, out = run(il, b, root, "install")
+    assert rc == 1 and "symlink in the bundle: enhance" in out, out
+    assert not os.path.exists(os.path.join(root, "versions", V1))
+
+
+def test_subdir_upgrade_rollback_prune(il, d):
+    """Each version keeps its own pack: an unchanged one is hard-linked, a
+    new one copied, a version without one has no enhance/; rollback finds
+    the old one in place, and prune takes it with its version."""
+    root = os.path.join(d, "r")
+    v1 = make_bundle(os.path.join(d, "1"), V1, extra={PACK: b"pack 1"})
+    v2 = make_bundle(os.path.join(d, "2"), V2, exe=b"MZ v2", extra={PACK: b"pack 1"})
+    v3 = make_bundle(os.path.join(d, "3"), V3, exe=b"MZ v3", extra={PACK: b"pack 3"})
+    for b in (v1, v2):
+        rc, out = run(il, b, root, "install")
+        assert rc == 0, out
+    vp = lambda v: os.path.join(root, "versions", v, PACK)  # noqa: E731
+    assert os.stat(vp(V1)).st_ino == os.stat(vp(V2)).st_ino
+    rc, out = run(il, v3, root, "install", "--keep", "1")
+    assert rc == 0, out
+    assert read(vp(V3)) == b"pack 3" and read(vp(V2)) == b"pack 1"
+    assert not os.path.exists(os.path.join(root, "versions", V1)), "pruned with its pack"
+    rc, out = run(il, v3, root, "rollback")
+    assert rc == 0 and read(os.path.join(root, "current", PACK)) == b"pack 1", out
+    v4 = make_bundle(os.path.join(d, "4"), "20261004.0000-ca-tb-g4", exe=b"MZ v4")
+    rc, out = run(il, v4, root, "install")
+    assert rc == 0, out
+    assert not os.path.exists(os.path.join(root, "current", "enhance"))
+
+
+def test_subdir_repairs_older_install(il, d):
+    """A version dir with the same SHA256SUMS but a program file missing
+    (or truncated) is not taken as installed: the install repairs it."""
+    root = os.path.join(d, "r")
+    b = make_bundle(d, V1, extra={PACK: b"pack 1"})
+    run(il, b, root, "install")
+    shutil.rmtree(os.path.join(root, "versions", V1, "enhance"))
+    rc, out = run(il, b, root, "install")
+    assert rc == 0 and "installed versions/%s" % V1 in out, out
+    assert read(os.path.join(root, "current", PACK)) == b"pack 1"
+    rc, out = run(il, b, root, "install")
+    assert rc == 0 and "already installed" in out, out
+
+
+def test_subdir_repairs_truncated(il, d):
+    root = os.path.join(d, "r")
+    b = make_bundle(d, V1, extra={PACK: b"pack 1"})
+    run(il, b, root, "install")
+    p = os.path.join(root, "versions", V1, PACK)
+    os.remove(p)  # a fresh inode: the bundle's copy is not touched
+    with open(p, "wb") as f:
+        f.write(b"pack")
+    rc, out = run(il, b, root, "install")
+    assert rc == 0 and "installed versions/%s" % V1 in out, out
+    assert read(os.path.join(root, "current", PACK)) == b"pack 1"
+
+
+def test_reinstall_current_never_dangles(il, d, monkeypatch):
+    """Reinstalling the current version renames the old dir aside before
+    the new one goes in: current names a dir at every rename."""
+    root = os.path.join(d, "r")
+    b = make_bundle(d, V1, extra={PACK: b"pack 1"})
+    run(il, b, root, "install")
+    shutil.rmtree(os.path.join(root, "versions", V1, "enhance"))
+    real_rename, real_rmtree = il.os.rename, il.shutil.rmtree
+    seen = []
+
+    def check(what):
+        def f(a, *rest, **kw):
+            if os.path.basename(str(a)) in (V1, V1 + ".old"):
+                seen.append((what, os.path.isdir(os.path.join(root, "current"))))
+            return (real_rename if what == "rename" else real_rmtree)(a, *rest, **kw)
+
+        return f
+
+    monkeypatch.setattr(il.os, "rename", check("rename"))
+    monkeypatch.setattr(il.shutil, "rmtree", check("rmtree"))
+    rc, out = run(il, b, root, "install")
+    monkeypatch.undo()
+    assert rc == 0, out
+    assert ("rmtree", True) in seen and all(ok for what, ok in seen if what == "rmtree"), seen
+    assert not os.path.exists(os.path.join(root, "versions", V1 + ".old"))
+    assert read(os.path.join(root, "current", PACK)) == b"pack 1"
+
+
+def test_sums_path_traversal_refused(il, d):
+    """A SHA256SUMS line naming a path outside the bundle (../x, /x) is
+    never installed: the install stops before versions/<v> exists."""
+    root = os.path.join(d, "r")
+    outside = os.path.join(d, "outside")
+    with open(outside, "wb") as f:
+        f.write(b"outside the bundle")
+    digest = hashlib.sha256(b"outside the bundle").hexdigest()
+    for name in ("../outside", outside):
+        b = make_bundle(os.path.join(d, "b" + str(len(name))), V1, extra={PACK: b"pack 1"})
+        # ../outside exists beside the bundle, with the digest it is listed with.
+        shutil.copy2(outside, os.path.join(os.path.dirname(b), "outside"))
+        with open(os.path.join(b, "SHA256SUMS"), "a") as f:
+            f.write("%s  %s\n" % (digest, name))
+        rc, out = run(il, b, root, "install")
+        assert rc == 1 and "bundle file missing: %s" % name in out, out
+        assert not os.path.exists(os.path.join(root, "versions", V1))
 
 
 def test_prune_and_foreign(il, d):

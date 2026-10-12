@@ -60,7 +60,7 @@ generated code, the toolchain and the bundles out of git, the toolkit's
 `templates/new-game/` with the game's constants, and `config/setup-pins.json`.
 The title, title ID and entry point come from the XBE header, which is read
 and never copied. `@<tag>` after the repository URL pins a release, `@<sha>`
-a commit (`…/xboxrecomp-cli@v0.5.0 xbr new mygame`); the no-pipe way is a
+a commit (`…/xboxrecomp-cli@v0.5.1 xbr new mygame`); the no-pipe way is a
 clone and `uv run xbr new ../mygame`.
 
 The first build is a Windows x86-64 executable that runs natively on Windows

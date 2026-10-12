@@ -114,6 +114,20 @@ def test_installer_drops_old_defaults(d):
     assert drop in uninst and uninst.index(drop) < uninst.index('RMDir "$INSTDIR"')
 
 
+def test_installer_drops_stale_pack(d):
+    # A pack from an earlier --hud-pack install goes before the payload's
+    # File lines (which put this payload's own back) and on uninstall,
+    # so neither an upgrade without one nor RMDir "$INSTDIR" trips on it.
+    text = render_installer(os.path.join(d, "installer.nsi"))
+    main = text[text.index('Section "BLiNX 2" SecMain') : text.index("SectionEnd")]
+    uninst = text[text.index('Section "Uninstall"') :]
+    uninst = uninst[: uninst.index("SectionEnd")]
+    drop = 'Delete "$INSTDIR\\enhance\\hud.pack"'
+    assert drop in main and main.index(drop) < main.index("  File a\n")
+    assert uninst.index(drop) < uninst.index('RMDir "$INSTDIR\\enhance"')
+    assert uninst.index('RMDir "$INSTDIR\\enhance"') < uninst.index('RMDir "$INSTDIR"')
+
+
 def test_second_game_values(d, game2):
     text = render_launcher(os.path.join(d, "launcher.c"))
     assert not PLACEHOLDER.findall(text)

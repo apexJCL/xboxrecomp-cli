@@ -129,13 +129,50 @@ class Bundle:
                 raise InstallError("bundle file damaged (checksum mismatch): %s" % rel)
 
     def program_files(self):
-        """Top-level files: the program, launch.sh, defaults, docs, the
-        installer itself. game_files/ is installed once at the root."""
-        return sorted(
-            n
-            for n in os.listdir(self.path)
-            if os.path.isfile(os.path.join(self.path, n)) and n != ".DS_Store"
+        """What goes in versions/<v>/, as relative POSIX paths: the
+        top-level files (the program, launch.sh, defaults, docs, the
+        installer itself) and every subdirectory but game_files/, which is
+        installed once at the root (enhance/hud.pack when the bundle was
+        packaged with --hud-pack; config.default.toml names it relative to
+        the program). In a subdirectory only what SHA256SUMS lists is
+        taken: what else lands in an unpacked bundle (a __pycache__/, a
+        file manager's notes) is not the program. No symlink is followed:
+        the tar has none, so one was put there."""
+        out = []
+        for dirpath, dirnames, filenames in os.walk(self.path):
+            rel_dir = os.path.relpath(dirpath, self.path)
+            top = rel_dir == "."
+            dirnames[:] = sorted(
+                n for n in dirnames if n != "__pycache__" and not (top and n == "game_files")
+            )
+            for n in dirnames:
+                if os.path.islink(os.path.join(dirpath, n)):
+                    raise InstallError("symlink in the bundle: %s" % self.rel(dirpath, n))
+            for n in filenames:
+                p = os.path.join(dirpath, n)
+                rel = n if top else self.rel(dirpath, n)
+                if n == ".DS_Store" or not (top or rel in self.sums):
+                    continue
+                if os.path.islink(p):
+                    raise InstallError("symlink in the bundle: %s" % rel)
+                if os.path.isfile(p):
+                    out.append(rel)
+        # A listed file the walk did not reach (under a symlinked or
+        # skipped directory) would pass verify() and never be installed.
+        have = set(out)
+        missed = sorted(
+            r
+            for r in self.sums
+            if not r.startswith("game_files/")
+            and r not in have
+            and os.path.basename(r) != ".DS_Store"
         )
+        if missed:
+            raise InstallError("bundle file missing: %s" % missed[0])
+        return sorted(out)
+
+    def rel(self, dirpath, name):
+        return os.path.relpath(os.path.join(dirpath, name), self.path).replace(os.sep, "/")
 
     def game_files(self):
         base = os.path.join(self.path, "game_files")
@@ -206,7 +243,7 @@ class Root:
 
 
 def is_product_dir(d):
-    if d.endswith(".partial") or not os.path.isdir(d):
+    if d.endswith((".partial", ".old")) or not os.path.isdir(d):
         return False
     try:
         with open(os.path.join(d, "manifest.json")) as f:
@@ -451,13 +488,28 @@ def copy_atomic(src, dst):
     os.replace(tmp, dst)
 
 
+def complete(final, bundle, name):
+    """Whether an installed version has this program file at its size.
+    A matching SHA256SUMS alone would take a version dir that lost a
+    program file, or holds a truncated one, as installed; this repairs it."""
+    p = os.path.join(final, name)
+    return (
+        os.path.isfile(p)
+        and not os.path.islink(p)
+        and os.path.getsize(p) == os.path.getsize(os.path.join(bundle.path, name))
+    )
+
+
 def install_program(bundle, root):
     """versions/<v>.partial/, hard-linked against the current version where
     a file is unchanged, verified, then renamed into place."""
     v = bundle.version
     final = root.p("versions", v)
-    if os.path.isdir(final) and same_file(
-        os.path.join(final, "SHA256SUMS"), os.path.join(bundle.path, "SHA256SUMS")
+    names = bundle.program_files()
+    if (
+        os.path.isdir(final)
+        and same_file(os.path.join(final, "SHA256SUMS"), os.path.join(bundle.path, "SHA256SUMS"))
+        and all(complete(final, bundle, n) for n in names)
     ):
         return False
     part = final + ".partial"
@@ -466,14 +518,15 @@ def install_program(bundle, root):
     cur = root.current()
     prev_dir = root.p("versions", cur) if cur else None
     try:
-        for name in bundle.program_files():
+        for name in names:
             src, dst = os.path.join(bundle.path, name), os.path.join(part, name)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
             old = os.path.join(prev_dir, name) if prev_dir else None
-            if old and same_file(src, old):
+            if old and not os.path.islink(old) and same_file(src, old):
                 os.link(old, dst)
             else:
                 shutil.copy2(src, dst)
-        for name in bundle.program_files():
+        for name in names:
             want = bundle.sums.get(name)
             if want and sha256_file(os.path.join(part, name)) != want:
                 raise InstallError("copy damaged (checksum mismatch): %s" % name)
@@ -484,8 +537,15 @@ def install_program(bundle, root):
     except BaseException:
         shutil.rmtree(part, ignore_errors=True)
         raise
-    shutil.rmtree(final, ignore_errors=True)
+    # Reinstalling the current version: the old dir is renamed aside, not
+    # removed first, so current never points at a missing dir for longer
+    # than the two renames.
+    old = final + ".old"
+    shutil.rmtree(old, ignore_errors=True)
+    if os.path.lexists(final):
+        os.rename(final, old)
     os.rename(part, final)
+    shutil.rmtree(old, ignore_errors=True)
     return True
 
 
@@ -595,7 +655,8 @@ def write_desktop(root, name):
 
 def prune(root, keep):
     """Keep the newest `keep` versions plus current and previous; remove
-    only this product's version dirs, and .partial dirs older than a day."""
+    only this product's version dirs, and .partial and .old dirs (an
+    interrupted install's) older than a day."""
     vdir = root.p("versions")
     removed, foreign = [], []
     if not os.path.isdir(vdir):
@@ -610,7 +671,7 @@ def prune(root, keep):
     now = datetime.datetime.now().timestamp()
     for name in sorted(os.listdir(vdir)):
         d = os.path.join(vdir, name)
-        if name.endswith(".partial"):
+        if name.endswith((".partial", ".old")):
             if now - os.path.getmtime(d) > 86400:
                 shutil.rmtree(d, ignore_errors=True)
                 removed.append(name)
