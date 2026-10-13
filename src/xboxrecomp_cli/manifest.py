@@ -161,6 +161,12 @@ SPEC = {
         # may fill. Empty: the glyph's whole slot (the gaps to its
         # neighbours), clipped to the slot either way.
         "font_margin": (INTS, []),
+        # The most, in percent, a redrawn glyph is widened or narrowed
+        # towards its stock ink width (0: never; the font's own widths).
+        "font_stretch": (INT, 0),
+        # Glyphs (brackets) drawn to span their stock ink box top to
+        # bottom instead of sitting on the baseline at the font's height.
+        "font_full_height": (STR, ""),
         # The font the atlas is redrawn from, by its full name (name ID 4),
         # looked up in the host's font folders when --font is not given.
         # The user installs it; the CLI never ships a font.
@@ -370,6 +376,8 @@ def _check_values(m):
             errors.append(
                 "enhance.hud.font_margin: four texel counts [left, top, right, bottom], none negative"
             )
+        if not 0 <= hud["font_stretch"] < 100:
+            errors.append("enhance.hud.font_stretch: a percent, 0 to 99")
         for i, row in enumerate(hud["font_rows"]):
             if not row.strip():
                 errors.append("enhance.hud.font_rows: row %d names no glyph" % i)

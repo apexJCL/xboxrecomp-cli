@@ -730,22 +730,23 @@ VFIT_STOCK = {
 VFIT_ROW = "".join(VFIT_STOCK)
 
 
-def vfit_render():
-    """The second fit atlas at 4x: (notes, {char: (slot, pack ink box)})."""
+def vfit_render(glyphs=VFIT_GLYPHS, **options):
+    """The second fit atlas at 4x, drawn from `glyphs` with the render's
+    `options`: (notes, {char: (slot, pack ink box)})."""
 
     def ink(x, y):
         return any(x0 <= x < x1 and y0 <= y < y1 for x0, y0, x1, y1 in VFIT_STOCK.values())
 
     w, h, rgba = dds.decode(dds.parse(dds_file(48, 12, b"DXT5", dxt5_blocks(48, 12, ink))))
-    f = font.Font(ttf(VFIT_GLYPHS))
-    glyphs, metrics = atlas.measure(w, h, rgba, [VFIT_ROW], f)
-    assert [g.box for g in glyphs] == list(VFIT_STOCK.values())
+    f = font.Font(ttf(glyphs))
+    measured, metrics = atlas.measure(w, h, rgba, [VFIT_ROW], f)
+    assert [g.box for g in measured] == list(VFIT_STOCK.values())
     assert metrics == [(9, 7)]
     fallback = scaler.scale_nearest(w, h, rgba, 4)
-    out, n, notes = atlas.render((w, h, rgba), [VFIT_ROW], f, 4, fallback)
+    out, n, notes = atlas.render((w, h, rgba), [VFIT_ROW], f, 4, fallback, **options)
     assert n == 8
     boxes = {}
-    for g in glyphs:
+    for g in measured:
         slot = tuple(v * 4 for v in g.slot)
         boxes[g.char] = (slot, atlas.ink_box(w * 4, out, slot[0], slot[2], slot[1], slot[3]))
     return notes, boxes
@@ -791,6 +792,37 @@ def test_atlas_vertical_fit():
         "'p': shrunk 0.75 to stay in its slot (more than 8%: it is thinner and shorter)",
         "'\u00cd': shrunk 0.90 to stay in its slot (more than 8%: it is thinner and shorter)",
     ]
+
+
+def test_atlas_stretch():
+    """font_stretch widens or narrows a glyph towards its stock ink width,
+    by that percent at most, and counts the ones it stops."""
+    # o drawn 16 px wide against a 20 px stock box; V and W 24 against 12.
+    narrow_o = dict(VFIT_GLYPHS, o=[rect(0, 0, 400, 500)])
+    notes, boxes = vfit_render(narrow_o)
+    assert size(boxes["o"][1]) == (16, 20)
+    notes, boxes = vfit_render(narrow_o, stretch=10)
+    assert abs(size(boxes["o"][1])[0] - 16 * 1.1) <= 1 and size(boxes["o"][1])[1] == 20
+    assert abs(size(boxes["V"][1])[0] - 24 * 0.9) <= 1 and size(boxes["V"][1])[1] == 28
+    # H, p, I-acute, _ and ' match their stock widths: o, V and W stop.
+    assert notes[1] == (
+        "font: each glyph widened or narrowed towards its stock ink width; 3 stopped at 10%"
+    )
+    notes, boxes = vfit_render(narrow_o, stretch=30)
+    assert size(boxes["o"][1]) == (20, 20) and boxes["o"][1][3] == 36
+    # Never past the slot: V still shifts inside it.
+    slot, box = boxes["V"]
+    assert slot[0] <= box[0] and box[2] <= slot[2]
+
+
+def test_atlas_full_height():
+    """A font_full_height glyph spans its stock ink box top to bottom,
+    unshrunk across, instead of sitting on the baseline."""
+    notes, boxes = vfit_render(full="p")
+    slot, box = boxes["p"]
+    # The stock p: rows 4-12, 16-48 at 4x; the font's is 36 px tall at k.
+    assert box[1] == 16 and box[3] == 48 and size(box)[0] == 8
+    assert not any("'p'" in x for x in notes)
 
 
 def test_atlas_glyph_without_run():

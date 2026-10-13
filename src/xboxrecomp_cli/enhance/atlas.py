@@ -23,9 +23,14 @@ the band's. A glyph that would overrun the region its quad samples (the
 stock ink box grown by `font_margin`, or the slot between its
 neighbours) is shifted inside it where there is slack, else shrunk by one
 factor on both axes, about the stock centre and the baseline: never
-stretched on one axis, never enlarged. Descenders and overshoots keep the
+enlarged. Descenders and overshoots keep the
 baseline; only a mark the font draws clear of it (a dash, an underscore,
-a quote) may move up or down to fit. A shrink beyond FIT is named. The
+a quote) may move up or down to fit. A shrink beyond FIT is named.
+Two options trade some of that evenness for the stock look: `stretch`
+widens or narrows each glyph towards its stock ink width (the game
+advances by the slot, so ink narrower than the stock opens the gaps),
+and the `full` glyphs (brackets) span their stock ink box top to bottom,
+so they enclose the text as the stock ones do. The
 ink is white with the coverage in alpha, which the game tints with the
 vertex colour as it does the stock glyphs. A glyph the font lacks, one
 written as U+FFFD in `font_rows` (an icon the game draws for that code,
@@ -309,14 +314,17 @@ def _fit(lo, hi, a0, a1):
     return 0.0
 
 
-def render(stock, rows, font, scale, fallback, margin=None):
+def render(stock, rows, font, scale, fallback, margin=None, stretch=0, full=""):
     """The atlas at `scale`: stock is (w, h, rgba) of the stock atlas,
     fallback the upscaled stock rgba (the same size as the result) that a
     glyph keeps when the font has no glyph for it. `margin` is [left,
     top, right, bottom] in stock atlas texels: how far past its stock
-    ink box a glyph may draw (None: its whole slot). Returns (rgba, rendered,
-    notes): the number of glyphs drawn from the font, then a line on the
-    fit and what it left as it was or shrank by more than FIT."""
+    ink box a glyph may draw (None: its whole slot). `stretch` is the most,
+    in percent, a glyph is widened or narrowed towards its stock ink width,
+    and `full` the glyphs drawn at their stock ink box's height and place.
+    Returns (rgba, rendered, notes): the number of glyphs drawn from the
+    font, then a line on the fit and what it left as it was or shrank by
+    more than FIT."""
     w, h, rgba = stock
     glyphs, metrics = measure(w, h, rgba, rows, font)
     color = ink_color(w, h, rgba)
@@ -325,6 +333,7 @@ def render(stock, rows, font, scale, fallback, margin=None):
     cap_units = font.cap_height()
     rendered = 0
     shrunk = 0
+    limited = 0
     notes = []
     where = "slot" if margin is None else "stock ink box and margin"
     for g in glyphs:
@@ -360,6 +369,23 @@ def render(stock, rows, font, scale, fallback, margin=None):
                 % (g.char, br - bl, bb_ - bt, fw / scale, fh / scale)
             )
             continue
+        # The game advances by the slot, so a glyph narrower or wider than
+        # the stock one changes the gaps to its neighbours: it is widened or
+        # narrowed towards the stock ink width, by `stretch` at most, which
+        # keeps the stems within that much of each other.
+        sx = 1.0
+        if stretch:
+            sx = min(max(rx, 1 - stretch / 100), 1 + stretch / 100)
+            if abs(sx - rx) > 1e-9:
+                limited += 1
+        kx, ky = k * sx, k
+        # A bracket spans the stock ink box: the typefaces disagree on how
+        # far one reaches above the caps and below the baseline, and one
+        # taller than the stock sits low against the text it encloses.
+        tall = g.char in full
+        if tall:
+            ky = (bb_ - bt) * scale / (bb[3] - bb[1])
+        fw, fh = (bb[2] - bb[0]) * kx, (bb[3] - bb[1]) * ky
         # The allowed box, in pack pixels: what the game's quad samples,
         # never past the slot (a neighbour's ink).
         if margin is None:
@@ -384,19 +410,22 @@ def render(stock, rows, font, scale, fallback, margin=None):
         # The shrink that fits it, about the stock centre across and the
         # baseline down; a shift alone does when there is slack.
         f = min(1.0, (a1 - a0) / fw)
-        if floats:
+        if floats or tall:
             f = min(f, (ab - at) / fh)
         else:
-            above, below = bb[3] * k, -bb[1] * k
+            above, below = bb[3] * ky, -bb[1] * ky
             if above > 0:
                 f = min(f, (base - at) / above)
             if below > 0:
                 f = min(f, (ab - base) / below)
         f = max(f, 0.0)
-        kf = k * f
-        x0 = cx - (bb[2] - bb[0]) * kf / 2
+        kxf, kyf = kx * f, ky * f
+        x0 = cx - fw * f / 2
         x0 += _fit(x0, x0 + fw * f, a0, a1)
-        top = base - bb[3] * kf
+        if tall:
+            top = (bt + bb_) * scale / 2 - fh * f / 2
+        else:
+            top = base - bb[3] * kyf
         if floats:
             top += _fit(top, top + fh * f, at, ab)
         if f < 1.0 - 1e-9:
@@ -410,10 +439,9 @@ def render(stock, rows, font, scale, fallback, margin=None):
         # Straight into the slot at scale: the origin is a float, so the
         # placement is exact and the same on every host.
         sw, sh = (sr - sl) * scale, (vb - vt) * scale
-        ox = x0 - bb[0] * kf - sl * scale
-        oy = top + bb[3] * kf - vt * scale
-        px = kf * font.upem
-        cov = font.render(gid, px, px, ox, oy, sw, sh)
+        ox = x0 - bb[0] * kxf - sl * scale
+        oy = top + bb[3] * kyf - vt * scale
+        cov = font.render(gid, kxf * font.upem, kyf * font.upem, ox, oy, sw, sh)
         for y in range(sh):
             orow = (vt * scale + y) * ow + sl * scale
             for x in range(sw):
@@ -430,4 +458,10 @@ def render(stock, rows, font, scale, fallback, margin=None):
         "font: cap %s px, one proportional scale; %d glyphs shrunk within %d%% to fit their %s"
         % (capstr, shrunk, round(FIT * 100), where),
     )
+    if stretch:
+        notes.insert(
+            1,
+            "font: each glyph widened or narrowed towards its stock ink width; %d stopped at %d%%"
+            % (limited, stretch),
+        )
     return bytes(out), rendered, notes
