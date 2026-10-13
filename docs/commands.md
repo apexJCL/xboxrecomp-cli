@@ -80,6 +80,13 @@ or non-stock build without the override; a stale `gen/` is regenerated
 first. A dump whose `default.xbe` is not in `xbe.sha256` packages with a
 warning and `"xbe": "unknown"` in the manifest.
 
+When the game's `config.default.toml` sets `[present] pacing = "sleep"`,
+the bundle's README.txt gets a paragraph saying that `"spin"` is the
+console-original timing and how to switch to it, and `package` prints the
+same as a `note:` after the `bundle:` line, before the PRIVATE notice. A
+game that ships `"spin"` or omits the key gets neither; a defaults file
+that is not valid TOML gets one `WARNING:` line and no note.
+
 ### `mygame doctor`
 
 What this host has (uv, the venv, llvm-mingw, makensis, the toolkit and CLI

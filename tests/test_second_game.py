@@ -471,3 +471,77 @@ def test_rsync_escapes_args():
     assert not bench.rsync_escapes_args(
         "openrsync: protocol version 29\nrsync version 2.6.9 compatible\n"
     )
+
+
+def test_package_pacing_note(d, monkeypatch, capsys):
+    """package() prints the frame pacing note once, after the bundle: line
+    and before the PRIVATE notice, only when the README got the paragraph
+    (a staged config.default.toml at "sleep"); never at "spin"."""
+    from xboxrecomp_cli.package import windows
+
+    with game2_tree(d) as (G, _):
+        host.g().m["package"] = dict(PKG2)
+        G.content = G.path("packaging")
+        write(os.path.join(G.content, "launch.env.default.windows"), "LOG_KEEP=10\n")
+        write(G.path("LICENSE"), "MIT\n")
+        stage = os.path.join(d, "stage")
+        payload = os.path.join(stage, "payload")
+        exe = os.path.join(d, "build", G.exe_name + ".exe")
+        write(exe, "exe")
+        monkeypatch.setattr(pkg.setup, "host_blockers", lambda t, importing=False: [])
+        monkeypatch.setattr(pkg.toolkit, "exclude_pin_mark", lambda t: None)
+        monkeypatch.setattr(pkg, "package_plan", lambda a, imp=None: [])
+        monkeypatch.setattr(pkg, "run_plan_prefix", lambda a, plan: None)
+        monkeypatch.setattr(pkg, "check_staged", lambda root, lib: None)
+        monkeypatch.setattr(pkg, "write_manifest", lambda *a, **k: None)
+        monkeypatch.setattr(pkg, "stage_payload", lambda t, a, lib: (stage, payload, "v1", [], exe))
+        monkeypatch.setattr(pl, "stage_game_files", lambda src, dst: 0)
+        monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
+        monkeypatch.setattr(windows, "build_launcher_exe", lambda *a: None)
+        monkeypatch.setattr(windows, "wrap_windows", lambda *a: os.path.join(d, "setup.exe"))
+
+        class View:  # package()'s progress view, plain lines
+            plan = []
+
+            def say(self, msg):
+                print(msg)
+
+            def begin(self, msg):
+                pass
+
+            def end(self, ok):
+                pass
+
+        monkeypatch.setattr(host, "VIEW", View())
+        write(os.path.join(G.content, "windows", "README.part"), "\nInstall\n")
+        a = type(
+            "A",
+            (),
+            {
+                "target": "windows",
+                "out": d,
+                "hud_pack": None,
+                "keep_stage": True,
+                "archive": False,
+                "icon_dir": d,
+            },
+        )()
+        for pacing, note in (("sleep", True), ("spin", False)):
+            write(
+                os.path.join(G.content, "config.default.toml"),
+                '[present]\npacing = "%s"\n' % pacing,
+            )
+            shutil.rmtree(stage, ignore_errors=True)
+            os.makedirs(payload)
+            capsys.readouterr()
+            pkg.package(a)
+            out = capsys.readouterr().out
+            readme = open(os.path.join(payload, "README.txt")).read()
+            assert ("console-original" in readme) == note
+            assert out.count("note: frame pacing") == (1 if note else 0), out
+            assert out.index("bundle: ") < out.index("PRIVATE: ")
+            if note:
+                assert (
+                    out.index("bundle: ") < out.index("note: frame pacing") < out.index("PRIVATE: ")
+                )
+                assert 'pacing = "spin" under [present]' in out

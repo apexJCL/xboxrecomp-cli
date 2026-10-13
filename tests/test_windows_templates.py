@@ -216,3 +216,49 @@ def test_readme_game_intro(d, monkeypatch, game2):
     assert "\n\nOur own words about Second Game: Test (Second Game abcdef0" in text
     assert "PRIVATE" not in text
     shutil.rmtree(content)
+
+
+@pytest.mark.parametrize(
+    "defaults, note",
+    [
+        ('[present]\npacing = "sleep"\n', True),
+        ('[present]\npacing = "spin"\n', False),
+        ("[render]\nscale = 1\n", False),
+        (None, False),
+    ],
+)
+def test_readme_pacing_paragraph(d, monkeypatch, game2, defaults, note):
+    """The frame pacing paragraph follows the options paragraph only when
+    the staged config.default.toml (beside README.txt) ships "sleep"; a
+    game at "spin", without the key or without the file reads as before."""
+    monkeypatch.setattr(game2, "content", os.path.join(d, "content"))
+    monkeypatch.setattr(game2, "templates", "")
+    if defaults is not None:
+        with open(os.path.join(d, "config.default.toml"), "w") as f:
+            f.write(defaults)
+    text = readme_text(d, monkeypatch)
+    assert not PLACEHOLDER.findall(text)
+    assert ("console-original" in text) == note
+    if note:
+        assert (
+            'renamed to config.toml once.\n\nFrame pacing defaults to "sleep"' in text
+            and '  [present]\n  pacing = "spin"\n\nin config/config.toml, or '
+            "RECOMP_PRESENT_PACING=spin in config/launch.env.\n\n\nInstall v1\n"
+            in text
+        )
+    else:
+        assert "renamed to config.toml once.\n\n\nInstall v1\n" in text
+
+
+def test_readme_pacing_unparsable(d, monkeypatch, game2, capsys):
+    """A defaults file tomllib cannot read: one WARNING line, no paragraph."""
+    monkeypatch.setattr(game2, "content", os.path.join(d, "content"))
+    monkeypatch.setattr(game2, "templates", "")
+    with open(os.path.join(d, "config.default.toml"), "w") as f:
+        f.write('[present]\npacing = "sleep\n')
+    capsys.readouterr()
+    text = readme_text(d, monkeypatch)
+    out = capsys.readouterr().out
+    assert "console-original" not in text and not PLACEHOLDER.findall(text)
+    assert out.count("WARNING: config.default.toml: ") == 1, out
+    assert "no frame pacing note" in out

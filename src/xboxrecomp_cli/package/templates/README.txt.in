@@ -21,3 +21,4 @@ on the first launch and never overwrites it. Environment variables, such
 as the lines in config/launch.env, override both. An earlier version's
 config/enhance.toml is renamed to config.toml once.
 
+@OPTION_NOTES@

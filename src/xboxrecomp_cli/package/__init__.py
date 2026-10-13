@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import tomllib
 
 from .. import build as build_mod
 from .. import cli_dir, doctor, host, pipeline, setup, toolkit
@@ -22,6 +23,27 @@ NOTICE_TEXT = (
     "PRIVATE: this bundle contains your own copy of %s and code generated from it.\n"
     "It is for your own machines only. The game is not yours to redistribute:\n"
     "never share, upload or publish this bundle."
+)
+# The bundle README's paragraph and the terminal note for a game whose
+# defaults file ships the sleeping frame wait: the console spins there, so
+# the player is told how to get the original timing back.
+PACING_README = (
+    'Frame pacing defaults to "sleep": the game\'s frame wait sleeps until the\n'
+    'next vblank, which saves CPU and battery. "spin" is the console-original\n'
+    "timing, where that wait holds a CPU core as it did on the Xbox. To switch,\n"
+    "put\n"
+    "\n"
+    "  [present]\n"
+    '  pacing = "spin"\n'
+    "\n"
+    "in config/config.toml, or RECOMP_PRESENT_PACING=spin in config/launch.env.\n"
+    "\n"
+)
+PACING_NOTE = (
+    'note: frame pacing defaults to "sleep" (the game\'s frame wait sleeps until the\n'
+    'next vblank: less CPU and battery). "spin" is the console-original timing, the\n'
+    'wait holding a CPU core as on the Xbox: pacing = "spin" under [present] in\n'
+    "config/config.toml, or RECOMP_PRESENT_PACING=spin in config/launch.env."
 )
 DEFAULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 TARGET_NAMES = {
@@ -125,8 +147,30 @@ def ghidra_named():
     return os.path.isfile(g().ghidra_export)
 
 
+def pacing_sleeps(defaults):
+    """Whether the staged defaults file sets [present] pacing = "sleep".
+    That file is what the bundle's player gets, so the note needs no
+    toolkit knowledge: a game that ships "spin", or omits the key, gets
+    none. A file tomllib cannot read gets one warning and no note; the
+    runtime reports its own defaults file."""
+    try:
+        with open(defaults, "rb") as f:
+            doc = tomllib.load(f)
+    except FileNotFoundError:
+        return False
+    except tomllib.TOMLDecodeError as e:
+        host.say("WARNING: %s: %s; no frame pacing note" % (os.path.basename(defaults), e))
+        return False
+    present = doc.get("present")
+    return isinstance(present, dict) and present.get("pacing") == "sleep"
+
+
 def readme(target, version, lib, dst):
+    """README.txt at `dst`, beside the staged config.default.toml. Returns
+    whether the frame pacing paragraph went in (package() then prints the
+    terminal note)."""
     G = g()
+    pacing = pacing_sleeps(os.path.join(os.path.dirname(dst), "config.default.toml"))
     cat = lib.tree_state(G.root)
     tk = lib.tree_state(toolkit.toolkit_dir())
     values = {
@@ -138,6 +182,7 @@ def readme(target, version, lib, dst):
         % (G.m["pipeline"]["game_name"], cat["commit"][:7], tk["commit"][:7]),
         "DATA_PATHS": data_paths(target),
         "LOG_KEEP": "10",
+        "OPTION_NOTES": PACING_README if pacing else "",
     }
     # The PRIVATE and "built by" paragraphs: the game's README.intro (in
     # package.content) when it words them its own way, else the CLI's.
@@ -162,6 +207,7 @@ def readme(target, version, lib, dst):
         part = part.replace("@%s@" % k, v)
     with open(dst, "a", newline="\n") as f:
         f.write(part.replace("\r\n", "\n"))
+    return pacing
 
 
 def check_staged(root, lib):
@@ -342,6 +388,8 @@ def stage_hud_pack(payload, target, info):
 
 
 def write_common(payload, target, version, lib, hud_pack=None):
+    """The files every target shares. Returns readme()'s answer: whether
+    the README has the frame pacing paragraph."""
     G = g()
     fam = "macos" if target == "macos" else "windows"
     copy_lf(
@@ -360,9 +408,10 @@ def write_common(payload, target, version, lib, hud_pack=None):
     for n in ("LICENSE", "NOTICE"):
         if n == "LICENSE" or os.path.isfile(os.path.join(G.root, n)):
             copy_lf(os.path.join(G.root, n), os.path.join(payload, n))
-    readme(target, version, lib, os.path.join(payload, "README.txt"))
+    pacing = readme(target, version, lib, os.path.join(payload, "README.txt"))
     n = lib.stage_game_files(G.game_files, os.path.join(payload, "game_files"))
     host.say("game files: %d entries staged" % n)
+    return pacing
 
 
 def write_manifest(root, target, version, overrides, lib, extra=None, dump_unknown=False):
@@ -515,7 +564,7 @@ def package(a):
     run_plan_prefix(a, plan)
     os.makedirs(a.out, exist_ok=True)
     stage, payload, version, overrides, exe = stage_payload(a.target, a, lib)
-    write_common(payload, a.target, version, lib, hud_pack)
+    pacing_note = write_common(payload, a.target, version, lib, hud_pack)
     if hud_pack:
         host.say("hud pack: %d entries at %dx" % (hud_pack["entries"], hud_pack["scale"]))
     unknown = getattr(a, "dump_unknown", False)
@@ -567,4 +616,7 @@ def package(a):
     host.say()
     host.say("bundle: %s" % result)
     host.say()
+    if pacing_note:
+        host.say(PACING_NOTE)
+        host.say()
     host.say(NOTICE_TEXT % lib.PRODUCT_NAME)

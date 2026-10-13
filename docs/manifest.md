@@ -158,7 +158,7 @@ This table is optional. Without it, `package` says so.
 | `targets` | `["windows", "steamos"]` | The bundles: `windows`, `steamos`, `macos`. `macos` needs `build.targets` to include it. The command with no arguments packages this host's own bundle when it is listed, else the first listed one this host can make. |
 | `brew` | `[]` | The Homebrew formulae the macos target links. `doctor` checks them. |
 | `dylib_companions` | `[]` | `NAME=brew:FORMULA`: libraries loaded with dlopen, bundled too. |
-| `content` | `"packaging"` | The game's own packaging content: `launch.env.default.<windows\|macos>`, `config.default.toml` (the option defaults the game reads beside its executable; a game that still has `enhance.toml.default` is refused until it renames it), `<target>/README.part` for windows and macos, and optionally `README.intro`. |
+| `content` | `"packaging"` | The game's own packaging content: `launch.env.default.<windows\|macos>`, `config.default.toml` (the option defaults the game reads beside its executable; a game that still has `enhance.toml.default` is refused until it renames it; `[present] pacing = "sleep"` there adds the frame pacing paragraph to README.txt and the note to `package`'s output), `<target>/README.part` for windows and macos, and optionally `README.intro`. |
 | `templates` | `""` | The game's own packaging templates: the macos ones (required for `macos`), and any copy of a CLI template that must differ, at the same path (`README.txt.in`, `windows/launcher.c`, `steamos/launch.sh`, ...), which then wins. |
 | `icon` | `"xbe"` | The XBE's title image, or the generic icon. |
 
@@ -176,6 +176,8 @@ under `package.content`).
   the bundle, come from `README.intro`: the CLI's names the game
   (`game.name`) and `package.product`; a game with its own wording puts
   `README.intro` in `package.content` (the same placeholders work there).
+  The frame pacing paragraph (`@OPTION_NOTES@`) follows the options
+  paragraph when `config.default.toml` sets `[present] pacing = "sleep"`.
   The target's install section `<target>/README.part` follows.
 - **windows** (`launcher.c`, `installer.nsi.in`, `app.rc.in`): the
   launcher `<app>.exe`, with the icon compiled in, sets the game's
