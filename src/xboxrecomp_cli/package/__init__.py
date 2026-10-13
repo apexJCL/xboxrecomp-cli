@@ -158,7 +158,7 @@ def pacing_sleeps(defaults):
             doc = tomllib.load(f)
     except FileNotFoundError:
         return False
-    except tomllib.TOMLDecodeError as e:
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
         host.say("WARNING: %s: %s; no frame pacing note" % (os.path.basename(defaults), e))
         return False
     present = doc.get("present")
@@ -191,7 +191,12 @@ def readme(target, version, lib, dst):
     for k, v in values.items():
         intro = intro.replace("@%s@" % k, v)
     values["INTRO"] = intro
-    render(template("", "README.txt.in"), values, dst)
+    frame = template("", "README.txt.in")
+    # A game's own README.txt.in from before the placeholder gets no
+    # paragraph, so no note either: the note promises the README says it.
+    with open(frame) as f:
+        pacing = pacing and "@OPTION_NOTES@" in f.read()
+    render(frame, values, dst)
     part_values = {"VERSION": version}
     if target == "steamos":
         # The CLI's own install section, unless the game has its own.

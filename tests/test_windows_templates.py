@@ -250,15 +250,47 @@ def test_readme_pacing_paragraph(d, monkeypatch, game2, defaults, note):
         assert "renamed to config.toml once.\n\n\nInstall v1\n" in text
 
 
-def test_readme_pacing_unparsable(d, monkeypatch, game2, capsys):
-    """A defaults file tomllib cannot read: one WARNING line, no paragraph."""
+@pytest.mark.parametrize(
+    "data",
+    [b'[present]\npacing = "sleep\n', b'[present]\npacing = "sleep"\n# \xff\n'],
+    ids=["toml", "utf8"],
+)
+def test_readme_pacing_unparsable(d, monkeypatch, game2, capsys, data):
+    """A defaults file tomllib cannot read, bad TOML or not UTF-8: one
+    WARNING line, no paragraph, no traceback."""
     monkeypatch.setattr(game2, "content", os.path.join(d, "content"))
     monkeypatch.setattr(game2, "templates", "")
-    with open(os.path.join(d, "config.default.toml"), "w") as f:
-        f.write('[present]\npacing = "sleep\n')
+    with open(os.path.join(d, "config.default.toml"), "wb") as f:
+        f.write(data)
     capsys.readouterr()
     text = readme_text(d, monkeypatch)
     out = capsys.readouterr().out
     assert "console-original" not in text and not PLACEHOLDER.findall(text)
     assert out.count("WARNING: config.default.toml: ") == 1, out
     assert "no frame pacing note" in out
+
+
+def test_readme_pacing_game_template_without_placeholder(d, monkeypatch, game2):
+    """A game's own README.txt.in from before @OPTION_NOTES@: no paragraph
+    goes in, so readme() says so and package prints no note."""
+    tdir = os.path.join(d, "tpl")
+    os.makedirs(tdir)
+    with open(os.path.join(tdir, "README.txt.in"), "w") as f:
+        f.write("@NAME@ @VERSION@\n\nOur own README.\n")
+    monkeypatch.setattr(game2, "content", os.path.join(d, "content"))
+    monkeypatch.setattr(game2, "templates", tdir)
+    with open(os.path.join(d, "config.default.toml"), "w") as f:
+        f.write('[present]\npacing = "sleep"\n')
+    monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
+    monkeypatch.setattr(toolkit, "toolkit_dir", lambda: d)
+    os.makedirs(os.path.join(game2.content, "windows"), exist_ok=True)
+    with open(os.path.join(game2.content, "windows", "README.part"), "w") as f:
+        f.write("\nInstall\n")
+    dst = os.path.join(d, "README.txt")
+    assert pkg.readme("windows", "v1", pl, dst) is False
+    with open(dst) as f:
+        text = f.read()
+    assert "Our own README." in text and "console-original" not in text
+    # The CLI's own frame has the placeholder: the same file gives the paragraph.
+    monkeypatch.setattr(game2, "templates", "")
+    assert pkg.readme("windows", "v1", pl, dst) is True
