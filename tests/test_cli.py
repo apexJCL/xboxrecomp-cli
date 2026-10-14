@@ -356,6 +356,33 @@ def test_cli_rejects_stray_args():
     assert "unrecognized arguments" in err.getvalue()
 
 
+def test_help_outside_a_game(tmp_path):
+    """`xbr --help` where no game.toml is says how to start one; bare `xbr`
+    prints the same as an error, and any other command names `xbr new`."""
+    for flag in ("--help", "-h"):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            assert main.main(["--game", str(tmp_path), flag]) == 0
+        assert out.getvalue().startswith("usage: xbr [--game DIR] command"), out.getvalue()
+        assert "xbr new DIR [--xbe DUMP]" in out.getvalue()
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        assert main.main(["--game", str(tmp_path)]) == 1
+    assert "xbr new DIR [--xbe DUMP]" in err.getvalue()
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        assert main.main(["--game", str(tmp_path), "doctor"]) == 1
+    assert "start one with `xbr new DIR`" in err.getvalue()
+    # Inside a game, --help is still the game's own.
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        try:
+            main.main(["--game", GAME, "--prog", "blinx2", "--help"])
+        except SystemExit as e:
+            assert e.code == 0
+    assert out.getvalue().startswith("usage: blinx2 [-h] command"), out.getvalue()
+
+
 def test_manifest_error_named():
     """A broken game.toml stops every command with the key and the reason."""
     err = io.StringIO()

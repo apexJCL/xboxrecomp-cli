@@ -186,6 +186,65 @@ def test_the_xbe_fills_the_constants_and_is_not_copied(d, tk, game):
     assert manifest.load(root2).m["xbe"]["title_id"] == 7
 
 
+def test_the_xbe_is_read_from_a_disc_image_or_folder(d, tk, game):
+    """A porter holding only the .iso starts the game from it: without the
+    title ID, import would refuse that same image afterwards."""
+    from test_dump import build_image, write_folder
+
+    xbe_bytes = header(title="Imaged", title_id=0x4B4C0002, entry=0x00012340)
+    tree = [("default.xbe", xbe_bytes), ("media", [("a.bik", b"BIK1")])]
+    iso = build_image(os.path.join(d, "Game.xiso"), tree, base=0x18300000)
+    rc, out, err = new(
+        os.path.join(d, "g"), "--offline", "--xbe", iso, "--cli-commit", CLI, "--toolkit-commit", TK
+    )
+    assert rc == 0, err
+    G = manifest.load(os.path.join(d, "g"))
+    assert G.name == "Imaged" and G.m["xbe"]["title_id"] == 0x4B4C0002
+    assert "entry point 0x00012340 (retail)" in out
+    assert os.listdir(G.game_files) == []  # read in place, never extracted
+    folder = write_folder(os.path.join(d, "dump"), tree)
+    rc, out, err = new(
+        os.path.join(d, "g2"),
+        "--offline",
+        "--xbe",
+        folder,
+        "--cli-commit",
+        CLI,
+        "--toolkit-commit",
+        TK,
+    )
+    assert rc == 0, err
+    assert manifest.load(os.path.join(d, "g2")).m["xbe"]["title_id"] == 0x4B4C0002
+    # A --xbe that cannot be read stops new before anything is written: a
+    # title ID of 0 would only move the refusal to import.
+    junk = os.path.join(d, "notes.txt")
+    write(junk, "hello")
+    empty = os.path.join(d, "empty.iso")
+    write(empty, "")
+    no_xbe_iso = build_image(os.path.join(d, "noxbe.iso"), [("readme.txt", b"hi")])
+    no_xbe_dir = write_folder(os.path.join(d, "noxbe"), [("readme.txt", b"hi")])
+    for bad, words in (
+        (junk, "not an Xbox disc image"),
+        (empty, "not an Xbox disc image"),
+        (no_xbe_iso, "no default.xbe on this disc image"),
+        (no_xbe_dir, "no default.xbe in"),
+        (os.path.join(d, "gmae.iso"), "no such file or folder"),
+    ):
+        root = os.path.join(d, "bad")
+        rc, out, err = new(
+            root, "--offline", "--xbe", bad, "--cli-commit", CLI, "--toolkit-commit", TK
+        )
+        assert rc == 1 and "--xbe " in err and words in err, (bad, err)
+        assert not os.path.exists(os.path.join(root, "game.toml")), bad
+    # No --xbe and no dump in game_files/: a note, not an error.
+    rc, out, err = new(
+        os.path.join(d, "g3"), "--offline", "--cli-commit", CLI, "--toolkit-commit", TK
+    )
+    assert rc == 0, err
+    assert "import refuses every dump until then" in out
+    assert manifest.load(os.path.join(d, "g3")).m["xbe"]["title_id"] == 0
+
+
 def test_a_changed_template_is_reported_not_fatal(d, tk, game):
     main_c = os.path.join(tk, "templates", "new-game", "src", "main.c")
     write(main_c, FAKE_MAIN.replace("0x00000000  /* XBE", "0x00000001  /* XBE"))

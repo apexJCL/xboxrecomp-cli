@@ -579,7 +579,8 @@ def load(root):
             text = f.read()
     except OSError as e:
         raise ManifestError(
-            "no %s in %s: run this from a game that has one (or pass --game DIR)" % (FILE, root)
+            "no %s in %s: run this from a game that has one (or pass --game DIR), "
+            "or start one with `xbr new DIR`" % (FILE, root)
         ) from e
     return Game(root, parse_text(text, path))
 

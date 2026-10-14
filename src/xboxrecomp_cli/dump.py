@@ -132,10 +132,11 @@ def file_size(p):
 # ── the source ───────────────────────────────────────────────────────────
 
 
-def classify(path):
+def classify(path, name=None):
     """'folder' or 'image', judged by content (any file extension), or a
-    CliError that says what the path is not."""
-    name = xbe_name()
+    CliError that says what the path is not. name is the XBE's path inside
+    the dump; `new` passes it, as no game is loaded there yet."""
+    name = name or xbe_name()
     if os.path.isdir(path):
         if not os.path.isfile(os.path.join(path, *name.split("/"))):
             raise CliError(
@@ -188,11 +189,11 @@ class Source:
     """A disc image or a folder: its XBE header, its file listing, and
     copying one of its files."""
 
-    def __init__(self, path):
+    def __init__(self, path, xbe=None):
         self.path = os.path.abspath(path)
         self.real = os.path.realpath(path)
         self.name = os.path.basename(self.path.rstrip(os.sep)) or self.path
-        self.kind = classify(self.path)
+        self.kind = classify(self.path, xbe)
         self.iso = Xiso(self.real) if self.kind == "image" else None
         self._listing = None
         self.dirs = []  # every directory, so empty ones are made too
@@ -210,8 +211,8 @@ class Source:
     def describe(self):
         return "disc image" if self.kind == "image" else "folder"
 
-    def xbe_header(self):
-        name = xbe_name()
+    def xbe_header(self, name=None):
+        name = name or xbe_name()
         if self.kind == "folder":
             with open(os.path.join(self.real, *name.split("/")), "rb") as f:
                 return f.read(0x10000)

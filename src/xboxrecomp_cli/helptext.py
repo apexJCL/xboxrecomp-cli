@@ -47,6 +47,31 @@ Developer commands:
 """
 
 
+OUTSIDE = """\
+usage: @prog@ [--game DIR] command ...
+
+@prog@: the xboxrecomp toolchain. There is no game.toml here, so the one
+command that runs is `new`:
+
+  @prog@ new DIR [--xbe DUMP]
+      start a game in DIR; DUMP is your disc image (.iso, .xiso), dump
+      folder or default.xbe, read in place for the title, title ID and
+      entry point
+  @prog@ new --help
+      its options
+
+Inside a game (or with --game DIR) `@prog@ --help` lists that game's
+commands. After `new`: `./SLUG import DUMP`, `./SLUG setup` and `./SLUG all`
+in DIR (its README.md).
+"""
+
+
+def outside_help(prog="xbr"):
+    """What --help prints where no game.toml is: the game's own help names
+    the game, so it cannot be rendered before there is one."""
+    return OUTSIDE.replace("@prog@", prog)
+
+
 def render(slug, name, windows_dir="build-win", macos_dir="build"):
     """DOC for this game: its first line is the description, the rest the
     epilog argparse prints under the options."""

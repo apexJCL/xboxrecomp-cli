@@ -1,7 +1,7 @@
 """new: a starter game in an empty directory, so that porting a third game
 starts with one command instead of copying files out of another game.
 
-  xbr new DIR [--slug S] [--name N] [--xbe PATH] [--offline] ...
+  xbr new DIR [--slug S] [--name N] [--xbe DUMP] [--offline] ...
 
 It writes the manifest with every pin filled in, the bootstrap and its two
 wrappers, the tools pyproject.toml, .gitignore, .gitattributes, README.md,
@@ -9,8 +9,9 @@ and the toolkit's templates/new-game/ with the game's constants patched
 in; then, when the network, git and uv allow, it clones the toolkit at the
 pin and writes config/setup-pins.json and uv.lock. Whatever cannot be done
 is named as the command that finishes it. It never overwrites a file and
-never copies, moves or links a dump: --xbe reads a header, and the dump
-goes into game_files/ by the developer's own hand.
+never copies, moves or links a dump: --xbe reads a header (from a disc
+image, a dump folder or the XBE), and the dump goes into game_files/ through
+`import` or by the developer's own hand.
 
 This module runs before a game is loaded (main.py dispatches `new` first);
 once game.toml is written it loads the scaffold as the current game and
@@ -26,7 +27,7 @@ import subprocess
 import sys
 from importlib import metadata
 
-from . import cli_dir, gitpin, host, manifest, pins, toolkit, wrapper, xbe
+from . import cli_dir, dump, gitpin, host, manifest, pins, toolkit, wrapper, xbe
 from .host import CliError
 
 # The toolkit every game the CLI builds pins: the fork's integration branch.
@@ -477,18 +478,39 @@ def slug_from(path):
     return s or "game"
 
 
-def xbe_values(path):
+def read_xbe_header(path):
+    """The first 64 KiB of default.xbe from the XBE itself, a dump folder or
+    a disc image (any extension, judged as import judges it), so a porter
+    holding only the .iso can start a game; the image is read in place."""
+    if os.path.isfile(path):
+        with open(path, "rb") as f:
+            data = f.read(0x10000)
+        if data[:4] == b"XBEH":
+            return data
+    # Import's own reader: the same lookup its title check makes later, and
+    # the same words for an archive or a .cue.
+    with dump.Source(path, "default.xbe") as src:
+        return src.xbe_header("default.xbe")
+
+
+def xbe_values(path, asked=False):
     """What the dump's header gives the manifest and main.c, or {} with the
-    reason when there is no readable XBE."""
-    if not path or not os.path.isfile(path):
+    reason when there is no readable XBE. A dump named by --xbe (asked) that
+    cannot be read is an error: written as title ID 0, import would refuse
+    that same dump afterwards."""
+    try:
+        if not path or not os.path.exists(path):
+            raise CliError("%s: no such file or folder" % path)
+        h = xbe.read_header(read_xbe_header(path))
+    except (OSError, ValueError, CliError) as e:
+        if asked:
+            raise CliError("--xbe %s" % e) from e
         return (
             {},
-            "no XBE read: title_id is 0 and the entry point 0x00000000 until you fill them in",
+            "no XBE read (%s): title_id is 0 and the entry point 0x00000000 until you "
+            "fill them in, and import refuses every dump until then; --xbe takes your "
+            "disc image" % e,
         )
-    try:
-        h = xbe.read_file(path)
-    except (OSError, ValueError) as e:
-        return {}, "%s: %s; title_id and the entry point are left to fill in" % (path, e)
     return h, "%s: title %r, title ID 0x%08X, entry point 0x%08X (%s)" % (
         path,
         h["title"],
@@ -551,7 +573,7 @@ def scaffold(root, a):
         raise CliError("slug %r: lower-case letters, digits and '-' only (--slug)" % slug)
     check_dir(root)
     xbe_path = a.xbe or os.path.join(root, "game_files", "default.xbe")
-    h, xbe_note = xbe_values(xbe_path)
+    h, xbe_note = xbe_values(xbe_path, asked=bool(a.xbe))
     name = clean_name(a.name or h.get("title") or "", slug)
     cli_tag, cli_commit, cli_how = resolve_cli_pin(a.cli_tag, a.cli_commit, a.offline)
     tk_commit, tk_how = resolve_toolkit_commit(
@@ -682,8 +704,10 @@ def make_parser(prog):
     ap.add_argument("--name", help="the game's name (default: the XBE certificate's title)")
     ap.add_argument(
         "--xbe",
-        help="read the title, title ID and entry point from this dump "
-        "(default: DIR/game_files/default.xbe if it is there); never copied",
+        metavar="DUMP",
+        help="read the title, title ID and entry point from your disc image (.iso, "
+        ".xiso), dump folder or default.xbe (default: DIR/game_files/default.xbe "
+        "if it is there); read in place, never copied",
     )
     ap.add_argument("--toolkit-url", default=TOOLKIT_URL)
     ap.add_argument("--toolkit-branch", default=TOOLKIT_BRANCH)

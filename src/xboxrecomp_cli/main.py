@@ -445,6 +445,13 @@ def main(argv=None):
         # The one command without a game: it writes the game.toml the
         # others load.
         return scaffold.main(argv[1:], prog or "xbr")
+    if argv in ([], ["-h"], ["--help"]) and not os.path.isfile(os.path.join(root, manifest.FILE)):
+        # A first `xbr --help` outside any game: say how to start one rather
+        # than fail on the missing manifest. Bare `xbr` would package, so it
+        # gets the same text as an error.
+        out = sys.stdout if argv else sys.stderr
+        out.write(helptext.outside_help(prog or "xbr"))
+        return 0 if argv else 1
     try:
         G = manifest.use(manifest.load(root))
     except manifest.ManifestError as e:

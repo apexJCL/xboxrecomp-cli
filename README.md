@@ -46,7 +46,7 @@ Windows host is supported and not yet verified on a real machine.
 ## Quick start
 
 ```sh
-uvx --from git+https://github.com/apexJCL/xboxrecomp-cli xbr new mygame
+uvx --from git+https://github.com/apexJCL/xboxrecomp-cli xbr new mygame --xbe /path/to/game.iso
 cd mygame
 ./mygame import /path/to/game.iso   # or the dump's folder, or copy it to game_files/
 ./mygame setup     # .venv, llvm-mingw, the toolkit; ends with doctor
@@ -58,10 +58,12 @@ the `mygame` bootstrap and its wrappers, the tools environment
 (`pyproject.toml`, `uv.lock`), a `.gitignore` that keeps the dump, the
 generated code, the toolchain and the bundles out of git, the toolkit's
 `templates/new-game/` with the game's constants, and `config/setup-pins.json`.
-The title, title ID and entry point come from the XBE header, which is read
-and never copied. `@<tag>` after the repository URL pins a release, `@<sha>`
-a commit (`…/xboxrecomp-cli@v0.6.0 xbr new mygame`); the no-pipe way is a
-clone and `uv run xbr new ../mygame`.
+The title, title ID and entry point come from the XBE header, read in place
+from `--xbe` (the disc image, the dump's folder or `default.xbe`) and never
+copied; without it they are left at 0 and `import` refuses every dump until
+`game.toml`'s `title_id` is filled in. `@<tag>` after the repository URL
+pins a release, `@<sha>` a commit (`…/xboxrecomp-cli@v0.6.0 xbr new
+mygame`); the no-pipe way is a clone and `uv run xbr new ../mygame`.
 
 The first build is a Windows x86-64 executable that runs natively on Windows
 and under Proton on Linux (Direct3D 11). The first run crashes; the port
