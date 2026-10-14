@@ -524,12 +524,12 @@ class Bench:
         self.ok(self.r.remote(self.r.ship("integrate_show.sh"))[0])
         if not golden:
             return 0
-        # Integration runs see no host pad or keyboard and fail on a bad
-        # script, as golden.json's env pins for golden.
+        # Integration runs see no host pad, keyboard or mouse and fail on a
+        # bad script, as golden.json's env pins for golden.
         env = c["BENCH_ENV"]
         env = (
             env + " " if env else ""
-        ) + "RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_INPUT_STRICT=1"
+        ) + "RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_MOUSE=0 RECOMP_INPUT_STRICT=1"
         with self.no_errexit():
             return cmd_golden(self, golden_args, bench_env=env, kind="integrate")
 
