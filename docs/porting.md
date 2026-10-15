@@ -62,6 +62,76 @@ files (`[enhance.hud]` names the set; a TrueType font the owner installs,
 named there, re-renders the Latin atlas) and `package --hud-pack` puts it in
 their private bundle. Packs are game data and are never published.
 
+## The D3D fence
+
+XDK D3D waits for the GPU through a fence. It keeps a pointer to its device
+in a global; the device holds the fence it last submitted at `+0x2C` and,
+at `+0x30`, a pointer to the word the GPU writes as it completes work. The
+fence wait loads the device, reads both, and loops until the completed word
+reaches the fence it wants; the wait-for-idle polls PGRAPH `0x400B10`,
+which the toolkit drives from the same word. With nothing writing that
+word, both waits spin forever. The line that ties the word to the device is
+in `src/main.c`, right after `xbox_MemoryLayoutInit`:
+
+```c
+xbox_Nv2aMirrorFence(0x00235528, 0x2C, 0x30);
+```
+
+It registers a fence mirror: the runtime copies submitted into completed
+until the pushbuffer executor's semaphore releases land on that word, then
+steps aside. The mirror stays registered as the catch-up path when a walk
+stops short of PUT, and as the only fence with `RECOMP_PB_EXEC=0`.
+
+`new` fills the line in. When it reads the dump it looks in the XBE's `D3D`
+section (or every executable section, when there is no `D3D` section) for
+the fence wait's instructions, with the device pointer as the one unknown,
+and when it finds exactly one match it replaces the template's commented
+example with the live line. Its summary says what it found:
+
+```
+D3D fence: device pointer 0x00235528 (+0x2C submitted, +0x30 completed), from the fence wait at 0x00228FA0 in D3D8 1.0.5849; main.c carries the mirror line
+XDK libraries: XAPILIB 1.0.5849, XMV 1.0.5849, D3D8 1.0.5849, ...
+```
+
+or `D3D fence: not found (...)` with the reason (`no XBE read`, `no D3D
+section`, `no match in D3D`, `2 matches in D3D`, `D3D section truncated`), in which case the example
+stays commented out and the line is yours to write. The signature is the
+XDK 5849 one (D3D8 and D3D8LTCG); a title on another XDK may not match.
+
+By hand: after `analyze`, open `analysis/disasm/asm/D3D.asm` (the XDK
+library section the disassembler names) and look for these three
+instructions in a row (the listing pads the mnemonic, so search for the
+bytes `8b4630`, or with a regular expression such as
+`mov +eax, dword ptr \[esi \+ 0x30\]`):
+
+```
+8b4630    mov eax, dword ptr [esi + 0x30]
+8b08      mov ecx, dword ptr [eax]
+8b462c    mov eax, dword ptr [esi + 0x2c]
+```
+
+(the LTCG build puts `push edi; mov edi, eax` before them). The
+`mov esi, dword ptr [0x......]` just above is the device pointer, and the
+two displacements are the offsets the line takes. Three titles, all
+XDK 5849, as worked examples:
+
+| Title | D3D library | Fence wait | Device pointer |
+|---|---|---|---|
+| BLiNX 2 | D3D8 1.0.5849 | `0x002E8110` | `0x002F1FB8` |
+| Spartan: Total Warrior | D3D8 1.0.5849 | `0x00228FA0` | `0x00235528` |
+| Burnout 3 | D3D8LTCG 1.0.5849 | `0x00351770` | `0x0035FB48` |
+
+The device pointer is loaded in a hundred places or more, so it cannot be
+found by how often it is referenced; the fence wait carries it.
+
+At runtime the log confirms it: `NV2A fence mirror: device at 0x...` when
+the line registers, then `NV2A fence mirror: device 0x... fence word 0x...
+now written by the executor; mirror off` once the executor's first release
+lands. `RECOMP_TRACE=sema` prints the releases. A boot that hangs in the
+fence wait shows, under `sample` or the watchdog, a loop in that function
+reading `[edx]` with no calls; one with the line missing stops in the
+wait-for-idle that follows.
+
 ## macOS as a target
 
 The toolkit builds for macOS (Apple silicon, Metal), and the toolkit's
@@ -89,14 +159,20 @@ rasteriser, a few frames a second on a Mac). `RECOMP_STDIO_LOG=<file>`
 sends stdout and stderr to a file on both hosts, which is how the bench and
 the launchers read the Windows build's log under Proton.
 
-The first title-specific fault on a POSIX host is often in the vblank DPC
-or in `KeSetEvent`, before the first frame: some XDKs' D3D signals a KEVENT
-the title built without `KeInitializeEvent`. Windows fails that call
-quietly; POSIX dereferences the guest address. Try
-`RECOMP_TITLE_KEVENTS=1` in the environment, and once it is confirmed make
-it the game's default in `main.c`'s entry points, right after
-`recomp_env_init()`: `recomp_env_set(RENV_TITLE_KEVENTS, "1")` when
-`recomp_env(RENV_TITLE_KEVENTS)` is unset.
+The toolkit's template `main.c` turns on two keys every XDK D3D title
+needs, each only when the environment leaves it unset: `RECOMP_VBLANK`
+(D3D paces `Swap`, `BlockUntilVerticalBlank` and the title's vblank
+callback on the vblank interrupt, so without it the boot stops in D3D's
+first vblank wait) and `RECOMP_TITLE_KEVENTS` (D3D8 builds the KEVENT its
+vblank DPC sets without `KeInitializeEvent`; without a host event for it
+`KeSetEvent` fails quietly on Windows and faults on POSIX, in the vblank
+DPC before the first frame). `=0` in the environment turns either off: the
+A/B when a title that does not use them behaves differently with them on,
+or to see which of the two a stop depends on. A game scaffolded from an
+older template adds the two lines to `main.c` after
+`xbox_MemoryLayoutInit` itself: `recomp_env_set(RENV_VBLANK, "1")` when
+`recomp_env(RENV_VBLANK)` is unset, and the same for
+`RENV_TITLE_KEVENTS`.
 
 A game pinned to a toolkit at or before `blinx2-v0.3.0` has the Win32-only
 template: `new` says so, and `build macos` will not compile. Move the

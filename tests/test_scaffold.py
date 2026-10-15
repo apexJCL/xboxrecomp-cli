@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 import pytest
-from test_xbe import header
+from test_xbe import XDK, fence_wait, header, image
 
 from xboxrecomp_cli import (
     cli_dir,
@@ -31,6 +31,7 @@ from xboxrecomp_cli import (
     scaffold,
     toolkit,
     wrapper,
+    xbe,
 )
 from xboxrecomp_cli.host import CliError
 
@@ -60,8 +61,14 @@ extern void xbe_entry_point(void);
 #if defined(_WIN32)
 #include <windows.h>
 #endif
-int main(void) { puts("=== YOUR_GAME_NAME ==="); recomp_dispatch_init(); xbe_entry_point(); return 0; }
+int main(void) {
+    xbox_MemoryLayoutInit();
+    /* xbox_Nv2aMirrorFence(0x00000000, 0x2C, 0x30); */
+    puts("=== YOUR_GAME_NAME ==="); recomp_dispatch_init(); xbe_entry_point(); return 0;
+}
 """
+# The template before it carried the fence example line.
+FAKE_MAIN_NO_FENCE = FAKE_MAIN.replace("    %s\n" % scaffold.FENCE_EXAMPLE, "")
 # The template up to toolkit blinx2-v0.3.0: Win32 only.
 FAKE_MAIN_WIN32_ONLY = FAKE_MAIN.replace("#if defined(_WIN32)\n", "").replace("#endif\n", "")
 FAKE_MANUAL = "/* overrides */\n"
@@ -496,6 +503,7 @@ def test_real_template_patches_match(d, game, monkeypatch):
     rc, out, _ = new(root, "--offline", "--cli-commit", CLI, "--toolkit-commit", TK)
     assert rc == 0
     assert "(the template changed)" not in out, out
+    assert "D3D fence: not found (no XBE read)" in out
     c = read(os.path.join(root, "src", "main.c"))
     assert c.count("recomp_dispatch_init(void)") == 1
     assert "YOUR_GAME_NAME" not in c and "YOUR_GAME_NAME" not in read(
@@ -521,6 +529,30 @@ def test_real_template_patches_match(d, game, monkeypatch):
     assert win32 and all(win32), "#include <windows.h> outside a _WIN32 section"
     for p in (os.path.join(root, "CMakeLists.txt"), os.path.join(root, "src", "recomp_manual.c")):
         assert os.path.getsize(p) > 0
+    # A dump whose fence was found: the live line where the template has the
+    # example, the hand-edit hint (never a failure) where it predates it.
+    dump = os.path.join(d, "fence.xbe")
+    with open(dump, "wb") as f:
+        f.write(image([("D3D", 0x6, fence_wait(0x00235528))], XDK))
+    root = os.path.join(d, "g2")
+    rc, out, err = new(
+        root, "--offline", "--xbe", dump, "--cli-commit", CLI, "--toolkit-commit", TK
+    )
+    assert rc == 0, err
+    c = read(os.path.join(root, "src", "main.c"))
+    template = read(os.path.join(REAL_TOOLKIT, "templates", "new-game", "src", "main.c"))
+    # A reworded example would fall to the old-template branch below and
+    # pass: any example in the template must be the exact text new patches.
+    if "xbox_Nv2aMirrorFence(0x00000000" in template:
+        assert scaffold.FENCE_EXAMPLE in template
+    if scaffold.FENCE_EXAMPLE in template:
+        assert "(the template changed)" not in out, out
+        assert "    xbox_Nv2aMirrorFence(0x00235528, 0x2C, 0x30);" in c
+        assert "main.c carries the mirror line" in out
+    else:
+        assert "xbox_Nv2aMirrorFence" not in template
+        assert "add `xbox_Nv2aMirrorFence(0x00235528, 0x2C, 0x30)` after" in out, out
+        assert "xbox_Nv2aMirrorFence" not in c
 
 
 def test_bootstrap_runs_in_the_scaffold(d, tk, game):
@@ -615,3 +647,191 @@ def test_toolkit_checkout_on_another_branch_is_said(d, monkeypatch):
     sha, how = scaffold.resolve_toolkit_commit(d, "u", "wanted", offline=True)
     assert len(sha) == 40 and how == t + " (not on wanted)"
     assert scaffold.resolve_toolkit_commit(d, "u", "other", offline=True)[1] == t
+
+
+def fence_dump(path, sections, libraries=XDK):
+    write(path, "")
+    with open(path, "wb") as f:
+        f.write(image(sections, libraries, title="Fenced", title_id=0x4B4C0003))
+    return path
+
+
+def test_new_fills_the_fence_line_from_the_dump(d, tk, game):
+    """D3D's fence wait in the dump's D3D section: main.c gets the live
+    mirror line in place of the example, and the summary says where it came
+    from and which libraries the title links."""
+    code = b"\xcc" * 64 + fence_wait(0x00235528) + b"\xcc" * 64
+    dump = fence_dump(
+        os.path.join(d, "dump", "default.xbe"),
+        [(".text", 0x6, b"\x90" * 64), ("D3D", 0x6, code)],
+    )
+    root = os.path.join(d, "g")
+    rc, out, err = new(
+        root, "--offline", "--xbe", dump, "--cli-commit", CLI, "--toolkit-commit", TK
+    )
+    assert rc == 0, err
+    c = read(os.path.join(root, "src", "main.c"))
+    assert scaffold.FENCE_EXAMPLE not in c
+    with open(dump, "rb") as f:
+        raw = f.read()
+    wait = xbe.sections(raw)[1].va + 64
+    assert (
+        "    xbox_Nv2aMirrorFence(0x00235528, 0x2C, 0x30);   "
+        "/* from D3D's fence wait at 0x%08X */\n" % wait
+    ) in c
+    assert (
+        "D3D fence: device pointer 0x00235528 (+0x2C submitted, +0x30 completed), from the "
+        "fence wait at 0x%08X in D3D8 1.0.5849; main.c carries the mirror line" % wait
+    ) in out
+    assert "XDK libraries: XAPILIB 1.0.5849, D3D8 1.0.5849, DSOUND 1.0.5849" in out
+    assert "(the template changed)" not in out
+    # The same dump on a disc image: the section is read in place.
+    from test_dump import build_image
+
+    iso = build_image(os.path.join(d, "F.xiso"), [("default.xbe", raw)])
+    rc, out, err = new(
+        os.path.join(d, "g2"),
+        "--offline",
+        "--xbe",
+        iso,
+        "--cli-commit",
+        CLI,
+        "--toolkit-commit",
+        TK,
+    )
+    assert rc == 0, err
+    assert "device pointer 0x00235528" in out
+    assert "xbox_Nv2aMirrorFence(0x00235528, 0x2C, 0x30);" in read(
+        os.path.join(d, "g2", "src", "main.c")
+    )
+
+
+def test_new_without_a_fence_keeps_the_example(d, tk, game):
+    """Zero or several matches, or no D3D section: the example line stays and
+    the note says why; a title with no D3D section is scanned in its
+    executable sections."""
+    cases = (
+        ([("D3D", 0x6, b"\xcc" * 64)], "no match in D3D"),
+        ([("D3D", 0x6, fence_wait(0x1000) + fence_wait(0x2000))], "2 matches in D3D"),
+        ([(".text", 0x6, b"\x90" * 64)], "no D3D section"),
+        (
+            [("D3D", 0x6, b"\xcc" * 22 + fence_wait(0x00235528))],
+            "D3D section truncated (10 of 41 bytes)",
+        ),
+        # Not executable: never scanned.
+        ([(".text", 0x6, b"\x90" * 8), (".data", 0x1, fence_wait(0x3000))], "no D3D section"),
+    )
+    for i, (sections, why) in enumerate(cases):
+        dump = fence_dump(os.path.join(d, "dump%d" % i, "default.xbe"), sections)
+        if why.startswith("D3D section truncated"):
+            # The dump ends inside the D3D section, fence wait and all.
+            with open(dump, "rb") as f:
+                raw = f.read()
+            with open(dump, "wb") as f:
+                f.write(raw[: -(len(raw) - xbe.sections(raw)[0].raw_off - 10)])
+        root = os.path.join(d, "g%d" % i)
+        rc, out, err = new(
+            root, "--offline", "--xbe", dump, "--cli-commit", CLI, "--toolkit-commit", TK
+        )
+        assert rc == 0, err
+        assert scaffold.FENCE_EXAMPLE in read(os.path.join(root, "src", "main.c"))
+        assert (
+            'D3D fence: not found (%s); main.c keeps the commented example, see docs/porting.md "The D3D fence"'
+            % why
+        ) in out, out
+        assert "(the template changed)" not in out
+    # One match in an executable section of a title with no D3D section.
+    dump = fence_dump(os.path.join(d, "dumpx", "default.xbe"), [(".text", 0x6, fence_wait(0x4000))])
+    rc, out, err = new(
+        os.path.join(d, "gx"),
+        "--offline",
+        "--xbe",
+        dump,
+        "--cli-commit",
+        CLI,
+        "--toolkit-commit",
+        TK,
+    )
+    assert rc == 0, err
+    assert "device pointer 0x00004000" in out and "in D3D8 1.0.5849" in out
+    # No dump at all.
+    rc, out, err = new(
+        os.path.join(d, "gn"), "--offline", "--cli-commit", CLI, "--toolkit-commit", TK
+    )
+    assert rc == 0, err
+    assert "D3D fence: not found (no XBE read)" in out
+    assert "XDK libraries" not in out
+
+
+def test_a_found_fence_on_an_older_template_is_a_hint(d, tk, game):
+    write(os.path.join(tk, "templates", "new-game", "src", "main.c"), FAKE_MAIN_NO_FENCE)
+    dump = fence_dump(
+        os.path.join(d, "dump", "default.xbe"), [("D3D", 0x6, fence_wait(0x00235528))]
+    )
+    root = os.path.join(d, "g")
+    rc, out, err = new(
+        root, "--offline", "--xbe", dump, "--cli-commit", CLI, "--toolkit-commit", TK
+    )
+    assert rc == 0, err
+    assert "the template has no example line to replace" in out
+    assert (
+        "src/main.c: add `xbox_Nv2aMirrorFence(0x00235528, 0x2C, 0x30)` after "
+        "xbox_MemoryLayoutInit yourself (the template changed)"
+    ) in out
+    # Not found on the older template: nothing to say about the template.
+    dump = fence_dump(os.path.join(d, "dump2", "default.xbe"), [("D3D", 0x6, b"\xcc" * 8)])
+    rc, out, err = new(
+        os.path.join(d, "g2"),
+        "--offline",
+        "--xbe",
+        dump,
+        "--cli-commit",
+        CLI,
+        "--toolkit-commit",
+        TK,
+    )
+    assert rc == 0, err
+    assert "(the template changed)" not in out
+
+
+def test_fence_past_64k_and_in_a_dump_folder(d, tk, game):
+    """A header larger than the 64 KiB read first is read again whole, and
+    a dump folder is read at the section's offset, not only the header."""
+    from test_dump import write_folder
+
+    big = image([("D3D", 0x6, b"\xcc" * 32 + fence_wait(0x00235528))], XDK, tables_at=0x10000)
+    assert xbe.header_size(big) > 0x10000 and xbe.sections(big)[0].raw_off > 0x10000
+    dump = os.path.join(d, "big", "default.xbe")
+    write(dump, "")
+    with open(dump, "wb") as f:
+        f.write(big)
+    rc, out, err = new(
+        os.path.join(d, "g"),
+        "--offline",
+        "--xbe",
+        dump,
+        "--cli-commit",
+        CLI,
+        "--toolkit-commit",
+        TK,
+    )
+    assert rc == 0, err
+    assert "device pointer 0x00235528" in out and "XDK libraries: XAPILIB 1.0.5849" in out
+    raw = image([(".text", 0x6, b"\x90" * 0x10000), ("D3D", 0x6, fence_wait(0x002F1FB8))], XDK)
+    assert xbe.sections(raw)[1].raw_off > 0x10000
+    folder = write_folder(os.path.join(d, "dumpdir"), [("default.xbe", raw)])
+    rc, out, err = new(
+        os.path.join(d, "g2"),
+        "--offline",
+        "--xbe",
+        folder,
+        "--cli-commit",
+        CLI,
+        "--toolkit-commit",
+        TK,
+    )
+    assert rc == 0, err
+    assert "device pointer 0x002F1FB8" in out
+    assert "xbox_Nv2aMirrorFence(0x002F1FB8, 0x2C, 0x30);" in read(
+        os.path.join(d, "g2", "src", "main.c")
+    )

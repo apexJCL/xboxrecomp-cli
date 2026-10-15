@@ -212,10 +212,18 @@ class Source:
         return "disc image" if self.kind == "image" else "folder"
 
     def xbe_header(self, name=None):
+        # The header and certificate sit in the first 64 KiB; the reader's
+        # read() would take the whole XBE.
+        return self.xbe_read(0, 0x10000, name)
+
+    def xbe_read(self, off, n, name=None):
+        """Up to n bytes of the XBE at file offset off, read in place: the
+        header, or one section `new` scans."""
         name = name or xbe_name()
         if self.kind == "folder":
             with open(os.path.join(self.real, *name.split("/")), "rb") as f:
-                return f.read(0x10000)
+                f.seek(off)
+                return f.read(n)
         parts = name.split("/")
         try:
             e = self.iso.find(parts[-1], "/".join(parts[:-1]))
@@ -223,9 +231,11 @@ class Source:
             e = None
         if e is None or e.is_dir:
             raise CliError("%s: no %s on this disc image" % (self.path, name))
-        # The header and certificate sit in the first 64 KiB; the reader's
-        # read() would take the whole XBE.
-        return self._seek(e).read(min(e.size, 0x10000))
+        if off >= e.size:
+            return b""
+        f = self._seek(e)
+        f.seek(off, os.SEEK_CUR)
+        return f.read(min(e.size - off, n))
 
     def _seek(self, handle):
         f = self.iso._f

@@ -312,10 +312,17 @@ The CLI's `docs/porting.md` has the loop; `game.toml` has every setting,
 documented in the CLI's `docs/manifest.md`.
 """
 
+# The template's commented fence-mirror line, which `new` replaces with the
+# game's own when it finds D3D's fence wait in the dump.
+FENCE_EXAMPLE = "/* xbox_Nv2aMirrorFence(0x00000000, 0x2C, 0x30); */"
+FENCE_DOC = 'see docs/porting.md "The D3D fence"'
+
 # What `new` patches in the toolkit's template: (file, old, new, what to do
 # by hand if the template changed, every occurrence?). A patch for one
 # place must match exactly once; one marked for every occurrence (the
 # game's name, which the template prints and comments) needs at least one.
+# A patch whose new text names a value this game does not have (the fence
+# line, when the dump did not give it) is skipped.
 ALL = True
 TEMPLATE_PATCHES = (
     (
@@ -355,6 +362,12 @@ TEMPLATE_PATCHES = (
         " *   Entry point: 0x00000000",
         " *   Entry point: 0x@ENTRY@",
         "",
+    ),
+    (
+        os.path.join("src", "main.c"),
+        FENCE_EXAMPLE,
+        "@FENCE_LINE@",
+        "add `@FENCE_CALL@` after xbox_MemoryLayoutInit yourself",
     ),
 )
 # A declaration the template lacks and Clang (llvm-mingw) requires; MSVC
@@ -517,19 +530,113 @@ def slug_from(path):
     return s or "game"
 
 
-def read_xbe_header(path):
-    """The first 64 KiB of default.xbe from the XBE itself, a dump folder or
-    a disc image (any extension, judged as import judges it), so a porter
-    holding only the .iso can start a game; the image is read in place."""
+def read_xbe_bytes(path, off, n):
+    """Up to n bytes of default.xbe at file offset off, from the XBE itself,
+    a dump folder or a disc image (any extension, judged as import judges
+    it), so a porter holding only the .iso can start a game; the image is
+    read in place."""
     if os.path.isfile(path):
         with open(path, "rb") as f:
-            data = f.read(0x10000)
-        if data[:4] == b"XBEH":
-            return data
+            if f.read(4) == b"XBEH":
+                f.seek(off)
+                return f.read(n)
     # Import's own reader: the same lookup its title check makes later, and
     # the same words for an archive or a .cue.
     with dump.Source(path, "default.xbe") as src:
-        return src.xbe_header("default.xbe")
+        return src.xbe_read(off, n, "default.xbe")
+
+
+def read_xbe_header(path):
+    """The first 64 KiB of default.xbe: the header and certificate."""
+    return read_xbe_bytes(path, 0, 0x10000)
+
+
+def find_fence(path):
+    """(Fence or None, why not, [(library, version)]): D3D's fence wait in
+    the dump's D3D section, or in every executable section when it has
+    none, with exactly one match."""
+    head = read_xbe_header(path)
+    size = xbe.header_size(head)
+    if size > len(head):
+        # Past the 64 KiB read first; capped, so a corrupt size reads no
+        # more than a real header could be.
+        head = read_xbe_bytes(path, 0, min(size, 0x1000000))
+    secs = xbe.sections(head)
+    try:
+        libs = xbe.libraries(head)
+    except xbe.XbeError:
+        libs = []
+    d3d = [s for s in secs if s.name == "D3D"]
+    scan = d3d or [s for s in secs if s.flags & xbe.SECTION_EXECUTABLE]
+    found = []
+    for s in scan:
+        code = read_xbe_bytes(path, s.raw_off, s.raw_size)
+        if len(code) < s.raw_size:
+            # A short dump: a missing match there says nothing about D3D.
+            return (
+                None,
+                "%s section truncated (%d of %d bytes)"
+                % (
+                    s.name,
+                    len(code),
+                    s.raw_size,
+                ),
+                libs,
+            )
+        found += xbe.find_d3d_fences(code, s.va)
+    if len(found) == 1:
+        return found[0], "", libs
+    where = "D3D" if d3d else "the executable sections"
+    if not found:
+        why = "no match in D3D" if d3d else "no D3D section"
+    else:
+        why = "%d matches in %s" % (len(found), where)
+    return None, why, libs
+
+
+def fence_values(path, h):
+    """What the fence detection gives main.c and the summary: ({FENCE_LINE,
+    FENCE_CALL} or {}, the D3D fence note's start, the libraries note or
+    '')."""
+    if not h:
+        return {}, "D3D fence: not found (no XBE read)", ""
+    try:
+        fence, why, libs = find_fence(path)
+    except (OSError, ValueError, CliError) as e:
+        return {}, "D3D fence: not found (%s)" % e, ""
+    lib_note = "XDK libraries: " + ", ".join("%s %s" % lib for lib in libs) if libs else ""
+    if not fence:
+        return {}, "D3D fence: not found (%s)" % why, lib_note
+    call = "xbox_Nv2aMirrorFence(0x%08X, 0x%02X, 0x%02X)" % (fence.device, fence.put, fence.get)
+    d3d = next(("%s %s" % lib for lib in libs if lib[0].startswith("D3D8")), "section D3D")
+    note = (
+        "D3D fence: device pointer 0x%08X (+0x%02X submitted, +0x%02X completed), from the "
+        "fence wait at 0x%08X in %s" % (fence.device, fence.put, fence.get, fence.wait, d3d)
+    )
+    line = "%s;   /* from D3D's fence wait at 0x%08X */" % (call, fence.wait)
+    return {"FENCE_LINE": line, "FENCE_CALL": call}, note, lib_note
+
+
+def fence_note(start, v, main_c):
+    """The D3D fence note's end: what main.c ended up with (main_c is its
+    text, None when the template was not copied)."""
+    if "FENCE_LINE" not in v:
+        if main_c is None:
+            return "%s; add the line yourself when you copy the template, %s" % (start, FENCE_DOC)
+        if FENCE_EXAMPLE in main_c:
+            return "%s; main.c keeps the commented example, %s" % (start, FENCE_DOC)
+        return "%s; the template has no example line, add the line yourself, %s" % (
+            start,
+            FENCE_DOC,
+        )
+    if main_c is None:
+        return "%s; add `%s` after xbox_MemoryLayoutInit when you copy the template" % (
+            start,
+            v["FENCE_CALL"],
+        )
+    if v["FENCE_LINE"] in main_c:
+        return start + "; main.c carries the mirror line"
+    return start + "; the template has no example line to replace (see below)"
 
 
 def xbe_values(path, asked=False):
@@ -589,7 +696,7 @@ def patch_template(src, dst, values):
         with open(s, encoding="utf-8", newline="") as f:
             text = f.read()
         for file, old, new, hint, *every in TEMPLATE_PATCHES:
-            if file != rel:
+            if file != rel or any(k not in values for k in re.findall(r"@(\w+)@", new)):
                 continue
             n = text.count(old)
             if n == 1 or (every and n):
@@ -614,13 +721,15 @@ def patch_template(src, dst, values):
 
 
 def scaffold(root, a):
-    """Write the files; return (values, notes) for the summary."""
+    """Write the files; return (values, notes, fence) for the summary:
+    fence is the D3D fence note's start and the libraries note."""
     slug = a.slug or slug_from(root)
     if not manifest.SLUG.match(slug):
         raise CliError("slug %r: lower-case letters, digits and '-' only (--slug)" % slug)
     check_dir(root)
     xbe_path = a.xbe or os.path.join(root, "game_files", "default.xbe")
     h, xbe_note = xbe_values(xbe_path, asked=bool(a.xbe))
+    fence_v, fence_start, lib_note = fence_values(xbe_path, h)
     name = clean_name(a.name or h.get("title") or "", slug)
     cli_tag, cli_commit, cli_how = resolve_cli_pin(a.cli_tag, a.cli_commit, a.offline)
     tk_commit, tk_how = resolve_toolkit_commit(
@@ -648,6 +757,7 @@ def scaffold(root, a):
         "OUT": "analysis",
         "WINDOWS_DIR": "build-win",
         "MACOS_DIR": "build",
+        **fence_v,
     }
     notes = [
         xbe_note,
@@ -675,13 +785,14 @@ def scaffold(root, a):
     write(j("config", "seed_functions.json"), "[]\n")
     os.makedirs(G.game_files, exist_ok=True)
     os.makedirs(G.gen, exist_ok=True)
-    return v, notes
+    return v, notes, (fence_start, lib_note)
 
 
-def finish(root, v, a, notes):
+def finish(root, v, a, notes, fence=("", "")):
     """The toolkit clone, the template copy, the pins and the lock: each
     one needs the network, git or uv, and each failure becomes the command
-    that does it later."""
+    that does it later. fence is scaffold's (D3D fence note start,
+    libraries note), finished here once main.c is known."""
     slug = v["SLUG"]
     cmd = slug if host.host_os() == "windows" else "./" + slug
     later = []
@@ -697,9 +808,19 @@ def finish(root, v, a, notes):
                 tk = toolkit.clone_toolkit()
             except CliError as e:
                 later.append("'%s setup' clones the toolkit (%s)" % (cmd, e))
+    template_notes, main_c = [], None
     if tk:
-        notes += patch_template(os.path.join(tk, TEMPLATE_DIR), root, v)
-    else:
+        template_notes = patch_template(os.path.join(tk, TEMPLATE_DIR), root, v)
+        main_path = os.path.join(root, "src", "main.c")
+        if os.path.isfile(main_path):
+            with open(main_path, encoding="utf-8") as f:
+                main_c = f.read()
+    if fence[0]:
+        notes.append(fence_note(fence[0], v, main_c))
+    if fence[1]:
+        notes.append(fence[1])
+    notes += template_notes
+    if not tk:
         later.append(
             "then copy external/xboxrecomp/%s/ (CMakeLists.txt, src/) here and set "
             "project(%s C), YOUR_GAME_ENTRY_POINT 0x%s, YOUR_GAME_XBE_PATH %s, "
@@ -791,8 +912,8 @@ def main(argv, prog="xbr"):
     a = make_parser(prog).parse_args(argv)
     root = os.path.abspath(a.dir)
     try:
-        v, notes = scaffold(root, a)
-        later = finish(root, v, a, notes)
+        v, notes, fence = scaffold(root, a)
+        later = finish(root, v, a, notes, fence)
     except (CliError, manifest.ManifestError) as e:
         print("%s new: %s" % (prog, e), file=sys.stderr)
         return 1

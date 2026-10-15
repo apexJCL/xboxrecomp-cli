@@ -204,7 +204,7 @@ the pins and the lock.
 |---|---|
 | `--slug SLUG` | the command name, `[a-z0-9-]` (default: `DIR`'s name) |
 | `--name NAME` | the game's name (default: the XBE certificate's title) |
-| `--xbe DUMP` | read the title, title ID and entry point from your disc image (`.iso`, `.xiso`, any extension, as `import` judges it), the dump's folder or `default.xbe` (default: `DIR/game_files/default.xbe` if it is there); read in place, never copied. Without it `title_id` stays 0 and `import` refuses every dump until it is filled in |
+| `--xbe DUMP` | read the title, title ID and entry point from your disc image (`.iso`, `.xiso`, any extension, as `import` judges it), the dump's folder or `default.xbe` (default: `DIR/game_files/default.xbe` if it is there); read in place, never copied. Without it `title_id` stays 0 and `import` refuses every dump until it is filled in. `new` also finds D3D's fence wait in the dump and writes the game's `xbox_Nv2aMirrorFence` line into `src/main.c`, or says why not (`porting.md`, "The D3D fence"), and lists the XDK libraries the title links |
 | `--toolkit-url`, `--toolkit-branch`, `--toolkit-commit` | the toolkit pin (default: a checkout beside `DIR`, else the branch head) |
 | `--cli-tag TAG`, `--cli-commit SHA` | the CLI pin (default: the release this CLI runs at, else its commit) |
 | `--llvm-mingw TAG` | the llvm-mingw release |
