@@ -3,6 +3,7 @@ package gamecfg
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -36,15 +37,16 @@ func TestSample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Game.Slug != "blinx2" || len(c.Targets) != 3 || len(c.Options) != 6 {
+	if c.Game.Slug != "blinx2" || len(c.Targets) != 3 || len(c.Options) != 3 {
 		t.Fatalf("decoded %+v", c)
 	}
-	scale := c.Options[1]
-	if scale.Key != "scale" || scale.DefaultValue() != "1" || scale.TOML["2"] != "2" {
+	scale := c.Options[0]
+	if scale.Key != "scale" || scale.Kind != "range" || scale.DefaultValue() != "1" || scale.TOML["2"] != "2" ||
+		!slices.Equal(scale.Choices(), []string{"1", "2", "3", "4"}) || scale.Labels["1"] == "" {
 		t.Fatalf("scale option %+v", scale)
 	}
-	if c.Options[0].Flag != "--hud-pack" || c.Options[0].DefaultValue() != "false" {
-		t.Fatalf("hud option %+v", c.Options[0])
+	if c.Options[2].Flag != "--hud-pack" || c.Options[2].DefaultValue() != "false" || c.Options[2].Hint == "" {
+		t.Fatalf("hud option %+v", c.Options[2])
 	}
 }
 
@@ -77,13 +79,61 @@ func TestRefusals(t *testing.T) {
 			o["flag"] = "--x"
 		}},
 		{"choice default", "default among", func(m map[string]any) {
-			m["options"].([]any)[1].(map[string]any)["default"] = "4"
+			m["options"] = append(m["options"].([]any), map[string]any{"key": "pace", "label": "Pace", "kind": "choice",
+				"values": []any{"a", "b"}, "default": "c", "config": "p.q", "toml": map[string]any{"a": `"a"`, "b": `"b"`}})
 		}},
 		{"bool default", "true or false", func(m map[string]any) {
 			m["options"].([]any)[2].(map[string]any)["default"] = "no"
 		}},
 		{"toml literal", "no TOML literal", func(m map[string]any) {
-			delete(m["options"].([]any)[1].(map[string]any)["toml"].(map[string]any), "3")
+			delete(m["options"].([]any)[0].(map[string]any)["toml"].(map[string]any), "3")
+		}},
+		{"link http", "hint link", func(m map[string]any) {
+			m["options"].([]any)[2].(map[string]any)["hint_link"] = map[string]any{"text": "Get", "url": "http://fonts.example/f"}
+		}},
+		{"link no host", "hint link", func(m map[string]any) {
+			m["options"].([]any)[2].(map[string]any)["hint_link"] = map[string]any{"text": "Get", "url": "https:///f"}
+		}},
+		{"link relative", "hint link", func(m map[string]any) {
+			m["options"].([]any)[2].(map[string]any)["hint_link"] = map[string]any{"text": "Get", "url": "fonts.example/f"}
+		}},
+		{"link space", "hint link", func(m map[string]any) {
+			m["options"].([]any)[2].(map[string]any)["hint_link"] = map[string]any{"text": "Get", "url": "https://a.example/a b"}
+		}},
+		{"link no text", "hint link", func(m map[string]any) {
+			m["options"].([]any)[2].(map[string]any)["hint_link"] = map[string]any{"text": " ", "url": "https://fonts.example/f"}
+		}},
+		{"range min above max", "min below max", func(m map[string]any) {
+			o := m["options"].([]any)[0].(map[string]any)
+			o["min"], o["max"] = 5, 1
+		}},
+		{"range min equals max", "min below max", func(m map[string]any) {
+			o := m["options"].([]any)[0].(map[string]any)
+			o["min"], o["max"] = 1, 1
+		}},
+		{"range no max", "min below max", func(m map[string]any) {
+			delete(m["options"].([]any)[0].(map[string]any), "max")
+		}},
+		{"range step", "step divides", func(m map[string]any) {
+			m["options"].([]any)[0].(map[string]any)["step"] = 2
+		}},
+		{"range negative step", "step divides", func(m map[string]any) {
+			m["options"].([]any)[0].(map[string]any)["step"] = -1
+		}},
+		{"range default out", "on a step", func(m map[string]any) {
+			m["options"].([]any)[0].(map[string]any)["default"] = 5
+		}},
+		{"range default fraction", "on a step", func(m map[string]any) {
+			m["options"].([]any)[0].(map[string]any)["default"] = 1.5
+		}},
+		{"range default string", "on a step", func(m map[string]any) {
+			m["options"].([]any)[0].(map[string]any)["default"] = "1"
+		}},
+		{"range label outside", "label \"9\"", func(m map[string]any) {
+			m["options"].([]any)[0].(map[string]any)["labels"].(map[string]any)["9"] = "nine"
+		}},
+		{"range keys on a bool", "only for a range", func(m map[string]any) {
+			m["options"].([]any)[1].(map[string]any)["min"] = 0
 		}},
 		{"fetch sha", "no sha256", func(m map[string]any) {
 			m["fetch"] = []any{map[string]any{"name": "x", "url": "https://e/x.zip", "dest": "third_party/x", "hosts": []any{}}}

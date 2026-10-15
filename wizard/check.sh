@@ -17,6 +17,21 @@ echo "gofmt: ok"
 go vet ./...
 echo "vet: ok"
 go test -count=1 ./...
+# The race detector catches a test or a page that touches widgets from
+# two goroutines (the log pane's timer did). It needs cgo and one of the
+# platforms Go supports it on; elsewhere it is skipped and says so.
+platform="$(go env GOOS)/$(go env GOARCH)"
+case "$platform" in
+darwin/amd64 | darwin/arm64 | linux/amd64 | linux/arm64 | windows/amd64)
+	if [ "$(go env CGO_ENABLED)" = 1 ]; then
+		go test -race -count=1 ./...
+		echo "race: ok"
+	else
+		echo "race: skipped (cgo is off)"
+	fi
+	;;
+*) echo "race: skipped (not supported on $platform)" ;;
+esac
 sc=$(command -v staticcheck || true)
 [ -n "$sc" ] || [ ! -x "$(go env GOPATH)/bin/staticcheck" ] || sc="$(go env GOPATH)/bin/staticcheck"
 if [ -n "$sc" ]; then

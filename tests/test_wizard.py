@@ -190,6 +190,107 @@ def test_manifest_wizard_needs_package():
         manifest.parse_text(text + WIZARD)
 
 
+RANGE = WIZARD.replace(
+    'kind = "choice"\nvalues = ["1", "2", "3"]\ndefault = "1"',
+    'hint = "Sharper on a big screen"\nkind = "range"\nmin = 1\nmax = 6\ndefault = 1\n'
+    'labels = { "1" = "640x480", "6" = "about 4K" }',
+)
+
+
+def test_manifest_wizard_range():
+    assert RANGE != WIZARD
+    scale = manifest.parse_text(base_text() + RANGE)["wizard"]["option"][1]
+    assert scale["kind"] == "range" and (scale["min"], scale["max"]) == (1, 6)
+    assert "step" not in scale and manifest.range_values(scale) == [1, 2, 3, 4, 5, 6]
+    assert scale["hint"] == "Sharper on a big screen"
+    stepped = RANGE.replace("max = 6\ndefault = 1", "max = 7\nstep = 2\ndefault = 3")
+    stepped = stepped.replace('"6" = "about 4K"', '"7" = "most"')
+    assert manifest.range_values(
+        manifest.parse_text(base_text() + stepped)["wizard"]["option"][1]
+    ) == [1, 3, 5, 7]
+    # The other kinds carry no range keys.
+    hud = manifest.parse_text(base_text() + RANGE)["wizard"]["option"][0]
+    assert not any(k in hud for k in manifest.RANGE_KEYS) and hud["hint"] == ""
+
+
+@pytest.mark.parametrize(
+    "old, new, error",
+    [
+        ("min = 1\nmax = 6", "min = 6\nmax = 1", r"max: above min"),
+        ("min = 1\nmax = 6", "min = 3\nmax = 3", r"max: above min"),
+        ("max = 6\n", "", r"max: required"),
+        ("max = 6\n", "max = 6\nstep = 0\n", r"step: 1 or more"),
+        ("max = 6\n", "max = 6\nstep = 2\n", r"step: 2 does not divide"),
+        ("default = 1\nlabels", "default = 7\nlabels", r"default: a whole number"),
+        ("default = 1\nlabels", "default = 0\nlabels", r"default: a whole number"),
+        ("default = 1\nlabels", 'default = "1"\nlabels', r"default: a whole number"),
+        ("default = 1\nlabels", "default = true\nlabels", r"default: a whole number"),
+        ("max = 6\n", "max = 7\nstep = 2\n", r"default: a whole number|labels: '6'"),
+        ('"6" = "about 4K"', '"9" = "too far"', r"labels: '9' is not a value"),
+        ('"6" = "about 4K"', '"x" = "not a number"', r"labels: 'x' is not a value"),
+        ('"6" = "about 4K"', '"06" = "padded"', r"labels: '06' is not a value"),
+        ("min = 1\nmax = 6", "min = 0\nmax = 10001", r"max: max - min above 10000"),
+        ("max = 6\n", "max = 6.5\n", r"max: must be a"),
+        ('kind = "range"', 'kind = "range"\nvalues = ["1", "2"]', r"values: only for kind choice"),
+    ],
+)
+def test_manifest_wizard_range_refusals(old, new, error):
+    assert old in RANGE
+    with pytest.raises(manifest.ManifestError, match=error):
+        manifest.parse_text(base_text() + RANGE.replace(old, new, 1))
+
+
+def test_manifest_wizard_range_keys_only_on_range():
+    bad = WIZARD.replace('label = "Fullscreen"', 'label = "Fullscreen"\nmin = 0')
+    with pytest.raises(manifest.ManifestError, match=r"option\[2\].min: only for kind range"):
+        manifest.parse_text(base_text() + bad)
+
+
+LINK = 'flag = "--hud-pack"\nhint_link = { text = "Get the font", url = "https://fonts.example/f" }'
+
+
+def test_manifest_wizard_hint_link():
+    text = WIZARD.replace('flag = "--hud-pack"', LINK, 1)
+    hud = manifest.parse_text(base_text() + text)["wizard"]["option"][0]
+    assert hud["hint_link"] == {"text": "Get the font", "url": "https://fonts.example/f"}
+    assert "hint_link" not in manifest.parse_text(base_text() + WIZARD)["wizard"]["option"][0]
+
+
+@pytest.mark.parametrize(
+    "link, error",
+    [
+        ('{ text = "Get", url = "http://fonts.example/f" }', r"hint_link.url: an https"),
+        ('{ text = "Get", url = "fonts.example/f" }', r"hint_link.url: an https"),
+        ('{ text = "Get", url = "https:///f" }', r"hint_link.url: an https"),
+        ('{ text = "Get", url = "https://a.example/a b" }', r"hint_link.url: an https"),
+        ('{ text = " ", url = "https://fonts.example/f" }', r"hint_link.text: words"),
+        ('{ url = "https://fonts.example/f" }', r"hint_link: exactly text and url"),
+        ('{ text = "Get", url = "https://f.example", x = "y" }', r"exactly text and url"),
+        ('{ text = "Get", url = 1 }', r"hint_link"),
+        ('{ text = "Get", url = "https://[::1" }', r"hint_link.url: an https"),
+        ('{ text = "Get", url = "https://a.example/\\u0000" }', r"hint_link.url: an https"),
+        ('{ text = "Get", url = "https://a.example/\\u007f" }', r"hint_link.url: an https"),
+    ],
+)
+def test_manifest_wizard_hint_link_refusals(link, error):
+    text = WIZARD.replace('flag = "--hud-pack"', 'flag = "--hud-pack"\nhint_link = ' + link, 1)
+    with pytest.raises(manifest.ManifestError, match=error):
+        manifest.parse_text(base_text() + text)
+
+
+def test_scaffold_wizard_example():
+    """`new`'s commented [wizard] example, uncommented, is a valid table
+    whose scale is a range."""
+    from xboxrecomp_cli import scaffold
+
+    text = scaffold.GAME_TOML
+    block = text[text.index("# [wizard]\n") :].split('"""')[0]
+    lines = [ln[2:] for ln in block.splitlines() if ln.startswith("# ")]
+    example = "\n" + "\n".join(lines).replace("@SLUG@", "blinx2") + "\n"
+    scale = manifest.parse_text(base_text() + example)["wizard"]["option"][0]
+    assert scale["kind"] == "range" and (scale["min"], scale["max"], scale["default"]) == (1, 4, 1)
+
+
 # ── wizard config ────────────────────────────────────────────────────────
 
 
@@ -615,3 +716,26 @@ def test_check_second_build_is_fresh(d, monkeypatch):
     monkeypatch.setattr(wizard_build, "build", fake_build)
     assert wizard_build.check(None, "v1") == 0
     assert calls[0] == "" and calls[1] and os.path.basename(calls[1]) == "gocache"
+
+
+def test_config_range(wgame):
+    write(os.path.join(wgame.root, "game.toml"), base_text() + RANGE)
+    cfg, _ = wizard.resolve(manifest.load(wgame.root), dev=True)
+    scale = cfg["options"][1]
+    assert scale["toml"] == {str(v): str(v) for v in range(1, 7)}
+    assert scale["labels"] == {"1": "640x480", "6": "about 4K"} and scale["default"] == 1
+    write(
+        os.path.join(wgame.root, "game.toml"),
+        base_text() + RANGE.replace('flag = "--hud-pack"', LINK, 1),
+    )
+    hud = wizard.resolve(manifest.load(wgame.root), dev=True)[0]["options"][0]
+    assert hud["hint_link"] == {"text": "Get the font", "url": "https://fonts.example/f"}
+    write(os.path.join(wgame.root, "game.toml"), base_text() + RANGE)
+    for defaults, error in (
+        (DEFAULTS.replace("scale = 1", "scale = 2"), r"render.scale is 2"),
+        (DEFAULTS.replace("scale = 1", 'scale = "1"'), r"render.scale is not a whole number"),
+        (DEFAULTS.replace("scale = 1", "scale = true"), r"render.scale is not a whole number"),
+    ):
+        write(os.path.join(wgame.root, "packaging", "config.default.toml"), defaults)
+        with pytest.raises(CliError, match=error):
+            wizard.resolve(manifest.load(wgame.root), dev=True)

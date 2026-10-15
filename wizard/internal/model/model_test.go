@@ -33,10 +33,8 @@ func TestModel(t *testing.T) {
 		{"defaults", nil, "", [][]string{{"package", "macos", "--dump", "/d/b2.iso", "--seed-config", "S", "--plain"}}},
 		{"scale 2 and fullscreen", map[string]string{"scale": "2", "fullscreen": "true"},
 			seedHead + "\n[render]\nscale = 2\n\n[present]\nfullscreen = true\n", nil},
-		{"keyboard off", map[string]string{"keyboard": "false"},
-			seedHead + "\n[input]\nkeyboard = false\n", nil},
-		{"pacing spin", map[string]string{"pacing": "spin"},
-			seedHead + "\n[present]\npacing = \"spin\"\n", nil},
+		{"scale at the range's top", map[string]string{"scale": "4"},
+			seedHead + "\n[render]\nscale = 4\n", nil},
 		{"hud pack", map[string]string{"hud_pack": "true"}, "", [][]string{
 			{"import", "/d/b2.iso"},
 			{"enhance", "hud"},

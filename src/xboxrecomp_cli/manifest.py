@@ -11,6 +11,7 @@ modules that act on one (current()).
 import os
 import re
 import tomllib
+import urllib.parse
 
 from . import SCHEMA, gitpin
 
@@ -212,12 +213,24 @@ WIZARD_FETCH = {
 WIZARD_OPTION = {
     "key": (STR, REQUIRED),
     "label": (STR, REQUIRED),
+    "hint": (STR, ""),
+    # A link after the hint ({ text, url }, https only): absent unless set.
+    "hint_link": (STRMAP, None),
     "kind": (STR, REQUIRED),
     "values": (STRS, []),
-    "default": (None, REQUIRED),  # a string for choice, a boolean for bool
+    "default": (None, REQUIRED),  # a string for choice, a boolean for bool, an int for range
     "config": (STR, ""),
     "flag": (STR, ""),
+    # kind range only: absent unless set (OPTIONAL_ENTRY).
+    "min": (INT, None),
+    "max": (INT, None),
+    "step": (INT, None),
+    "labels": (STRMAP, None),
 }
+# An entry key whose spec default is this stays absent when unset.
+OPTIONAL_ENTRY = None
+RANGE_KEYS = ("min", "max", "step", "labels")
+RANGE_SPAN_MAX = 10000  # the binary's own cap (gamecfg.go)
 WIZARD_HOSTS = ("windows", "macos", "linux")
 TARGETS = ("windows", "steamos", "macos")
 BUILD_TARGETS = ("windows", "macos")
@@ -365,7 +378,7 @@ def _entry(e, spec):
     are left for _check_wizard to name."""
     out = dict(e)
     for k, (_, default) in spec.items():
-        if k not in out and default is not REQUIRED:
+        if k not in out and default is not REQUIRED and default is not OPTIONAL_ENTRY:
             out[k] = list(default) if isinstance(default, list) else default
     return out
 
@@ -439,6 +452,10 @@ def _check_wizard(m):
         keys.add(o["key"])
         if bool(o["config"]) == bool(o["flag"]):
             errors.append("%s: exactly one of config or flag" % name)
+        if o["kind"] != "range":
+            for k in RANGE_KEYS:
+                if k in o:
+                    errors.append("%s.%s: only for kind range" % (name, k))
         if o["kind"] == "bool":
             if not isinstance(o["default"], bool):
                 errors.append("%s.default: true or false (kind bool)" % name)
@@ -451,12 +468,82 @@ def _check_wizard(m):
                 errors.append("%s.default: one of values" % name)
             if o["flag"]:
                 errors.append("%s: a flag option is kind bool (set or not)" % name)
+        elif o["kind"] == "range":
+            errors += _range_errors(name, o)
         else:
-            errors.append("%s.kind: bool or choice" % name)
+            errors.append("%s.kind: bool, choice or range" % name)
+        if "hint_link" in o:
+            errors += _hint_link_errors(name, o["hint_link"])
         if o["flag"] and not re.match(r"^--[a-z][a-z0-9-]*$", o["flag"]):
             errors.append("%s.flag: a long option, --name" % name)
         if o["config"] and not re.match(r"^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+$", o["config"]):
             errors.append("%s.config: a dotted key, table.key" % name)
+    return errors
+
+
+def _hint_link_errors(name, link):
+    """A hint link opens in the player's browser from a published binary:
+    words to show and an https address, nothing else."""
+    errors = []
+    if set(link) != {"text", "url"}:
+        errors.append("%s.hint_link: exactly text and url" % name)
+    if not link.get("text", "").strip():
+        errors.append("%s.hint_link.text: words to show" % name)
+    url = link.get("url", "")
+    try:
+        u = urllib.parse.urlsplit(url)
+        ok = u.scheme == "https" and bool(u.hostname)
+    except ValueError:  # urlsplit refuses a broken [IPv6] host
+        ok = False
+    # Whitespace and control characters: the binary's url.Parse refuses
+    # the controls, and an address is one argument to the OS's opener.
+    if not ok or re.search(r"[\s\x00-\x1f\x7f]", url):
+        errors.append("%s.hint_link.url: an https address" % name)
+    return errors
+
+
+def range_values(o):
+    """The integers a kind range option takes, min to max by step."""
+    return list(range(o["min"], o["max"] + 1, o.get("step", 1)))
+
+
+def _range_errors(name, o):
+    """A kind range option's rules: whole numbers, min below max, a step
+    that lands on max, the default and every label on a step."""
+    errors = []
+    for k in ("min", "max"):
+        if k not in o:
+            errors.append("%s.%s: required (kind range)" % (name, k))
+    if errors:
+        return errors
+    lo, hi, step = o["min"], o["max"], o.get("step", 1)
+    if lo >= hi:
+        errors.append("%s.max: above min (kind range)" % name)
+        return errors
+    if step < 1:
+        errors.append("%s.step: 1 or more" % name)
+        return errors
+    if (hi - lo) % step:
+        errors.append("%s.step: %d does not divide max - min (%d)" % (name, step, hi - lo))
+        return errors
+    # The binary refuses a wider range, and wizard config would write a
+    # TOML literal for every value.
+    if hi - lo > RANGE_SPAN_MAX:
+        errors.append("%s.max: max - min above %d" % (name, RANGE_SPAN_MAX))
+        return errors
+    vals = range_values(o)
+    d = o["default"]
+    if isinstance(d, bool) or not isinstance(d, int) or d not in vals:
+        errors.append("%s.default: a whole number from min to max, on a step" % name)
+    if o["values"]:
+        errors.append("%s.values: only for kind choice" % name)
+    if o["flag"]:
+        errors.append("%s: a flag option is kind bool (set or not)" % name)
+    for k in o.get("labels", {}):
+        # The binary compares keys as text with each value's decimal
+        # form, so "01" would never match 1.
+        if not re.match(r"^-?[0-9]+$", k) or str(int(k)) != k or int(k) not in vals:
+            errors.append("%s.labels: %r is not a value of the range" % (name, k))
     return errors
 
 

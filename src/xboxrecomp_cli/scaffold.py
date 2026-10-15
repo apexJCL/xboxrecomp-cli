@@ -125,9 +125,10 @@ game_files = "game_files"
 # [[wizard.option]]
 # key = "scale"
 # label = "Render scale"
-# kind = "choice"
-# values = ["1", "2", "3"]
-# default = "1"
+# kind = "range"
+# min = 1
+# max = 4
+# default = 1
 # config = "render.scale"
 # [[wizard.option]]
 # key = "fullscreen"

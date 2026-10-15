@@ -175,6 +175,15 @@ def problems(m, read, flags):
                         % (name, o["config"], toml_literal(like), defaults_rel)
                     )
                 out["toml"] = {"true": "true", "false": "false"}
+            elif o["kind"] == "range":
+                if isinstance(like, bool) or not isinstance(like, int):
+                    errors.append("%s.kind: %s is not a whole number" % (name, o["config"]))
+                elif like != o["default"]:
+                    errors.append(
+                        "%s.default: %s is %s in %s"
+                        % (name, o["config"], toml_literal(like), defaults_rel)
+                    )
+                out["toml"] = {str(v): str(v) for v in manifest.range_values(o)}
             else:
                 try:
                     vals = {v: _choice_value(v, like) for v in o["values"]}

@@ -18,36 +18,34 @@
   },
   "options": [
     {
-      "config": "",
-      "default": false,
-      "flag": "--hud-pack",
-      "key": "hud_pack",
-      "kind": "bool",
-      "label": "HUD texture pack (needs the PT Sans Narrow Bold font on Linux and Windows, else the atlas is upscaled)",
-      "values": []
-    },
-    {
       "config": "render.scale",
-      "default": "1",
+      "default": 1,
       "flag": "",
+      "hint": "Draws the game sharper on a big screen; needs a faster graphics card.",
       "key": "scale",
-      "kind": "choice",
-      "label": "Render scale (1 is the stock 640x480)",
+      "kind": "range",
+      "label": "Render scale",
+      "labels": {
+        "1": "640×480, as on the Xbox",
+        "2": "1280×960",
+        "3": "1920×1440",
+        "4": "2560×1920, the sharpest"
+      },
+      "max": 4,
+      "min": 1,
       "toml": {
         "1": "1",
         "2": "2",
-        "3": "3"
+        "3": "3",
+        "4": "4"
       },
-      "values": [
-        "1",
-        "2",
-        "3"
-      ]
+      "values": []
     },
     {
       "config": "present.fullscreen",
       "default": false,
       "flag": "",
+      "hint": "",
       "key": "fullscreen",
       "kind": "bool",
       "label": "Start fullscreen",
@@ -58,45 +56,17 @@
       "values": []
     },
     {
-      "config": "present.pacing",
-      "default": "sleep",
-      "flag": "",
-      "key": "pacing",
-      "kind": "choice",
-      "label": "Frame pacing (spin is steadier and uses a whole CPU core)",
-      "toml": {
-        "sleep": "\"sleep\"",
-        "spin": "\"spin\""
+      "config": "",
+      "default": false,
+      "flag": "--hud-pack",
+      "hint": "Redrawn from your own game files. On Windows and Linux it needs the free PT Sans Narrow Bold font: install it, then build.",
+      "hint_link": {
+        "text": "Get PT Sans Narrow (free, Google Fonts)",
+        "url": "https://fonts.google.com/specimen/PT+Sans+Narrow"
       },
-      "values": [
-        "sleep",
-        "spin"
-      ]
-    },
-    {
-      "config": "input.keyboard",
-      "default": true,
-      "flag": "",
-      "key": "keyboard",
+      "key": "hud_pack",
       "kind": "bool",
-      "label": "Keyboard controls player 1",
-      "toml": {
-        "false": "false",
-        "true": "true"
-      },
-      "values": []
-    },
-    {
-      "config": "input.mouse",
-      "default": true,
-      "flag": "",
-      "key": "mouse",
-      "kind": "bool",
-      "label": "Mouse controls the camera",
-      "toml": {
-        "false": "false",
-        "true": "true"
-      },
+      "label": "Sharper HUD and menus",
       "values": []
     }
   ],

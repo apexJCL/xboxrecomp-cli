@@ -230,11 +230,16 @@ clone before `package` runs.
 | Key | Default | Meaning |
 |---|---|---|
 | `key` | required | `[a-z][a-z0-9_]*`, unique. |
-| `label` | required | What the player reads. |
-| `kind` | required | `bool` (a checkbox) or `choice` (one of `values`). |
+| `label` | required | What the player reads: short and plain. |
+| `hint` | `""` | One line under the control, for a caveat (a font the option needs). |
+| `hint_link` | none | A link after the hint, `{ text = "...", url = "https://..." }`: both keys, words to show and an https address with no spaces or control characters (where to get that font). The page opens it in the browser. |
+| `kind` | required | `bool` (a checkbox), `choice` (one of `values`: radio buttons up to three, a drop-down above) or `range` (a whole number from `min` to `max`: a slider). |
 | `values` | `[]` | `choice`: two or more strings. |
-| `default` | required | `bool`: `true` or `false`; `choice`: one of `values`. |
-| `config` | `""` | A dotted key of `<package.content>/config.default.toml` (`render.scale`): the choice goes in the seed config.toml (`package --seed-config`). The default must equal that file's value, and a choice's values must read as its type. |
+| `default` | required | `bool`: `true` or `false`; `choice`: one of `values`; `range`: a whole number on a step. |
+| `min`, `max` | none | `range` only, both required: whole numbers, `min` below `max`, at most 10000 apart. |
+| `step` | `1` | `range` only: 1 or more, dividing `max - min`. |
+| `labels` | none | `range` only: a table from a value (as a string) to what it means, shown beside the slider at that value: `labels = { "1" = "640×480, as on the Xbox", "6" = "about 4K" }`. Every key is a value of the range, written plainly (`"1"`, not `"01"`). |
+| `config` | `""` | A dotted key of `<package.content>/config.default.toml` (`render.scale`): the choice goes in the seed config.toml (`package --seed-config`). The default must equal that file's value; a choice's values must read as its type, and a range's key must be a whole number there. |
 | `flag` | `""` | A switch of `package` (`--hud-pack`), passed when the box is ticked. Only `kind = "bool"`. |
 
 Each option has exactly one of `config` and `flag`. `wizard config` checks

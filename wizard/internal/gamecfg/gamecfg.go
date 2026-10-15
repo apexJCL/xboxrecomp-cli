@@ -9,9 +9,12 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"math"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -81,14 +84,37 @@ func LocalDest(dest string) bool {
 // Option is one [[wizard.option]]: a package flag (Flag) or a config.toml
 // key (Config, with each value's TOML literal in TOML).
 type Option struct {
-	Key     string            `json:"key"`
-	Label   string            `json:"label"`
-	Kind    string            `json:"kind"`
-	Values  []string          `json:"values"`
-	Default any               `json:"default"`
-	Config  string            `json:"config"`
-	Flag    string            `json:"flag"`
-	TOML    map[string]string `json:"toml,omitempty"`
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Hint  string `json:"hint,omitempty"`
+	// HintLink follows the hint: words and an https address, which the
+	// page opens in the browser.
+	HintLink *Link             `json:"hint_link,omitempty"`
+	Kind     string            `json:"kind"`
+	Values   []string          `json:"values"`
+	Default  any               `json:"default"`
+	Config   string            `json:"config"`
+	Flag     string            `json:"flag"`
+	TOML     map[string]string `json:"toml,omitempty"`
+	// Kind range only: whole numbers from Min to Max by Step (1 when
+	// unset), and what some of them mean.
+	Min    *int              `json:"min,omitempty"`
+	Max    *int              `json:"max,omitempty"`
+	Step   int               `json:"step,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// Link is an option's hint link.
+type Link struct {
+	Text string `json:"text"`
+	URL  string `json:"url"`
+}
+
+// httpsURL is an absolute https address with a host and no spaces.
+func httpsURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.Hostname() != "" &&
+		!strings.ContainsAny(s, " \t\r\n")
 }
 
 type Config struct {
@@ -104,21 +130,46 @@ type Config struct {
 }
 
 // DefaultValue is the option's default as the model keeps every value:
-// "true"/"false" for a bool, the value itself for a choice.
+// "true"/"false" for a bool, the value itself for a choice, the number in
+// decimal for a range.
 func (o Option) DefaultValue() string {
 	switch v := o.Default.(type) {
 	case bool:
 		return fmt.Sprint(v)
 	case string:
 		return v
+	case float64: // JSON's number
+		if v == math.Trunc(v) {
+			return strconv.Itoa(int(v))
+		}
 	}
 	return ""
 }
 
+func isNumber(v any) bool { _, ok := v.(float64); return ok }
+
+// RangeStep is a range's step: 1 when the config leaves it out.
+func (o Option) RangeStep() int {
+	if o.Step == 0 {
+		return 1
+	}
+	return o.Step
+}
+
 // Choices are the values an option takes, in the screen's order.
 func (o Option) Choices() []string {
-	if o.Kind == "bool" {
+	switch o.Kind {
+	case "bool":
 		return []string{"false", "true"}
+	case "range":
+		if o.Min == nil || o.Max == nil || o.RangeStep() < 1 || *o.Max-*o.Min > 10000 {
+			return nil
+		}
+		var out []string
+		for v := *o.Min; v <= *o.Max; v += o.RangeStep() {
+			out = append(out, strconv.Itoa(v))
+		}
+		return out
 	}
 	return o.Values
 }
@@ -219,6 +270,12 @@ func (c *Config) Validate() error {
 		if o.Flag != "" && (!flagRE.MatchString(o.Flag) || o.Kind != "bool") {
 			bad("%s: a flag option is a bool with a --name flag", where)
 		}
+		if o.Kind != "range" && (o.Min != nil || o.Max != nil || o.Step != 0 || len(o.Labels) > 0) {
+			bad("%s: min, max, step and labels are only for a range", where)
+		}
+		if l := o.HintLink; l != nil && (strings.TrimSpace(l.Text) == "" || !httpsURL(l.URL)) {
+			bad("%s: a hint link has words and an https address", where)
+		}
 		switch o.Kind {
 		case "bool":
 			if _, ok := o.Default.(bool); !ok {
@@ -229,8 +286,24 @@ func (c *Config) Validate() error {
 			if len(o.Values) < 2 || !ok || !slices.Contains(o.Values, d) {
 				bad("%s: a choice has two or more values and its default among them", where)
 			}
+		case "range":
+			switch {
+			case o.Min == nil || o.Max == nil || *o.Min >= *o.Max:
+				bad("%s: a range needs min below max", where)
+			case o.Step < 0 || (*o.Max-*o.Min)%o.RangeStep() != 0:
+				bad("%s: a range's step divides max - min", where)
+			case *o.Max-*o.Min > 10000:
+				bad("%s: a range of more than 10000 values", where)
+			case !isNumber(o.Default) || !slices.Contains(o.Choices(), o.DefaultValue()):
+				bad("%s: a range's default is a whole number from min to max, on a step", where)
+			}
+			for v := range o.Labels {
+				if !slices.Contains(o.Choices(), v) {
+					bad("%s: label %q is not a value of the range", where, v)
+				}
+			}
 		default:
-			bad("%s: kind %q is not bool or choice", where, o.Kind)
+			bad("%s: kind %q is not bool, choice or range", where, o.Kind)
 		}
 		if o.Config != "" {
 			for _, v := range o.Choices() {

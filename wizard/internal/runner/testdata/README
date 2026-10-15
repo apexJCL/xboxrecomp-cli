@@ -1,0 +1,1 @@
+doctor.json: a real `doctor --json` of a fresh tree on a Mac. doctor-blocked.json: doctor.json edited by hand (the makensis line and the windows and macos blockers) for a Mac where Homebrew lacks sdl3, libepoxy and makensis.

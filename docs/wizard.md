@@ -15,19 +15,44 @@ A game without the table has no wizard.
 
 ## What the player sees
 
-1. **Welcome**: the game and the release, the install folder (per OS,
-   changeable), and a newer-release note when the release repo has one.
+1. **Welcome**: what the wizard does and what it never does (no game
+   inside, downloads by checksum, sends nothing), the install folder (per
+   OS, changeable), and a box for the newer-release check. The check goes
+   out only when the player leaves this page with the box ticked, so
+   nothing is sent before they have seen it; a newer release shows as a
+   note then.
 2. **Checks**: uv (downloaded by sha256 when missing or older than 0.5.31),
    git (MinGit on Windows; the Command Line Tools on macOS, with Homebrew's
    installer offered for the libraries; the distribution's package hint on
    Linux), 15 GB free, then the clone at the tag and `<game> doctor --json`.
-   A target `doctor` reports blockers for is shown with them.
+   The page is just the list of what the build depends on (build tools,
+   game source, one row per target), with no sentence above it. The game
+   files are the next page's, and the host's own lines (host, gen/, next)
+   are information; both appear only in the raw log. The host's limits
+   reach the page as each target's blockers, and a failed setup (no git,
+   too little disk) as one "Getting ready" row. Each row leads with an
+   icon for what it is about: a platform row has a small original glyph
+   for its kind of computer (a window, a laptop, a handheld; a monitor for
+   a target the wizard does not know), not a vendor logo. The state's icon
+   and colour sit with the status (green ready, amber needs something, red
+   failed; darker shades on a light background). Each row opens to a plain explanation, its fix button and the CLI's own lines; a
+   target `doctor` reports blockers for says what it needs there. The full
+   output is in a collapsible log pane, whose last line turns red when the
+   checks stop.
 3. **Dump**: the disc image or folder (a file dialog, or typed).
-4. **Target**: the targets `[wizard] targets` offers that this host can
+4. **Target**: one choice per platform, each with its glyph, for the
+   targets `[wizard] targets` offers that this host can
    package (Windows and macOS natively; SteamOS on Linux, a Steam Deck
    included).
-5. **Options**: one control per `[[wizard.option]]`.
-6. **Summary**: every command the build will run.
+5. **Options**: one control per `[[wizard.option]]`: a checkbox for a
+   bool, radio buttons for a choice of up to three values and a drop-down
+   for more, a slider for a range with its value and label beside it,
+   and the option's hint and hint link under it. A note at the foot names the chosen
+   platform's `config.toml` (its data folder plus `config/config.toml`)
+   for the settings the page leaves out.
+6. **Summary**: the game, folder, target and changed options; under
+   "Technical details", the wizard, release, CLI and toolkit versions and
+   every command the build will run.
 7. **Build**: the CLI's own `--plain` output with a progress bar; Cancel
    stops the whole process tree.
 8. **Done**: the bundle's folder, and the target's install step.
@@ -135,7 +160,8 @@ A moved player pin reaches players with the next wizard build.
 
 `<game> wizard check [--tag TAG | --dev] [--no-build]` runs
 `wizard/check.sh` on the pinned Go (`gofmt -l` empty, `go vet`, `go test`,
-`staticcheck` when installed), then builds every asset twice and compares
+`go test -race` where the host supports it, `staticcheck` when installed),
+then builds every asset twice and compares
 the sha256s of the archives and the binaries. The second build shares no
 compiled output with the first: an empty `GOCACHE`, and the Linux asset
 with `docker build --no-cache` and an empty `GOCACHE` inside (the builder
