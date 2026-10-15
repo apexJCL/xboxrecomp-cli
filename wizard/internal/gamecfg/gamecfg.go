@@ -89,7 +89,11 @@ type Option struct {
 	Hint  string `json:"hint,omitempty"`
 	// HintLink follows the hint: words and an https address, which the
 	// page opens in the browser.
-	HintLink *Link             `json:"hint_link,omitempty"`
+	HintLink *Link `json:"hint_link,omitempty"`
+	// FontHint follows the hint only while the game's font is not
+	// installed, or the wizard cannot tell; with it set, HintLink shows
+	// under the same rule (`wizard font --json`).
+	FontHint string            `json:"font_hint,omitempty"`
 	Kind     string            `json:"kind"`
 	Values   []string          `json:"values"`
 	Default  any               `json:"default"`
@@ -117,6 +121,25 @@ func httpsURL(s string) bool {
 		!strings.ContainsAny(s, " \t\r\n")
 }
 
+// Credit is one open-source project the wizard credits: the CLI's list,
+// the game's own entries first (docs/wizard.md, Credits).
+type Credit struct {
+	Name    string `json:"name"`
+	Role    string `json:"role"`
+	License string `json:"license"`
+	URL     string `json:"url"`
+}
+
+// FallbackCredits is the list for a config from a CLI older than the
+// credits key: the wizard's own projects, so it still credits them.
+var FallbackCredits = []Credit{
+	{"xboxrecomp-cli", "this build wizard and the CLI that runs the build", "MIT", "https://github.com/apexJCL/xboxrecomp-cli"},
+	{"Go", "the wizard's language and runtime", "BSD-3-Clause", "https://github.com/golang/go"},
+	{"Fyne", "the wizard's window toolkit", "BSD-3-Clause", "https://github.com/fyne-io/fyne"},
+	{"zenity", "the wizard's file dialogs", "MIT", "https://github.com/ncruces/zenity"},
+	{"Tabler Icons", "the wizard's icons", "MIT", "https://github.com/tabler/tabler-icons"},
+}
+
 type Config struct {
 	Schema  int               `json:"schema"`
 	Game    Game              `json:"game"`
@@ -127,6 +150,17 @@ type Config struct {
 	Data    map[string]string `json:"data"`
 	Fetch   []Fetch           `json:"fetch"`
 	Options []Option          `json:"options"`
+	// Credits is absent from a CLI older than the key: CreditList.
+	Credits []Credit `json:"credits,omitempty"`
+}
+
+// CreditList is what the wizard credits: the config's list, or
+// FallbackCredits when the CLI that wrote the config had none.
+func (c *Config) CreditList() []Credit {
+	if c.Credits == nil {
+		return FallbackCredits
+	}
+	return c.Credits
 }
 
 // DefaultValue is the option's default as the model keeps every value:
@@ -255,6 +289,11 @@ func (c *Config) Validate() error {
 			if !slices.Contains(Hosts, h) {
 				bad("%s: host %q is not one of %s", where, h, strings.Join(Hosts, ", "))
 			}
+		}
+	}
+	for i, cr := range c.Credits {
+		if strings.TrimSpace(cr.Name) == "" || !httpsURL(cr.URL) {
+			bad("credits[%d] (%s): a credit has a name and an https address", i, cr.Name)
 		}
 	}
 	seen := map[string]bool{}

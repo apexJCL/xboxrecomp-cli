@@ -21,7 +21,8 @@ A game without the table has no wizard.
    newer-release check. The check goes
    out only when the player leaves this page with the box ticked, so
    nothing is sent before they have seen it; a newer release shows as a
-   note then.
+   note then. Right under the intro, "Made with these open-source
+   projects" lists the credits (see Credits below).
 2. **Checks**: uv (downloaded by sha256 when missing or older than 0.5.31),
    git (MinGit on Windows; the Command Line Tools on macOS, with Homebrew's
    installer offered for the libraries; the distribution's package hint on
@@ -51,27 +52,55 @@ A game without the table has no wizard.
 5. **Options**: one control per `[[wizard.option]]`: a checkbox for a
    bool, radio buttons for a choice of up to three values and a drop-down
    for more, a slider for a range with its value and label beside it,
-   and the option's hint and hint link under it. A note at the foot names the chosen
-   platform's `config.toml` (its data folder plus `config/config.toml`)
-   for the settings the page leaves out.
+   and the option's hint and hint link under it. A link ends in an
+   external-link glyph (Tabler, in the link's colour), which says the
+   browser opens; the glyph is tappable too but takes no focus, so the
+   link's words stay the one control. An option with `font_hint` asks
+   `<game> wizard font --json` each time the page opens: while the
+   game's font is missing, or the wizard cannot tell (no checks yet, a
+   CLI pinned before the command), the sentence and the link show; once
+   found they give way to "<font> is installed." in the success colour.
+   A note at the foot names the chosen platform's `config.toml` (its
+   data folder plus `config/config.toml`) for the settings the page
+   leaves out.
 6. **Summary**: the game, the two folders, target and changed options; under
    "Technical details", the wizard, release, CLI and toolkit versions and
    every command the build will run.
-7. **Build**: the CLI's own `--plain` output with a progress bar, the
-   percentage and two clocks ("4:12 in this part · 12:40 in all") that
-   tick every second. While the build runs a sheen sweeps the bar's
-   filled part, so a step that prints nothing for minutes still shows it
-   is running; the collapsed log line shows the CLI's heartbeat (the
-   step's time and the tool's latest line, every 20 s of silence). Cancel
-   stops the whole process tree.
+7. **Build**: a checklist of the build's parts, in order. The wizard
+   knows its own commands (each prerequisite, such as `import` and
+   `enhance hud`, then `package`); `package`'s row reads "Build the
+   game" until its `plan:` line names the stages, which then take its
+   place (an open log stays open on the first stage). A stage the plan
+   did not name gets a row when it starts, one jumped over reads "not
+   needed", and with no plan line the row becomes the first stage that
+   starts, or stands for the whole command when none does. Each row has a glyph for its kind, the
+   part in the player's words ("Translate the game's code" for
+   `generate`), and its state as a glyph, a colour and words: waiting,
+   running (a spinner, the CLI's step, its percentage or `[i/n]`, and
+   the part's clock), done, failed or stopped with its time, not
+   needed, or not run after a stop. The running row has a thin bar
+   that pulses while its step prints no percentage. "Log" opens a
+   row's own lines in place, selectable, with Copy; a failed row opens
+   by itself with what it said. Above the rows, "Part 3 of 6 · 42% ·
+   12:40 in all" and the overall bar tick every second; below them the
+   Details pane still holds every line of the build together, with the
+   CLI's heartbeat on its collapsed line. Cancel asks first ("Are you
+   sure?", "Go back" or a red "Cancel Build", no default button; the
+   dialog is 420 wide, narrower in a narrower window, and follows a
+   resize), then stops the whole process tree. The next build reuses most of what
+   finished: the dump, the tools, a finished `gen/` and every compiled
+   object; the HUD pack and the staging are redone, and an interrupted
+   recomp starts over.
 8. **Done**: the bundle, "Open the folder", and the target's install step
    ("Install now" on the host's own target: the Windows setup program,
    the `.dmg`, or `install.sh` in a terminal). When the build fails: the
-   part that stopped, what the build said (its last lines, from the
-   Python traceback when there is one, in a box that can be selected and
-   copied), the exit status, where the full logs are, and Retry; the same
-   goes to `wizard.log` in the settings folder. A cancelled build says the
-   player stopped it. Every outcome ends with the notice that the bundle
+   part that stopped, the checklist as it ended with the failed row open
+   on what it said (its last lines, from the Python traceback when there
+   is one, in a box that can be selected and copied), the exit status,
+   where the full logs are, and Retry ("Retry runs the build again and
+   reuses most of what already finished."); the same goes to `wizard.log` in
+   the settings folder. A cancelled build says the player stopped it and
+   shows the checklist. Every outcome ends with the notice that the bundle
    is for the player's own computers only.
 
 The chosen config options are written as a small `config.toml` (the seed)
@@ -88,6 +117,45 @@ script (`packaging/macos/<App>.in`, which `package macos` puts in the app)
 must copy `Resources/config.seed.toml` the same way. BLiNX 2's
 `packaging/macos/BLiNX2.in` is the model; a CLI template for that launcher
 is a follow-up.
+
+## Credits
+
+The wizard credits the open-source projects it and the build rely on.
+On Welcome the list sits right under the intro, so everyone is credited
+before the player does anything: one line per project, its name as a
+link with its role and licence dimmed beside it (cut short in a narrow
+window), in a box about eight rows tall that scrolls. On every other page
+an info button (Tabler's `info-circle`, low importance) at the right end
+of the header line, after the step counter, opens the same list as
+"Open-source credits": two lines per project there, the name as a link
+over its role and licence, then "NOTICES.txt, which came with the wizard,
+holds each licence's full text." The dialog is 560 by 520, smaller in a
+smaller window, and follows a resize. Welcome hides the button, since the
+list is already on the page. Each link opens in the browser.
+
+The CLI owns the list and its order (`credits.py`), and `wizard config`
+puts it in the config as `credits`. Our repos come first, then the
+third-party projects:
+
+1. the game's own repository (or repositories): its `[[wizard.credit]]`
+   entries with `own = true`, in `game.toml`'s order;
+2. xboxrecomp-cli, the toolkit fork and the toolkit's upstream;
+3. the game's other `[[wizard.credit]]` entries (anything only the game
+   uses, such as a font), in `game.toml`'s order. They lead the
+   third-party projects rather than being sorted into them: the CLI's
+   list is grouped by what uses each project, and a game's extra
+   belongs to none of its groups;
+4. the third-party projects the wizard and the build use directly: Go,
+   Fyne, zenity, Tabler Icons; xemu, SDL, OpenSSL, libepoxy (in the
+   game); Python, uv, Git, Homebrew, CMake, Ninja, llvm-mingw, NSIS,
+   Capstone, pefile, umu-launcher (the build's tools).
+
+A game that lists nothing gets the generic order, xboxrecomp-cli first.
+A url is listed once, where it first comes in that order, so an entry
+the game repeats is shown as the game wrote it. Transitive dependencies are not listed; their licences are in
+NOTICES.txt. A config from a CLI older than the key has no `credits`, and
+the wizard then shows its own short list (xboxrecomp-cli, Go, Fyne,
+zenity, Tabler Icons).
 
 ## The build folder and the output folder
 
@@ -135,7 +203,8 @@ comes from `<game> wizard config --json --dev`) or `--config FILE`.
 `<game> wizard config --json [--tag TAG | --dev]` prints what the binary
 embeds: the game's names, the release (repo, tag, commit), the `[cli]` and
 `[toolkit]` pins, the targets, the data folders, `[[wizard.fetch]]`, and
-the options, each config option with the TOML literal of every value. It
+the options, each config option with the TOML literal of every value,
+and the credits (see Credits). It
 is read from the tag's tree (`git show TAG:game.toml`), never the working
 tree: the binary clones that tag, so its options must be the tag's. The
 checks, on top of `game.toml`'s own ([manifest.md](manifest.md#wizard)):
@@ -160,8 +229,23 @@ to `dist/wizard/`:
 |---|---|---|
 | `<slug>-wizard-<tag>-macos.zip` | macOS | `go build` for arm64 and amd64, `lipo`, `fyne package` (the app bundle, its `.icns` from `Icon.png`), a zip with fixed dates |
 | `<slug>-wizard-<tag>-windows-x64.zip` | macOS or Linux | `go build` with llvm-mingw's clang (`-H windowsgui`) and the icon as a resource (`llvm-windres` into `cmd/wizard/rsrc_windows_amd64.syso`), a zip with fixed dates |
-| `<slug>-wizard-<tag>-linux-x64.tar.gz` | any host with Docker | `docker build --output` from `wizard/linux/Dockerfile` on the pinned builder image; no bind mounts. The tar holds the binary, `<slug>-wizard.png` and `<slug>-wizard.desktop` |
+| `<slug>-wizard-<tag>-linux-x64.tar.gz` | any host with Docker | `docker build --output` from `wizard/linux/Dockerfile` on the pinned builder image; no bind mounts. The tar holds the binary, `<slug>-wizard.png`, `<slug>-wizard.desktop` and `NOTICES.txt` |
 | `SHA256SUMS` | | the archives |
+
+Every archive carries `NOTICES.txt` (in the macOS app, under
+`Contents/Resources/`): the wizard's MIT licence, then the licence of
+everything its binaries contain, as published: the Go standard library,
+the Tabler glyphs (`LICENSES/tabler-icons-MIT.txt`), the MinGW-w64
+runtime that llvm-mingw links into the Windows program
+(`wizard/notices/mingw-w64-runtime.txt`, a copy from the pinned
+llvm-mingw that the Windows build checks it still matches) and each Go module that
+any of the three binaries links (`go list -deps` for each target), Fyne's
+font licences and GLFW's C sources included. The build gathers the files
+from the module cache: the licence files at each module's root, and those
+in each linked package's folder and in its folders that are no package of
+their own, with every text in a REUSE-style `LICENSES/` folder at either
+place. A linked module with no licence file stops the build. The file
+is the same in all three archives and between two builds.
 
 The module is staged into `<out>/.work/src` with the config in
 `internal/gamecfg/config.json`; the CLI's checkout is never written. Every

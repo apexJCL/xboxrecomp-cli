@@ -170,7 +170,7 @@ head for each `[cli]` and `[toolkit]` pin. Needs the network.
 and MinGit releases (the player's downloads, by sha256); the build's own
 pins move by hand ([wizard.md](wizard.md#the-pins)).
 
-### `mygame wizard <config|build|check>`
+### `mygame wizard <config|build|check|font>`
 
 The player's build wizard for a release tag ([wizard.md](wizard.md)).
 Needs `[wizard]` in `game.toml` and a CLI checkout (the bootstrap's).
@@ -180,6 +180,7 @@ Needs `[wizard]` in `game.toml` and a CLI checkout (the bootstrap's).
 | `config --json` | print the config the binary embeds, read from the tag's tree |
 | `build` | the macOS, Windows and Linux assets and `SHA256SUMS` in `dist/wizard/` |
 | `check` | the Go module's gates, then two builds with equal sha256s |
+| `font [--json]` | whether `[enhance.hud] font` is installed here, by `enhance hud`'s own lookup: `{"font", "found", "path"}` with `--json`; the wizard's `font_hint` reads it |
 
 | Option | Effect |
 |---|---|
@@ -188,6 +189,7 @@ Needs `[wizard]` in `game.toml` and a CLI checkout (the bootstrap's).
 | `--only LIST` | `build`: a comma-separated subset of `macos,windows,linux` |
 | `--out DIR` | `build`: the output folder (default `dist/wizard/`) |
 | `--no-build` | `check`: the gates only |
+| `--name NAME` | `font`: look for this full name instead (to try the missing case) |
 
 ### `xbr new DIR`
 

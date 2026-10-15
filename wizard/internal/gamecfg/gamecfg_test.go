@@ -48,6 +48,41 @@ func TestSample(t *testing.T) {
 	if c.Options[2].Flag != "--hud-pack" || c.Options[2].DefaultValue() != "false" || c.Options[2].Hint == "" {
 		t.Fatalf("hud option %+v", c.Options[2])
 	}
+	// The font sentence and its link wait for the font; the other options
+	// have no font_hint.
+	if !strings.Contains(c.Options[2].FontHint, "PT Sans Narrow Bold") || c.Options[2].HintLink == nil ||
+		c.Options[0].FontHint != "" {
+		t.Fatalf("font hint: %+v", c.Options)
+	}
+}
+
+func TestCredits(t *testing.T) {
+	c, err := parse(t, sample(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Our repos (the game's own, then the CLI's), then the third party,
+	// the game's font first: the CLI's order.
+	got := c.CreditList()
+	if len(got) < 5 || got[0].Name != "blinx2-recomp" || got[1].Name != "xboxrecomp-cli" ||
+		got[4].Name != "PT Sans Narrow" ||
+		got[0].License != "MIT" || !strings.HasPrefix(got[4].URL, "https://") {
+		t.Fatalf("credits %+v", got)
+	}
+	// A CLI older than the key: the wizard's own projects.
+	m := sample(t)
+	delete(m, "credits")
+	if c, err = parse(t, m); err != nil || !slices.Equal(c.CreditList(), FallbackCredits) {
+		t.Fatalf("fallback: %v %+v", err, c)
+	}
+	for _, f := range FallbackCredits {
+		if f.Name == "" || f.Role == "" || f.License == "" || !httpsURL(f.URL) {
+			t.Fatalf("fallback entry %+v", f)
+		}
+	}
+	if FallbackCredits[0].Name != "xboxrecomp-cli" {
+		t.Fatalf("the generic list starts with the CLI: %+v", FallbackCredits[0])
+	}
 }
 
 func TestPlaceholderIsEmpty(t *testing.T) {
@@ -134,6 +169,12 @@ func TestRefusals(t *testing.T) {
 		}},
 		{"range keys on a bool", "only for a range", func(m map[string]any) {
 			m["options"].([]any)[1].(map[string]any)["min"] = 0
+		}},
+		{"credit http", "https address", func(m map[string]any) {
+			m["credits"].([]any)[1].(map[string]any)["url"] = "http://fonts.example/f"
+		}},
+		{"credit no name", "https address", func(m map[string]any) {
+			m["credits"].([]any)[0].(map[string]any)["name"] = " "
 		}},
 		{"fetch sha", "no sha256", func(m map[string]any) {
 			m["fetch"] = []any{map[string]any{"name": "x", "url": "https://e/x.zip", "dest": "third_party/x", "hosts": []any{}}}

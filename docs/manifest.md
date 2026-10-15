@@ -231,7 +231,8 @@ clone before `package` runs.
 |---|---|---|
 | `key` | required | `[a-z][a-z0-9_]*`, unique. |
 | `label` | required | What the player reads: short and plain. |
-| `hint` | `""` | One line under the control, for a caveat (a font the option needs). |
+| `hint` | `""` | One line under the control, for a caveat that always holds. |
+| `font_hint` | `""` | Words after the hint shown only while the game's font (`[enhance.hud] font`) is not installed on the player's computer, or the wizard cannot tell (`wizard font`); with it set, `hint_link` follows the same rule. Needs `[enhance.hud] font`. |
 | `hint_link` | none | A link after the hint, `{ text = "...", url = "https://..." }`: both keys, words to show and an https address with no spaces or control characters (where to get that font). The page opens it in the browser. |
 | `kind` | required | `bool` (a checkbox), `choice` (one of `values`: radio buttons up to three, a drop-down above) or `range` (a whole number from `min` to `max`: a slider). |
 | `values` | `[]` | `choice`: two or more strings. |
@@ -244,6 +245,20 @@ clone before `package` runs.
 
 Each option has exactly one of `config` and `flag`. `wizard config` checks
 the icon, the config keys and the flags against the tag's tree.
+
+`[[wizard.credit]]`: the game's own open-source credits
+([wizard.md](wizard.md#credits)). Entries with `own = true` (the game's
+repository) come first, before the CLI's own repos; the others (anything
+only the game uses, such as a font) lead the third-party projects. No
+two entries share a url.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name` | required | The project's name, the link's words. |
+| `role` | required | What it does for this game, in a few plain words. |
+| `license` | required | An SPDX licence expression (`MIT`, `OFL-1.1`, `MIT OR Apache-2.0`). |
+| `url` | required | Its page, `https://` with no spaces or control characters: the GitHub page when there is one. |
+| `own` | `false` | `true` for the game's own repository: listed with our repos, first. |
 
 ## [enhance.hud]
 

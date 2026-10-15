@@ -297,3 +297,35 @@ func TestScanLines(t *testing.T) {
 		t.Errorf("\\r before more data: %d %q", n, tok)
 	}
 }
+
+// wizard font --json: the report, a stray line before it, and the
+// failures the Options page reads as "cannot tell".
+func TestFont(t *testing.T) {
+	f, err := ParseFont([]byte("uv: resolved\n{\"font\": \"PT Sans Narrow Bold\", \"found\": true, \"path\": \"/f.ttc\"}\n"))
+	if err != nil || !f.Found || f.Font != "PT Sans Narrow Bold" || f.Path != "/f.ttc" {
+		t.Fatalf("%+v %v", f, err)
+	}
+	if f, err := ParseFont([]byte(`{"font": "X", "found": false, "path": null}`)); err != nil || f.Found || f.Path != "" {
+		t.Fatalf("missing: %+v %v", f, err)
+	}
+	for _, bad := range []string{"", "usage: blinx2 wizard {config,build,check}", `{"font": "", "found": false, "path": null}`} {
+		if _, err := ParseFont([]byte(bad)); err == nil {
+			t.Errorf("%q parsed", bad)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		return // the fake uv is a shell script
+	}
+	dir := t.TempDir()
+	uv := filepath.Join(dir, "uv")
+	// A CLI pinned before the command: argparse refuses it with exit 2.
+	os.WriteFile(uv, []byte("#!/bin/sh\necho \"invalid choice: 'font'\" >&2\nexit 2\n"), 0o755)
+	r := Runner{UV: uv, Game: dir, Slug: "xgame", Env: Environ(os.Environ(), "")}
+	if _, err := r.Font(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "invalid choice") {
+		t.Fatalf("an old CLI: %v", err)
+	}
+	os.WriteFile(uv, []byte("#!/bin/sh\necho '{\"font\": \"F\", \"found\": true, \"path\": \"/x\"}'\n"), 0o755)
+	if f, err := r.Font(context.Background(), nil); err != nil || !f.Found {
+		t.Fatalf("%+v %v", f, err)
+	}
+}

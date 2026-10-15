@@ -83,13 +83,3 @@ func fmtClock(d time.Duration) string {
 	}
 	return fmt.Sprintf("%d:%02d", s/60, s%60)
 }
-
-// buildClockText is the clocks beside the step label: the bar's
-// percentage once it moved, the part's time and the whole build's.
-func buildClockText(frac float64, part, all time.Duration) string {
-	s := fmt.Sprintf(buildClock, fmtClock(part), fmtClock(all))
-	if frac > 0 {
-		s = fmt.Sprintf(buildClockPct, int(frac*100)) + s
-	}
-	return s
-}

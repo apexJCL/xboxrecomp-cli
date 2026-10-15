@@ -7,6 +7,10 @@ Mac (or the game's workflow), every input pinned in wizard/pins.json.
                                         builder image, docker build --output)
   SHA256SUMS
 
+Each archive also carries NOTICES.txt: the licences of the wizard and of
+everything its binaries link or embed (the Go standard library, the Go
+modules, Fyne's fonts, the Tabler glyphs), gathered from the module cache.
+
 Go is the official tarball by sha256 under wizard/.tools/ (or $WIZARD_GO),
 run with GOTOOLCHAIN=local. The module is staged into the output's work
 folder with the generated config.json, so the CLI checkout is never
@@ -229,6 +233,159 @@ def desktop_entry(game, name):
     )
 
 
+NOTICES = "NOTICES.txt"
+# What a module ships for its users: licence, copying and patent files.
+LICENSE_FILE = re.compile(r"^(licen[cs]e|copying|notice|patents)", re.I)
+# A REUSE-style folder of licence texts, one file per SPDX id
+# (LICENSES/MIT.txt): every file in it is a licence.
+LICENSES_DIR = re.compile(r"^licen[cs]es$", re.I)
+# The MinGW-w64 runtime's notices: llvm-mingw links its startup code and
+# CRT helpers into the Windows exe statically, and parts of it ask for
+# their notices with a binary. A copy from the pinned llvm-mingw, so the
+# three archives' NOTICES.txt stays one file; the Windows build checks it
+# still matches (mingw_notice). compiler-rt's builtins are Apache-2.0 WITH
+# LLVM-exception, which asks for no notice in a compiled program, and
+# nothing links libunwind, libc++ or winpthreads (no C++).
+MINGW_NOTICE = os.path.join("notices", "mingw-w64-runtime.txt")
+MINGW_RUNTIME = os.path.join(
+    "x86_64-w64-mingw32", "share", "mingw32", "COPYING.MinGW-w64-runtime.txt"
+)
+# Folders under a package that nothing in the binary comes from.
+NOT_LINKED = {"testdata", "cmd", "example", "examples", "doc", "docs", "test"}
+# Every binary the build makes: a module any of them links is in NOTICES.txt,
+# so the three archives carry the same file.
+NOTICE_TARGETS = (
+    ("darwin", "arm64"),
+    ("darwin", "amd64"),
+    ("windows", "amd64"),
+    ("linux", "amd64"),
+)
+
+
+def linked_cmd(go):
+    """Each package the wizard links, outside the module itself: its
+    module@version, the module's folder and the package's folder."""
+    f = "{{with .Module}}{{if not .Main}}{{.Path}}@{{.Version}}\t{{.Dir}}\t{{$.Dir}}{{end}}{{end}}"
+    return [go, "list", "-deps", "-f", f, "./cmd/wizard"]
+
+
+def linked_modules(go, env, mod):
+    """{module@version: (module folder, {package folders})} over every
+    target. go list only reads the sources, so no C compiler is needed."""
+    out = {}
+    for goos, arch in NOTICE_TARGETS:
+        e = dict(env, CGO_ENABLED="1", GOOS=goos, GOARCH=arch)
+        r = subprocess.run(linked_cmd(go), env=e, cwd=mod, capture_output=True)
+        if r.returncode != 0:
+            raise CliError("go list (%s/%s) failed: %s" % (goos, arch, r.stderr.decode()[-400:]))
+        for line in r.stdout.decode().splitlines():
+            name, mdir, pdir = line.split("\t")
+            out.setdefault(name, (mdir, set()))[1].add(pdir)
+    return out
+
+
+def _texts(p):
+    return [os.path.join(p, f) for f in sorted(os.listdir(p)) if os.path.isfile(os.path.join(p, f))]
+
+
+def reuse_files(d):
+    """The licence texts in d's REUSE-style LICENSES folder, if any."""
+    out = []
+    for n in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        if LICENSES_DIR.match(n) and os.path.isdir(os.path.join(d, n)):
+            out += _texts(os.path.join(d, n))
+    return out
+
+
+def license_files(d, top=True):
+    """The licence files in a package's folder and in its folders that are
+    no package of their own: the C sources and fonts it builds in (GLFW's
+    zlib licence, Fyne's font licences) keep theirs there."""
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return []
+    if not top and any(n.endswith(".go") for n in names):
+        return []
+    out = []
+    for n in names:
+        p = os.path.join(d, n)
+        if os.path.isdir(p):
+            if LICENSES_DIR.match(n):
+                out += _texts(p)
+            elif n not in NOT_LINKED:
+                out += license_files(p, False)
+        elif LICENSE_FILE.match(n):
+            out.append(p)
+    return out
+
+
+def notice_sections(cli_root, goroot, modules):
+    """(title, file) in NOTICES.txt's order: the wizard's own licence, the
+    Go standard library, the Tabler glyphs the module embeds, then each
+    linked module. A module without a licence file stops the build: its
+    notice cannot be shipped."""
+    with open(os.path.join(goroot, "VERSION")) as f:
+        gov = f.readline().strip()
+    secs = [
+        ("The wizard (xboxrecomp-cli)", os.path.join(cli_root, "LICENSE")),
+        ("Go standard library (%s): LICENSE" % gov, os.path.join(goroot, "LICENSE")),
+        ("Go standard library (%s): PATENTS" % gov, os.path.join(goroot, "PATENTS")),
+        ("Tabler Icons (the glyphs and the generic window icon)",
+         os.path.join(cli_root, "LICENSES", "tabler-icons-MIT.txt")),
+        ("MinGW-w64 runtime (in the Windows program)", os.path.join(cli_root, "wizard", MINGW_NOTICE)),
+    ]  # fmt: skip
+    for name in sorted(modules, key=str.lower):
+        mdir, pdirs = modules[name]
+        files = {
+            os.path.join(mdir, n)
+            for n in os.listdir(mdir)
+            if LICENSE_FILE.match(n) and os.path.isfile(os.path.join(mdir, n))
+        }
+        files.update(reuse_files(mdir))
+        for p in pdirs:
+            files.update(license_files(p))
+        if not files:
+            raise CliError("%s has no licence file for %s" % (name, NOTICES))
+        for f in sorted(files):
+            secs.append(("%s: %s" % (name, os.path.relpath(f, mdir).replace(os.sep, "/")), f))
+    return secs
+
+
+def mingw_notice(mingw, mod):
+    """Refuses a Windows build whose llvm-mingw runtime notices differ from
+    the copy NOTICES.txt carries: a new llvm-mingw pin brings its own."""
+    with open(os.path.join(mingw, MINGW_RUNTIME), "rb") as f:
+        theirs = f.read()
+    with open(os.path.join(mod, MINGW_NOTICE), "rb") as f:
+        ours = f.read()
+    if theirs != ours:
+        raise CliError(
+            "llvm-mingw's MinGW-w64 runtime notices changed: copy %s to wizard/%s"
+            % (MINGW_RUNTIME, MINGW_NOTICE)
+        )
+
+
+def notices_text(secs):
+    """One text file, LF endings, the same bytes for the same inputs."""
+    parts = [
+        "The licence of this program and of the code, fonts and icons it\n"
+        "contains, as their authors publish them.\n"
+    ]
+    for title, path in secs:
+        with open(path, encoding="utf-8", errors="replace", newline="") as f:
+            body = f.read().replace("\r\n", "\n").rstrip("\n")
+        parts.append("\n%s\n%s\n%s\n\n%s\n" % ("=" * 72, title, "=" * 72, body))
+    return "".join(parts)
+
+
+def write_notices(go, env, mod, goroot, dest):
+    secs = notice_sections(os.path.dirname(mod), goroot, linked_modules(go, env, mod))
+    with open(dest, "w", encoding="utf-8", newline="\n") as f:
+        f.write(notices_text(secs))
+    return dest
+
+
 def version_ldflags(tag):
     return "%s -X main.version=%s" % (LDFLAGS, tag or "dev")
 
@@ -405,7 +562,7 @@ def _run(cmd, env=None, cwd=None, quiet=False):
     return r
 
 
-def build_macos(go, env, src, work, name, tag, icon, appid, tool, epoch, out):
+def build_macos(go, env, src, work, name, tag, icon, appid, tool, epoch, out, notices):
     arm, amd = os.path.join(work, name + "-arm64"), os.path.join(work, name + "-amd64")
     for arch, dst in (("arm64", arm), ("amd64", amd)):
         e = dict(env, CGO_ENABLED="1", GOOS="darwin", GOARCH=arch)
@@ -416,12 +573,16 @@ def build_macos(go, env, src, work, name, tag, icon, appid, tool, epoch, out):
     shutil.rmtree(app, ignore_errors=True)
     # fyne package writes <name>.app into its working folder.
     _run(fyne_package_cmd(go, tool, name, appid, uni, icon, tag), env=env, cwd=work, quiet=True)
+    # fyne package signs nothing, so a file added to Resources breaks no seal.
+    res = os.path.join(app, "Contents", "Resources")
+    os.makedirs(res, exist_ok=True)
+    shutil.copyfile(notices, os.path.join(res, NOTICES))
     set_mtimes(app, epoch)
     write_zip(out, _entries(app), epoch)
     return {"macos-binary": uni, "macos-app": app}
 
 
-def build_windows(go, env, src, work, name, tag, mingw, epoch, out, icons):
+def build_windows(go, env, src, work, name, tag, mingw, epoch, out, icons, notices):
     exe = os.path.join(work, name + ".exe")
     rc = os.path.join(icons, "wizard.rc")
     with open(rc, "w", newline="\n") as f:
@@ -438,7 +599,7 @@ def build_windows(go, env, src, work, name, tag, mingw, epoch, out, icons):
         CXX=os.path.join(mingw, "bin", "x86_64-w64-mingw32-clang++"),
     )
     _run(go_build_cmd(go, exe, tag, windows=True), env=e, cwd=src)
-    write_zip(out, [(name + ".exe", exe)], epoch)
+    write_zip(out, [(name + ".exe", exe), (NOTICES, notices)], epoch)
     return {"windows-binary": exe}
 
 
@@ -525,11 +686,14 @@ def build(G, tag="", dev=False, only=ASSETS, out="", keep_work=False, gocache=""
     go = os.path.join(goroot, "bin", "go" + host.exe_suffix())
     _run([go, "mod", "download"], env=env, cwd=mod)
     icons = make_icons(go, env, mod, work, icon_bytes)
+    notices = write_notices(go, env, mod, goroot, os.path.join(work, NOTICES))
     game_png = None
     if icon_bytes is not None:
         with open(os.path.join(icons, "icon-256.png"), "rb") as f:
             game_png = f.read()
     stage_module(mod, src, wizard_mod.config_json(cfg), game_png)
+    # Docker's context: the Linux tar takes it from there.
+    shutil.copyfile(notices, os.path.join(src, NOTICES))
     if "macos" in only:
         if host.host_os() != "macos":
             raise CliError("the macOS asset needs a macOS host (Apple clang, lipo)")
@@ -547,11 +711,13 @@ def build(G, tag="", dev=False, only=ASSETS, out="", keep_work=False, gocache=""
                 pins["fyne_tool"],
                 epoch,
                 os.path.join(out, names["macos"]),
+                notices,
             )
         )
         done.append(names["macos"])
     if "windows" in only:
         mingw = ensure_mingw(pins, mod, G)
+        mingw_notice(mingw, mod)
         built.update(
             build_windows(
                 go,
@@ -564,6 +730,7 @@ def build(G, tag="", dev=False, only=ASSETS, out="", keep_work=False, gocache=""
                 epoch,
                 os.path.join(out, names["windows"]),
                 icons,
+                notices,
             )
         )
         done.append(names["windows"])

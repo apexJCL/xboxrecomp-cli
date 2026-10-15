@@ -16,7 +16,7 @@ import os
 import subprocess
 import tomllib
 
-from . import gitpin, host, manifest
+from . import credits, gitpin, host, manifest
 from .host import CliError
 
 # The embedded config's format; the Go side refuses another.
@@ -241,8 +241,21 @@ def resolve(G, tag="", dev=False):
         "data": {t: m["data"][t] for t in ("windows", "steamos", "macos")},
         "fetch": [dict(f) for f in w["fetch"]],
         "options": options,
+        "credits": credits.merged(w["credit"]),
     }
     return cfg, (read(w["icon"]) if w["icon"] else None)
+
+
+def font_report(m, name=""):
+    """{font, found, path}: whether the font the game's HUD pack draws with
+    ([enhance.hud] font, or name) is installed here, found as `enhance hud`
+    finds it. A [[wizard.option]] with font_hint shows its words and link
+    only while this says not found."""
+    from .enhance import hud
+
+    want = name or m.get("enhance", {}).get("hud", {}).get("font", "")
+    path = hud.resolve_font(None, want)[0] if want else None
+    return {"font": want, "found": path is not None, "path": path}
 
 
 def config_json(cfg):
@@ -261,6 +274,13 @@ def configure(p):
             action="store_true",
             help="developers: the working tree as it is, no tag (what --game DIR mode reads)",
         )
+    f = sub.add_parser(
+        "font",
+        description="whether [enhance.hud] font is installed here, by the lookup "
+        "`enhance hud` uses (the wizard's font_hint)",
+    )
+    f.add_argument("--json", action="store_true", help="as JSON (for the wizard)")
+    f.add_argument("--name", default="", help="look for this full name instead")
     b = sub.add_parser(
         "build",
         description="build the wizard's release assets: the Windows zip, the macOS app zip, "
@@ -292,6 +312,15 @@ def run(a):
     if a.action == "config":
         cfg, _ = resolve(G, a.tag, a.dev)
         print(config_json(cfg), end="")
+        return 0
+    if a.action == "font":
+        r = font_report(G.m, a.name)
+        if a.json:
+            print(json.dumps(r, sort_keys=True, ensure_ascii=False))
+        elif not r["font"]:
+            print("this game names no font ([enhance.hud] font)")
+        else:
+            print("%s: %s" % (r["font"], r["path"] or "not installed"))
         return 0
     from . import wizard_build
 

@@ -48,6 +48,15 @@ const (
 	pickOutTitle    = "Output folder"
 )
 
+// The open-source credits: on Welcome and in the header's info dialog.
+const (
+	creditsHeading = "Made with these open-source projects"
+	creditsTitle   = "Open-source credits"
+	creditsNotices = "NOTICES.txt, which came with the wizard, holds each licence's full text."
+	// What the project does for the build, then its licence.
+	creditMeta = "%s · %s"
+)
+
 func welcomeHeading(game string) string { return fmt.Sprintf("Build %s for your own computer", game) }
 
 // welcomeIntro names the computers the config's targets build for; the
@@ -209,11 +218,12 @@ const (
 
 // Options.
 const (
-	titleOptions   = "Options"
-	optionsIntro   = "The game starts with these. Most players leave them as they are."
-	optionsNone    = "This game has no settings to choose here."
-	optionsLater   = "Later, change these and more in config.toml: %s"
-	optionLabelled = "%s (%s)"
+	titleOptions    = "Options"
+	optionsIntro    = "The game starts with these. Most players leave them as they are."
+	optionsNone     = "This game has no settings to choose here."
+	optionsLater    = "Later, change these and more in config.toml: %s"
+	optionLabelled  = "%s (%s)"
+	optionFontFound = "%s is installed."
 )
 
 // Summary.
@@ -236,20 +246,45 @@ const (
 
 // Building.
 const (
-	titleBuild    = "Building"
-	buildIntro    = "This takes a while. You can keep using your computer; closing this window stops the build."
-	buildStarting = "Starting"
-	buildPlanning = "Planning"
-	buildStep     = "Part %d of %d: %s"
-	buildPrepare  = "Getting ready"
-	buildClock    = "%s in this part · %s in all"
-	buildClockPct = "%d%% · "
-	cancelText    = "Cancel"
-	stopTitle     = "Stop the build?"
-	stopText      = "Next time it continues from where it stopped."
-	quitTitle     = "A build is running"
-	quitText      = "A build is running. Stop it and quit? Next time it continues from where it stopped."
+	titleBuild   = "Building"
+	buildIntro   = "This takes a while. You can keep using your computer; closing this window stops the build."
+	buildPrepare = "Getting ready"
+	buildAll     = "%s in all"
+	buildPart    = "Part %d of %d"
+	buildPct     = "%d%%"
+	buildSep     = " · "
+	partLog      = "Log"
+	partHideLog  = "Hide log"
+	partWaiting  = "waiting"
+	partNotRun   = "not run"
+	partDone     = "done · %s"
+	partFailed   = "failed · %s"
+	partSkipped  = "not needed"
+	partStopped  = "stopped · %s"
+	cancelText   = "Cancel"
+	stopTitle    = "Are you sure?"
+	stopBack     = "Go back"
+	stopConfirm  = "Cancel Build"
+	quitTitle    = "A build is running"
+	// The re-run skips import, setup and generate once they are done and
+	// ninja keeps every compiled object, but nothing resumes inside a
+	// step and the HUD pack and the staging are redone (the
+	// wizard-test-notes design, D6): "most", not "from where it stopped".
+	stopText = "Next time, the build reuses most of what already finished."
+	quitText = "A build is running. Stop it and quit? Next time, the build reuses most of what already finished."
 )
+
+// partNames are the build's parts in the player's words, by the CLI's
+// command or stage name; a name not here shows as the CLI prints it.
+var partNames = map[string]string{
+	"import":      "Copy your game files",
+	"enhance hud": "Redraw the HUD and menus",
+	"plan":        "Build the game",
+	"setup":       "Get the tools",
+	"generate":    "Translate the game's code",
+	"build":       "Compile",
+	"package":     "Make the installer",
+}
 
 // Done.
 const (
@@ -267,7 +302,7 @@ const (
 	doneLogs         = "The full logs are in %s."
 	doneCanceled     = "You stopped the build."
 	openLogFolder    = "Open the log folder"
-	doneRetry        = "Retry runs the build again and skips what is already done."
+	doneRetry        = "Retry runs the build again and reuses most of what already finished."
 )
 
 // The notice on the Done page (notice.go): the lead and the tail in bold,

@@ -848,13 +848,22 @@ func TestScreenshots(t *testing.T) {
 	w.building = true
 	w.cancelBtn.Enable()
 	w.bar.SetValue(0.45)
-	w.stepLabel.SetText(fmt.Sprintf(buildStep, 3, 5, "generate") + " (recomp)")
-	// One frame of the pulse, and the clocks 4:12 into the part, 12:40 in.
+	// The HUD pack's build 12:40 in: the prerequisites done, the plan
+	// read, generate 4:12 into its recomp.
+	w.partsAfter = func(time.Duration, func()) {}
 	now := time.Now()
-	w.clockFrac, w.partStart, w.buildStart = 0.45, now.Add(-252*time.Second), now.Add(-760*time.Second)
-	w.buildClock.SetText(w.clockText(now))
+	w.buildStart = now.Add(-760 * time.Second)
+	at := func(s int) time.Time { return w.buildStart.Add(time.Duration(s) * time.Second) }
+	w.parts = runner.NewChecklist(w.st.Steps("", w.out))
+	slug := "./" + opt.Cfg.Game.Slug
+	feedParts(w.parts, at, []string{"$ " + slug + " import", "  ✓ import  0:40", "", "$ " + slug + " enhance hud", "  ✓ upscale  1:50", "",
+		"$ " + slug + " package", "plan: setup (toolkit), generate (no gen/), build (build-win), package (" + w.st.Target + ")",
+		"== [1/4] setup ==", "  ✓ setup: toolkit  0:02", "== [2/4] generate ==", "  ✓ disasm  1:10",
+		"  recomp ... 4:00, ~19 min left | [5500/26190] Translating fn_00012345..."}, 508)
+	w.flushParts()
+	w.overall.SetText(overallText(w.parts.Snapshot(1), 0.45, 760*time.Second))
 	logLines(w.buildLog, "$ ./"+opt.Cfg.Game.Slug+" package "+w.st.Target+" --out "+w.out+" --plain",
-		"== [2/5] setup ==", "  ✓ setup: toolkit  0:02", "== [3/5] generate ==", "  ✓ disasm  1:10", "  recomp ...",
+		"== [2/4] setup ==", "  ✓ setup: toolkit  0:02", "== [3/4] generate ==", "  ✓ disasm  1:10", "  recomp ...",
 		"  recomp ... 4:00, ~19 min left | [5500/26190] Translating fn_00012345...")
 	w.render(pBuild)
 	w.bar.StartPulse()
@@ -1021,14 +1030,18 @@ func TestOptionsPage(t *testing.T) {
 		t.Errorf("hint link: %+v", link)
 	}
 	hud := opt.Cfg.Options[2]
-	if h, ok := w.optionHint(hud).(*fyne.Container); !ok || len(h.Objects) != 1 {
+	if h, font := w.optionHint(hud); font == nil {
+		t.Error("the HUD option has no font lines")
+	} else if c, ok := h.(*fyne.Container); !ok || len(c.Objects) != 1 {
 		t.Error("a checkbox's hint is not in an indented container")
 	}
-	if _, ok := w.optionHint(opt.Cfg.Options[0]).(*fyne.Container); !ok {
+	if h, font := w.optionHint(opt.Cfg.Options[0]); font != nil {
+		t.Error("the scale option waits for a font")
+	} else if _, ok := h.(*fyne.Container); !ok {
 		t.Error("the slider's hint is missing")
 	}
-	hud.Hint, hud.HintLink = "", nil
-	if w.optionHint(hud) != nil {
+	hud.Hint, hud.HintLink, hud.FontHint = "", nil, ""
+	if h, font := w.optionHint(hud); h != nil || font != nil {
 		t.Error("an option without a hint has one")
 	}
 	slider.SetValue(3)
@@ -1105,6 +1118,8 @@ func walkTree(o fyne.CanvasObject, f func(fyne.CanvasObject)) {
 		}
 	case *container.Scroll:
 		walkTree(v.Content, f)
+	case *tapRow:
+		walkTree(v.content, f)
 	}
 }
 
@@ -1120,60 +1135,6 @@ func TestURLOpener(t *testing.T) {
 		if got := urlOpener(goos, u); !slices.Equal(got, want) {
 			t.Errorf("%s: %q, want %q", goos, got, want)
 		}
-	}
-}
-
-// The clocks: the part's and the build's time, the percentage once the
-// bar moved, and a new stage restarting the part.
-func TestBuildClock(t *testing.T) {
-	isolate(t)
-	a := test.NewApp()
-	defer a.Quit()
-	w := New(a, sampleOptions(t))
-	w.prog = &runner.Progress{}
-	t0 := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	w.buildStart, w.partStart = t0, t0
-	for _, c := range []struct {
-		at   time.Duration
-		want string
-	}{
-		{0, "0:00 in this part · 0:00 in all"},
-		{65 * time.Second, "1:05 in this part · 1:05 in all"},
-		{3700 * time.Second, "1:01:40 in this part · 1:01:40 in all"},
-	} {
-		if got := w.clockText(t0.Add(c.at)); got != c.want {
-			t.Errorf("at %v: %q, want %q", c.at, got, c.want)
-		}
-	}
-	at := t0.Add(100 * time.Second)
-	if !w.feedLine("== [2/5] setup ==", at) {
-		t.Fatal("a stage line changed nothing")
-	}
-	if got, want := w.clockText(at.Add(5*time.Second)), "20% · 0:05 in this part · 1:45 in all"; got != want {
-		t.Errorf("after the stage: %q, want %q", got, want)
-	}
-	// A step inside the stage is not a new part.
-	w.feedLine("  setup: toolkit ...", at.Add(30*time.Second))
-	if got := w.clockText(at.Add(40 * time.Second)); !strings.Contains(got, "0:40 in this part") {
-		t.Errorf("a step reset the part: %q", got)
-	}
-	w.newPart(at.Add(50 * time.Second))
-	if got := w.clockText(at.Add(51 * time.Second)); !strings.Contains(got, "0:01 in this part") {
-		t.Errorf("a command start: %q", got)
-	}
-	// A tick queued before the build ended leaves the final clocks alone,
-	// as does one from an earlier build.
-	w.building, w.clockRun = true, 2
-	w.showTick(2, "live")
-	w.showTick(1, "an earlier build")
-	if got := w.buildClock.Text(); got != "live" {
-		t.Errorf("ticks while building: %q", got)
-	}
-	w.building = false
-	w.buildClock.SetText("final")
-	w.showTick(2, "late")
-	if got := w.buildClock.Text(); got != "final" {
-		t.Errorf("a late tick overwrote the end: %q", got)
 	}
 }
 
@@ -1258,9 +1219,24 @@ func TestDoneFailure(t *testing.T) {
 	if f.Step != "generate: recomp" {
 		t.Fatalf("step %q", f.Step)
 	}
+	// The failed part holds what it printed; the part before it ended well.
+	w.parts = runner.NewChecklist([][]string{{"enhance", "hud"}, {"package", "windows"}})
+	feedParts(w.parts, func(s int) time.Time { return time.Unix(int64(s), 0) },
+		[]string{"$ ./blinx2 enhance hud", "", "$ ./blinx2 package windows", "plan: generate (no gen/), package (windows)",
+			"== [1/2] generate ==", "  recomp ...", "error: the disk is full", "  FAILED recomp  0:12"}, 80)
+	w.parts.EndCommand(err, false, time.Unix(90, 0))
 	w.buildErr = f
 	w.fillDone()
 	all, sel := texts(w.doneBox)
+	if n := count(all, doneSaid); n != 1 {
+		t.Errorf("%q %d times", doneSaid, n)
+	}
+	for _, want := range []string{partNames["enhance hud"], partNames["generate"], partNames["package"],
+		fmt.Sprintf(partDone, "0:10"), fmt.Sprintf(partFailed, "1:10"), partNotRun} {
+		if !slices.Contains(all, want) {
+			t.Errorf("the checklist lacks %q: %q", want, all)
+		}
+	}
 	joined := strings.Join(all, "\n")
 	for _, want := range []string{fmt.Sprintf(doneStoppedAt, "generate: recomp"), doneSaid,
 		fmt.Sprintf(doneLogs, filepath.Join("/r", "build-logs")), openLogFolder, retryText} {

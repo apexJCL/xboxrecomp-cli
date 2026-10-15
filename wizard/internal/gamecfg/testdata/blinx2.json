@@ -4,6 +4,152 @@
     "tag": "v0.6.7",
     "url": "https://github.com/apexJCL/xboxrecomp-cli.git"
   },
+  "credits": [
+    {
+      "license": "MIT",
+      "name": "blinx2-recomp",
+      "role": "this recompilation of BLiNX 2 for PC and Mac",
+      "url": "https://github.com/apexJCL/blinx2-recomp"
+    },
+    {
+      "license": "MIT",
+      "name": "xboxrecomp-cli",
+      "role": "this build wizard and the CLI that runs the build",
+      "url": "https://github.com/apexJCL/xboxrecomp-cli"
+    },
+    {
+      "license": "MIT",
+      "name": "xboxrecomp",
+      "role": "the recompilation toolkit (this fork)",
+      "url": "https://github.com/apexJCL/xboxrecomp"
+    },
+    {
+      "license": "MIT",
+      "name": "xboxrecomp (upstream)",
+      "role": "the original toolkit, by sp00nz",
+      "url": "https://github.com/sp00nznet/xboxrecomp"
+    },
+    {
+      "license": "OFL-1.1",
+      "name": "PT Sans Narrow",
+      "role": "the sharper HUD's font",
+      "url": "https://github.com/google/fonts/tree/main/ofl/ptsansnarrow"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "name": "Go",
+      "role": "the wizard's language and runtime",
+      "url": "https://github.com/golang/go"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "name": "Fyne",
+      "role": "the wizard's window toolkit",
+      "url": "https://github.com/fyne-io/fyne"
+    },
+    {
+      "license": "MIT",
+      "name": "zenity",
+      "role": "the wizard's file dialogs",
+      "url": "https://github.com/ncruces/zenity"
+    },
+    {
+      "license": "MIT",
+      "name": "Tabler Icons",
+      "role": "the wizard's icons",
+      "url": "https://github.com/tabler/tabler-icons"
+    },
+    {
+      "license": "LGPL-2.1-or-later",
+      "name": "xemu",
+      "role": "the toolkit's audio (MCPX APU) and NV2A register code",
+      "url": "https://github.com/xemu-project/xemu"
+    },
+    {
+      "license": "Zlib",
+      "name": "SDL",
+      "role": "window, input and sound on macOS",
+      "url": "https://github.com/libsdl-org/SDL"
+    },
+    {
+      "license": "Apache-2.0",
+      "name": "OpenSSL",
+      "role": "the Xbox kernel's crypto on macOS",
+      "url": "https://github.com/openssl/openssl"
+    },
+    {
+      "license": "MIT",
+      "name": "libepoxy",
+      "role": "OpenGL loading on macOS",
+      "url": "https://github.com/anholt/libepoxy"
+    },
+    {
+      "license": "PSF-2.0",
+      "name": "Python",
+      "role": "runs the CLI and the toolkit's tools",
+      "url": "https://github.com/python/cpython"
+    },
+    {
+      "license": "MIT OR Apache-2.0",
+      "name": "uv",
+      "role": "installs Python and the build's tools",
+      "url": "https://github.com/astral-sh/uv"
+    },
+    {
+      "license": "GPL-2.0-only",
+      "name": "Git",
+      "role": "fetches the game, the toolkit and the CLI (MinGit on Windows)",
+      "url": "https://github.com/git/git"
+    },
+    {
+      "license": "BSD-2-Clause",
+      "name": "Homebrew",
+      "role": "installs the macOS libraries",
+      "url": "https://github.com/Homebrew/brew"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "name": "CMake",
+      "role": "configures the game's build",
+      "url": "https://github.com/Kitware/CMake"
+    },
+    {
+      "license": "Apache-2.0",
+      "name": "Ninja",
+      "role": "runs the game's build",
+      "url": "https://github.com/ninja-build/ninja"
+    },
+    {
+      "license": "ISC AND Apache-2.0 WITH LLVM-exception",
+      "name": "llvm-mingw",
+      "role": "the Windows compiler",
+      "url": "https://github.com/mstorsjo/llvm-mingw"
+    },
+    {
+      "license": "Zlib",
+      "name": "NSIS",
+      "role": "makes the Windows installer",
+      "url": "https://nsis.sourceforge.io/"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "name": "Capstone",
+      "role": "decodes the game's code for the lifter",
+      "url": "https://github.com/capstone-engine/capstone"
+    },
+    {
+      "license": "MIT",
+      "name": "pefile",
+      "role": "reads the game's executable",
+      "url": "https://github.com/erocarrera/pefile"
+    },
+    {
+      "license": "GPL-3.0-only",
+      "name": "umu-launcher",
+      "role": "runs the Windows build on SteamOS",
+      "url": "https://github.com/Open-Wine-Components/umu-launcher"
+    }
+  ],
   "data": {
     "macos": "~/Library/Application Support/BLiNX2",
     "steamos": "~/Games/BLiNX2",
@@ -21,6 +167,7 @@
       "config": "render.scale",
       "default": 1,
       "flag": "",
+      "font_hint": "",
       "hint": "Draws the game sharper on a big screen; needs a faster graphics card.",
       "key": "scale",
       "kind": "range",
@@ -45,6 +192,7 @@
       "config": "present.fullscreen",
       "default": false,
       "flag": "",
+      "font_hint": "",
       "hint": "",
       "key": "fullscreen",
       "kind": "bool",
@@ -59,7 +207,8 @@
       "config": "",
       "default": false,
       "flag": "--hud-pack",
-      "hint": "Redrawn from your own game files. On Windows and Linux it needs the free PT Sans Narrow Bold font: install it, then build.",
+      "font_hint": "On Windows and Linux it needs the free PT Sans Narrow Bold font: install it, then build.",
+      "hint": "Redrawn from your own game files.",
       "hint_link": {
         "text": "Get PT Sans Narrow (free, Google Fonts)",
         "url": "https://fonts.google.com/specimen/PT+Sans+Narrow"

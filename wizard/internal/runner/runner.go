@@ -345,3 +345,32 @@ func SlugOf(gameDir string) (string, error) {
 }
 
 var slugRE = regexp.MustCompile(`^slug\s*=\s*"([a-z0-9][a-z0-9_-]*)"`)
+
+// Font is `wizard font --json`: whether the game's font ([enhance.hud]
+// font) is installed, by the CLI's own lookup.
+type Font struct {
+	Font  string `json:"font"`
+	Found bool   `json:"found"`
+	Path  string `json:"path"`
+}
+
+func ParseFont(b []byte) (*Font, error) {
+	var f Font
+	if err := json.NewDecoder(bytes.NewReader(jsonPart(b))).Decode(&f); err != nil {
+		return nil, fmt.Errorf("wizard font --json: %w", err)
+	}
+	if f.Font == "" {
+		return nil, errors.New("wizard font --json: the game names no font")
+	}
+	return &f, nil
+}
+
+// Font runs `wizard font --json`. A CLI pinned before the command exits
+// non-zero: an error, which the Options page reads as "cannot tell".
+func (r Runner) Font(ctx context.Context, log io.Writer) (*Font, error) {
+	out, err := r.Output(ctx, log, "wizard", "font", "--json")
+	if err != nil {
+		return nil, err
+	}
+	return ParseFont(out)
+}

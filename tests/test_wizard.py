@@ -14,7 +14,7 @@ import zipfile
 
 import pytest
 
-from xboxrecomp_cli import doctor, manifest, pins, scaffold, wizard, wizard_build
+from xboxrecomp_cli import credits, doctor, manifest, pins, scaffold, wizard, wizard_build
 from xboxrecomp_cli import package as pkg
 from xboxrecomp_cli.host import CliError
 
@@ -278,6 +278,196 @@ def test_manifest_wizard_hint_link_refusals(link, error):
         manifest.parse_text(base_text() + text)
 
 
+FONT_HINT = 'flag = "--hud-pack"\nfont_hint = "It needs the free font."'
+HUD_FONT = '\n[enhance.hud]\nfont_atlas = "a.dds"\nfont_rows = ["AB"]\nfont = "Some Sans Bold"\n'
+
+
+def test_manifest_wizard_font_hint():
+    text = WIZARD.replace('flag = "--hud-pack"', FONT_HINT, 1)
+    hud = manifest.parse_text(base_text() + HUD_FONT + text)["wizard"]["option"][0]
+    assert hud["font_hint"] == "It needs the free font."
+    assert manifest.parse_text(base_text() + WIZARD)["wizard"]["option"][0]["font_hint"] == ""
+    # The words wait for [enhance.hud] font: without it they would never go.
+    with pytest.raises(
+        manifest.ManifestError, match=r"option\[0\].font_hint: needs \[enhance.hud\] font"
+    ):
+        manifest.parse_text(base_text() + text)
+    no_font = HUD_FONT.replace('font = "Some Sans Bold"\n', "")
+    with pytest.raises(manifest.ManifestError, match=r"font_hint: needs"):
+        manifest.parse_text(base_text() + no_font + text)
+
+
+CREDIT = """
+[[wizard.credit]]
+name = "blinx2-recomp"
+role = "this game's recompilation"
+license = "MIT"
+url = "https://github.com/someone/blinx2-recomp"
+own = true
+
+[[wizard.credit]]
+name = "Some Sans"
+role = "the HUD pack's font"
+license = "OFL-1.1"
+url = "https://fonts.example/some-sans"
+"""
+
+
+def test_manifest_wizard_credit():
+    w = manifest.parse_text(base_text() + WIZARD + CREDIT)["wizard"]
+    assert [c["name"] for c in w["credit"]] == ["blinx2-recomp", "Some Sans"]
+    assert [c["own"] for c in w["credit"]] == [True, False]
+    assert manifest.parse_text(base_text() + WIZARD)["wizard"]["credit"] == []
+
+
+@pytest.mark.parametrize(
+    "old, new, error",
+    [
+        ('license = "MIT"', 'license = "MIT or Apache"', r"credit\[0\].license: an SPDX"),
+        ('license = "MIT"', 'license = " MIT"', r"credit\[0\].license: an SPDX"),
+        ('url = "https://github.com/someone/blinx2-recomp"', 'url = "http://x.example/a"',
+         r"credit\[0\].url: an https"),
+        ('role = "this game\'s recompilation"', 'role = " "', r"credit\[0\].role: words"),
+        ('name = "blinx2-recomp"', 'name = "x "', r"credit\[0\].name: words"),
+        ('name = "blinx2-recomp"\n', "", r"credit\[0\].name: required"),
+        ('license = "MIT"', 'license = "MIT"\nyear = 1', r"credit\[0\].year: unknown key"),
+        ('license = "MIT"', "license = 1", r"credit\[0\].license: must be"),
+        ("own = true", 'own = "yes"', r"credit\[0\].own: must be"),
+        ('url = "https://fonts.example/some-sans"', 'url = "https://GitHub.com/someone/blinx2-recomp/"',
+         r"credit\[1\].url: another entry has this address"),
+    ],
+)  # fmt: skip
+def test_manifest_wizard_credit_refusals(old, new, error):
+    text = CREDIT.replace(old, new, 1)
+    with pytest.raises(manifest.ManifestError, match=error):
+        manifest.parse_text(base_text() + WIZARD + text)
+
+
+def test_credits_lists_pass_the_game_rules():
+    """The CLI's own entries keep the rules a game's must: four fields,
+    an SPDX licence, an https link, no url twice."""
+    for i, c in enumerate(credits.OURS + credits.THIRD_PARTY):
+        assert set(c) == {"name", "role", "license", "url"}
+        assert manifest.credit_errors("credits[%d]" % i, c) == [], c
+    urls = [c["url"] for c in credits.OURS + credits.THIRD_PARTY]
+    assert len(set(urls)) == len(urls)
+    assert all(u.startswith("https://github.com/") for u in urls if "nsis" not in u)
+
+
+def test_credits_generic_order():
+    """No game entries: the generic wizard, the CLI first, then the
+    toolkit, its upstream and the third-party projects."""
+    names = [c["name"] for c in credits.merged()]
+    assert names[:3] == ["xboxrecomp-cli", "xboxrecomp", "xboxrecomp (upstream)"]
+    assert names[3:7] == ["Go", "Fyne", "zenity", "Tabler Icons"]
+    assert len(names) == len(credits.OURS) + len(credits.THIRD_PARTY)
+
+
+def test_credits_game_order():
+    """A game's wizard: our repos first (the game's own, marked own,
+    wherever it is listed, then the CLI's), then the third-party projects
+    (the game's other entries, then the CLI's). An entry the game repeats
+    (by url) is listed once, the game's."""
+    game = [
+        credits._c("Some Sans", "the HUD font", "OFL-1.1", "https://fonts.example/some-sans"),
+        dict(
+            credits._c(
+                "blinx2-recomp", "the game", "MIT", "https://github.com/someone/blinx2-recomp"
+            ),
+            own=True,
+        ),
+        credits._c("SDL 2", "its window", "Zlib", "https://github.com/libsdl-org/SDL/"),
+    ]
+    out = credits.merged(game)
+    names = [c["name"] for c in out]
+    assert names[:7] == [
+        "blinx2-recomp",
+        "xboxrecomp-cli",
+        "xboxrecomp",
+        "xboxrecomp (upstream)",
+        "Some Sans",
+        "SDL 2",
+        "Go",
+    ]
+    assert "SDL" not in names and len(out) == len(credits.merged()) + 2
+    assert all(set(c) == {"name", "role", "license", "url"} for c in out)  # own is not shown
+    out[0]["name"] = "changed"
+    assert credits.merged()[0]["name"] == "xboxrecomp-cli"  # copies, not the module's
+
+
+def test_config_credits(wgame):
+    cfg, _ = wizard.resolve(wgame)
+    assert cfg["credits"] == credits.merged()
+    write(os.path.join(wgame.root, "game.toml"), base_text() + WIZARD + CREDIT)
+    cfg, _ = wizard.resolve(manifest.load(wgame.root), dev=True)
+    names = [c["name"] for c in cfg["credits"]]
+    assert names[:5] == [
+        "blinx2-recomp",
+        "xboxrecomp-cli",
+        "xboxrecomp",
+        "xboxrecomp (upstream)",
+        "Some Sans",
+    ]
+
+
+def test_font_report(monkeypatch):
+    from xboxrecomp_cli.enhance import font
+
+    seen = []
+
+    def find(name, dirs=None):
+        seen.append(name)
+        return "/fonts/some.ttf" if name == "Some Sans Bold" else None
+
+    monkeypatch.setattr(font, "find", find)
+    m = manifest.parse_text(base_text() + HUD_FONT + WIZARD)
+    assert wizard.font_report(m) == {
+        "font": "Some Sans Bold",
+        "found": True,
+        "path": "/fonts/some.ttf",
+    }
+    assert wizard.font_report(m, "Nope Sans") == {"font": "Nope Sans", "found": False, "path": None}
+    assert seen == ["Some Sans Bold", "Nope Sans"]
+    # No font named: nothing to look for.
+    assert wizard.font_report(manifest.parse_text(base_text() + WIZARD)) == {
+        "font": "",
+        "found": False,
+        "path": None,
+    }
+    assert len(seen) == 2
+
+
+def test_font_report_real_lookup(d, monkeypatch):
+    """The report goes through the build's own lookup: a face installed
+    under the font folders by its full name, case and spaces aside."""
+    import test_enhance
+
+    from xboxrecomp_cli.enhance import font
+
+    write(os.path.join(d, "fonts", "x.ttf"), test_enhance.ttf(name="Some Sans Bold"))
+    monkeypatch.setattr(font, "font_dirs", lambda: [os.path.join(d, "fonts")])
+    m = manifest.parse_text(base_text() + HUD_FONT + WIZARD)
+    assert wizard.font_report(m)["path"] == os.path.join(d, "fonts", "x.ttf")
+    assert wizard.font_report(m, "some  sans BOLD")["found"]
+    assert not wizard.font_report(m, "Some Sans")["found"]
+
+
+def test_wizard_font_json(wgame, capsys, monkeypatch):
+    import argparse
+
+    from xboxrecomp_cli.enhance import font
+
+    monkeypatch.setattr(font, "find", lambda name, dirs=None: None)
+    assert wizard.run(argparse.Namespace(action="font", json=True, name="Nope Sans")) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "font": "Nope Sans",
+        "found": False,
+        "path": None,
+    }
+    assert wizard.run(argparse.Namespace(action="font", json=False, name="")) == 0
+    assert "names no font" in capsys.readouterr().out
+
+
 def test_scaffold_wizard_example():
     """`new`'s commented [wizard] example, uncommented, is a valid table
     whose scale is a range."""
@@ -504,12 +694,126 @@ def test_icon_commands(d):
     # The tar holds the binary, its icon and its menu entry.
     with open(os.path.join(wizard_build.module_dir(), "linux", "Dockerfile")) as f:
         df = f.read()
-    assert "-cf - ${NAME} ${NAME}.png ${NAME}.desktop" in df
-    assert "cp icon/${NAME}.png icon/${NAME}.desktop /out/" in df
+    assert "-cf - ${NAME} ${NAME}.png ${NAME}.desktop NOTICES.txt" in df
+    assert "cp icon/${NAME}.png icon/${NAME}.desktop NOTICES.txt /out/" in df
     # The generic icon is the module's own SVG, and the license ships.
     assert os.path.isfile(os.path.join(wizard_build.module_dir(), wizard_build.GENERIC_ICON))
     root = os.path.dirname(wizard_build.module_dir())
     assert os.path.isfile(os.path.join(root, "LICENSES", "tabler-icons-MIT.txt"))
+
+
+def _notice_tree(d):
+    """A CLI root, a GOROOT and one module whose package builds in a C
+    folder with its own licence, beside a sub-package and testdata."""
+    cli, goroot, m = (os.path.join(d, n) for n in ("cli", "goroot", "mod"))
+    write(os.path.join(cli, "LICENSE"), "MIT wizard\n")
+    write(os.path.join(cli, "LICENSES", "tabler-icons-MIT.txt"), "MIT tabler\n")
+    write(os.path.join(cli, "wizard", "notices", "mingw-w64-runtime.txt"), "mingw\n")
+    write(os.path.join(goroot, "VERSION"), "go1.27.2\ntime x\n")
+    write(os.path.join(goroot, "LICENSE"), "BSD go\r\n\r\n")
+    write(os.path.join(goroot, "PATENTS"), "patents\n")
+    write(os.path.join(m, "LICENSE"), "BSD mod\n")
+    write(os.path.join(m, "README.md"), "no\n")
+    write(os.path.join(m, "pkg", "a.go"), "package pkg\n")
+    write(os.path.join(m, "pkg", "csrc", "LICENSE.md"), "zlib\n")
+    write(os.path.join(m, "pkg", "csrc", "x.c"), "")
+    write(os.path.join(m, "pkg", "sub", "b.go"), "package sub\n")
+    write(os.path.join(m, "pkg", "sub", "LICENSE"), "not linked\n")
+    write(os.path.join(m, "pkg", "testdata", "COPYING"), "not linked\n")
+    # REUSE-style: one text per SPDX id, at the root and in a package.
+    write(os.path.join(m, "LICENSES", "Apache-2.0.txt"), "apache\n")
+    write(os.path.join(m, "pkg", "LICENSES", "CC0-1.0.txt"), "cc0\n")
+    return cli, goroot, m
+
+
+def test_notices(d):
+    cli, goroot, m = _notice_tree(d)
+    mods = {"example.org/m@v1.0.0": (m, {os.path.join(m, "pkg")})}
+    secs = wizard_build.notice_sections(cli, goroot, mods)
+    assert [t for t, _ in secs] == [
+        "The wizard (xboxrecomp-cli)",
+        "Go standard library (go1.27.2): LICENSE",
+        "Go standard library (go1.27.2): PATENTS",
+        "Tabler Icons (the glyphs and the generic window icon)",
+        "MinGW-w64 runtime (in the Windows program)",
+        "example.org/m@v1.0.0: LICENSE",
+        "example.org/m@v1.0.0: LICENSES/Apache-2.0.txt",
+        "example.org/m@v1.0.0: pkg/LICENSES/CC0-1.0.txt",
+        "example.org/m@v1.0.0: pkg/csrc/LICENSE.md",
+    ]
+    text = wizard_build.notices_text(secs)
+    assert text == wizard_build.notices_text(secs) and "\r" not in text
+    assert (
+        "=" * 72 + "\nexample.org/m@v1.0.0: pkg/csrc/LICENSE.md\n" + "=" * 72 + "\n\nzlib\n" in text
+    )
+    assert "not linked" not in text and d not in text
+    # A linked module that ships no licence stops the build.
+    bare = os.path.join(d, "bare")
+    write(os.path.join(bare, "c.go"), "package c\n")
+    with pytest.raises(CliError, match="no licence file"):
+        wizard_build.notice_sections(cli, goroot, {"x.org/bare@v1": (bare, {bare})})
+
+
+def test_mingw_notice(d):
+    """The Windows build refuses an llvm-mingw whose runtime notices are
+    not the copy NOTICES.txt carries; the copy in the tree is the pinned
+    llvm-mingw's."""
+    mod, mingw = os.path.join(d, "wizard"), os.path.join(d, "mingw")
+    write(os.path.join(mod, wizard_build.MINGW_NOTICE), "notices v1\n")
+    write(os.path.join(mingw, wizard_build.MINGW_RUNTIME), "notices v1\n")
+    wizard_build.mingw_notice(mingw, mod)
+    write(os.path.join(mingw, wizard_build.MINGW_RUNTIME), "notices v2\n")
+    with pytest.raises(CliError, match="runtime notices changed"):
+        wizard_build.mingw_notice(mingw, mod)
+    with open(os.path.join(wizard_build.module_dir(), wizard_build.MINGW_NOTICE)) as f:
+        assert f.read().startswith("MinGW-w64 runtime licensing")
+
+
+def test_linked_modules(d, monkeypatch):
+    seen = []
+
+    def fake_run(cmd, env, cwd, capture_output):
+        seen.append((env["GOOS"], env["GOARCH"], env["CGO_ENABLED"]))
+        extra = "\nx.org/w@v1\t/m/w\t/m/w/win" if env["GOOS"] == "windows" else ""
+        out = "a.org/b@v2\t/m/b\t/m/b/p" + extra
+        return subprocess.CompletedProcess(cmd, 0, out.encode(), b"")
+
+    monkeypatch.setattr(wizard_build.subprocess, "run", fake_run)
+    mods = wizard_build.linked_modules("go", {}, d)
+    assert mods == {"a.org/b@v2": ("/m/b", {"/m/b/p"}), "x.org/w@v1": ("/m/w", {"/m/w/win"})}
+    assert {s[0] for s in seen} == {"darwin", "windows", "linux"} and {s[2] for s in seen} == {"1"}
+    assert wizard_build.linked_cmd("go")[-1] == "./cmd/wizard"
+
+
+def test_archives_carry_notices(d, monkeypatch):
+    notices = os.path.join(d, "NOTICES.txt")
+    write(notices, "licences\n")
+
+    def fake_run(cmd, env=None, cwd=None, quiet=False):
+        if "-o" in cmd:  # go build, windres
+            write(cmd[cmd.index("-o") + 1], b"bin")
+        elif cmd[0] == "lipo":
+            write(cmd[cmd.index("-output") + 1], b"bin")
+        elif "package" in cmd:  # fyne package writes <name>.app into cwd
+            name = cmd[cmd.index("-name") + 1]
+            write(os.path.join(cwd, name + ".app", "Contents", "MacOS", name), b"bin")
+
+    monkeypatch.setattr(wizard_build, "_run", fake_run)
+    src, work = os.path.join(d, "src"), os.path.join(d, "work")
+    os.makedirs(os.path.join(src, "cmd", "wizard"))
+    os.makedirs(work)
+    win = os.path.join(d, "w.zip")
+    wizard_build.build_windows("go", {}, src, work, "g-wizard", "v1", "/mingw", 1700000000,
+                               win, work, notices)  # fmt: skip
+    mac = os.path.join(d, "m.zip")
+    wizard_build.build_macos("go", {}, src, work, "g-wizard", "v1", "i.png", "id", "fyne",
+                             1700000000, mac, notices)  # fmt: skip
+    with zipfile.ZipFile(win) as z:
+        assert z.namelist() == ["g-wizard.exe", "NOTICES.txt"]
+        assert z.read("NOTICES.txt") == b"licences\n"
+    with zipfile.ZipFile(mac) as z:
+        assert z.read("g-wizard.app/Contents/Resources/NOTICES.txt") == b"licences\n"
+    # The Linux tar takes it from Docker's context (test_icon_commands).
 
 
 def test_write_zip_is_reproducible(d):

@@ -190,13 +190,16 @@ SPEC = {
     # clones at the release tag and asks about newer releases, its icon
     # (optional: the wizard's own gamepad otherwise),
     # the targets it offers, archives the build needs beyond the clone and
-    # the options screen. A game without the table has no wizard.
+    # the options screen, and the game's own open-source credits (listed
+    # before the CLI's own; credits.py). A game without the table has no
+    # wizard.
     "wizard": {
         "repo": (STR, REQUIRED),
         "icon": (STR, ""),
         "targets": (STRS, DERIVED),
         "fetch": (TABLES, []),
         "option": (TABLES, []),
+        "credit": (TABLES, []),
     },
 }
 # Optional tables: a game without them still sets up, generates, builds and
@@ -217,6 +220,10 @@ WIZARD_OPTION = {
     "hint": (STR, ""),
     # A link after the hint ({ text, url }, https only): absent unless set.
     "hint_link": (STRMAP, None),
+    # Words after the hint shown only while [enhance.hud] font is not
+    # installed (or the wizard cannot tell); with it set, hint_link
+    # follows the same rule (`xbr wizard font` reports the font).
+    "font_hint": (STR, ""),
     "kind": (STR, REQUIRED),
     "values": (STRS, []),
     "default": (None, REQUIRED),  # a string for choice, a boolean for bool, an int for range
@@ -228,6 +235,18 @@ WIZARD_OPTION = {
     "step": (INT, None),
     "labels": (STRMAP, None),
 }
+# [[wizard.credit]]: a project the game stands on, shown in the wizard's
+# credits with a link. own marks the game's own repo (or repos), listed
+# before the CLI's; the rest go with the third-party projects (credits.py).
+WIZARD_CREDIT = {
+    "name": (STR, REQUIRED),
+    "role": (STR, REQUIRED),
+    "license": (STR, REQUIRED),
+    "url": (STR, REQUIRED),
+    "own": (BOOL, False),
+}
+# An SPDX licence expression, loosely: ids joined by AND, OR and WITH.
+SPDX_RE = re.compile(r"^[A-Za-z0-9.+()-]+(?: (?:AND|OR|WITH) [A-Za-z0-9.+()-]+)*$")
 # An entry key whose spec default is this stays absent when unset.
 OPTIONAL_ENTRY = None
 RANGE_KEYS = ("min", "max", "step", "labels")
@@ -372,6 +391,7 @@ def _derive(m):
         m["wizard"].setdefault("targets", list(m.get("package", {}).get("targets", [])))
         m["wizard"]["fetch"] = [_entry(e, WIZARD_FETCH) for e in m["wizard"]["fetch"]]
         m["wizard"]["option"] = [_entry(e, WIZARD_OPTION) for e in m["wizard"]["option"]]
+        m["wizard"]["credit"] = [_entry(e, WIZARD_CREDIT) for e in m["wizard"]["credit"]]
 
 
 def _entry(e, spec):
@@ -404,6 +424,7 @@ def _check_wizard(m):
     for kind, entries, spec in (
         ("fetch", w["fetch"], WIZARD_FETCH),
         ("option", w["option"], WIZARD_OPTION),
+        ("credit", w["credit"], WIZARD_CREDIT),
     ):
         for i, e in enumerate(entries):
             name = "wizard.%s[%d]" % (kind, i)
@@ -475,11 +496,47 @@ def _check_wizard(m):
             errors.append("%s.kind: bool, choice or range" % name)
         if "hint_link" in o:
             errors += _hint_link_errors(name, o["hint_link"])
+        if o["font_hint"] and not m.get("enhance", {}).get("hud", {}).get("font"):
+            errors.append("%s.font_hint: needs [enhance.hud] font, the font it waits for" % name)
         if o["flag"] and not re.match(r"^--[a-z][a-z0-9-]*$", o["flag"]):
             errors.append("%s.flag: a long option, --name" % name)
         if o["config"] and not re.match(r"^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+$", o["config"]):
             errors.append("%s.config: a dotted key, table.key" % name)
+    urls = set()
+    for i, c in enumerate(w["credit"]):
+        errors += credit_errors("wizard.credit[%d]" % i, c)
+        # The wizard lists a url once (credits.merged): a second entry for
+        # it would vanish without a word.
+        key = c["url"].rstrip("/").lower()
+        if key in urls:
+            errors.append("wizard.credit[%d].url: another entry has this address" % i)
+        urls.add(key)
     return errors
+
+
+def credit_errors(name, c):
+    """A credit as the wizard shows it: words for its name and role, an
+    SPDX licence, an https link (the CLI's own entries pass the same)."""
+    errors = []
+    for k in ("name", "role"):
+        if not c[k].strip() or c[k] != c[k].strip():
+            errors.append("%s.%s: words, no spaces at the ends" % (name, k))
+    if not SPDX_RE.match(c["license"]):
+        errors.append("%s.license: an SPDX expression, such as MIT or MIT OR Apache-2.0" % name)
+    if not https_ok(c["url"]):
+        errors.append("%s.url: an https address" % name)
+    return errors
+
+
+def https_ok(url):
+    """An https address the binary's url.Parse takes and the OS's opener
+    gets as one argument: no whitespace or control characters."""
+    try:
+        u = urllib.parse.urlsplit(url)
+        ok = u.scheme == "https" and bool(u.hostname)
+    except ValueError:  # urlsplit refuses a broken [IPv6] host
+        ok = False
+    return ok and not re.search(r"[\s\x00-\x1f\x7f]", url)
 
 
 def _hint_link_errors(name, link):
@@ -490,15 +547,7 @@ def _hint_link_errors(name, link):
         errors.append("%s.hint_link: exactly text and url" % name)
     if not link.get("text", "").strip():
         errors.append("%s.hint_link.text: words to show" % name)
-    url = link.get("url", "")
-    try:
-        u = urllib.parse.urlsplit(url)
-        ok = u.scheme == "https" and bool(u.hostname)
-    except ValueError:  # urlsplit refuses a broken [IPv6] host
-        ok = False
-    # Whitespace and control characters: the binary's url.Parse refuses
-    # the controls, and an address is one argument to the OS's opener.
-    if not ok or re.search(r"[\s\x00-\x1f\x7f]", url):
+    if not https_ok(link.get("url", "")):
         errors.append("%s.hint_link.url: an https address" % name)
     return errors
 

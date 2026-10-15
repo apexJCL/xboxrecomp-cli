@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
@@ -58,9 +59,13 @@ type page struct {
 
 // Wizard is the window and its state.
 type Wizard struct {
-	opt      Options
-	app      fyne.App
-	win      fyne.Window
+	opt Options
+	app fyne.App
+	win fyne.Window
+	// stopD and creditsD are the stop and credits dialogs while they
+	// show: they follow the window's size.
+	stopD    dialog.Dialog
+	creditsD dialog.Dialog
 	st       *model.State
 	setDir   string
 	settings hostinfo.Settings
@@ -79,6 +84,7 @@ type Wizard struct {
 	title   *widget.Label
 	step    *quietText
 	stepBar *thinBar
+	info    *widget.Button // the credits; Welcome lists them and hides it
 	footer  *quietText
 	body    *fyne.Container
 	back    *widget.Button
@@ -118,23 +124,35 @@ type Wizard struct {
 	targetRadios map[string]*widget.RadioGroup
 	optionsNote  *quietText
 	optionsSync  []func()
-	summaryBox   *fyne.Container
-	summaryTech  *widget.Label
-	summaryAcc   *widget.Accordion
+	// the font check: fonts are the options' font lines, fontRun counts
+	// checks so a late answer from an older one is dropped, fontCheck
+	// asks the CLI (the tests replace it).
+	fonts     []*fontLines
+	fontRun   int
+	fontCheck func(runner.Runner) (*runner.Font, error)
+	// openLink opens a hint link; async runs the font check off the UI
+	// thread. The tests replace both.
+	openLink    func(string)
+	async       func(func())
+	summaryBox  *fyne.Container
+	summaryTech *widget.Label
+	summaryAcc  *widget.Accordion
 
 	// build and done
-	buildLog   *logPane
-	bar        *thinBar
-	stepLabel  *widget.Label
-	buildClock *quietText
-	// the clocks: the build's start, the part's (a plan stage, or a
-	// command without one), the stage index the part belongs to and the
-	// bar's fraction; the build's and the ticker's goroutines share them.
-	clockMu    sync.Mutex
-	buildStart time.Time
-	partStart  time.Time
-	partIndex  int
-	clockFrac  float64
+	buildLog *logPane
+	bar      *thinBar
+	overall  *quietText
+	// buildStart and buildEnd are the build's clock, on the UI thread.
+	buildStart, buildEnd time.Time
+	// parts is the build's checklist, fed from the build's goroutine
+	// under partsMu; partsArmed is one refresh pending, partsAfter
+	// schedules it (the tests replace it, as the log pane's after).
+	partsMu    sync.Mutex
+	parts      *runner.Checklist
+	partsArmed bool
+	partsAfter func(time.Duration, func())
+	buildParts *partsView
+	doneParts  *partsView
 	// clockRun counts builds, on the main thread: a tick queued before
 	// its build ended sees a newer count, or building false, and leaves
 	// the final clocks alone.
@@ -177,6 +195,10 @@ func New(a fyne.App, opt Options) *Wizard {
 		w.root = hostinfo.DefaultRoot(opt.Cfg.Game.Slug)
 	}
 	w.free, w.sameVolume = hostinfo.Free, hostinfo.SameVolume
+	w.openLink = w.openURL
+	w.async = func(f func()) { go f() }
+	w.fontCheck = w.askFont
+	w.partsAfter = uiAfter
 	var why string
 	w.out, why = hostinfo.ResolveOut(w.settings.Out, w.root)
 	w.outDefault = w.settings.Out == "" || why != ""
@@ -196,7 +218,8 @@ func New(a fyne.App, opt Options) *Wizard {
 		w.welcomePage(), w.checksPage(), w.dumpPage(), w.targetPage(),
 		w.optionsPage(), w.summaryPage(), w.buildPage(), w.donePage(),
 	}
-	w.win.SetContent(container.NewBorder(w.header(), w.bottom(), nil, nil, container.NewPadded(w.body)))
+	page := container.NewBorder(w.header(), w.bottom(), nil, nil, container.NewPadded(w.body))
+	w.win.SetContent(container.NewStack(newSizeWatch(w.fitDialogs), page))
 	w.win.Resize(fyne.NewSize(780, 580))
 	w.win.SetCloseIntercept(w.onClose)
 	w.render(pWelcome)
@@ -210,7 +233,10 @@ func (w *Wizard) header() fyne.CanvasObject {
 	w.title.SizeName = theme.SizeNameSubHeadingText
 	w.step = newQuiet(theme.SizeNameCaptionText, fyne.TextAlignTrailing, fyne.TextStyle{})
 	w.stepBar = newThinBar(len(w.pages))
-	line := container.NewBorder(nil, nil, w.title, container.NewVBox(layout.NewSpacer(), w.step))
+	w.info = widget.NewButtonWithIcon("", infoIcon(), func() { d, _ := w.creditsDialog(); d.Show() })
+	w.info.Importance = widget.LowImportance
+	line := container.NewBorder(nil, nil, w.title,
+		container.NewHBox(container.NewVBox(layout.NewSpacer(), w.step), w.info))
 	return container.NewPadded(container.NewVBox(line, w.stepBar))
 }
 
@@ -309,6 +335,11 @@ func (w *Wizard) render(i int) {
 	w.step.SetText(fmt.Sprintf(stepText, i+1, len(w.pages)))
 	// The current page counts as reached: step 2 of 8 fills two segments.
 	w.stepBar.SetValue(float64(i+1) / float64(len(w.pages)))
+	if i == pWelcome {
+		w.info.Hide()
+	} else {
+		w.info.Show()
+	}
 	w.body.Objects = []fyne.CanvasObject{p.obj}
 	w.body.Refresh()
 	w.refreshNav()
@@ -465,6 +496,8 @@ func (w *Wizard) welcomePage() *page {
 	items := []fyne.CanvasObject{
 		heading,
 		para(welcomeIntro(c.Game.Name, c.Targets)),
+		bold(creditsHeading),
+		w.welcomeCredits(),
 		statement(noGameLead, noGameText(c.Game.Name)),
 		statement(downloadsLead, downloadsText),
 		statement(sendsLead, sendsText),
@@ -1012,8 +1045,12 @@ func (w *Wizard) optionsPage() *page {
 		objs, sync := w.optionControl(o)
 		items = append(items, objs...)
 		w.optionsSync = append(w.optionsSync, sync)
-		if h := w.optionHint(o); h != nil {
+		h, font := w.optionHint(o)
+		if h != nil {
 			items = append(items, h)
+		}
+		if font != nil {
+			w.fonts = append(w.fonts, font)
 		}
 	}
 	if len(items) == 0 {
@@ -1088,51 +1125,152 @@ func (w *Wizard) optionControl(o gamecfg.Option) (objs []fyne.CanvasObject, sync
 	return []fyne.CanvasObject{widget.NewLabel(o.Label), r}, sync
 }
 
+// fontLines are an option's font sentence and link, shown while the
+// game's font is missing or the wizard cannot tell, and the line that
+// says it is installed.
+type fontLines struct {
+	need  *fyne.Container
+	found *quietText
+}
+
+// set shows the lines for the CLI's answer; nil is "cannot tell".
+func (l *fontLines) set(f *runner.Font) {
+	if f != nil && f.Found {
+		l.found.SetText(fmt.Sprintf(optionFontFound, f.Font))
+		l.found.Show()
+		l.need.Hide()
+		return
+	}
+	l.found.Hide()
+	l.need.Show()
+}
+
+func hintText(text string) *quietText {
+	h := newQuiet(theme.SizeNameCaptionText, fyne.TextAlignLeading, fyne.TextStyle{})
+	h.Wrapping = fyne.TextWrapWord
+	h.SetText(text)
+	return h
+}
+
 // optionHint is an option's hint in quiet text and its link after it,
 // lined up with the control's own text: a checkbox's words start after
-// its box. nil when the option has neither.
-func (w *Wizard) optionHint(o gamecfg.Option) fyne.CanvasObject {
+// its box. With a font_hint, the font sentence and the link go in font,
+// which the font check shows or hides. nil when the option has neither.
+func (w *Wizard) optionHint(o gamecfg.Option) (obj fyne.CanvasObject, font *fontLines) {
 	var parts []fyne.CanvasObject
 	if o.Hint != "" {
-		h := newQuiet(theme.SizeNameCaptionText, fyne.TextAlignLeading, fyne.TextStyle{})
-		h.Wrapping = fyne.TextWrapWord
-		h.SetText(o.Hint)
-		parts = append(parts, h)
+		parts = append(parts, hintText(o.Hint))
 	}
-	if l := o.HintLink; l != nil {
-		// The address comes from the embedded config, the game's own at
-		// the release tag; the config loader took only https.
-		if u, err := url.Parse(l.URL); err == nil {
-			link := widget.NewHyperlink(l.Text, u)
-			link.OnTapped = func() { w.openURL(l.URL) }
-			parts = append(parts, link)
+	link := w.hintLink(o.HintLink)
+	if o.FontHint != "" {
+		need := container.NewVBox(hintText(o.FontHint))
+		if link != nil {
+			need.Add(link)
 		}
+		found := hintText("")
+		found.SetColor(theme.ColorNameSuccess)
+		found.Hide()
+		font = &fontLines{need: need, found: found}
+		parts = append(parts, need, found)
+	} else if link != nil {
+		parts = append(parts, link)
 	}
 	if len(parts) == 0 {
-		return nil
+		return nil, nil
 	}
 	box := container.NewVBox(parts...)
 	if o.Kind != "bool" {
-		return box
+		return box, font
 	}
 	// The check's label starts after the focus square (icon plus inner
 	// padding) and two borders; the hint's own inner padding is the rest.
 	indent := theme.Size(theme.SizeNameInlineIcon) + 2*theme.Size(theme.SizeNameInputBorder)
-	return container.New(layout.NewCustomPaddedLayout(0, 0, indent, 0), box)
+	return container.New(layout.NewCustomPaddedLayout(0, 0, indent, 0), box), font
+}
+
+// hintLink is a hint's link and the external-link glyph after it, which
+// says the browser opens. The glyph is a second tap target for the same
+// address but takes no focus: the link is the one control, and its
+// words are what a screen reader reads.
+func (w *Wizard) hintLink(l *gamecfg.Link) fyne.CanvasObject {
+	if l == nil {
+		return nil
+	}
+	// The address comes from the embedded config, the game's own at the
+	// release tag; the config loader took only https.
+	u, err := url.Parse(l.URL)
+	if err != nil {
+		return nil
+	}
+	open := func() { w.openLink(l.URL) }
+	link := widget.NewHyperlink(l.Text, u)
+	link.OnTapped = open
+	img := canvas.NewImageFromResource(externalLinkIcon())
+	img.FillMode = canvas.ImageFillContain
+	img.SetMinSize(fyne.NewSquareSize(theme.TextSize()))
+	// The link's own inner padding already leaves a gap after its words.
+	return container.New(layout.NewCustomPaddedHBoxLayout(-theme.InnerPadding()/2), link, newTapRow(img, open))
 }
 
 // fillOptions sets the controls from the state and says where the chosen
 // platform keeps config.toml, for the settings this page leaves out; the
-// platform can change between visits.
+// platform can change between visits, and the font may have been
+// installed since.
 func (w *Wizard) fillOptions() {
 	for _, sync := range w.optionsSync {
 		sync()
 	}
+	w.checkFont()
 	if p := ConfigPath(w.opt.Cfg, w.st.Target); p != "" {
 		w.optionsNote.SetText(fmt.Sprintf(optionsLater, p))
 		return
 	}
 	w.optionsNote.SetText("")
+}
+
+// checkFont asks the CLI whether the game's font is installed, off the UI
+// thread. The lines keep what they show until the answer; a check that a
+// newer one overtook is dropped.
+func (w *Wizard) checkFont() {
+	if len(w.fonts) == 0 {
+		return
+	}
+	w.fontRun++
+	run := w.fontRun
+	if w.env == nil {
+		w.Logf("font check: no checks yet")
+		w.showFont(nil)
+		return
+	}
+	r := w.env.Runner
+	w.async(func() {
+		f, err := w.fontCheck(r)
+		fyne.Do(func() {
+			if run != w.fontRun {
+				return
+			}
+			if err != nil {
+				w.Logf("font check: %v", err)
+				f = nil
+			} else {
+				w.Logf("font check: %s found=%v %s", f.Font, f.Found, f.Path)
+			}
+			w.showFont(f)
+		})
+	})
+}
+
+func (w *Wizard) showFont(f *runner.Font) {
+	for _, l := range w.fonts {
+		l.set(f)
+	}
+}
+
+// askFont is `wizard font --json` through the game's bootstrap.
+func (w *Wizard) askFont(r runner.Runner) (*runner.Font, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	return r.Font(ctx, LogWriter(func(s string) { w.Logf("font check: %s", s) }))
 }
 
 // ConfigPath is the player's config.toml on a target, as that target
@@ -1226,35 +1364,129 @@ func (w *Wizard) buildPage() *page {
 	w.buildLog = newLogPane(nil)
 	w.bar = newThinBar(0)
 	w.bar.Height = 10
-	w.stepLabel = widget.NewLabel("")
-	w.buildClock = newQuiet("", fyne.TextAlignTrailing, fyne.TextStyle{})
 	w.cancelBtn = widget.NewButton(cancelText, func() {
-		dialog.ShowConfirm(stopTitle, stopText, func(ok bool) {
-			if ok {
-				w.cancelBuild()
-			}
-		}, w.win)
+		d, _ := w.stopDialog()
+		d.Show()
 	})
+	w.overall = newQuiet("", fyne.TextAlignLeading, fyne.TextStyle{})
+	w.overall.Truncation = fyne.TextTruncateEllipsis
+	w.buildParts = newPartsView(w.partLines)
 	// The bar is thinner than the button: centred beside it.
 	bar := container.NewVBox(layout.NewSpacer(), w.bar, layout.NewSpacer())
-	top := container.NewVBox(para(buildIntro),
-		container.NewBorder(nil, nil, nil, w.buildClock, w.stepLabel),
-		container.NewBorder(nil, nil, nil, w.cancelBtn, bar))
-	// Collapsed, the pane sits at the bottom; expanded, it takes the space
-	// under the bar instead of leaving a gap above it.
-	holder := container.NewStack()
-	place := func() {
-		if w.buildLog.open {
-			holder.Objects = []fyne.CanvasObject{w.buildLog.obj}
-		} else {
-			holder.Objects = []fyne.CanvasObject{container.NewBorder(nil, w.buildLog.obj, nil, nil)}
-		}
-		holder.Refresh()
-	}
-	place()
-	obj := container.NewBorder(top, nil, nil, nil, holder)
-	w.buildLog.relayout = place
+	top := container.NewVBox(para(buildIntro), w.overall, container.NewBorder(nil, nil, nil, w.cancelBtn, bar))
+	// The parts scroll between the bar and the Details pane, which holds
+	// every line of the build together.
+	obj := container.NewBorder(top, w.buildLog.obj, nil, nil, container.NewVScroll(w.buildParts.box))
+	w.buildLog.relayout = obj.Refresh
 	return &page{title: titleBuild, obj: obj, enter: w.startBuild, ready: func() bool { return !w.building }, next: nextText}
+}
+
+// stopDialog asks before stopping the build: the buttons at the right,
+// the way back first, and no default, so Enter never stops a build. body
+// is the dialog's content, for the tests.
+func (w *Wizard) stopDialog() (_ dialog.Dialog, body fyne.CanvasObject) {
+	var d *dialog.CustomDialog
+	back := widget.NewButtonWithIcon(stopBack, theme.NavigateBackIcon(), func() { d.Hide() })
+	stop := widget.NewButtonWithIcon(stopConfirm, theme.MediaStopIcon(), func() {
+		d.Hide()
+		w.cancelBuild()
+	})
+	stop.Importance = widget.DangerImportance
+	body = container.NewVBox(para(stopText), container.NewHBox(layout.NewSpacer(), back, stop))
+	d = dialog.NewCustomWithoutButtons(stopTitle, body, w.win)
+	d.SetOnClosed(func() {
+		if w.stopD == d {
+			w.stopD = nil
+		}
+	})
+	w.stopD = d
+	w.fitDialogs(w.win.Canvas().Size())
+	return d, body
+}
+
+// stopWidth is the stop dialog's width in a window this wide.
+func stopWidth(win float32) float32 { return max(min(420, win-48), 0) }
+
+// fitDialogs sizes the open dialogs to a window this big, again whenever
+// the window is resized: wrapped text asks for little width, so each gets
+// its own, never more than the window has.
+func (w *Wizard) fitDialogs(win fyne.Size) {
+	if w.stopD != nil {
+		w.stopD.Resize(fyne.NewSize(stopWidth(win.Width), 0))
+	}
+	if w.creditsD != nil {
+		w.creditsD.Resize(creditsSize(win))
+	}
+}
+
+// sizeWatch fills the window under its content and reports each new
+// size: Fyne tells a window's content, not the app, about a resize.
+type sizeWatch struct {
+	widget.BaseWidget
+	resized func(fyne.Size)
+}
+
+func newSizeWatch(resized func(fyne.Size)) *sizeWatch {
+	s := &sizeWatch{resized: resized}
+	s.ExtendBaseWidget(s)
+	return s
+}
+
+func (s *sizeWatch) Resize(size fyne.Size) {
+	if size != s.Size() {
+		s.BaseWidget.Resize(size)
+		s.resized(size)
+	}
+}
+
+func (s *sizeWatch) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(&canvas.Rectangle{})
+}
+
+// partLines is every line part i kept, for its Copy button.
+func (w *Wizard) partLines(i int) string {
+	w.partsMu.Lock()
+	defer w.partsMu.Unlock()
+	if w.parts == nil || i >= len(w.parts.Parts) {
+		return ""
+	}
+	return strings.Join(w.parts.Parts[i].Lines, "\n")
+}
+
+// armParts schedules one refresh of the parts; any goroutine.
+func (w *Wizard) armParts() {
+	w.partsMu.Lock()
+	defer w.partsMu.Unlock()
+	if !w.partsArmed {
+		w.partsArmed = true
+		w.partsAfter(paneDelay, w.flushParts)
+	}
+}
+
+// snapParts is a copy of the parts and the share done, under the lock.
+func (w *Wizard) snapParts() ([]runner.Part, float64) {
+	w.partsMu.Lock()
+	defer w.partsMu.Unlock()
+	w.partsArmed = false
+	if w.parts == nil {
+		return nil, 0
+	}
+	return w.parts.Snapshot(partShown), w.parts.Fraction()
+}
+
+// flushParts shows the parts, the overall line and the bar, on the UI
+// goroutine.
+func (w *Wizard) flushParts() {
+	snap, frac := w.snapParts()
+	now := time.Now()
+	if !w.building && !w.buildEnd.IsZero() {
+		now = w.buildEnd
+	}
+	w.buildParts.show(snap, !w.building, now)
+	w.overall.SetText(overallText(snap, frac, now.Sub(w.buildStart)))
+	if frac > 0 && w.building {
+		w.bar.SetValue(frac)
+	}
 }
 
 func (w *Wizard) cancelBuild() {
@@ -1278,15 +1510,16 @@ func (w *Wizard) startBuild() {
 	w.bar.SetValue(0)
 	w.bar.StartPulse()
 	w.cancelBtn.Enable()
-	w.stepLabel.SetText(buildStarting)
-	now := time.Now()
-	w.clockMu.Lock()
-	w.buildStart, w.partStart, w.partIndex, w.clockFrac = now, now, 0, 0
-	w.clockMu.Unlock()
-	w.buildClock.SetText(w.clockText(now))
 	w.refreshNav()
 	seed := w.seedArg()
 	steps := w.st.Steps(seed, w.out)
+	w.partsMu.Lock()
+	w.parts = runner.NewChecklist(steps)
+	w.partsMu.Unlock()
+	w.buildParts.reset()
+	w.doneParts.reset()
+	w.buildStart, w.buildEnd = time.Now(), time.Time{}
+	w.flushParts()
 	done := make(chan struct{})
 	w.clockRun++
 	go w.tickClock(done, w.clockRun)
@@ -1297,8 +1530,9 @@ func (w *Wizard) startBuild() {
 		fyne.Do(func() {
 			w.building = false
 			w.buildErr = err
+			w.buildEnd = time.Now()
 			w.bar.StopPulse()
-			w.buildClock.SetText(w.clockText(time.Now()))
+			w.flushParts()
 			w.cancelBtn.Disable()
 			w.fillDone()
 			w.show(pDone)
@@ -1315,49 +1549,28 @@ func (w *Wizard) tickClock(done <-chan struct{}, run int) {
 		select {
 		case <-done:
 			return
-		case now := <-t.C:
-			s := w.clockText(now)
-			fyne.Do(func() { w.showTick(run, s) })
+		case <-t.C:
+			fyne.Do(func() { w.showTick(run) })
 		}
 	}
 }
 
-// showTick is a tick's clocks, unless its build has ended since: the end
-// set the final ones.
-func (w *Wizard) showTick(run int, s string) {
+// showTick moves the clocks, unless the tick's build has ended since: the
+// end set the final ones.
+func (w *Wizard) showTick(run int) {
 	if w.building && run == w.clockRun {
-		w.buildClock.SetText(s)
+		w.flushParts()
 	}
 }
 
-// clockText is the clocks at now.
-func (w *Wizard) clockText(now time.Time) string {
-	w.clockMu.Lock()
-	defer w.clockMu.Unlock()
-	return buildClockText(w.clockFrac, now.Sub(w.partStart), now.Sub(w.buildStart))
-}
-
-// newPart starts the part's clock: a command starts, or the plan moves to
-// another stage.
-func (w *Wizard) newPart(now time.Time) {
-	w.clockMu.Lock()
-	w.partStart = now
-	w.clockMu.Unlock()
-}
-
-// feedLine is one CLI line into the progress: it reports whether the
-// state changed, and a new stage restarts the part's clock.
-func (w *Wizard) feedLine(line string, now time.Time) bool {
-	if !w.prog.Feed(line) {
-		return false
+// partsDo changes the checklist under its lock and schedules a refresh.
+func (w *Wizard) partsDo(f func(c *runner.Checklist)) {
+	w.partsMu.Lock()
+	if w.parts != nil {
+		f(w.parts)
 	}
-	w.clockMu.Lock()
-	w.clockFrac = w.prog.Fraction()
-	if w.prog.Index != w.partIndex {
-		w.partIndex, w.partStart = w.prog.Index, now
-	}
-	w.clockMu.Unlock()
-	return true
+	w.partsMu.Unlock()
+	w.armParts()
 }
 
 func (w *Wizard) runSteps(seed string, steps [][]string) error {
@@ -1373,23 +1586,20 @@ func (w *Wizard) runSteps(seed string, steps [][]string) error {
 		w.procMu.Lock()
 		if w.canceled {
 			w.procMu.Unlock()
+			w.partsDo(func(c *runner.Checklist) { c.Stop(true, time.Now()) })
 			return errCanceled
 		}
 		w.procMu.Unlock()
 		cmd = runner.Display(slug, s)
 		log("$ " + cmd)
-		w.newPart(time.Now())
-		if i < len(steps)-1 {
-			fyne.Do(func() { w.stepLabel.SetText(buildPrepare) })
-		}
+		w.partsDo(func(c *runner.Checklist) { c.StartCommand(i, time.Now()); c.Feed("$ "+cmd, time.Now()) })
 		p, err := w.env.Runner.Start(context.Background(), []string{"CI=1"}, func(line string) {
 			log(line)
-			if w.feedLine(line, time.Now()) {
-				f, label := w.prog.Fraction(), w.progressText()
-				fyne.Do(func() { w.bar.SetValue(f); w.stepLabel.SetText(label) })
-			}
+			w.prog.Feed(line)
+			w.partsDo(func(c *runner.Checklist) { c.Feed(line, time.Now()) })
 		}, s...)
 		if err != nil {
+			w.partsDo(func(c *runner.Checklist) { c.EndCommand(err, false, time.Now()) })
 			return w.failure(cmd, err)
 		}
 		w.procMu.Lock()
@@ -1400,6 +1610,7 @@ func (w *Wizard) runSteps(seed string, steps [][]string) error {
 		w.proc = nil
 		canceled := w.canceled
 		w.procMu.Unlock()
+		w.partsDo(func(c *runner.Checklist) { c.EndCommand(err, canceled, time.Now()) })
 		if canceled {
 			return errCanceled
 		}
@@ -1455,22 +1666,11 @@ func (w *Wizard) logBuildEnd(err error) {
 	}
 }
 
-func (w *Wizard) progressText() string {
-	p := w.prog
-	if p.Index == 0 {
-		return buildPlanning
-	}
-	s := fmt.Sprintf(buildStep, p.Index, p.Total, p.Stage)
-	if p.Label != "" {
-		s += " (" + p.Label + ")"
-	}
-	return s
-}
-
 // --- done
 
 func (w *Wizard) donePage() *page {
 	w.doneBox = container.NewVBox()
+	w.doneParts = newPartsView(w.partLines)
 	return &page{title: titleDone, obj: container.NewVScroll(w.doneBox), next: doneNext}
 }
 
@@ -1491,7 +1691,9 @@ func (w *Wizard) fillDone() {
 		items = append(items, container.NewHBox(row...), para(fmt.Sprintf(doneData, c.Data[w.st.Target])))
 	case errors.Is(w.buildErr, errCanceled):
 		w.pages[pDone].title = titleStopped
-		items = append(items, bold(doneCanceled), container.NewHBox(retry...), para(doneRetry))
+		items = append(items, bold(doneCanceled))
+		items, _ = w.doneChecklist(items)
+		items = append(items, container.NewHBox(retry...), para(doneRetry))
 	default:
 		w.pages[pDone].title = titleStopped
 		items = append(items, bold(doneFailed))
@@ -1499,7 +1701,11 @@ func (w *Wizard) fillDone() {
 			f = &buildFailure{Step: failedStep(w.prog), Err: w.buildErr, Tail: w.buildLog.Tail(tailLines)}
 		}
 		items = append(items, para(fmt.Sprintf(doneStoppedAt, f.Step)))
-		if ex := failureExcerpt(f.Tail); len(ex) > 0 {
+		var said bool
+		items, said = w.doneChecklist(items)
+		// Without a failed part (the build stopped before its first
+		// command), what the build said stands on its own.
+		if ex := failureExcerpt(f.Tail); len(ex) > 0 && !said {
 			items = append(items, bold(doneSaid), mono(strings.Join(ex, "\n")))
 		}
 		var ee *exec.ExitError
@@ -1527,6 +1733,24 @@ func (w *Wizard) fillDone() {
 	if w.cur == pDone {
 		w.title.SetText(w.pages[pDone].title)
 	}
+}
+
+// doneChecklist adds the build's parts as they ended, the failed one open
+// with what it said; said is whether a failed part has lines to show.
+func (w *Wizard) doneChecklist(items []fyne.CanvasObject) (_ []fyne.CanvasObject, said bool) {
+	snap, _ := w.snapParts()
+	if len(snap) == 0 {
+		return items, false
+	}
+	end := w.buildEnd
+	if end.IsZero() {
+		end = time.Now()
+	}
+	w.doneParts.show(snap, true, end)
+	for _, p := range snap {
+		said = said || p.State == runner.PartFailed && len(p.Lines) > 0
+	}
+	return append(items, w.doneParts.box), said
 }
 
 // setupIn is the Windows bundle's setup program: the one *-setup.exe in
