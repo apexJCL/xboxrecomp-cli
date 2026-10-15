@@ -64,10 +64,43 @@ their private bundle. Packs are game data and are never published.
 
 ## macOS as a target
 
-The toolkit builds for macOS (Apple silicon, Metal) and BLiNX 2 runs there,
-but the toolkit's template `main.c` is Win32 (WinMain, the VEH crash
-handler, dbghelp). A game that lists `macos` in `build.targets` needs a
-`main.c` with the POSIX host code: BLiNX 2's `src/main.c` has it
-(`host_main`, the signal handlers, the SDL window), and a portable template
-is a toolkit follow-up. Until then a Mac is a build host for the windows
-target and a run host for nothing, unless you port the host code.
+The toolkit builds for macOS (Apple silicon, Metal), and the toolkit's
+template `main.c`, the one `new` copies, has both hosts in one file: a shared
+boot sequence (`host_main`) with the host parts under `#if defined(_WIN32)`
+/ `#else`. On Windows that is `WinMain`, the VEH crash handler and dbghelp;
+elsewhere a SIGBUS/SIGSEGV handler that prints the same `[CRASH]` report
+(the host PC and the generated function it is in, the guest registers and
+return addresses, the native stack), and the SDL window, with the guest on
+its own thread. So `new` writes `build.targets = ["windows", "macos"]`.
+The macos build needs the Command Line Tools and
+`brew install sdl2 openssl libepoxy pkg-config` (a new game's `game.toml`
+has no `[package] brew` list, so `setup` does not check them). Then, on a
+Mac:
+
+```sh
+./mygame build macos                      # build/<exe>, Apple clang
+SDL_AUDIODRIVER=dummy RECOMP_HEADLESS=1 ./build/<exe>
+```
+
+Run it from the game's root, where `game_files/` is. `RECOMP_HEADLESS=1`
+runs with no window; `SDL_AUDIODRIVER=dummy` keeps it silent. The backend
+is Metal unless `RECOMP_PB_BACKEND` says otherwise (`cpu` is the CPU
+rasteriser, a few frames a second on a Mac). `RECOMP_STDIO_LOG=<file>`
+sends stdout and stderr to a file on both hosts, which is how the bench and
+the launchers read the Windows build's log under Proton.
+
+The first title-specific fault on a POSIX host is often in the vblank DPC
+or in `KeSetEvent`, before the first frame: some XDKs' D3D signals a KEVENT
+the title built without `KeInitializeEvent`. Windows fails that call
+quietly; POSIX dereferences the guest address. Try
+`RECOMP_TITLE_KEVENTS=1` in the environment, and once it is confirmed make
+it the game's default in `main.c`'s entry points, right after
+`recomp_env_init()`: `recomp_env_set(RENV_TITLE_KEVENTS, "1")` when
+`recomp_env(RENV_TITLE_KEVENTS)` is unset.
+
+A game pinned to a toolkit at or before `blinx2-v0.3.0` has the Win32-only
+template: `new` says so, and `build macos` will not compile. Move the
+toolkit pin forward (`[toolkit] commit` in `game.toml`, then `setup`) and
+copy the new `templates/new-game/src/main.c` and `CMakeLists.txt` over your
+own, re-applying your constants, or drop `macos` from `build.targets` and
+keep the Mac a build host for the windows target.

@@ -97,9 +97,9 @@ text_only = true
 [build]
 # The CMake target and file name: build-win/@EXE@.exe
 exe = "@EXE@"
-# windows builds on every host (llvm-mingw). macos needs a main.c with the
-# POSIX host code: the CLI's docs/porting.md, "macOS as a target".
-targets = ["windows"]
+# windows builds on every host (llvm-mingw); macos builds on a Mac (Apple
+# clang). Drop one to stop `build` offering it.
+targets = ["windows", "macos"]
 # No enhancements layer: the stock build is the plain one.
 stock_cmake = []
 
@@ -270,7 +270,8 @@ short checkout path such as `C:\\g\\@SLUG@`, with
 `git config --global core.longpaths true`.
 
 The first build is `@WINDOWS_DIR@/@EXE@.exe`, cross-compiled with llvm-mingw on
-every host. It will crash the first time: that is where the port starts.
+any host, or `@MACOS_DIR@/@EXE@` with Apple clang on a Mac (Metal). It will
+crash the first time: that is where the port starts.
 `src/recomp_manual.c` takes hand-written overrides, `config/seed_functions.json`
 the function starts the disassembler missed, and `./@SLUG@ analyze` then
 `./@SLUG@ recomp` regenerate `src/recomp/gen/` (never edit it by hand).
@@ -334,6 +335,11 @@ DISPATCH_DECL = (
     " * declaration MSVC only warned about. */\n"
     "extern int recomp_dispatch_init(void);\n",
 )
+
+# The two-host template's host sections. Without one, src/main.c is the
+# Win32-only template (toolkit blinx2-v0.3.0 and older).
+WIN32_SECTION = "#if defined(_WIN32)"
+WIN32_ONLY_NOTE = "has the Win32-only template: `build macos` will not compile"
 
 
 def fill(text, values):
@@ -562,6 +568,14 @@ def patch_template(src, dst, values):
                 text = text.replace(*DISPATCH_DECL)
             else:
                 notes.append("src/main.c: declare `extern int recomp_dispatch_init(void);`")
+        if rel.endswith("main.c") and WIN32_SECTION not in text:
+            # An older toolkit checkout (XBOXRECOMP_DIR, ../xboxrecomp): the
+            # Windows build still works, so a note, not an error.
+            notes.append(
+                "the toolkit at %s %s until the toolkit pin moves past blinx2-v0.3.0, "
+                "or drop macos from build.targets"
+                % (values.get("TOOLKIT_COMMIT", "?")[:12], WIN32_ONLY_NOTE)
+            )
         write(d, text)
     return notes
 
@@ -689,7 +703,17 @@ def summary(root, v, notes, later):
         "in %s/" % (root, cmd, v["GAME_FILES"])
     )
     host.say("  2. %s setup" % cmd)
-    host.say("  3. %s all        -> %s/%s.exe" % (cmd, v["WINDOWS_DIR"], v["EXE"]))
+    # This host's default build (build.default_build_target): its own target.
+    win_out = "%s/%s.exe" % (v["WINDOWS_DIR"], v["EXE"])
+    if host.host_os() != "macos":
+        host.say("  3. %s all        -> %s" % (cmd, win_out))
+    elif any(WIN32_ONLY_NOTE in n for n in notes):
+        # `all` would build macos, which this template cannot (the note above).
+        host.say(
+            "  3. %s analyze && %s recomp && %s build windows -> %s" % (cmd, cmd, cmd, win_out)
+        )
+    else:
+        host.say("  3. %s all        -> %s/%s" % (cmd, v["MACOS_DIR"], v["EXE"]))
     host.say("Commit the directory when you like: the dump, gen/ and the toolchain are ignored.")
 
 

@@ -99,11 +99,13 @@ pipeline, the build, the data folders, packaging and the bench.
 
 ## macOS
 
-The toolkit builds for macOS (Apple silicon, Metal) and BLiNX 2 runs there,
-but the toolkit's template `main.c` is Win32. A game that lists `macos` in
-`build.targets` needs a `main.c` with the POSIX host code; until a portable
-template exists, a Mac is a build host for the windows target
-([docs/porting.md](docs/porting.md#macos-as-a-target)).
+The toolkit builds for macOS (Apple silicon, Metal), and the template
+`main.c` that `new` copies runs on both hosts: a new game lists
+`build.targets = ["windows", "macos"]`, and on a Mac `mygame build` makes
+`build/<exe>` with Apple clang while `mygame build windows` still
+cross-compiles the Windows one. A toolkit pin at or before `blinx2-v0.3.0`
+has the older Win32-only template, which `new` notes; see
+[docs/porting.md](docs/porting.md#macos-as-a-target).
 
 ## The bench host
 

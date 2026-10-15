@@ -45,8 +45,9 @@ for t in $standalone; do
     cmake --build "build-win/tests/$t"
 done
 # Tests an older toolkit does not have yet (another game's pin): built and run
-# when their directory exists, skipped with a line otherwise.
-optional="enhance_cfg"
+# when their directory exists, skipped with a line otherwise. template_main
+# builds the new-game template's main.c against the toolkit.
+optional="enhance_cfg template_main"
 have_optional=
 for t in $optional; do
     src=../xboxrecomp/tests/$t

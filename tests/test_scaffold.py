@@ -38,7 +38,8 @@ CLI = "1" * 40
 TK = "2" * 40
 
 # The marks the template carries, as the toolkit's templates/new-game has
-# them on 2026-10-07 (test_real_template_patches_match reads the real one).
+# them on 2026-10-07, with the two-host template's host section
+# (test_real_template_patches_match reads the real one).
 FAKE_CMAKE = """\
 cmake_minimum_required(VERSION 3.20)
 # YOUR_GAME_NAME - Static Recompilation
@@ -55,8 +56,13 @@ FAKE_MAIN = """\
 #define YOUR_GAME_XBE_PATH      "game\\\\Your Game Title\\\\default.xbe"
 #define YOUR_GAME_DIR            "game\\\\Your Game Title"
 extern void xbe_entry_point(void);
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 int main(void) { puts("=== YOUR_GAME_NAME ==="); recomp_dispatch_init(); xbe_entry_point(); return 0; }
 """
+# The template up to toolkit blinx2-v0.3.0: Win32 only.
+FAKE_MAIN_WIN32_ONLY = FAKE_MAIN.replace("#if defined(_WIN32)\n", "").replace("#endif\n", "")
 FAKE_MANUAL = "/* overrides */\n"
 
 
@@ -106,7 +112,8 @@ def test_offline_scaffold_loads_and_names_what_is_left(d, tk, game):
     G = manifest.load(root)
     assert (G.slug, G.name, G.exe_name) == ("my-game", "my-game", "my_game_recomp")
     assert G.m["cli"]["commit"] == CLI and G.m["toolkit"]["commit"] == TK
-    assert G.m["build"]["targets"] == ["windows"] and G.m["pipeline"]["icall_seeds"] is False
+    assert G.m["build"]["targets"] == ["windows", "macos"]
+    assert G.m["pipeline"]["icall_seeds"] is False
     assert G.m["xbe"]["title_id"] == 0 and "package" not in G.m
     assert wrapper.check(G) == (True, [])
     for f in (
@@ -338,9 +345,53 @@ def test_windows_wrapper_and_messages(d, tk, game, monkeypatch):
     for f in ("g", "g.py", "game.toml", "pyproject.toml", "src/main.c"):
         assert "\r" not in read(os.path.join(root, f), newline=""), f
     assert "cd %s && g import PATH with your disc image or folder" % root in out
-    assert "  2. g setup" in out and "  3. g all" in out
+    assert "  2. g setup" in out and "  3. g all        -> build-win/g_recomp.exe" in out
     # fopen takes / on Windows: the patched paths never need escaping.
     assert '"game_files/default.xbe"' in read(os.path.join(root, "src", "main.c"))
+
+
+def test_next_build_is_this_hosts_own(d, tk, game, monkeypatch):
+    """Step 3 names the build `all` makes here (build.default_build_target):
+    build/<exe> on a Mac, build-win/<exe>.exe elsewhere."""
+    for os_name, want in (
+        ("macos", "./g all        -> build/g_recomp\n"),
+        ("linux", "./g all        -> build-win/g_recomp.exe\n"),
+    ):
+        monkeypatch.setattr(host, "host_os", lambda system=None, o=os_name: o)
+        root = os.path.join(d, os_name, "g")
+        rc, out, _ = new(root, "--offline", "--cli-commit", CLI, "--toolkit-commit", TK)
+        assert rc == 0 and want in out, out
+    readme = read(os.path.join(root, "README.md"))
+    assert "`build-win/g_recomp.exe`" in readme and "`build/g_recomp`" in readme
+
+
+def test_a_win32_only_template_is_noted_not_fatal(d, tk, game):
+    """An old toolkit beside the game (blinx2-v0.3.0 and older) has the
+    Win32-only template: both targets are still written, and the summary
+    says what `build macos` needs."""
+    note = "has the Win32-only template: `build macos` will not compile"
+    root = os.path.join(d, "two")
+    rc, out, _ = new(root, "--offline", "--cli-commit", CLI, "--toolkit-commit", TK)
+    assert rc == 0 and note not in out
+    write(os.path.join(tk, "templates", "new-game", "src", "main.c"), FAKE_MAIN_WIN32_ONLY)
+    root = os.path.join(d, "old")
+    rc, out, _ = new(root, "--offline", "--cli-commit", CLI, "--toolkit-commit", TK)
+    assert rc == 0 and note in out, out
+    assert "the toolkit at %s %s" % (TK[:12], note) in out
+    assert "drop macos from build.targets" in out
+    assert manifest.load(root).m["build"]["targets"] == ["windows", "macos"]
+
+
+def test_a_win32_only_template_on_a_mac_points_at_windows(d, tk, game, monkeypatch):
+    """On a Mac, `all` builds macos, which the Win32-only template cannot:
+    step 3 names the windows build instead."""
+    monkeypatch.setattr(host, "host_os", lambda system=None: "macos")
+    write(os.path.join(tk, "templates", "new-game", "src", "main.c"), FAKE_MAIN_WIN32_ONLY)
+    root = os.path.join(d, "old")
+    rc, out, _ = new(root, "--offline", "--cli-commit", CLI, "--toolkit-commit", TK)
+    assert rc == 0, out
+    assert "./old build windows -> build-win/old_recomp.exe\n" in out, out
+    assert "./old all" not in out
 
 
 def test_doctor_next_line(d, tk, game, monkeypatch):
@@ -440,6 +491,24 @@ def test_real_template_patches_match(d, game, monkeypatch):
     assert "YOUR_GAME_NAME" not in c and "YOUR_GAME_NAME" not in read(
         os.path.join(root, "CMakeLists.txt")
     )
+    # The two-host template: host sections, the POSIX window, and
+    # <windows.h> only inside a _WIN32 section.
+    assert "Win32-only template" not in out, out
+    assert "#if defined(_WIN32)" in c and "xbox_HostWindowMain" in c
+    depth, win32 = [], []
+    for line in c.splitlines():
+        s = line.strip()
+        if s.startswith("#if"):
+            depth.append("_WIN32" in s and "!" not in s)
+        elif s.startswith("#elif"):
+            depth[-1] = "_WIN32" in s and "!" not in s
+        elif s.startswith("#else"):
+            depth[-1] = False
+        elif s.startswith("#endif"):
+            depth.pop()
+        elif s == "#include <windows.h>":
+            win32.append(any(depth))
+    assert win32 and all(win32), "#include <windows.h> outside a _WIN32 section"
     for p in (os.path.join(root, "CMakeLists.txt"), os.path.join(root, "src", "recomp_manual.c")):
         assert os.path.getsize(p) > 0
 
