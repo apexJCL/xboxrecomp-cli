@@ -308,3 +308,33 @@ def next_step(problems, gen_ok, game_files):
     if not gen_ok:
         return "'%s analyze', then '%s recomp' ('%s all' builds too)" % (cmd, cmd, cmd)
     return "'%s build', or '%s package <target>'" % (cmd, cmd)
+
+
+def report_json(lines, targets, blocked):
+    """doctor_report()'s result as data for the build wizard: nothing is
+    recomputed but `blockers`, setup.host_blockers per package target for a
+    run that imports a dump (what setup cannot fetch, each with its fix;
+    the wizard enables a target when it has none)."""
+    import json
+
+    from . import setup
+
+    g = host.g()
+    wanted = g.m["package"]["targets"] if "package" in g.m else []
+    nxt = [x for x in lines if x.startswith("next:")]
+    return json.dumps(
+        {
+            "host": {
+                "os": host.host_os(),
+                "arch": host.host_arch(),
+                "python": platform.python_version(),
+            },
+            "lines": lines,
+            "targets": targets,
+            "blocked": blocked,
+            "blockers": {t: setup.host_blockers(t, importing=True) for t in wanted},
+            "problems": list(PROBLEMS),
+            "next": nxt[-1].split(":", 1)[1].strip() if nxt else "",
+        },
+        indent=2,
+    )

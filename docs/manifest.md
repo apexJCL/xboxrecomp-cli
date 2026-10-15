@@ -9,8 +9,8 @@ reads and validates it on every command:
   The error names the key.
 - Paths are relative to the game root, written with `/`, and must stay
   inside it.
-- Tables other than `[package]` are always present in effect: a table you
-  leave out takes its defaults.
+- Tables other than `[package]`, `[enhance]` and `[wizard]` are always
+  present in effect: a table you leave out takes its defaults.
 
 The CLI never writes this file, except once: `xbr new DIR` writes a starter
 one (every required key filled in, the defaults written out with their
@@ -198,6 +198,47 @@ under `package.content`).
   the CLI's `running_game.py` with `build.exe` baked in, for
   `install.sh status`.
 - **macos**: still the game's own, in `<package.templates>/macos/`.
+
+## [wizard]
+
+This table is optional, and needs `[package]`. With it, `wizard build` makes
+the player's build wizard for a release tag ([wizard.md](wizard.md)). Its
+values are read at the tag, so a change reaches players with the next
+release.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `repo` | required | The game's public repository, `https://`: the wizard clones it at the release tag and asks its releases for a newer one. |
+| `icon` | required | A PNG in the game's tree (512x512 or larger): the app's icon on macOS. |
+| `targets` | `package.targets` | The targets the wizard offers, each one of `package.targets`. |
+
+`[[wizard.fetch]]`: archives the build needs beyond the clone (none for a
+game whose `setup` fetches everything), each fetched by sha256 into the
+clone before `package` runs.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name` | required | A name for the progress lines, unique. |
+| `url` | required | `https://` only. |
+| `sha256` | required | The archive's. |
+| `dest` | required | A path inside the clone, `/`-separated, every segment named (no empty, `.` or `..`). |
+| `unpack` | `true` | Unpack the `.zip`, `.tar.gz` or `.tar` into the folder `dest`; `false` saves the download itself as the file `dest`. |
+| `hosts` | all three | The player hosts that need it: `windows`, `macos`, `linux`. |
+
+`[[wizard.option]]`: the options screen, one control each.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `key` | required | `[a-z][a-z0-9_]*`, unique. |
+| `label` | required | What the player reads. |
+| `kind` | required | `bool` (a checkbox) or `choice` (one of `values`). |
+| `values` | `[]` | `choice`: two or more strings. |
+| `default` | required | `bool`: `true` or `false`; `choice`: one of `values`. |
+| `config` | `""` | A dotted key of `<package.content>/config.default.toml` (`render.scale`): the choice goes in the seed config.toml (`package --seed-config`). The default must equal that file's value, and a choice's values must read as its type. |
+| `flag` | `""` | A switch of `package` (`--hud-pack`), passed when the box is ticked. Only `kind = "bool"`. |
+
+Each option has exactly one of `config` and `flag`. `wizard config` checks
+the icon, the config keys and the flags against the tag's tree.
 
 ## [enhance.hud]
 

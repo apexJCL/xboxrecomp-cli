@@ -38,6 +38,8 @@ Developer commands:
                                         recomp; ghidra is optional)
   @slug@ build [windows|macos]          compile @windows_dir@/ or @macos_dir@/
   @slug@ pins refresh                   maintainers: re-pin the downloads
+  @slug@ wizard build [--tag TAG]       the player's build wizard for a release
+                                        (dist/wizard/; config, check)
   @slug@ new DIR                        start another game: a manifest, bootstrap
                                         and template in DIR (xbr new --help)
   @slug@ bench <command>                drive the Proton bench host (@slug@ bench --help)

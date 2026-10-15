@@ -6,6 +6,7 @@ makes and the game's commit reviews."""
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -175,3 +176,61 @@ def pins_refresh():
     tk, cli = g.m["toolkit"], g.m["cli"]
     host.say(pin_report("toolkit", tk, tk["branch"]))
     host.say(pin_report("cli", cli, CLI_BRANCH))
+
+
+# The player's downloads the wizard pins (wizard/pins.json), by the key the
+# Go side looks them up with (GOOS-GOARCH) and the release asset's name.
+UV_ASSETS = {
+    "darwin-arm64": "uv-aarch64-apple-darwin.tar.gz",
+    "darwin-amd64": "uv-x86_64-apple-darwin.tar.gz",
+    "linux-amd64": "uv-x86_64-unknown-linux-gnu.tar.gz",
+    "windows-amd64": "uv-x86_64-pc-windows-msvc.zip",
+}
+MINGIT_ASSET = re.compile(r"^MinGit-[0-9.]+-64-bit\.zip$")
+
+
+def release_pins(rel, wanted):
+    """{key: {url, sha256, size}} for the assets of a GitHub release JSON;
+    wanted: {key: asset name or a compiled pattern}."""
+    out = {}
+    for key, want in wanted.items():
+        for a in rel["assets"]:
+            name = a["name"]
+            if name == want if isinstance(want, str) else want.match(name):
+                if not (a.get("digest") or "").startswith("sha256:"):
+                    raise CliError("%s has no sha256 digest in the release API" % name)
+                out[key] = {
+                    "url": a["browser_download_url"],
+                    "sha256": a["digest"][len("sha256:") :],
+                    "size": a["size"],
+                }
+                break
+        else:
+            raise CliError("release %s has no %s" % (rel.get("tag_name"), want))
+    return out
+
+
+def wizard_pins_refresh(path=None, get_json=None):
+    """uv's and MinGit's newest releases into the CLI's wizard/pins.json
+    (the binaries embed it: a moved pin reaches players with the next
+    wizard build). Go, llvm-mingw, the fyne tool and the builder image move
+    by hand."""
+    from . import wizard_build
+
+    get_json = get_json or _get_json
+    path = path or os.path.join(wizard_build.module_dir(), "pins.json")
+    with open(path) as f:
+        pins = json.load(f)
+    uv = get_json("https://api.github.com/repos/astral-sh/uv/releases/latest")
+    git = get_json("https://api.github.com/repos/git-for-windows/git/releases/latest")
+    pins["uv"] = {"version": uv["tag_name"], "assets": release_pins(uv, UV_ASSETS)}
+    pins["mingit"] = {
+        "version": git["tag_name"].lstrip("v"),
+        "assets": release_pins(git, {"windows-amd64": MINGIT_ASSET}),
+    }
+    with open(path, "w", newline="\n") as f:
+        json.dump(pins, f, indent=2, sort_keys=True)
+        f.write("\n")
+    host.say(
+        "wrote %s: uv %s, MinGit %s" % (path, pins["uv"]["version"], pins["mingit"]["version"])
+    )

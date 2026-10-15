@@ -124,6 +124,7 @@ still `bench build` and `bench run`. Commands and variables:
 | [docs/commands.md](docs/commands.md) | every command, option and tool |
 | [docs/manifest.md](docs/manifest.md) | `game.toml`, key by key |
 | [docs/porting.md](docs/porting.md) | the porting loop, the keys a port meets first, environment and enhancements, macOS |
+| [docs/wizard.md](docs/wizard.md) | the player's build wizard: the config, the build, the pins, the release workflow |
 | [docs/bootstrap.md](docs/bootstrap.md) | how a game finds the CLI, the pins |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | the messages and their fixes |
 | [docs/maintainers.md](docs/maintainers.md) | working on the CLI, releases, the audit before a public push |

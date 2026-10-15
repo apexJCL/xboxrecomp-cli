@@ -65,6 +65,7 @@ A private bundle for one target in `dist/`. Needs `[package]` in `game.toml`.
 | `--allow-nonstock` | package with a non-stock CMake value (`build.nonstock_vars`, or the enhancements layer off); recorded in `manifest.json` |
 | `--archive` | windows: also a stored `.zip` of the folder |
 | `--hud-pack [DIR]` | put the HUD texture pack (default `dist/enhance/hud/`) in the bundle and enable it in its `config.default.toml`, which the game reads on first installs and upgrades alike |
+| `--seed-config FILE` | a `config.toml` with the player's options (the build wizard writes it), staged as `config.seed.toml`; each installer copies it to the data folder's `config/config.toml` only when that file does not exist yet. Every key must be one `config.default.toml` has |
 | `--out OUT` | output directory (default `dist/`) |
 | `--plain` | plain line output, no live progress (also when not a terminal, or `CI=1`) |
 | `--verbose` | show every tool's output as it runs (implies `--plain`); it always goes to `build-logs/` too |
@@ -93,6 +94,11 @@ What this host has (uv, the venv, llvm-mingw, makensis, the toolkit and CLI
 pins, the dump, `gen/`), which targets it can package, and `next:` the first
 thing to do. Exit 1 when the game's steamos target is blocked, or when
 anything is missing for a game without one.
+
+`--json` prints the same as data for the build wizard: `host`, `lines`,
+`targets`, `blocked`, `problems`, `next`, and `blockers`, for each package
+target what a run that imports a dump cannot fetch itself (each with its
+fix).
 
 ### `mygame enhance hud`
 
@@ -159,6 +165,29 @@ on a macOS host, windows elsewhere.
 Maintainers: rewrite `config/setup-pins.json` (the llvm-mingw and NSIS
 downloads, by sha256) and `uv.lock`, and print the newest release or branch
 head for each `[cli]` and `[toolkit]` pin. Needs the network.
+
+`--wizard` instead rewrites the CLI's `wizard/pins.json` with the newest uv
+and MinGit releases (the player's downloads, by sha256); the build's own
+pins move by hand ([wizard.md](wizard.md#the-pins)).
+
+### `mygame wizard <config|build|check>`
+
+The player's build wizard for a release tag ([wizard.md](wizard.md)).
+Needs `[wizard]` in `game.toml` and a CLI checkout (the bootstrap's).
+
+| Action | Effect |
+|---|---|
+| `config --json` | print the config the binary embeds, read from the tag's tree |
+| `build` | the macOS, Windows and Linux assets and `SHA256SUMS` in `dist/wizard/` |
+| `check` | the Go module's gates, then two builds with equal sha256s |
+
+| Option | Effect |
+|---|---|
+| `--tag TAG` | the release (default: the one tag on HEAD of a clean checkout) |
+| `--dev` | the working tree as it is, no tag (developers) |
+| `--only LIST` | `build`: a comma-separated subset of `macos,windows,linux` |
+| `--out DIR` | `build`: the output folder (default `dist/wizard/`) |
+| `--no-build` | `check`: the gates only |
 
 ### `xbr new DIR`
 

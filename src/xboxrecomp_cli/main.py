@@ -120,8 +120,21 @@ def cmd_setup(a):
     return cmd_doctor(a)
 
 
+def _cfg_doctor(p):
+    p.add_argument(
+        "--json",
+        action="store_true",
+        help="the report as JSON (the build wizard reads it); no other output",
+    )
+
+
 def cmd_doctor(a):
     lines, targets, blocked = doctor_mod.doctor_report()
+    if getattr(a, "json", False):
+        # The report is data and `blockers` carries the verdict: a fresh
+        # clone has packaged nothing yet, and the wizard must still read it.
+        print(doctor_mod.report_json(lines, targets, blocked))
+        return 0
     host.step("doctor")
     for line in lines:
         host.say(line)
@@ -129,6 +142,10 @@ def cmd_doctor(a):
     host.say("can package: %s" % (", ".join(targets) or "nothing yet"))
     for t, why in blocked.items():
         host.say("  %s: %s" % (t, why))
+    return doctor_status(targets)
+
+
+def doctor_status(targets):
     if "steamos" in host.g().m.get("package", {}).get("targets", []):
         return 0 if "steamos" in targets else 1
     return 0 if not doctor_mod.PROBLEMS else 1
@@ -136,9 +153,17 @@ def cmd_doctor(a):
 
 def _cfg_pins(p):
     p.add_argument("action", choices=("refresh",))
+    p.add_argument(
+        "--wizard",
+        action="store_true",
+        help="rewrite the uv and MinGit pins in the CLI's wizard/pins.json instead",
+    )
 
 
 def cmd_pins(a):
+    if a.wizard:
+        pins.wizard_pins_refresh()
+        return
     pins.pins_refresh()
 
 
@@ -176,6 +201,12 @@ def _cfg_package(p):
         metavar="DIR",
         help="put your HUD texture pack (enhance hud; default dist/enhance/hud/) in the "
         "bundle and enable it in its config.default.toml (first installs and upgrades)",
+    )
+    p.add_argument(
+        "--seed-config",
+        metavar="FILE",
+        help="a config.toml with your options: each installer copies it to the data "
+        "folder's config/config.toml when that file does not exist yet",
     )
     p.add_argument("--out", default=host.g().dist, help="output directory (default dist/)")
     p.add_argument("--keep-stage", action="store_true", help=argparse.SUPPRESS)
@@ -277,7 +308,9 @@ def register():
         "fetch the pinned toolchain for this host (venv, llvm-mingw, NSIS on Windows)",
         _cfg_setup,
     )(cmd_setup)
-    command("doctor", "what this host has, and which targets it can package")(cmd_doctor)
+    command("doctor", "what this host has, and which targets it can package", _cfg_doctor)(
+        cmd_doctor
+    )
     command("pins", "maintainers: rewrite config/setup-pins.json and uv.lock", _cfg_pins)(cmd_pins)
     command(
         "package",
@@ -296,6 +329,23 @@ def register():
         "owner-made enhancement assets from your own dump (enhance hud: the HUD texture pack)",
         _cfg_enhance,
     )(cmd_enhance)
+    command(
+        "wizard",
+        "maintainers: the player's build wizard (config, build, check; docs/wizard.md)",
+        _cfg_wizard,
+    )(cmd_wizard)
+
+
+def _cfg_wizard(p):
+    from . import wizard
+
+    wizard.configure(p)
+
+
+def cmd_wizard(a):
+    from . import wizard
+
+    return wizard.run(a)
 
 
 class Parser(argparse.ArgumentParser):

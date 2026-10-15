@@ -1,0 +1,9 @@
+plan: build (build-pkg-steamos), package (steamos)
+== [1/2] build ==
+  build steamos (build-pkg-steamos) ...
+  build steamos (build-pkg-steamos): 10% (22/218)
+ninja failed (exit 1); the last lines:
+  FAILED: CMakeFiles/cat_recomp.dir/src/recomp/gen/recomp_0001.c.o
+full log: /work/blinx2/build-logs/20261014-101500-build steamos (build-pkg-steamos).log
+  FAILED build steamos (build-pkg-steamos)  0:41
+error: the build failed

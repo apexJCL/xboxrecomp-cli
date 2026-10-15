@@ -106,6 +106,24 @@ def read_sums(path):
     return sums
 
 
+def seed_config(bundle, root):
+    """The options chosen in the build wizard (package --seed-config, the
+    bundle's config.seed.toml) become config/config.toml only when there
+    is none yet: the player's own file is never replaced, so a later
+    install leaves it. An earlier version's config/enhance.toml is the
+    player's file too: the game renames it to config.toml only while
+    config.toml is missing, so a seed there would hide it."""
+    seed = os.path.join(bundle.path, "config.seed.toml")
+    dst = root.p("config", "config.toml")
+    if os.path.isfile(seed) and not os.path.exists(dst):
+        old = root.p("config", "enhance.toml")
+        if os.path.exists(old):
+            say("config: kept your existing settings (%s)" % old)
+            return
+        shutil.copyfile(seed, dst)
+        say("config: your options -> %s" % dst)
+
+
 class Bundle:
     def __init__(self, path):
         self.path = os.path.abspath(path)
@@ -812,6 +830,7 @@ def cmd_install(
     if not os.path.isdir(root.p("config")):
         os.makedirs(root.p("config"))
         say("config: created %s" % root.p("config"))
+    seed_config(bundle, root)
     copied = install_program(bundle, root)
     say(
         "program: %s"

@@ -5,7 +5,9 @@
 ; copied from the folder setup.exe runs in (NSIS caps an installer at 2 GB,
 ; and the dump alone is larger). Saves and settings live in
 ; the data folder (game.toml's data.windows), which neither the installer nor the uninstaller
-; ever writes: installing on top or uninstalling keeps them.
+; ever changes: installing on top or uninstalling keeps them. The one write
+; there is a bundle's config.seed.toml (package --seed-config), copied to
+; config\config.toml when that file does not exist yet.
 ;
 ; Placeholders (each written between @ signs): NAME LINK_NAME APP DATA_DIR
 ; VERSION OUTFILE ICON INSTALL_FILES UNINSTALL_FILES. Never write one in a comment: it is replaced
@@ -80,7 +82,24 @@ Section "@NAME@" SecMain
   ; puts its own back, and one without a pack must not leave a stale file
   ; that uninstall's list does not name (its RMDir would then fail).
   Delete "$INSTDIR\enhance\hud.pack"
+  ; Likewise the options file of an earlier --seed-config install.
+  Delete "$INSTDIR\config.seed.toml"
 @INSTALL_FILES@
+  ; The options chosen in the build wizard (package --seed-config) become
+  ; the data folder's config\config.toml only when there is none yet: the
+  ; player's own file is never replaced, and a later install leaves it. An
+  ; earlier version's config\enhance.toml counts as the player's file too:
+  ; the game renames it to config.toml only while config.toml is missing.
+  IfFileExists "$INSTDIR\config.seed.toml" 0 seed_done
+  IfFileExists "$LOCALAPPDATA\@DATA_DIR@\config\config.toml" seed_done 0
+  IfFileExists "$LOCALAPPDATA\@DATA_DIR@\config\enhance.toml" 0 seed_copy
+    DetailPrint "Kept your existing settings: $LOCALAPPDATA\@DATA_DIR@\config\enhance.toml"
+    Goto seed_done
+  seed_copy:
+    CreateDirectory "$LOCALAPPDATA\@DATA_DIR@\config"
+    CopyFiles /SILENT "$INSTDIR\config.seed.toml" "$LOCALAPPDATA\@DATA_DIR@\config\config.toml"
+    DetailPrint "Your options: $LOCALAPPDATA\@DATA_DIR@\config\config.toml"
+  seed_done:
   ; Versions before config.default.toml shipped enhance.toml.default; an
   ; install over one would keep it, and uninstall's RMDir would then fail.
   Delete "$INSTDIR\enhance.toml.default"
@@ -115,6 +134,7 @@ Section "Uninstall"
   ; settings, logs) is never touched.
 @UNINSTALL_FILES@
   Delete "$INSTDIR\enhance.toml.default"
+  Delete "$INSTDIR\config.seed.toml"
   Delete "$INSTDIR\enhance\hud.pack"
   RMDir "$INSTDIR\enhance"
   Delete "$INSTDIR\uninstall.exe"

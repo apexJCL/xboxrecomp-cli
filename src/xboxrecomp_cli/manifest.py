@@ -32,6 +32,9 @@ STRMAP = "table of strings"
 # The same with a list of strings per key: enhance.hud.languages.
 STRSMAP = "table of string lists"
 MAPS = (STRMAP, STRSMAP)
+# An array of tables ([[wizard.option]]), each checked by its own rules
+# (_check_wizard): held as one key, a list of dicts.
+TABLES = "array of tables"
 DERIVED = object()
 SPEC = {
     "": {"schema": (INT, REQUIRED)},
@@ -182,10 +185,40 @@ SPEC = {
         # font atlas is art.
         "text": (STRS, []),
     },
+    # The player's build wizard (xbr wizard; docs/wizard.md): the repo it
+    # clones at the release tag and asks about newer releases, its icon,
+    # the targets it offers, archives the build needs beyond the clone and
+    # the options screen. A game without the table has no wizard.
+    "wizard": {
+        "repo": (STR, REQUIRED),
+        "icon": (STR, REQUIRED),
+        "targets": (STRS, DERIVED),
+        "fetch": (TABLES, []),
+        "option": (TABLES, []),
+    },
 }
 # Optional tables: a game without them still sets up, generates, builds and
 # benches (package says the manifest has no [package]).
-OPTIONAL = {"package", "enhance"}
+OPTIONAL = {"package", "enhance", "wizard"}
+# [[wizard.fetch]] and [[wizard.option]] keys: (type, default).
+WIZARD_FETCH = {
+    "name": (STR, REQUIRED),
+    "url": (STR, REQUIRED),
+    "sha256": (STR, REQUIRED),
+    "dest": (STR, REQUIRED),
+    "unpack": (BOOL, True),
+    "hosts": (STRS, ["windows", "macos", "linux"]),
+}
+WIZARD_OPTION = {
+    "key": (STR, REQUIRED),
+    "label": (STR, REQUIRED),
+    "kind": (STR, REQUIRED),
+    "values": (STRS, []),
+    "default": (None, REQUIRED),  # a string for choice, a boolean for bool
+    "config": (STR, ""),
+    "flag": (STR, ""),
+}
+WIZARD_HOSTS = ("windows", "macos", "linux")
 TARGETS = ("windows", "steamos", "macos")
 BUILD_TARGETS = ("windows", "macos")
 # The windows target's toolchain file when build.toolchain_file is unset.
@@ -222,6 +255,10 @@ def _type_ok(kind, v):
         return isinstance(v, dict) and all(
             isinstance(k, str) and _type_ok(STRS, x) for k, x in v.items()
         )
+    if kind == TABLES:
+        return isinstance(v, list) and all(isinstance(x, dict) for x in v)
+    if kind is None:
+        return True
     return isinstance(v, list) and all(isinstance(x, str) for x in v)
 
 
@@ -273,6 +310,8 @@ def validate(doc):
                     dst[k] = {n: list(x) for n, x in t[k].items()}
                 elif kind == STRMAP:
                     dst[k] = dict(t[k])
+                elif kind == TABLES:
+                    dst[k] = [dict(x) for x in t[k]]
                 else:
                     dst[k] = t[k]
             elif default is REQUIRED:
@@ -315,6 +354,110 @@ def _derive(m):
     gj.setdefault("frames", (gj["json"].rsplit("/", 1)[0] + "/frames") if gj["json"] else "")
     if "package" in m:
         m["package"].setdefault("product", g["slug"] + "-recomp")
+    if "wizard" in m:
+        m["wizard"].setdefault("targets", list(m.get("package", {}).get("targets", [])))
+        m["wizard"]["fetch"] = [_entry(e, WIZARD_FETCH) for e in m["wizard"]["fetch"]]
+        m["wizard"]["option"] = [_entry(e, WIZARD_OPTION) for e in m["wizard"]["option"]]
+
+
+def _entry(e, spec):
+    """An array-of-tables entry with its defaults; unknown and missing keys
+    are left for _check_wizard to name."""
+    out = dict(e)
+    for k, (_, default) in spec.items():
+        if k not in out and default is not REQUIRED:
+            out[k] = list(default) if isinstance(default, list) else default
+    return out
+
+
+def _check_wizard(m):
+    """[wizard]'s own rules, the ones that need no file: the files (the
+    icon, the config keys, the package flags) are wizard_problems()'s."""
+    w = m.get("wizard")
+    if not w:
+        return []
+    errors = []
+    if not re.match(r"^https://[^\s/]+/\S+$", w["repo"]):
+        errors.append("wizard.repo: an https:// URL")
+    if "package" not in m:
+        errors.append("wizard: needs a [package] table (the wizard runs package)")
+    else:
+        for t in w["targets"]:
+            if t not in m["package"]["targets"]:
+                errors.append("wizard.targets: %r is not in package.targets" % t)
+    if not w["targets"]:
+        errors.append("wizard.targets: names no target")
+    for kind, entries, spec in (
+        ("fetch", w["fetch"], WIZARD_FETCH),
+        ("option", w["option"], WIZARD_OPTION),
+    ):
+        for i, e in enumerate(entries):
+            name = "wizard.%s[%d]" % (kind, i)
+            for k in e:
+                if k not in spec:
+                    errors.append("%s.%s: unknown key" % (name, k))
+            for k, (t, default) in spec.items():
+                if k not in e:
+                    if default is REQUIRED:
+                        errors.append("%s.%s: required" % (name, k))
+                elif t is not None and not _type_ok(t, e[k]):
+                    errors.append("%s.%s: must be a %s" % (name, k, t))
+    if errors:
+        return errors
+    names = set()
+    for i, f in enumerate(w["fetch"]):
+        name = "wizard.fetch[%d]" % i
+        if f["name"] in names:
+            errors.append("%s.name: %r twice" % (name, f["name"]))
+        names.add(f["name"])
+        if not f["url"].startswith("https://"):
+            errors.append("%s.url: an https:// URL" % name)
+        if not re.match(r"^[0-9a-f]{64}$", f["sha256"]):
+            errors.append("%s.sha256: not a sha256" % name)
+        d = f["dest"]
+        # Each segment named: "" (a//b, a trailing /), "." and ".." would
+        # point at the clone itself or out of it, and an unpack replaces
+        # its dest wholesale.
+        segs = d.split("/")
+        if (
+            os.path.isabs(d)
+            or d.startswith("~")
+            or "\\" in d
+            or any(s in ("", ".", "..") for s in segs)
+        ):
+            errors.append("%s.dest: a path inside the clone, with /" % name)
+        for h in f["hosts"]:
+            if h not in WIZARD_HOSTS:
+                errors.append("%s.hosts: %r is not one of %s" % (name, h, ", ".join(WIZARD_HOSTS)))
+    keys = set()
+    for i, o in enumerate(w["option"]):
+        name = "wizard.option[%d]" % i
+        if not re.match(r"^[a-z][a-z0-9_]*$", o["key"]):
+            errors.append("%s.key: lower-case letters, digits and '_'" % name)
+        if o["key"] in keys:
+            errors.append("%s.key: %r twice" % (name, o["key"]))
+        keys.add(o["key"])
+        if bool(o["config"]) == bool(o["flag"]):
+            errors.append("%s: exactly one of config or flag" % name)
+        if o["kind"] == "bool":
+            if not isinstance(o["default"], bool):
+                errors.append("%s.default: true or false (kind bool)" % name)
+            if o["values"]:
+                errors.append("%s.values: only for kind choice" % name)
+        elif o["kind"] == "choice":
+            if len(o["values"]) < 2:
+                errors.append("%s.values: two or more (kind choice)" % name)
+            if not isinstance(o["default"], str) or o["default"] not in o["values"]:
+                errors.append("%s.default: one of values" % name)
+            if o["flag"]:
+                errors.append("%s: a flag option is kind bool (set or not)" % name)
+        else:
+            errors.append("%s.kind: bool or choice" % name)
+        if o["flag"] and not re.match(r"^--[a-z][a-z0-9-]*$", o["flag"]):
+            errors.append("%s.flag: a long option, --name" % name)
+        if o["config"] and not re.match(r"^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+$", o["config"]):
+            errors.append("%s.config: a dotted key, table.key" % name)
+    return errors
 
 
 def _check_values(m):
@@ -405,6 +548,7 @@ def _check_values(m):
                 )
     if m["pipeline"]["split"] <= 0:
         errors.append("pipeline.split: must be positive")
+    errors += _check_wizard(m)
     for s in m["xbe"]["sha256"]:
         if not re.match(r"^[0-9a-f]{64}$", s):
             errors.append("xbe.sha256: %r is not a sha256" % s)
@@ -446,6 +590,8 @@ def _paths(m):
         for k in ("content", "templates"):
             if m["package"][k]:
                 out.append(("package." + k, m["package"][k]))
+    if "wizard" in m:
+        out.append(("wizard.icon", m["wizard"]["icon"]))
     return out
 
 

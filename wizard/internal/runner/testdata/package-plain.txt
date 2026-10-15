@@ -1,0 +1,105 @@
+plan: import (game_files, folder, 3.3 GB, 485 files), setup (no cmake, no ninja, no tools Python, no toolkit), generate (checked after setup), build (build-pkg-macos), package (macos)
+== [1/5] import ==
+import: game_files (folder, 3.3 GB, 485 files) into game_files/
+imported 5/485 files, 0.3 of 3.3 GB
+imported 9/485 files, 0.5 of 3.3 GB
+imported 15/485 files, 0.9 of 3.3 GB
+imported 82/485 files, 1.1 of 3.3 GB
+imported 100/485 files, 1.1 of 3.3 GB
+imported 159/485 files, 1.3 of 3.3 GB
+imported 189/485 files, 1.7 of 3.3 GB
+imported 193/485 files, 1.9 of 3.3 GB
+imported 195/485 files, 2.3 of 3.3 GB
+imported 200/485 files, 2.4 of 3.3 GB
+imported 213/485 files, 2.7 of 3.3 GB
+imported 234/485 files, 3.0 of 3.3 GB
+imported 239/485 files, 3.2 of 3.3 GB
+imported 300/485 files, 3.3 of 3.3 GB
+imported 400/485 files, 3.3 of 3.3 GB
+kept from the old game_files/: UDATA
+game_files/: imported from game_files (485 files, 3.3 GB)
+== [2/5] setup ==
+  setup: Python venv (.venv, from uv.lock) ...
+uv: /usr/local/bin/uv 0.12.21
+  ✓ setup: Python venv (.venv, from uv.lock)  0:00
+  setup: llvm-mingw ...
+fetching https://github.com/mstorsjo/llvm-mingw/releases/download/20260922/llvm-mingw-20260922-ucrt-macos-universal.tar.xz
+  setup: llvm-mingw: 0% (0/118)
+  setup: llvm-mingw: 10% (12/118)
+  setup: llvm-mingw: 20% (24/118)
+  setup: llvm-mingw: 30% (36/118)
+  setup: llvm-mingw: 40% (48/118)
+  setup: llvm-mingw: 50% (59/118)
+  setup: llvm-mingw: 60% (71/118)
+  setup: llvm-mingw: 70% (83/118)
+  setup: llvm-mingw: 80% (95/118)
+  setup: llvm-mingw: 90% (107/118)
+  setup: llvm-mingw: 100% (118/118)
+sha256 verified: 52e5f5a7b131021d0c39a37a38fa380a1da7885cd04bd61afd0cd4ecfb8bc1f3
+llvm-mingw 20260922 -> third_party/llvm-mingw-20260922-ucrt-macos-universal
+  ✓ setup: llvm-mingw  0:21
+  setup: toolkit ...
+toolkit: cloning https://github.com/apexJCL/xboxrecomp.git blinx2-v0.2.0 (0692070cb41d) into external/xboxrecomp
+  ✓ setup: toolkit  0:02
+== [3/5] generate ==
+generate: no gen/
+  parse ...
+  ✓ parse  0:00
+  disasm ...
+  disasm: 0% (0/100)
+  disasm: 14% (14/100)
+  disasm: 24% (24/100)
+  disasm: 34% (34/100)
+  disasm: 44% (44/100)
+  disasm: 54% (54/100)
+  disasm: 65% (65/100)
+  disasm: 75% (75/100)
+  disasm: 88% (88/100)
+  disasm: 98% (98/100)
+  disasm: 100% (100/100)
+  ✓ disasm  0:27
+  funcid ...
+  ✓ funcid  1:38
+  abi ...
+  ✓ abi  0:09
+  recomp ...
+  recomp: 0% (0/26190)
+  recomp: 11% (3001/26190)
+  recomp: 21% (5501/26190)
+  recomp: 32% (8501/26190)
+  recomp: 42% (11001/26190)
+  recomp: 53% (14001/26190)
+  recomp: 63% (16501/26190)
+  recomp: 74% (19501/26190)
+  recomp: 84% (22001/26190)
+  recomp: 95% (25001/26190)
+  recomp: 100% (26190/26190)
+  ✓ recomp  8:38
+== [4/5] build ==
+icon: game title image (128x128)
+  build macos (build-pkg-macos) ...
+  build macos (build-pkg-macos): 0% (0/2)
+  build macos (build-pkg-macos): 10% (22/218)
+  build macos (build-pkg-macos): 20% (44/218)
+  build macos (build-pkg-macos): 30% (66/218)
+  build macos (build-pkg-macos): 40% (88/218)
+  build macos (build-pkg-macos): 50% (109/218)
+  build macos (build-pkg-macos): 60% (131/218)
+  build macos (build-pkg-macos): 70% (153/218)
+  build macos (build-pkg-macos): 80% (175/218)
+  build macos (build-pkg-macos): 90% (197/218)
+  ✓ build macos (build-pkg-macos)  5:56
+== [5/5] package ==
+  stage the files ...
+version: 20261012.0223-c938fa18-t0692070-g49989b51
+game files: 22 entries staged
+  ✓ stage the files  0:00
+  app and dmg ...
+  app and dmg: 100% (100/100)
+  ✓ app and dmg  1:13
+
+bundle: /work/blinx2/cat/dist/BLiNX2-20261012.0223-c938fa18-t0692070-g49989b51.dmg
+
+PRIVATE: this bundle contains your own copy of BLiNX 2 and code generated from it.
+It is for your own machines only. The game is not yours to redistribute:
+never share, upload or publish this bundle.

@@ -1,0 +1,119 @@
+{
+  "cli": {
+    "commit": "a7cdc15c80fa96e1f304739eb281f5245266e65e",
+    "tag": "v0.6.7",
+    "url": "https://github.com/apexJCL/xboxrecomp-cli.git"
+  },
+  "data": {
+    "macos": "~/Library/Application Support/BLiNX2",
+    "steamos": "~/Games/BLiNX2",
+    "windows": "%LOCALAPPDATA%\\BLiNX2"
+  },
+  "fetch": [],
+  "game": {
+    "app": "BLiNX2",
+    "name": "BLiNX 2",
+    "product": "blinx2-recomp",
+    "slug": "blinx2"
+  },
+  "options": [
+    {
+      "config": "",
+      "default": false,
+      "flag": "--hud-pack",
+      "key": "hud_pack",
+      "kind": "bool",
+      "label": "HUD texture pack (needs the PT Sans Narrow Bold font on Linux and Windows, else the atlas is upscaled)",
+      "values": []
+    },
+    {
+      "config": "render.scale",
+      "default": "1",
+      "flag": "",
+      "key": "scale",
+      "kind": "choice",
+      "label": "Render scale (1 is the stock 640x480)",
+      "toml": {
+        "1": "1",
+        "2": "2",
+        "3": "3"
+      },
+      "values": [
+        "1",
+        "2",
+        "3"
+      ]
+    },
+    {
+      "config": "present.fullscreen",
+      "default": false,
+      "flag": "",
+      "key": "fullscreen",
+      "kind": "bool",
+      "label": "Start fullscreen",
+      "toml": {
+        "false": "false",
+        "true": "true"
+      },
+      "values": []
+    },
+    {
+      "config": "present.pacing",
+      "default": "sleep",
+      "flag": "",
+      "key": "pacing",
+      "kind": "choice",
+      "label": "Frame pacing (spin is steadier and uses a whole CPU core)",
+      "toml": {
+        "sleep": "\"sleep\"",
+        "spin": "\"spin\""
+      },
+      "values": [
+        "sleep",
+        "spin"
+      ]
+    },
+    {
+      "config": "input.keyboard",
+      "default": true,
+      "flag": "",
+      "key": "keyboard",
+      "kind": "bool",
+      "label": "Keyboard controls player 1",
+      "toml": {
+        "false": "false",
+        "true": "true"
+      },
+      "values": []
+    },
+    {
+      "config": "input.mouse",
+      "default": true,
+      "flag": "",
+      "key": "mouse",
+      "kind": "bool",
+      "label": "Mouse controls the camera",
+      "toml": {
+        "false": "false",
+        "true": "true"
+      },
+      "values": []
+    }
+  ],
+  "release": {
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "dev": false,
+    "repo": "https://github.com/apexJCL/blinx2-recomp.git",
+    "tag": "v0.0.0-sample"
+  },
+  "schema": 1,
+  "targets": [
+    "windows",
+    "steamos",
+    "macos"
+  ],
+  "toolkit": {
+    "commit": "ac27175a3f54ff94bc272d1de533ccfa8557f409",
+    "tag": "blinx2-v0.3.1"
+  }
+}

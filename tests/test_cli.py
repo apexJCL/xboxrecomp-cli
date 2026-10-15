@@ -528,6 +528,7 @@ def test_command_table():
         "package",
         "import",
         "enhance",
+        "wizard",
     ], names
 
 

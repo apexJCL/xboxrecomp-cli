@@ -133,8 +133,12 @@ def test_offline_scaffold_loads_and_names_what_is_left(d, tk, game):
         "CMakeLists.txt",
         "src/main.c",
         "src/recomp_manual.c",
+        ".github/workflows/release-wizard.yml",
     ):
         assert os.path.isfile(os.path.join(root, f)), f
+    wf = read(os.path.join(root, ".github", "workflows", "release-wizard.yml"))
+    assert "@SLUG@" not in wf and "./my-game wizard build" in wf
+    assert "# [wizard]" in read(os.path.join(root, "game.toml"))
     assert os.path.isdir(G.game_files) and os.path.isdir(G.gen)
     assert os.stat(os.path.join(root, "my-game")).st_mode & stat.S_IXUSR
     # The template, patched where it marks the edits, plus the declaration

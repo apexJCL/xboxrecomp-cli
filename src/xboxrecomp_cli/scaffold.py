@@ -114,7 +114,38 @@ game_files = "game_files"
 # targets = ["windows", "steamos"]
 # with packaging/launch.env.default.windows and packaging/windows/README.part.
 # See docs/manifest.md, [package].
+
+# The player's build wizard (needs [package]): `@SLUG@ wizard build` makes
+# its Windows, macOS and Linux downloads for a release tag, and
+# .github/workflows/release-wizard.yml attaches them to the release. See
+# the CLI's docs/wizard.md.
+# [wizard]
+# repo = "https://github.com/OWNER/@SLUG@-recomp.git"
+# icon = "packaging/wizard-icon.png"
+# [[wizard.option]]
+# key = "scale"
+# label = "Render scale"
+# kind = "choice"
+# values = ["1", "2", "3"]
+# default = "1"
+# config = "render.scale"
+# [[wizard.option]]
+# key = "fullscreen"
+# label = "Fullscreen"
+# kind = "bool"
+# default = false
+# config = "present.fullscreen"
 """
+
+# Files `new` copies from this CLI's templates/new-game/, @KEY@ filled.
+CLI_TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "new-game")
+WORKFLOW = ".github/workflows/release-wizard.yml"
+
+
+def workflow_text(values):
+    with open(os.path.join(CLI_TEMPLATES, *WORKFLOW.split("/")), encoding="utf-8") as f:
+        return fill(f.read(), values)
+
 
 PYPROJECT = """\
 # The Python environment for the toolkit's tools and the build. ./@SLUG@
@@ -640,6 +671,7 @@ def scaffold(root, a):
     write(j(".gitignore"), fill(GITIGNORE, v))
     write(j(".gitattributes"), fill(GITATTRIBUTES, v))
     write(j("README.md"), fill(README, v))
+    write(j(*WORKFLOW.split("/")), workflow_text(v))
     write(j("config", "seed_functions.json"), "[]\n")
     os.makedirs(G.game_files, exist_ok=True)
     os.makedirs(G.gen, exist_ok=True)

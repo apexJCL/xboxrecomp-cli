@@ -392,9 +392,53 @@ def stage_hud_pack(payload, target, info):
     }
 
 
-def write_common(payload, target, version, lib, hud_pack=None):
+SEED_NAME = "config.seed.toml"
+
+
+def _flat_keys(doc, prefix=""):
+    """Every dotted key of a TOML document's values (a table's own keys,
+    not the table)."""
+    out = []
+    for k, v in doc.items():
+        name = prefix + k
+        if isinstance(v, dict):
+            out += _flat_keys(v, name + ".")
+        else:
+            out.append(name)
+    return out
+
+
+def check_seed(path):
+    """--seed-config FILE, checked before anything is built: TOML that
+    tomllib reads, every key one the game's config.default.toml has (the
+    wizard writes only the keys its options name, which `wizard config`
+    checked against that file). Returns the text, LF only."""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+        seed = tomllib.loads(raw.decode("utf-8"))
+    except OSError as e:
+        raise CliError("--seed-config: %s: %s" % (path, e.strerror)) from e
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
+        raise CliError("--seed-config: %s: not TOML (%s)" % (path, e)) from e
+    with open(os.path.join(g().content, "config.default.toml"), "rb") as f:
+        defaults = tomllib.load(f)
+    known = set(_flat_keys(defaults))
+    bad = [k for k in _flat_keys(seed) if k not in known]
+    if bad:
+        raise CliError(
+            "--seed-config: %s names keys config.default.toml does not have: %s"
+            % (path, ", ".join(bad))
+        )
+    return raw.decode("utf-8").replace("\r\n", "\n")
+
+
+def write_common(payload, target, version, lib, hud_pack=None, seed=None):
     """The files every target shares. Returns readme()'s answer: whether
-    the README has the frame pacing paragraph."""
+    the README has the frame pacing paragraph. seed: --seed-config's text,
+    staged as config.seed.toml beside config.default.toml; each installer
+    copies it to the data folder's config/config.toml when that file does
+    not exist."""
     G = g()
     fam = "macos" if target == "macos" else "windows"
     copy_lf(
@@ -407,6 +451,9 @@ def write_common(payload, target, version, lib, hud_pack=None):
         os.path.join(G.content, "config.default.toml"),
         os.path.join(payload, "config.default.toml"),
     )
+    if seed is not None:
+        with open(os.path.join(payload, SEED_NAME), "w", newline="\n") as f:
+            f.write(seed)
     global HUD_PACK
     HUD_PACK = stage_hud_pack(payload, target, hud_pack) if hud_pack else None
     # LICENSE always; NOTICE when the game has one (third-party notices).
@@ -433,6 +480,8 @@ def write_manifest(root, target, version, overrides, lib, extra=None, dump_unkno
         ex["xbe"] = "unknown"
     if HUD_PACK:
         ex["enhance"] = {"hud_pack": dict(HUD_PACK)}
+    if os.path.isfile(os.path.join(root, SEED_NAME)):
+        ex["seed_config"] = True
     ex.update(extra or {})
     man = lib.build_manifest(
         root,
@@ -553,7 +602,9 @@ def package(a):
     # The pack is checked before the plan runs: a missing one must not
     # cost a build.
     hud_pack = hud_pack_path(a.hud_pack) if getattr(a, "hud_pack", None) is not None else None
+    seed_path = getattr(a, "seed_config", None)
     try:
+        seed = check_seed(seed_path) if seed_path else None
         check_content(hud_pack)
         plan = package_plan(a, imp)
     except BaseException:
@@ -569,7 +620,9 @@ def package(a):
     run_plan_prefix(a, plan)
     os.makedirs(a.out, exist_ok=True)
     stage, payload, version, overrides, exe = stage_payload(a.target, a, lib)
-    pacing_note = write_common(payload, a.target, version, lib, hud_pack)
+    pacing_note = write_common(payload, a.target, version, lib, hud_pack, seed)
+    if seed is not None:
+        host.say("seed config: %s (copied to config/config.toml on a first install)" % SEED_NAME)
     if hud_pack:
         host.say("hud pack: %d entries at %dx" % (hud_pack["entries"], hud_pack["scale"]))
     unknown = getattr(a, "dump_unknown", False)
