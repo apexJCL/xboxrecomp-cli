@@ -90,9 +90,11 @@ icall_seeds = false
 exclude_manual = "src/recomp_manual.c"
 
 [pipeline.disasm]
-# Only .text. A title with code in its XDK sections names them, for example
-# extra_sections = ["D3D", "DSOUND", "XPP"].
-text_only = true
+# Every code section: without the XDK sections (D3D, DSOUND, XGRPH, ...)
+# there are no function boundaries there, and their internal calls become
+# stubs. A title whose XBE flags data sections executable sets
+# text_only = true and names its code sections in extra_sections.
+text_only = false
 
 [build]
 # The CMake target and file name: build-win/@EXE@.exe

@@ -39,7 +39,7 @@ documents each one with its default):
 
 | Key | Why it comes up |
 |---|---|
-| `pipeline.disasm.extra_sections` | code outside `.text`, such as the XDK library sections |
+| `pipeline.disasm.text_only` | `false` (the default) sweeps every code section, the XDK libraries included; a title whose XBE flags data sections executable sets it true and lists its code sections in `extra_sections` |
 | `pipeline.split` | how many functions per generated file |
 | `pipeline.spin_waits` | the guest's busy-wait sites, so the host can sleep in them |
 | `pipeline.seeds` | the seed files (`config/seed_functions.json`) |

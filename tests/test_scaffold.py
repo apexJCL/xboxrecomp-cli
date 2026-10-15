@@ -27,6 +27,7 @@ from xboxrecomp_cli import (
     main,
     manifest,
     pins,
+    pipeline,
     scaffold,
     toolkit,
     wrapper,
@@ -116,6 +117,11 @@ def test_offline_scaffold_loads_and_names_what_is_left(d, tk, game):
     assert G.m["pipeline"]["icall_seeds"] is False
     assert G.m["xbe"]["title_id"] == 0 and "package" not in G.m
     assert wrapper.check(G) == (True, [])
+    # Every code section is swept: .text alone stubs the XDK libraries.
+    assert G.m["pipeline"]["disasm"] == {"text_only": False, "extra_sections": []}
+    manifest.use(G)
+    (dis,) = [c for c in pipeline.disasm_cmds() if c[1] == "disasm"]
+    assert "--text-only" not in dis[2] and "--extra-sections" not in dis[2]
     for f in (
         "my-game",
         "my-game.cmd",

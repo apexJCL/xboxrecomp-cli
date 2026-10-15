@@ -98,8 +98,8 @@ you add it. A `url` may not start with `-`.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `text_only` | `true` | `--text-only`, as upstream's README has it. |
-| `extra_sections` | `[]` | `--extra-sections`: code outside `.text`, such as the XDK libraries. |
+| `text_only` | `false` | `--text-only` when true. The default sweeps every executable section except the PE data sections (`.data`, `.rdata`, `.idata`, `.reloc` …, which are skipped by name whatever their flags), as Burnout 3 does: the XDK libraries (D3D, DSOUND, XGRPH, XPP, ...) sit in sections of their own, and with `.text` alone they have no function boundaries, so every call inside them becomes a stub that returns without running. Upstream's README passes `--text-only`, which is why a title made that way stubs its libraries. Set it true when the XBE flags data sections executable (BLiNX 2's model sections), which would otherwise be swept into phantom functions, and list the code sections in `extra_sections`. |
+| `extra_sections` | `[]` | `--extra-sections`: code sections swept besides `.text`. Read with `text_only = true` (BLiNX 2 lists the XDK libraries and its middleware), or for a section the sweep would otherwise skip. |
 
 ## [build]
 

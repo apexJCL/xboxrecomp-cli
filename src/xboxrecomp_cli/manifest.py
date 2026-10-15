@@ -77,7 +77,7 @@ SPEC = {
         "ghidra": (BOOL, True),
     },
     "pipeline.disasm": {
-        "text_only": (BOOL, True),
+        "text_only": (BOOL, False),
         "extra_sections": (STRS, []),
     },
     "build": {

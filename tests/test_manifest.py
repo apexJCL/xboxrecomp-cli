@@ -47,7 +47,7 @@ def test_minimal_defaults():
     assert m["xbe"]["path"] == "game_files/default.xbe"
     assert m["xbe"]["sha256"] == []
     assert m["pipeline"]["out"] == "analysis" and m["pipeline"]["split"] == 250
-    assert m["pipeline"]["disasm"] == {"text_only": True, "extra_sections": []}
+    assert m["pipeline"]["disasm"] == {"text_only": False, "extra_sections": []}
     assert m["build"]["targets"] == ["windows"]
     assert m["build"]["stock_cmake"] == ["-DXBOXRECOMP_ENHANCE=ON"]
     assert m["data"]["dir_env"] == "SOME_GAME_DATA_DIR"
@@ -191,6 +191,38 @@ def test_path_with_a_space(d):
     g = manifest.load(root)
     assert g.gen == os.path.join(root, "src", "gen files")
     assert g.rel(g.gen) == "src/gen files"
+
+
+def disasm_flags(game):
+    """The section flags of the disasm stage `game` runs: what text_only and
+    extra_sections turn into, between the output dir and the seeds (or -v)."""
+    saved = manifest.current()
+    try:
+        manifest.use(game)
+        (cmd,) = [c for c in pipeline.disasm_cmds() if c[1] == "disasm"]
+    finally:
+        manifest.use(saved)
+    args = cmd[2]
+    end = args.index("--seed-functions") if "--seed-functions" in args else args.index("-v")
+    return args[args.index("-o") + 2 : end]
+
+
+def test_a_manifest_without_text_only_sweeps_every_section(d):
+    """Without the key, disasm sweeps every code section: a .text-only sweep
+    turns every call inside the XDK library sections into a stub (Spartan)."""
+    g = manifest.Game(d, parse(MINIMAL))
+    assert disasm_flags(g) == []
+
+
+def test_shipped_games_disasm_flags_unchanged():
+    """BLiNX 2 (text_only plus its code sections) and Burnout 3 (false, set
+    explicitly) run the same disasm as when text_only defaulted to true."""
+    assert disasm_flags(manifest.load(GAME)) == [
+        "--text-only",
+        "--extra-sections",
+        "D3D,D3DX,XGRPH,DSOUND,PSFD_I,PSFD_B,PSFD_P,PSFD00,SRCADV,SRCED,SRCAC,XPP",
+    ]
+    assert disasm_flags(manifest.load(os.path.join(HERE, "testdata", "game2"))) == []
 
 
 def test_no_manifest(d):

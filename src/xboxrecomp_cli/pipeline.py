@@ -98,9 +98,10 @@ def disasm_cmds(extra=()):
             )
         )
         seeds += ["--seed-functions", G.icall_seeds]
-    # Code outside .text (the XDK library sections) comes from
-    # extra_sections; --text-only keeps the data sections an XBE also flags
-    # executable from yielding phantom functions.
+    # Every executable section by default, so the XDK library sections are
+    # swept. A title whose XBE flags data sections executable sets
+    # --text-only, to keep them from yielding phantom functions, and names
+    # its code outside .text in extra_sections.
     opts = (["--text-only"] if d["text_only"] else []) + (
         ["--extra-sections", ",".join(d["extra_sections"])] if d["extra_sections"] else []
     )
