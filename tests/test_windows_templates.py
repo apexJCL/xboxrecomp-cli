@@ -294,3 +294,26 @@ def test_readme_pacing_game_template_without_placeholder(d, monkeypatch, game2):
     # The CLI's own frame has the placeholder: the same file gives the paragraph.
     monkeypatch.setattr(game2, "templates", "")
     assert pkg.readme("windows", "v1", pl, dst) is True
+
+
+def test_installer_counts_game_files(d):
+    """setup copies game_files from beside it, so NSIS's "Space required"
+    only counts them through AddSize."""
+    gf = os.path.join(d, "game_files", "media")
+    os.makedirs(gf)
+    with open(os.path.join(gf, "a.bin"), "wb") as f:
+        f.write(b"x" * 3000)
+    with open(os.path.join(d, "game_files", "default.xbe"), "wb") as f:
+        f.write(b"x" * 100)
+    kib = windows.tree_kib(os.path.join(d, "game_files"))
+    assert kib == 4  # 3100 bytes is 3.03 KiB, rounded up
+    values = windows.installer_values(
+        pl, "v1", "C:/out/setup.exe", "C:/stage", "C:/icon/app.ico", "", "", kib
+    )
+    dst = os.path.join(d, "installer.nsi")
+    pkg.render(pkg.template("windows", "installer.nsi.in"), values, dst)
+    with open(dst) as f:
+        text = f.read()
+    assert not PLACEHOLDER.findall(text)
+    main = text[text.index('Section "') :]
+    assert main.index("AddSize 4\n") < main.index("SectionEnd")

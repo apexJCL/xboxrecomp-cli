@@ -26,6 +26,7 @@ import datetime
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -492,7 +493,8 @@ def private_leaks(text, home=None, host=None):
     """Strings a manifest must never carry: absolute paths, $HOME, host name."""
     leaks = []
     home = home if home is not None else os.path.expanduser("~")
-    host = host if host is not None else os.uname().nodename.split(".")[0]
+    # platform.node(): Windows has no os.uname.
+    host = host if host is not None else platform.node().split(".")[0]
     if home and home != "/" and home in text:
         leaks.append("home directory")
     if host and len(host) > 2 and re.search(r"\b%s\b" % re.escape(host), text, re.I):
@@ -574,7 +576,9 @@ def nsis_lists(root):
         if d != cur:
             install.append('  SetOutPath "%s"\n' % win_dir(d))
             cur = d
-        install.append('  File "%s"\n' % os.path.join(root, n).replace("$", "$$"))
+        # Native separators: Windows makensis finds no "enhance/hud.pack".
+        src = os.path.join(root, *n.split("/"))
+        install.append('  File "%s"\n' % src.replace("$", "$$"))
     if cur:
         install.append('  SetOutPath "$INSTDIR"\n')
     uninstall = ['  Delete "$INSTDIR\\%s"\n' % n.replace("/", "\\") for n in names]

@@ -10,8 +10,8 @@
 ; config\config.toml when that file does not exist yet.
 ;
 ; Placeholders (each written between @ signs): NAME LINK_NAME APP DATA_DIR
-; VERSION OUTFILE ICON INSTALL_FILES UNINSTALL_FILES. Never write one in a comment: it is replaced
-; there too.
+; VERSION OUTFILE ICON INSTALL_FILES UNINSTALL_FILES GAME_FILES_KB. Never
+; write one in a comment: it is replaced there too.
 
 Unicode true
 SetCompressor zlib
@@ -77,6 +77,9 @@ FunctionEnd
 
 Section "@NAME@" SecMain
   SectionIn RO
+  ; The game files are copied from beside setup at install time, not
+  ; packed, so NSIS cannot see them: count them in "Space required".
+  AddSize @GAME_FILES_KB@
   SetOutPath "$INSTDIR"
   ; A pack from an earlier --hud-pack install goes first: this payload
   ; puts its own back, and one without a pack must not leave a stale file

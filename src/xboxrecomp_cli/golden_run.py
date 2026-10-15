@@ -42,6 +42,7 @@ Stdlib only."""
 import contextlib
 import hashlib
 import os
+import platform
 import re
 import shutil
 import signal
@@ -310,7 +311,7 @@ def run_one(o, scen, sc, scen_env, secs, say):
         say("golden run: WARNING %s: this run's pace may be off (INCOMPLETE pace mismatch)" % w)
     logp = os.path.join(d, "game-stdio.log")
     info = [
-        "host:   %s  %s" % (os.uname().nodename, time.strftime("%Y-%m-%dT%H:%M:%S%z")),
+        "host:   %s  %s" % (platform.node(), time.strftime("%Y-%m-%dT%H:%M:%S%z")),
         "backend: %s" % o["backend"],
         "exe:    %s  %s" % (sha256_file(o["exe"]), o["exe"]),
         "tree:   %s %s" % (o["root"], git_state(o["root"])),

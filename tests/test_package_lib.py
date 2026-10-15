@@ -290,23 +290,55 @@ def test_game_files_read_only_dump(d):
 
 
 def test_staged_refusals(d):
-    os.makedirs(os.path.join(d, "game_files", "nul"))
     with open(os.path.join(d, "launch.sh"), "wb") as f:
         f.write(b"#!/bin/sh\r\nexit 0\r\n")
     with open(os.path.join(d, "README.txt"), "wb") as f:
         f.write(b"crlf is fine here\r\n")
-    with open(os.path.join(d, "trail."), "w") as f:
-        f.write("")
+    want = ["launch.sh: CRLF line endings"]
+    # Windows cannot create the names refused here ("nul", "trail.").
+    if os.name != "nt":
+        os.makedirs(os.path.join(d, "game_files", "nul"))
+        with open(os.path.join(d, "trail."), "w") as f:
+            f.write("")
+        want = [
+            "game_files/nul: reserved name on Windows",
+            "launch.sh: CRLF line endings",
+            "trail.: trailing dot or space",
+        ]
     probs = pl.staged_problems(d)
-    assert sorted(probs) == [
-        "game_files/nul: reserved name on Windows",
-        "launch.sh: CRLF line endings",
-        "trail.: trailing dot or space",
-    ], probs
+    assert sorted(probs) == want, probs
     for ok in ("con_trol", "LPT10", "aux_data.bin", "media"):
         assert pl.name_problem(ok) is None, ok
     for bad in ("COM1", "lpt3.txt", "Aux.dat", "a<b"):
         assert pl.name_problem(bad), bad
+
+
+def test_private_leaks_default_host_without_uname():
+    # Windows has no os.uname: the default host name must not need it.
+    saved_uname, saved_node = getattr(os, "uname", None), pl.platform.node
+    if saved_uname:
+        del os.uname
+    pl.platform.node = lambda: "Gamebox.local"
+    try:
+        assert pl.private_leaks("built on gamebox", home="/nope") == ["host name"]
+    finally:
+        pl.platform.node = saved_node
+        if saved_uname:
+            os.uname = saved_uname
+
+
+def test_no_os_uname_in_cli():
+    # The CLI runs natively on Windows too (the build wizard), where
+    # os.uname does not exist.
+    src = os.path.join(HERE, "..", "src", "xboxrecomp_cli")
+    hits = []
+    for dirpath, _, files in os.walk(src):
+        for f in files:
+            if f.endswith(".py"):
+                with open(os.path.join(dirpath, f), encoding="utf-8") as fh:
+                    if "os.uname(" in fh.read():
+                        hits.append(f)
+    assert hits == []
 
 
 def test_nsis_lists(d):
@@ -329,7 +361,9 @@ def test_nsis_lists(d):
     assert names == ["BLiNX2.exe", "cat_recomp.exe", "enhance/hud.pack", "enhance/sub/y"]
     lines = inst.splitlines()
     assert lines[2] == '  SetOutPath "$INSTDIR\\enhance"', lines
-    assert lines[3].endswith('enhance/hud.pack"'), lines
+    # The File source uses this host's separator (Windows makensis needs \\).
+    src = os.path.join(root, "enhance", "hud.pack").replace("$", "$$")
+    assert lines[3] == '  File "%s"' % src, lines
     assert lines[4] == '  SetOutPath "$INSTDIR\\enhance\\sub"', lines
     assert lines[-1] == '  SetOutPath "$INSTDIR"', lines
     assert '  Delete "$INSTDIR\\enhance\\hud.pack"\n' in uninst

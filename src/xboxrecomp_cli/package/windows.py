@@ -79,9 +79,19 @@ def nsis_escape(path):
     return path.replace("$", "$$")
 
 
-def installer_values(lib, version, setup, payload, ico, inst, uninst):
+def tree_kib(root):
+    """The size of every file under root, in KiB, rounded up (NSIS AddSize)."""
+    total = 0
+    for dirpath, _, files in os.walk(root):
+        for f in files:
+            total += os.path.getsize(os.path.join(dirpath, f))
+    return (total + 1023) // 1024
+
+
+def installer_values(lib, version, setup, payload, ico, inst, uninst, game_kib=0):
     """The @KEY@ values of installer.nsi.in."""
     return {
+        "GAME_FILES_KB": str(game_kib),
         "NAME": lib.PRODUCT_NAME,
         "LINK_NAME": nsis_escape(link_name(lib.PRODUCT_NAME)),
         "APP": nsis_escape(app()),
@@ -119,7 +129,14 @@ def wrap_windows(stage, payload, version, out, lib, icon_dir):
     render(
         template("windows", "installer.nsi.in"),
         installer_values(
-            lib, version, setup, payload, os.path.join(icon_dir, a + ".ico"), inst, uninst
+            lib,
+            version,
+            setup,
+            payload,
+            os.path.join(icon_dir, a + ".ico"),
+            inst,
+            uninst,
+            tree_kib(os.path.join(payload, "game_files")),
         ),
         nsi,
     )
