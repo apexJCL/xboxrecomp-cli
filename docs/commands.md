@@ -67,7 +67,7 @@ A private bundle for one target in `dist/`. Needs `[package]` in `game.toml`.
 | `--hud-pack [DIR]` | put the HUD texture pack (default `dist/enhance/hud/`) in the bundle and enable it in its `config.default.toml`, which the game reads on first installs and upgrades alike |
 | `--seed-config FILE` | a `config.toml` with the player's options (the build wizard writes it), staged as `config.seed.toml`; each installer copies it to the data folder's `config/config.toml` only when that file does not exist yet. Every key must be one `config.default.toml` has |
 | `--out OUT` | output directory (default `dist/`) |
-| `--plain` | plain line output, no live progress (also when not a terminal, or `CI=1`) |
+| `--plain` | plain line output, no live progress (also when not a terminal, or `CI=1`), and a heartbeat line every 20 s of silence (`  <step> ... m:ss | <last line>`) |
 | `--verbose` | show every tool's output as it runs (implies `--plain`); it always goes to `build-logs/` too |
 | `--no-setup` | never run `setup`, even when something is missing |
 | `--reconfigure` | configure the packaging build tree afresh |

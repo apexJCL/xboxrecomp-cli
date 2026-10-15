@@ -489,19 +489,34 @@ def sums_text(manifest):
     return "".join("%s  %s\n" % (f["sha256"], f["path"]) for f in manifest["files"])
 
 
+# A path start anywhere in the text: after a quote, a space, a colon, a
+# bracket or at the start, never inside a relative path (a folder named
+# home under game_files) and never a bare drive letter without a
+# separator (C:X). Bracketed
+# letters: the same paths, without this line matching the public-push
+# audit's own search for them.
+PATH_RE = re.compile(r"(?<![A-Za-z0-9_./\\-])(?:/[U]sers/|/[h]ome/|/var/[h]ome/|[A-Za-z]:[\\/])")
+
+
+def home_pattern(home):
+    """$HOME as a regex that also matches it JSON-escaped (C:\\\\Users) and
+    with forward slashes (c:/users), without case: a Windows home in a
+    manifest reaches the text in any of those forms."""
+    parts = [re.escape(p) for p in re.split(r"[\\/]+", home.rstrip("\\/"))]
+    return re.compile(r"(?:\\\\|\\|/)+".join(parts), re.I)
+
+
 def private_leaks(text, home=None, host=None):
     """Strings a manifest must never carry: absolute paths, $HOME, host name."""
     leaks = []
     home = home if home is not None else os.path.expanduser("~")
     # platform.node(): Windows has no os.uname.
     host = host if host is not None else platform.node().split(".")[0]
-    if home and home != "/" and home in text:
+    if home and home != "/" and len(home) > 3 and home_pattern(home).search(text):
         leaks.append("home directory")
     if host and len(host) > 2 and re.search(r"\b%s\b" % re.escape(host), text, re.I):
         leaks.append("host name")
-    # Bracketed letters: the same paths, without this line matching the
-    # public-push audit's own search for them.
-    if re.search(r'"(/[U]sers/|/[h]ome/|/var/[h]ome/|[A-Za-z]:\\\\)', text):
+    if PATH_RE.search(text):
         leaks.append("absolute path")
     return leaks
 

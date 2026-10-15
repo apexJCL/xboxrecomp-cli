@@ -3,12 +3,14 @@ package runner
 import (
 	"bufio"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 )
 
@@ -189,6 +191,53 @@ func TestProgressFailure(t *testing.T) {
 	}
 }
 
+// The heartbeat (package/progress.py's plain mode) names the step's time
+// and the tool's line; it never moves the bar.
+func TestProgressHeartbeat(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "package-heartbeat.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p Progress
+	bar := 0.0
+	for _, line := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
+		pct, before := p.Pct, p.Fraction()
+		p.Feed(line)
+		if p.Fraction() < bar {
+			t.Fatalf("the bar went back at %q", line)
+		}
+		bar = p.Fraction()
+		if heartRE.MatchString(line) {
+			if p.Pct != pct || p.Fraction() != before {
+				t.Fatalf("a heartbeat moved the bar: %q", line)
+			}
+		}
+		if strings.HasPrefix(line, "  recomp: 21%") && p.Pct != 21 {
+			t.Fatalf("pct %d after %q", p.Pct, line)
+		}
+	}
+	if p.Pct != 21 || p.StepElapsed != "1:40" || p.Tool != "[5500/26190] Translating a | b..." {
+		t.Fatalf("%+v", p)
+	}
+
+	// A heartbeat with no tool line yet, and one that comes before any
+	// begin line: the label is taken from it.
+	var q Progress
+	if !q.Feed("  recomp ... 1:02:03") || q.Label != "recomp" || q.StepElapsed != "1:02:03" || q.Tool != "" {
+		t.Fatalf("%+v", q)
+	}
+	q.Feed("  recomp ... 1:02:23, under a minute left")
+	if q.Tool != "" || q.StepElapsed != "1:02:23" {
+		t.Fatalf("%+v", q)
+	}
+	// A begin line is not a heartbeat, and a new step forgets the old tool line.
+	q.Feed("  recomp ... 1:02:43 | x")
+	q.Feed("  build ...")
+	if q.Label != "build" || q.Tool != "" || q.StepElapsed != "" {
+		t.Fatalf("%+v", q)
+	}
+}
+
 func TestStartStreamsAndCancels(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("a POSIX shell stands in for the bootstrap")
@@ -196,7 +245,7 @@ func TestStartStreamsAndCancels(t *testing.T) {
 	dir := t.TempDir()
 	// A fake uv: the runner's line ends with the bootstrap path and the args.
 	uv := filepath.Join(dir, "uv")
-	os.WriteFile(uv, []byte("#!/bin/sh\nfor a; do last=$a; done\necho one\necho two >&2\nprintf 'three\\rfour\\n'\n[ \"$last\" = wait ] && sleep 30\nexit 0\n"), 0o755)
+	os.WriteFile(uv, []byte("#!/bin/sh\nfor a; do last=$a; done\necho one\necho two >&2\nprintf 'three\\rfour\\n'\nprintf 'five\\r\\nsix\\r\\n'\n[ \"$last\" = wait ] && sleep 30\nexit 0\n"), 0o755)
 	r := Runner{UV: uv, Game: dir, Slug: "g", Env: os.Environ()}
 	var lines []string
 	p, err := r.Start(context.Background(), nil, func(s string) { lines = append(lines, s) }, "x")
@@ -206,7 +255,7 @@ func TestStartStreamsAndCancels(t *testing.T) {
 	if err := p.Wait(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(lines, "|") != "one|two|three|four" {
+	if strings.Join(lines, "|") != "one|two|three|four|five|six" {
 		t.Fatalf("%q", lines)
 	}
 	p, err = r.Start(context.Background(), nil, func(string) {}, "wait")
@@ -218,5 +267,33 @@ func TestStartStreamsAndCancels(t *testing.T) {
 	p.Cancel()
 	if err := p.Wait(); err == nil || time.Since(start) > 10*time.Second {
 		t.Fatalf("cancel: %v after %v", err, time.Since(start))
+	}
+}
+
+// TestScanLines: "\r\n" is one end even when a read splits it, a lone "\r"
+// still ends a progress line, and the last line needs no end.
+func TestScanLines(t *testing.T) {
+	text := "Traceback (most recent call last):\r\n  File \"x.py\"\r\n10%\r20%\nPermissionError: no\r\n\r\nlast"
+	want := []string{"Traceback (most recent call last):", `  File "x.py"`, "10%", "20%", "PermissionError: no", "", "last"}
+	for name, r := range map[string]io.Reader{
+		"whole":       strings.NewReader(text),
+		"byte a read": iotest.OneByteReader(strings.NewReader(text)),
+	} {
+		sc := bufio.NewScanner(r)
+		sc.Split(ScanLines)
+		var got []string
+		for sc.Scan() {
+			got = append(got, sc.Text())
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: %q", name, got)
+		}
+	}
+	// A "\r" at the very end is a line end, not a wait.
+	if n, tok, _ := ScanLines([]byte("a\r"), true); n != 2 || string(tok) != "a" {
+		t.Errorf("\\r at EOF: %d %q", n, tok)
+	}
+	if n, tok, _ := ScanLines([]byte("a\r"), false); n != 0 || tok != nil {
+		t.Errorf("\\r before more data: %d %q", n, tok)
 	}
 }

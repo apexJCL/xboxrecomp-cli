@@ -1,0 +1,21 @@
+plan: import (game_files, folder, 3.3 GB, 485 files), setup (no cmake), generate (checked after setup), build (build-pkg-windows), package (windows)
+== [1/5] import ==
+game_files/: imported from game_files (485 files, 3.3 GB)
+== [2/5] setup ==
+  setup: toolkit ...
+  ✓ setup: toolkit  0:02
+== [3/5] generate ==
+  disasm ...
+  disasm: 0% (0/100)
+  disasm: 100% (100/100)
+  ✓ disasm  1:10
+  recomp ...
+  recomp ... 0:20
+  recomp ... 0:40
+  recomp: 0% (0/26190)
+  recomp ... 1:00, ~22 min left | Translating 26190 functions...
+  recomp: 10% (2619/26190)
+  recomp ... 1:20, ~21 min left | [2600/26190] Translating fn_00012345...
+  recomp: 21% (5500/26190)
+  recomp ... 1:40, ~19 min left | [5500/26190] Translating a | b...
+  ✓ recomp  24:30

@@ -338,10 +338,29 @@ def test_config_refusals(wgame):
     assert cfg["release"]["tag"] == "" and cfg["release"]["dev"] is True
 
 
+def test_config_icon_optional_or_svg(wgame):
+    # No icon: the config passes and the wizard's own icon applies.
+    toml = os.path.join(wgame.root, "game.toml")
+    with open(toml) as f:
+        text = f.read()
+    write(toml, text.replace('icon = "packaging/wizard-icon.png"\n', ""))
+    m = manifest.parse_text(open(toml).read())
+    assert m["wizard"]["icon"] == ""
+    _, icon = wizard.resolve(wgame, dev=True)
+    assert icon is None
+    # An SVG (after a BOM and whitespace) passes as a PNG does.
+    svg = b"\xef\xbb\xbf\n  <svg xmlns='http://www.w3.org/2000/svg'/>"
+    write(os.path.join(wgame.root, "i.svg"), svg)
+    write(toml, text.replace("packaging/wizard-icon.png", "i.svg"))
+    _, icon = wizard.resolve(wgame, dev=True)
+    assert icon == svg
+    assert wizard.is_svg(b'<?xml version="1.0"?><svg/>') and not wizard.is_svg(PNG)
+
+
 @pytest.mark.parametrize(
     "edit, error",
     [
-        (("packaging/wizard-icon.png", b"GIF89a"), "is not a PNG"),
+        (("packaging/wizard-icon.png", b"\xff\xd8\xff\xe0JFIF"), "not a PNG or SVG"),
         (("packaging/config.default.toml", "[render]\nscale = 1\n"), "present.fullscreen is not"),
         (("packaging/config.default.toml", DEFAULTS.replace("= 1", '= "1"')), None),
         (("packaging/config.default.toml", DEFAULTS.replace("false", "1")), "not a boolean"),
@@ -453,6 +472,44 @@ def test_stage_module(d):
     assert not os.path.exists(os.path.join(dest, "dist"))
     with open(os.path.join(mod, "internal", "gamecfg", "config.json")) as f:
         assert f.read() == "{}\n"  # the module itself is never written
+    # The generic window icon stays unless the game has its own.
+    write(os.path.join(mod, "internal", "gamecfg", "icon.png"), PNG)
+    wizard_build.stage_module(mod, dest, "{}\n")
+    with open(os.path.join(dest, "internal", "gamecfg", "icon.png"), "rb") as f:
+        assert f.read() == PNG
+    wizard_build.stage_module(mod, dest, "{}\n", PNG + b"game")
+    with open(os.path.join(dest, "internal", "gamecfg", "icon.png"), "rb") as f:
+        assert f.read() == PNG + b"game"
+    with open(os.path.join(mod, "internal", "gamecfg", "icon.png"), "rb") as f:
+        assert f.read() == PNG
+
+
+def test_icon_commands(d):
+    w = wizard_build.windres_cmd("/m", "wizard.rc", "/s/cmd/wizard/rsrc_windows_amd64.syso")
+    assert w[0] == os.path.join("/m", "bin", "llvm-windres")
+    assert "--target=pe-x86-64" in w and w[w.index("-O") + 1] == "coff"
+    assert w[w.index("-i") + 1] == "wizard.rc" and w[-1].endswith("rsrc_windows_amd64.syso")
+    assert "--no-preprocess" in w
+    assert wizard_build.icongen_cmd("go", "i.svg", "/o")[1:] == [
+        "run", "./cmd/icongen", "-in", "i.svg", "-out", "/o"
+    ]  # fmt: skip
+    assert wizard_build.desktop_entry("BLiNX 2", "blinx2-wizard") == (
+        "[Desktop Entry]\nType=Application\nName=BLiNX 2 build wizard\nExec=blinx2-wizard\n"
+        "Icon=blinx2-wizard\nCategories=Game;Utility;\n"
+    )
+    icons, src = os.path.join(d, "icons"), os.path.join(d, "src")
+    write(os.path.join(icons, "icon-256.png"), PNG)
+    wizard_build.stage_linux_icon(src, icons, "G", "g-wizard")
+    assert sorted(os.listdir(os.path.join(src, "icon"))) == ["g-wizard.desktop", "g-wizard.png"]
+    # The tar holds the binary, its icon and its menu entry.
+    with open(os.path.join(wizard_build.module_dir(), "linux", "Dockerfile")) as f:
+        df = f.read()
+    assert "-cf - ${NAME} ${NAME}.png ${NAME}.desktop" in df
+    assert "cp icon/${NAME}.png icon/${NAME}.desktop /out/" in df
+    # The generic icon is the module's own SVG, and the license ships.
+    assert os.path.isfile(os.path.join(wizard_build.module_dir(), wizard_build.GENERIC_ICON))
+    root = os.path.dirname(wizard_build.module_dir())
+    assert os.path.isfile(os.path.join(root, "LICENSES", "tabler-icons-MIT.txt"))
 
 
 def test_write_zip_is_reproducible(d):

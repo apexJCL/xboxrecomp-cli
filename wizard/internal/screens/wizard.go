@@ -66,6 +66,13 @@ type Wizard struct {
 	settings hostinfo.Settings
 	firstRun bool
 	root     string
+	// out is the output folder; outDefault that it is DefaultOut's, so a
+	// new build folder or a moved wizard moves it too.
+	out        string
+	outDefault bool
+	// free and sameVolume are hostinfo's; the tests replace them.
+	free       func(string) (uint64, error)
+	sameVolume func(a, b string) bool
 
 	pages   []*page
 	cur     int
@@ -86,6 +93,9 @@ type Wizard struct {
 
 	// welcome
 	rootLabel *widget.Label
+	outLabel  *widget.Label
+	// outNote says why the output folder cannot be used (outClash).
+	outNote *widget.Label
 
 	// checks
 	env        *Env
@@ -113,9 +123,22 @@ type Wizard struct {
 	summaryAcc   *widget.Accordion
 
 	// build and done
-	buildLog  *logPane
-	bar       *widget.ProgressBar
-	stepLabel *widget.Label
+	buildLog   *logPane
+	bar        *thinBar
+	stepLabel  *widget.Label
+	buildClock *quietText
+	// the clocks: the build's start, the part's (a plan stage, or a
+	// command without one), the stage index the part belongs to and the
+	// bar's fraction; the build's and the ticker's goroutines share them.
+	clockMu    sync.Mutex
+	buildStart time.Time
+	partStart  time.Time
+	partIndex  int
+	clockFrac  float64
+	// clockRun counts builds, on the main thread: a tick queued before
+	// its build ended sees a newer count, or building false, and leaves
+	// the final clocks alone.
+	clockRun  int
 	cancelBtn *widget.Button
 	procMu    sync.Mutex
 	proc      *runner.Proc
@@ -152,6 +175,13 @@ func New(a fyne.App, opt Options) *Wizard {
 		w.root = w.settings.Root
 	default:
 		w.root = hostinfo.DefaultRoot(opt.Cfg.Game.Slug)
+	}
+	w.free, w.sameVolume = hostinfo.Free, hostinfo.SameVolume
+	var why string
+	w.out, why = hostinfo.ResolveOut(w.settings.Out, w.root)
+	w.outDefault = w.settings.Out == "" || why != ""
+	if why != "" {
+		w.Logf("output folder: %s; using %s", why, w.out)
 	}
 	w.st = model.New(opt.Cfg, hostinfo.NativeTarget())
 	w.latest = func() (*update.Release, string) {
@@ -417,7 +447,16 @@ func (w *Wizard) welcomePage() *page {
 	change := widget.NewButton(changeText, w.pickRoot)
 	folderIs := newQuiet("", fyne.TextAlignLeading, fyne.TextStyle{})
 	folderIs.Wrapping = fyne.TextWrapWord
-	folderIs.SetText(fmt.Sprintf(installFolderIs, hostinfo.NeedBytes>>30))
+	folderIs.SetText(fmt.Sprintf(buildFolderIs, hostinfo.NeedBytes>>30))
+	w.outLabel = widget.NewLabel(w.out)
+	w.outLabel.Wrapping = fyne.TextWrapBreak
+	w.outNote = para("")
+	w.outNote.Importance = widget.DangerImportance
+	w.outNote.Hide()
+	changeOut := widget.NewButton(changeText, w.pickOut)
+	outIs := newQuiet("", fyne.TextAlignLeading, fyne.TextStyle{})
+	outIs.Wrapping = fyne.TextWrapWord
+	outIs.SetText(fmt.Sprintf(outputFolderIs, 4))
 	upd := widget.NewCheck(updateCheckText, func(on bool) {
 		w.settings.NoUpdateCheck = !on
 		w.saveSettings()
@@ -429,15 +468,40 @@ func (w *Wizard) welcomePage() *page {
 		statement(noGameLead, noGameText(c.Game.Name)),
 		statement(downloadsLead, downloadsText),
 		statement(sendsLead, sendsText),
-		container.NewBorder(nil, nil, bold(installFolder), nil, folderIs),
+		container.NewBorder(nil, nil, bold(buildFolder), nil, folderIs),
 		container.NewBorder(nil, nil, nil, change, w.rootLabel),
+		container.NewBorder(nil, nil, bold(outputFolder), nil, outIs),
+		container.NewBorder(nil, nil, nil, changeOut, w.outLabel),
+		w.outNote,
 		upd,
 	}
 	if w.firstRun {
 		items = append(items, para(unsignedText))
 	}
-	return &page{title: titleWelcome, obj: container.NewVScroll(container.NewVBox(items...)),
-		ready: func() bool { return w.root != "" }}
+	w.showOutClash()
+	return &page{title: titleWelcome, obj: container.NewVScroll(container.NewVBox(items...)), enter: w.showOutClash,
+		ready: func() bool { return w.root != "" && w.out != "" && w.outClash() == "" }}
+}
+
+// outClash is the folder the output folder overlaps, or "": the game's
+// data folder, the build folder's src or the dump folder (hostinfo.OutClash).
+func (w *Wizard) outClash() string {
+	data := hostinfo.ExpandData(w.opt.Cfg.Data[hostinfo.NativeTarget()])
+	return hostinfo.OutClash(w.out, w.root, data, w.st.Dump)
+}
+
+// showOutClash puts the reason under the output folder's row.
+func (w *Wizard) showOutClash() {
+	if w.outNote == nil {
+		return
+	}
+	if msg := outClashText[w.outClash()]; msg != "" {
+		w.outNote.SetText(msg)
+		w.outNote.Show()
+	} else {
+		w.outNote.SetText("")
+		w.outNote.Hide()
+	}
 }
 
 func (w *Wizard) saveSettings() {
@@ -447,19 +511,52 @@ func (w *Wizard) saveSettings() {
 }
 
 func (w *Wizard) pickRoot() {
-	set := func(p string) {
-		if p == "" {
-			return
-		}
-		w.root = p
-		w.settings.Root = p
-		w.saveSettings()
-		w.rootLabel.SetText(p)
-		w.env, w.doctor = nil, nil
-		w.refreshNav()
+	w.pickDir(pickFolderTitle, w.root, w.setRoot)
+}
+
+func (w *Wizard) setRoot(p string) {
+	if p == "" {
+		return
 	}
+	w.root = p
+	w.settings.Root = p
+	w.saveSettings()
+	w.rootLabel.SetText(p)
+	if w.outDefault {
+		var why string
+		w.out, why = hostinfo.DefaultOut(p)
+		if why != "" {
+			w.Logf("output folder: %s; using %s", why, w.out)
+		}
+		w.outLabel.SetText(w.out)
+	}
+	w.showOutClash()
+	w.env, w.doctor = nil, nil
+	w.refreshNav()
+}
+
+func (w *Wizard) pickOut() {
+	w.pickDir(pickOutTitle, w.out, w.setOut)
+}
+
+// setOut keeps the player's output folder until it is changed again.
+func (w *Wizard) setOut(p string) {
+	if p == "" {
+		return
+	}
+	w.out, w.outDefault = p, false
+	w.settings.Out = p
+	w.saveSettings()
+	w.outLabel.SetText(p)
+	w.showOutClash()
+	w.refreshNav()
+}
+
+// pickDir is the system's folder dialog, Fyne's when there is none; set
+// gets "" on a cancel.
+func (w *Wizard) pickDir(title, start string, set func(string)) {
 	if !w.opt.NoDialog {
-		p, err := zenity.SelectFile(zenity.Directory(), zenity.Title(pickFolderTitle), zenity.Filename(w.root))
+		p, err := zenity.SelectFile(zenity.Directory(), zenity.Title(title), zenity.Filename(start))
 		if err == nil || errors.Is(err, zenity.ErrCanceled) {
 			set(p)
 			return
@@ -821,19 +918,33 @@ func (w *Wizard) checkDump() error {
 		return playerError(fmt.Sprintf(dumpNothing, p))
 	}
 	need := uint64(hostinfo.NeedBytes)
+	var dumpBytes uint64
 	if st.IsDir() {
 		if _, err := os.Stat(filepath.Join(p, "default.xbe")); err != nil {
 			return playerError(fmt.Sprintf(dumpNoXBE, p))
 		}
+		dumpBytes = hostinfo.TreeSize(p)
 	} else {
-		need += uint64(st.Size())
+		dumpBytes = uint64(st.Size())
+		need += dumpBytes
 	}
-	if free, err := hostinfo.Free(w.root); err == nil && free < need {
+	// The bundle carries the game files again, in the output folder: on
+	// the build folder's disk the two needs draw on one free figure.
+	bundle := hostinfo.BundleNeed(dumpBytes)
+	if w.sameVolume(w.root, w.out) {
+		need += bundle
+	} else if free, err := w.free(w.out); err == nil && free < bundle {
+		return playerError(fmt.Sprintf(dumpNoSpaceOut, float64(free)/1e9, float64(bundle)/1e9))
+	}
+	if free, err := w.free(w.root); err == nil && free < need {
 		return playerError(plainPrepare(&SpaceError{Free: free, Need: need}))
 	}
 	abs, err := filepath.Abs(p)
 	if err == nil {
 		p = abs
+	}
+	if st.IsDir() && hostinfo.Overlaps(w.out, p) {
+		return playerError(outClashText[hostinfo.ClashDump])
 	}
 	w.st.Dump = p
 	return nil
@@ -1075,6 +1186,7 @@ func (w *Wizard) fillSummary() {
 	items := []fyne.CanvasObject{
 		para(fmt.Sprintf(summaryGame, c.Game.Name, c.Release.Tag)),
 		para(fmt.Sprintf(summaryFolder, w.root)),
+		para(fmt.Sprintf(summaryOut, w.out)),
 		para(fmt.Sprintf(summaryPlatform, model.TargetLabels[w.st.Target])),
 	}
 	var changed []fyne.CanvasObject
@@ -1097,7 +1209,7 @@ func (w *Wizard) fillSummary() {
 	var b strings.Builder
 	b.WriteString(w.pinsText() + "\n\n")
 	b.WriteString(techSteps + "\n")
-	for _, s := range w.st.Steps(w.seedArg()) {
+	for _, s := range w.st.Steps(w.seedArg(), w.out) {
 		b.WriteString("  " + runner.Display(c.Game.Slug, s) + "\n")
 	}
 	if seed := w.st.Seed(); seed != "" {
@@ -1112,8 +1224,10 @@ func (w *Wizard) fillSummary() {
 
 func (w *Wizard) buildPage() *page {
 	w.buildLog = newLogPane(nil)
-	w.bar = widget.NewProgressBar()
+	w.bar = newThinBar(0)
+	w.bar.Height = 10
 	w.stepLabel = widget.NewLabel("")
+	w.buildClock = newQuiet("", fyne.TextAlignTrailing, fyne.TextStyle{})
 	w.cancelBtn = widget.NewButton(cancelText, func() {
 		dialog.ShowConfirm(stopTitle, stopText, func(ok bool) {
 			if ok {
@@ -1121,7 +1235,11 @@ func (w *Wizard) buildPage() *page {
 			}
 		}, w.win)
 	})
-	top := container.NewVBox(para(buildIntro), w.stepLabel, container.NewBorder(nil, nil, nil, w.cancelBtn, w.bar))
+	// The bar is thinner than the button: centred beside it.
+	bar := container.NewVBox(layout.NewSpacer(), w.bar, layout.NewSpacer())
+	top := container.NewVBox(para(buildIntro),
+		container.NewBorder(nil, nil, nil, w.buildClock, w.stepLabel),
+		container.NewBorder(nil, nil, nil, w.cancelBtn, bar))
 	// Collapsed, the pane sits at the bottom; expanded, it takes the space
 	// under the bar instead of leaving a gap above it.
 	holder := container.NewStack()
@@ -1158,19 +1276,29 @@ func (w *Wizard) startBuild() {
 	w.prog = &runner.Progress{}
 	w.buildLog.Clear()
 	w.bar.SetValue(0)
+	w.bar.StartPulse()
 	w.cancelBtn.Enable()
 	w.stepLabel.SetText(buildStarting)
+	now := time.Now()
+	w.clockMu.Lock()
+	w.buildStart, w.partStart, w.partIndex, w.clockFrac = now, now, 0, 0
+	w.clockMu.Unlock()
+	w.buildClock.SetText(w.clockText(now))
 	w.refreshNav()
 	seed := w.seedArg()
-	steps := w.st.Steps(seed)
+	steps := w.st.Steps(seed, w.out)
+	done := make(chan struct{})
+	w.clockRun++
+	go w.tickClock(done, w.clockRun)
 	go func() {
 		err := w.runSteps(seed, steps)
-		if err != nil {
-			w.Logf("build: %v", err)
-		}
+		close(done)
+		w.logBuildEnd(err)
 		fyne.Do(func() {
 			w.building = false
 			w.buildErr = err
+			w.bar.StopPulse()
+			w.buildClock.SetText(w.clockText(time.Now()))
 			w.cancelBtn.Disable()
 			w.fillDone()
 			w.show(pDone)
@@ -1178,34 +1306,91 @@ func (w *Wizard) startBuild() {
 	}()
 }
 
+// tickClock moves the clocks every second until done is closed: the CLI's
+// lines come in bursts, minutes apart in a long step.
+func (w *Wizard) tickClock(done <-chan struct{}, run int) {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case now := <-t.C:
+			s := w.clockText(now)
+			fyne.Do(func() { w.showTick(run, s) })
+		}
+	}
+}
+
+// showTick is a tick's clocks, unless its build has ended since: the end
+// set the final ones.
+func (w *Wizard) showTick(run int, s string) {
+	if w.building && run == w.clockRun {
+		w.buildClock.SetText(s)
+	}
+}
+
+// clockText is the clocks at now.
+func (w *Wizard) clockText(now time.Time) string {
+	w.clockMu.Lock()
+	defer w.clockMu.Unlock()
+	return buildClockText(w.clockFrac, now.Sub(w.partStart), now.Sub(w.buildStart))
+}
+
+// newPart starts the part's clock: a command starts, or the plan moves to
+// another stage.
+func (w *Wizard) newPart(now time.Time) {
+	w.clockMu.Lock()
+	w.partStart = now
+	w.clockMu.Unlock()
+}
+
+// feedLine is one CLI line into the progress: it reports whether the
+// state changed, and a new stage restarts the part's clock.
+func (w *Wizard) feedLine(line string, now time.Time) bool {
+	if !w.prog.Feed(line) {
+		return false
+	}
+	w.clockMu.Lock()
+	w.clockFrac = w.prog.Fraction()
+	if w.prog.Index != w.partIndex {
+		w.partIndex, w.partStart = w.prog.Index, now
+	}
+	w.clockMu.Unlock()
+	return true
+}
+
 func (w *Wizard) runSteps(seed string, steps [][]string) error {
 	log := w.buildLog.Append
 	if seed != "" {
 		if err := os.WriteFile(seed, []byte(w.st.Seed()), 0o644); err != nil {
-			return err
+			return &buildFailure{Step: buildPrepare, Cmd: seed, Err: err}
 		}
 	}
 	slug := w.opt.Cfg.Game.Slug
+	cmd := ""
 	for i, s := range steps {
 		w.procMu.Lock()
 		if w.canceled {
 			w.procMu.Unlock()
-			return errors.New("canceled")
+			return errCanceled
 		}
 		w.procMu.Unlock()
-		log("$ " + runner.Display(slug, s))
+		cmd = runner.Display(slug, s)
+		log("$ " + cmd)
+		w.newPart(time.Now())
 		if i < len(steps)-1 {
 			fyne.Do(func() { w.stepLabel.SetText(buildPrepare) })
 		}
 		p, err := w.env.Runner.Start(context.Background(), []string{"CI=1"}, func(line string) {
 			log(line)
-			if w.prog.Feed(line) {
+			if w.feedLine(line, time.Now()) {
 				f, label := w.prog.Fraction(), w.progressText()
 				fyne.Do(func() { w.bar.SetValue(f); w.stepLabel.SetText(label) })
 			}
 		}, s...)
 		if err != nil {
-			return err
+			return w.failure(cmd, err)
 		}
 		w.procMu.Lock()
 		w.proc = p
@@ -1216,13 +1401,58 @@ func (w *Wizard) runSteps(seed string, steps [][]string) error {
 		canceled := w.canceled
 		w.procMu.Unlock()
 		if canceled {
-			return errors.New("canceled")
+			return errCanceled
 		}
 		if err != nil {
-			return fmt.Errorf("%s: %w", runner.Display(slug, s), err)
+			return w.failure(cmd, err)
 		}
 	}
+	if w.prog.Bundle == "" {
+		return w.failure(cmd, errNoBundle)
+	}
 	return nil
+}
+
+// failure is the build stopping in cmd: where, in the player's words, and
+// the log's last lines.
+func (w *Wizard) failure(cmd string, err error) *buildFailure {
+	return &buildFailure{Step: failedStep(w.prog), Cmd: cmd, Err: err, Tail: w.buildLog.Tail(tailLines)}
+}
+
+// failedStep is where the build stopped: the CLI's FAILED line, else the
+// running step inside its stage, else the stage, else before the plan.
+func failedStep(p *runner.Progress) string {
+	switch {
+	case p.Failed != "":
+		return p.Failed
+	case p.Stage != "" && p.Label != "" && !strings.HasPrefix(p.Label, p.Stage+":"):
+		return p.Stage + ": " + p.Label
+	case p.Label != "":
+		return p.Label
+	case p.Stage != "":
+		return p.Stage
+	}
+	return buildPrepare
+}
+
+// logBuildEnd is the build's entry in wizard.log: the failure with what
+// the build said, the cancel, or the bundle.
+func (w *Wizard) logBuildEnd(err error) {
+	var f *buildFailure
+	switch {
+	case err == nil:
+		w.Logf("build done: %s", w.prog.Bundle)
+	case errors.Is(err, errCanceled):
+		w.Logf("build canceled by the player")
+	case errors.As(err, &f):
+		msg := fmt.Sprintf("build stopped at %s: %s: %v", f.Step, f.Cmd, f.Err)
+		if ex := failureExcerpt(f.Tail); len(ex) > 0 {
+			msg += "\n  " + strings.Join(ex, "\n  ")
+		}
+		w.Logf("%s", msg)
+	default:
+		w.Logf("build: %v", err)
+	}
 }
 
 func (w *Wizard) progressText() string {
@@ -1247,37 +1477,76 @@ func (w *Wizard) donePage() *page {
 func (w *Wizard) fillDone() {
 	c := w.opt.Cfg
 	var items []fyne.CanvasObject
-	if w.buildErr == nil && w.prog.Bundle != "" {
+	var f *buildFailure
+	retry := []fyne.CanvasObject{widget.NewButton(retryText, func() { w.show(pBuild) })}
+	switch {
+	case w.buildErr == nil && w.prog.Bundle != "":
 		bundle := w.prog.Bundle
 		w.pages[pDone].title = titleDone
 		items = append(items, bold(doneReady), mono(bundle), para(installText[w.st.Target]))
-		row := []fyne.CanvasObject{widget.NewButton(showBundle, func() { w.openPath(filepath.Dir(bundle)) })}
+		row := []fyne.CanvasObject{widget.NewButton(openBundleFolder, func() { w.openPath(filepath.Dir(bundle)) })}
 		if w.st.Target == hostinfo.NativeTarget() {
 			row = append(row, widget.NewButton(installNowText, func() { w.installNow(bundle) }))
 		}
 		items = append(items, container.NewHBox(row...), para(fmt.Sprintf(doneData, c.Data[w.st.Target])))
-	} else {
+	case errors.Is(w.buildErr, errCanceled):
+		w.pages[pDone].title = titleStopped
+		items = append(items, bold(doneCanceled), container.NewHBox(retry...), para(doneRetry))
+	default:
 		w.pages[pDone].title = titleStopped
 		items = append(items, bold(doneFailed))
-		if w.prog.Failed != "" {
-			items = append(items, para(fmt.Sprintf(doneStoppedAt, w.prog.Failed)))
+		if !errors.As(w.buildErr, &f) {
+			f = &buildFailure{Step: failedStep(w.prog), Err: w.buildErr, Tail: w.buildLog.Tail(tailLines)}
 		}
-		logDir := filepath.Join(w.env.Game, "build-logs")
+		items = append(items, para(fmt.Sprintf(doneStoppedAt, f.Step)))
+		if ex := failureExcerpt(f.Tail); len(ex) > 0 {
+			items = append(items, bold(doneSaid), mono(strings.Join(ex, "\n")))
+		}
+		var ee *exec.ExitError
+		if errors.As(f.Err, &ee) {
+			q := newQuiet("", fyne.TextAlignLeading, fyne.TextStyle{})
+			q.SetText(fmt.Sprintf(doneExit, ee.ExitCode()))
+			items = append(items, q)
+		}
+		logDir := ""
 		if w.prog.Log != "" {
-			items = append(items, para(fmt.Sprintf(doneLog, w.prog.Log)))
 			logDir = filepath.Dir(w.prog.Log)
+		} else if w.env != nil {
+			logDir = filepath.Join(w.env.Game, "build-logs")
 		}
-		items = append(items, container.NewHBox(
-			widget.NewButton(openLogFolder, func() { w.openPath(logDir) }),
-			widget.NewButton(retryText, func() { w.show(pBuild) })),
-			para(doneRetry))
+		row := retry
+		if logDir != "" {
+			items = append(items, para(fmt.Sprintf(doneLogs, logDir)))
+			row = append([]fyne.CanvasObject{widget.NewButton(openLogFolder, func() { w.openPath(logDir) })}, retry...)
+		}
+		items = append(items, container.NewHBox(row...), para(doneRetry))
 	}
-	items = append(items, para(bundleRule(c.Game.Name)))
+	items = append(items, spaced(noticeBox(noticeLead, fmt.Sprintf(noticeBody, c.Game.Name), noticeTail)))
 	w.doneBox.Objects = items
 	w.doneBox.Refresh()
 	if w.cur == pDone {
 		w.title.SetText(w.pages[pDone].title)
 	}
+}
+
+// setupIn is the Windows bundle's setup program: the one *-setup.exe in
+// the bundle folder. A listing, not a glob: the player's folder name may
+// hold glob characters ("D:\Games [2026]").
+func setupIn(bundle string) (string, error) {
+	ents, err := os.ReadDir(bundle)
+	if err != nil {
+		return "", err
+	}
+	var m []string
+	for _, e := range ents {
+		if e.Type().IsRegular() && strings.HasSuffix(strings.ToLower(e.Name()), "-setup.exe") {
+			m = append(m, filepath.Join(bundle, e.Name()))
+		}
+	}
+	if len(m) != 1 {
+		return "", fmt.Errorf("the bundle %s has %d setup programs, not one", bundle, len(m))
+	}
+	return m[0], nil
 }
 
 // installNow installs on this computer by the target's own route: the
@@ -1287,7 +1556,10 @@ func (w *Wizard) installNow(bundle string) {
 	var err error
 	switch w.st.Target {
 	case "windows":
-		err = exec.Command(bundle).Start()
+		var setup string
+		if setup, err = setupIn(bundle); err == nil {
+			err = exec.Command(setup).Start()
+		}
 	case "macos":
 		err = OpenPath(bundle)
 	case "steamos":

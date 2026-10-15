@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 
 	"wizard"
@@ -39,7 +40,7 @@ func parse(args []string, out io.Writer) (flags, error) {
 	fs.SetOutput(out)
 	fs.StringVar(&f.game, "game", "", "developers: build in this game checkout as it is (no clone); its config comes from its CLI")
 	fs.StringVar(&f.config, "config", "", "developers: the wizard config JSON to use (xbr wizard config --json)")
-	fs.StringVar(&f.root, "root", "", "the install folder (default: the saved one, else the per-OS default)")
+	fs.StringVar(&f.root, "root", "", "the build folder: the clone, the tools and the build (default: the saved one, else the per-OS default)")
 	fs.BoolVar(&f.noDialog, "no-dialog", false, "no file dialogs: type the paths")
 	fs.BoolVar(&f.dry, "dry", false, "print what a build with the defaults would run, and exit (no window)")
 	fs.BoolVar(&f.noUpdate, "no-update-check", false, "do not look for a newer wizard at start")
@@ -81,46 +82,53 @@ func loadConfig(f flags) (*gamecfg.Config, error) {
 	return cfg, err
 }
 
-func dry(out io.Writer, cfg *gamecfg.Config, pins *fetch.Pins, f flags) {
+func dry(w io.Writer, cfg *gamecfg.Config, pins *fetch.Pins, f flags) {
+	set := hostinfo.LoadSettings(hostinfo.SettingsDir(cfg.Game.Slug))
 	root := f.root
 	if root == "" {
-		if s := hostinfo.LoadSettings(hostinfo.SettingsDir(cfg.Game.Slug)); s.Root != "" {
-			root = s.Root
+		if set.Root != "" {
+			root = set.Root
 		} else {
 			root = hostinfo.DefaultRoot(cfg.Game.Slug)
 		}
 	}
+	out, why := hostinfo.ResolveOut(set.Out, root)
 	r := cfg.Release
-	fmt.Fprintf(out, "%s build wizard %s (release %s %s, %s)\n", cfg.Game.Name, version, r.Tag, r.Commit, fetch.HostKey())
-	fmt.Fprintf(out, "install folder: %s\n", root)
+	fmt.Fprintf(w, "%s build wizard %s (release %s %s, %s)\n", cfg.Game.Name, version, r.Tag, r.Commit, fetch.HostKey())
+	fmt.Fprintf(w, "build folder: %s\n", root)
+	if why != "" {
+		fmt.Fprintf(w, "output folder: %s (%s)\n", out, why)
+	} else {
+		fmt.Fprintf(w, "output folder: %s\n", out)
+	}
 	if uv := fetch.UVOnPath(); uv != "" {
-		fmt.Fprintf(out, "uv: %s (on PATH)\n", uv)
+		fmt.Fprintf(w, "uv: %s (on PATH)\n", uv)
 	} else if a, ok := pins.UV.Assets[fetch.HostKey()]; ok {
-		fmt.Fprintf(out, "uv: %s %s sha256 %s -> %s\n", pins.UV.Version, a.URL, a.SHA256, filepath.Join(root, "tools", "uv"))
+		fmt.Fprintf(w, "uv: %s %s sha256 %s -> %s\n", pins.UV.Version, a.URL, a.SHA256, filepath.Join(root, "tools", "uv"))
 	}
 	if hostinfo.OS() == "windows" {
 		a := pins.MinGit.Assets[fetch.HostKey()]
-		fmt.Fprintf(out, "git: on PATH, else MinGit %s %s sha256 %s\n", pins.MinGit.Version, a.URL, a.SHA256)
+		fmt.Fprintf(w, "git: on PATH, else MinGit %s %s sha256 %s\n", pins.MinGit.Version, a.URL, a.SHA256)
 	}
 	game := filepath.Join(root, "src")
 	if f.game != "" {
 		game = f.game
-		fmt.Fprintf(out, "game: %s (developer mode)\n", game)
+		fmt.Fprintf(w, "game: %s (developer mode)\n", game)
 	} else if r.Tag == "" {
-		fmt.Fprintln(out, "clone: none (a developer build with no release tag: run it with --game DIR)")
+		fmt.Fprintln(w, "clone: none (a developer build with no release tag: run it with --game DIR)")
 	} else {
-		fmt.Fprintf(out, "clone: git %s\n", strings.Join(repo.CloneArgs(r.Repo, r.Tag, game), " "))
+		fmt.Fprintf(w, "clone: git %s\n", strings.Join(repo.CloneArgs(r.Repo, r.Tag, game), " "))
 	}
 	for _, e := range fetch.ForHost(cfg.Fetch, hostinfo.OS()) {
-		fmt.Fprintf(out, "fetch: %s %s sha256 %s -> %s\n", e.Name, e.URL, e.SHA256, e.Dest)
+		fmt.Fprintf(w, "fetch: %s %s sha256 %s -> %s\n", e.Name, e.URL, e.SHA256, e.Dest)
 	}
 	st := model.New(cfg, hostinfo.NativeTarget())
 	st.Dump = "DUMP"
-	fmt.Fprintf(out, "targets: %s (default %s)\n", strings.Join(cfg.Targets, ", "), st.Target)
-	for _, s := range st.Steps("") {
-		fmt.Fprintf(out, "run: %s\n", runner.Display(cfg.Game.Slug, s))
+	fmt.Fprintf(w, "targets: %s (default %s)\n", strings.Join(cfg.Targets, ", "), st.Target)
+	for _, s := range st.Steps("", out) {
+		fmt.Fprintf(w, "run: %s\n", runner.Display(cfg.Game.Slug, s))
 	}
-	fmt.Fprintln(out, "seed: none (every option at its default)")
+	fmt.Fprintln(w, "seed: none (every option at its default)")
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -156,6 +164,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	a := app.New()
+	// The window's and the taskbar's icon where the desktop asks the app
+	// (X11 and Wayland); Windows and macOS also take it from the binary.
+	a.SetIcon(fyne.NewStaticResource("icon.png", wizard.IconPNG))
 	screens.New(a, screens.Options{
 		Cfg: cfg, Pins: pins, Version: version, Root: f.root, DevGame: f.game,
 		NoDialog: f.noDialog, NoUpdateCheck: f.noUpdate,

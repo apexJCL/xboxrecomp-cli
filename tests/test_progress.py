@@ -244,6 +244,90 @@ def test_eta_text():
     assert v.eta() == ""
 
 
+def test_plain_heartbeat_clock():
+    t = [100.0]
+    out = Out()
+    v = pg.View("plain", out, clock=lambda: t[0])
+    v.begin("recomp")
+
+    def lines():
+        return [x for x in out.getvalue().splitlines() if x.startswith("  recomp ... ")]
+
+    v.paint()
+    assert lines() == []
+    t[0] += 20
+    v.paint()
+    assert lines() == ["  recomp ... 0:20"]  # nothing from the tool yet
+    v.line("[1/2] x")
+    t[0] += 19
+    v.paint()
+    assert len(lines()) == 1
+    t[0] += 1
+    v.paint()
+    assert lines()[-1] == "  recomp ... 0:40 | [1/2] x"
+    v.progress(1, 2)  # a 50% line resets the wait
+    t[0] += 15
+    v.paint()
+    assert len(lines()) == 2
+    t[0] += 5
+    v.paint()
+    assert len(lines()) == 3 and lines()[-1].startswith("  recomp ... 1:00 | ")
+    v.line("y" * 300)
+    t[0] += 20
+    v.paint()
+    assert lines()[-1] == "  recomp ... 1:20 | " + "y" * 120
+    v.end(True)
+    t[0] += 60
+    v.paint()  # no step running: nothing
+    assert len(lines()) == 4
+
+    # With the step's last duration known the ETA sits before the tool line.
+    out = Out()
+    v = pg.View("plain", out, clock=lambda: t[0])
+    v.timings = {"recomp": 600.0}
+    v.begin("recomp")
+    v.line("[1/2] x")
+    t[0] += 60
+    v.paint()
+    assert lines()[-1] == "  recomp ... 1:00, ~9 min left | [1/2] x", lines()
+
+
+def test_plain_heartbeat_child(d):
+    out = Out()
+    v = pg.View("plain", out, logs=os.path.join(d, "logs"))
+    v.begin("recomp")
+    argv = fake_child(d, "import time\ntime.sleep(0.7)\n")
+    keep = pg.HEARTBEAT_S
+    pg.HEARTBEAT_S = 0.25
+    try:
+        assert pg.run_step(v, argv) == 0
+    finally:
+        pg.HEARTBEAT_S = keep
+    beats = [x for x in out.getvalue().splitlines() if x.startswith("  recomp ... 0:")]
+    assert 1 <= len(beats) <= 4, beats
+
+
+def test_step_log_is_live(d):
+    """The step log holds a line while the child still runs (the flush)."""
+    out = Out()
+    v = pg.View("plain", out, logs=os.path.join(d, "logs"))
+    v.begin("recomp")
+    seen = []
+    real = v.line
+
+    def hook(text):
+        if not seen:
+            logs = [n for n in os.listdir(v.logs) if n.endswith(".log")]
+            with open(os.path.join(v.logs, logs[0]), "rb") as f:
+                seen.append(f.read())
+        real(text)
+
+    v.line = hook
+    argv = fake_child(d, "import time\nprint('first line')\ntime.sleep(0.8)\n")
+    assert pg.run_step(v, argv) == 0
+    assert b"first line" in seen[0], seen
+
+
 def test_prune_logs(d):
     logs = os.path.join(d, "build-logs")
     os.makedirs(logs)

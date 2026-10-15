@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"wizard/internal/hostinfo"
 )
 
 // Every sentence a player reads, in one place. The player has no build
@@ -32,15 +34,18 @@ const (
 	downloadsLead   = "Downloads only what it needs."
 	downloadsText   = "The free build tools and the game's source code come from their official sites, and each download is checked against a known checksum."
 	sendsLead       = "Sends nothing of yours."
-	installFolder   = "Install folder"
-	installFolderIs = "The tools, the source code and the build go here. About %d GB."
+	buildFolder     = "Build folder"
+	buildFolderIs   = "The tools, the source code and the build go here. About %d GB."
+	outputFolder    = "Output folder"
+	outputFolderIs  = "The finished game bundle goes here. About %d GB."
 	changeText      = "Change…"
 	updateCheckText = "Check for a newer wizard"
 	unsignedText    = "This program is not signed; the release page lists each download's SHA256."
 	newerKeepsText  = "This one keeps working. Download the new one from the release page if you like."
 	openReleaseText = "Open the release page"
 	closeText       = "Close"
-	pickFolderTitle = "Install folder"
+	pickFolderTitle = "Build folder"
+	pickOutTitle    = "Output folder"
 )
 
 func welcomeHeading(game string) string { return fmt.Sprintf("Build %s for your own computer", game) }
@@ -155,8 +160,8 @@ const (
 	blockNSISSudo   = "Run this in a terminal (it asks for your password there): %s"
 	blockNSISOther  = "On this system it runs in a container: %s"
 	blockMacOnly    = "A Mac app can only be built on a Mac. Pick another platform, or run this wizard on a Mac."
-	prepareOverlap  = "The install folder %s and the game's saves folder %s overlap. Pick another install folder on the Welcome page, so your saves stay apart from the build."
-	prepareNoSpace  = "The install folder's disk has %.1f GB free and this needs about %.1f GB. Free some space, or pick another install folder on the Welcome page."
+	prepareOverlap  = "The build folder %s and the game's saves folder %s overlap. Pick another build folder on the Welcome page, so your saves stay apart from the build."
+	prepareNoSpace  = "The build folder's disk has %.1f GB free and this needs about %.1f GB. Free some space, or pick another build folder on the Welcome page."
 	gitMissingMac   = "git comes with Apple's Command Line Tools, which this Mac does not have yet."
 	gitMissingOther = "This system has no git, which the build needs. Install it with: %s"
 )
@@ -177,7 +182,15 @@ const (
 	dumpNothing     = "Nothing was found at %s."
 	dumpNoXBE       = "%s has no default.xbe. Pick the game's top folder, or the disc image."
 	disksTitle      = "Disc images"
+	dumpNoSpaceOut  = "The output folder's disk has %.1f GB free and the bundle needs about %.1f GB. Free some space, or pick another output folder on the Welcome page."
 )
+
+// outClashText says why an output folder is refused, by hostinfo.OutClash.
+var outClashText = map[string]string{
+	hostinfo.ClashData: "The output folder must not be, hold or sit inside the game's data folder, where your saves and settings live. Pick another one.",
+	hostinfo.ClashSrc:  "The output folder must not be, hold or sit inside the build folder's src folder, which a rebuild rewrites. Pick another one.",
+	hostinfo.ClashDump: "The output folder must not be, hold or sit inside your game's folder. Pick another output folder on the Welcome page.",
+}
 
 func dumpIntro(game string) string {
 	return fmt.Sprintf("Pick your own copy of %s: a disc image (.iso or .xiso), or the folder that holds default.xbe. "+
@@ -208,7 +221,8 @@ const (
 	titleSummary     = "Summary"
 	summaryNext      = "Build"
 	summaryGame      = "Game: %s %s"
-	summaryFolder    = "Install folder: %s"
+	summaryFolder    = "Build folder: %s"
+	summaryOut       = "Output folder: %s"
 	summaryPlatform  = "Platform: %s"
 	summaryShipped   = "Settings: as shipped"
 	summarySettings  = "Settings:"
@@ -228,6 +242,8 @@ const (
 	buildPlanning = "Planning"
 	buildStep     = "Part %d of %d: %s"
 	buildPrepare  = "Getting ready"
+	buildClock    = "%s in this part · %s in all"
+	buildClockPct = "%d%% · "
 	cancelText    = "Cancel"
 	stopTitle     = "Stop the build?"
 	stopText      = "Next time it continues from where it stopped."
@@ -237,28 +253,35 @@ const (
 
 // Done.
 const (
-	titleDone      = "Done"
-	titleStopped   = "The build stopped"
-	doneNext       = "Quit"
-	doneReady      = "Your build is ready."
-	showBundle     = "Show the bundle"
-	installNowText = "Install now"
-	doneData       = "Saves and settings live in %s on the computer you install it on."
-	doneFailed     = "The build did not finish."
-	doneStoppedAt  = "It stopped at: %s."
-	doneLog        = "The full log: %s."
-	openLogFolder  = "Open the log folder"
-	doneRetry      = "Retry runs the build again and skips what is already done."
+	titleDone        = "Done"
+	titleStopped     = "The build stopped"
+	doneNext         = "Quit"
+	doneReady        = "Your build is ready."
+	openBundleFolder = "Open the folder"
+	installNowText   = "Install now"
+	doneData         = "Saves and settings live in %s on the computer you install it on."
+	doneFailed       = "The build did not finish."
+	doneStoppedAt    = "It stopped at: %s."
+	doneSaid         = "What the build said:"
+	doneExit         = "(exit status %d)"
+	doneLogs         = "The full logs are in %s."
+	doneCanceled     = "You stopped the build."
+	openLogFolder    = "Open the log folder"
+	doneRetry        = "Retry runs the build again and skips what is already done."
 )
 
-func bundleRule(game string) string {
-	return fmt.Sprintf("The bundle holds your own copy of %s and code made from it. "+
-		"It is for your own computers only: never share, upload or publish it.", game)
-}
+// The notice on the Done page (notice.go): the lead and the tail in bold,
+// the body names the game.
+const (
+	noticeLead = "For your own computers only."
+	noticeBody = "The bundle holds your own copy of %s and code made from it."
+	noticeTail = "Never share, upload or publish it."
+)
 
 // installText is docs/packaging.md's install step for each target.
 var installText = map[string]string{
-	"windows": "Run the setup program on the Windows PC. It installs for your user only and adds a Start menu entry.",
+	"windows": "Run the setup program on the Windows PC. It installs for your user only and adds a Start menu entry. " +
+		"Installing copies the game files again, so the PC needs about as much free space as the bundle takes.",
 	"macos":   "Open the .dmg and drag the app to Applications. The first time, right-click the app and choose Open (it is not signed).",
 	"steamos": "Copy the .tar to the Steam Deck or Linux PC, unpack it and run ./install.sh --steam in a terminal: it installs the game and adds it to Steam.",
 }

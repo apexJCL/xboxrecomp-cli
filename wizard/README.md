@@ -10,9 +10,11 @@ committed file is `{}`; the module is never built in place for a release).
 | Package | What |
 |---|---|
 | `cmd/wizard` | flags, the config (embedded, `--config`, or `--game DIR`), `--dry` |
-| `internal/gamecfg` | the embedded config: parse and validate |
+| `cmd/icongen` | the icon set from one SVG or PNG: the PNG sizes, `wizard.ico`, `Icon.png` (run by `xbr wizard build`) |
+| `icon/` | the generic icon: the Tabler glyph and the tile made from it (`icon/README.md`) |
+| `internal/gamecfg` | the embedded config: parse and validate; `icon.png`, the window icon the binary embeds |
 | `internal/model` | the player's choices and the commands they make |
-| `internal/hostinfo` | OS, target, the default install folder, saved settings, free space |
+| `internal/hostinfo` | OS, target, the default build and output folders, saved settings, free space |
 | `internal/fetch` | downloads by sha256 and size, safe unpacking, the pins |
 | `internal/repo` | git: the clone at the tag, the commit check |
 | `internal/runner` | the game's bootstrap under uv; `doctor --json`; `--plain` progress; cancel |
@@ -32,7 +34,9 @@ Two direct ones, each pinned in `go.mod`:
   (Fyne's are its own drawing, awkward for a disc image path). `--no-dialog`
   turns them off.
 
-Everything else is the standard library.
+Everything else is the standard library. The generic icon's glyph is
+Tabler Icons' `device-gamepad-2` (MIT, `LICENSES/tabler-icons-MIT.txt`),
+a file in `icon/`, not a Go dependency.
 
 ## Developing
 

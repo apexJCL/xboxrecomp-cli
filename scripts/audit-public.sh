@@ -32,9 +32,11 @@ PUBLIC_PATTERNS=(
     '[c]laude\.ai'
 )
 DATA_EXT='\.(xbe|iso|xiso|bmp|png|wav|sav|pack)$'
-# Synthetic fixtures that may be binary or carry a data extension (extended
-# regexes on the path). None yet: the tests build theirs in temp dirs.
-ALLOW=()
+# Files that may be binary or carry a data extension (extended regexes on
+# the path): the wizard's window icon, rendered from the committed SVG and
+# checked against it by TestIcongen. The tests build their fixtures in
+# temp dirs.
+ALLOW=('^wizard/internal/gamecfg/icon\.png$')
 
 cd "$(git rev-parse --show-toplevel)"
 all=0

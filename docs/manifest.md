@@ -209,7 +209,7 @@ release.
 | Key | Default | Meaning |
 |---|---|---|
 | `repo` | required | The game's public repository, `https://`: the wizard clones it at the release tag and asks its releases for a newer one. |
-| `icon` | required | A PNG in the game's tree (512x512 or larger): the app's icon on macOS. |
+| `icon` | `""` | Optional; a PNG (512x512 or larger) or an SVG in the game's tree: the wizard's icon on every platform. The wizard's own gamepad icon otherwise. |
 | `targets` | `package.targets` | The targets the wizard offers, each one of `package.targets`. |
 
 `[[wizard.fetch]]`: archives the build needs beyond the clone (none for a

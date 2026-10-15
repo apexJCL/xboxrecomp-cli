@@ -124,20 +124,25 @@ func (s *State) Seed() string {
 }
 
 // PackageArgs is the package command (after `xbr`): the target, the dump,
-// the flags, the seed file when there is one, and --plain for the log pane.
-func (s *State) PackageArgs(seedPath string) []string {
+// the flags, the seed file when there is one, the output folder when one
+// is set, and --plain for the log pane.
+func (s *State) PackageArgs(seedPath, out string) []string {
 	args := []string{"package", s.Target, "--dump", s.Dump}
 	args = append(args, s.Flags()...)
 	if seedPath != "" {
 		args = append(args, "--seed-config", seedPath)
+	}
+	if out != "" {
+		args = append(args, "--out", out)
 	}
 	return append(args, "--plain")
 }
 
 // Steps are the CLI commands of the build in order: each set flag's
 // prerequisites (once each), then the package line. seedPath is where the
-// caller writes Seed(), or "" when the seed is empty.
-func (s *State) Steps(seedPath string) [][]string {
+// caller writes Seed(), or "" when the seed is empty; out is the output
+// folder.
+func (s *State) Steps(seedPath, out string) [][]string {
 	var steps [][]string
 	seen := map[string]bool{}
 	for _, f := range s.Flags() {
@@ -156,5 +161,5 @@ func (s *State) Steps(seedPath string) [][]string {
 			steps = append(steps, step)
 		}
 	}
-	return append(steps, s.PackageArgs(seedPath))
+	return append(steps, s.PackageArgs(seedPath, out))
 }

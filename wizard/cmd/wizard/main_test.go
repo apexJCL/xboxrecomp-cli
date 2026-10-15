@@ -14,7 +14,7 @@ func TestDry(t *testing.T) {
 		t.Fatalf("rc %d: %s", rc, errb.String())
 	}
 	s := out.String()
-	for _, want := range []string{"install folder: /r", "--branch v0.0.0-sample", "run: ./blinx2 package", "--dump DUMP --plain"} {
+	for _, want := range []string{"build folder: /r", "output folder: ", "--out ", "--branch v0.0.0-sample", "run: ./blinx2 package", "--dump DUMP --out ", "--plain"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("no %q in:\n%s", want, s)
 		}

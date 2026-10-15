@@ -8,26 +8,35 @@ import (
 
 // Progress follows what `package --plain` prints (the CLI's
 // package/progress.py plain mode): the plan line, a "== [n/m] step =="
-// line per stage, a percentage line every 10% at most, the end marks,
-// the bundle and the failed step's log. Nothing else is parsed.
+// line per stage, a percentage line every 10% at most, the heartbeat
+// while a step is silent, the end marks, the bundle and the failed
+// step's log. Nothing else is parsed.
 type Progress struct {
-	Steps  []string // the plan's step names
-	Index  int      // the running stage, 1-based; 0 before the first
-	Total  int
-	Stage  string
-	Label  string // the running step inside the stage
-	Pct    int    // the running step's percentage, -1 when it prints none
-	Bundle string
-	Failed string
-	Log    string
-	floor  float64 // the bar so far: a stage's next step restarts its percentage
+	Steps []string // the plan's step names
+	Index int      // the running stage, 1-based; 0 before the first
+	Total int
+	Stage string
+	Label string // the running step inside the stage
+	Pct   int    // the running step's percentage, -1 when it prints none
+	// From the heartbeat: the running step's elapsed time as printed
+	// ("4:12") and the tool's latest line ("" until it printed one).
+	StepElapsed string
+	Tool        string
+	Bundle      string
+	Failed      string
+	Log         string
+	floor       float64 // the bar so far: a stage's next step restarts its percentage
 }
 
 var (
-	planRE   = regexp.MustCompile(`^plan: (.+)$`)
-	stageRE  = regexp.MustCompile(`^== \[(\d+)/(\d+)\] (.+) ==$`)
-	pctRE    = regexp.MustCompile(`^  (.+): (\d+)% \(\d+/\d+\)$`)
-	beginRE  = regexp.MustCompile(`^  (.+) \.\.\.$`)
+	planRE  = regexp.MustCompile(`^plan: (.+)$`)
+	stageRE = regexp.MustCompile(`^== \[(\d+)/(\d+)\] (.+) ==$`)
+	pctRE   = regexp.MustCompile(`^  (.+): (\d+)% \(\d+/\d+\)$`)
+	beginRE = regexp.MustCompile(`^  (.+) \.\.\.$`)
+	// "  recomp ... 4:12, ~7 min left | [1201/26190] Translating ...": the
+	// ETA cannot hold "|", so the first " | " after the time splits and
+	// the tool's line is kept whole even when it holds " | " itself.
+	heartRE  = regexp.MustCompile(`^  (.+?) \.\.\. (\d+:\d\d(?::\d\d)?)(?:, ([^|]*?))?(?: \| (.*))?$`)
 	failRE   = regexp.MustCompile(`^  FAILED (.+?)  \S+$`)
 	bundleRE = regexp.MustCompile(`^bundle: (.+)$`)
 	logRE    = regexp.MustCompile(`^\s*full log: (.+)$`)
@@ -74,6 +83,15 @@ func (p *Progress) feed(line string) bool {
 		p.Index, _ = strconv.Atoi(m[1])
 		p.Total, _ = strconv.Atoi(m[2])
 		p.Stage, p.Label, p.Pct = m[3], "", -1
+		p.StepElapsed, p.Tool = "", ""
+		return true
+	}
+	// Before the percentage line: a tool's line after " | " may look like one.
+	if m := heartRE.FindStringSubmatch(line); m != nil {
+		if p.Label == "" {
+			p.Label = m[1] // the begin line was missed
+		}
+		p.StepElapsed, p.Tool = m[2], m[4]
 		return true
 	}
 	if m := pctRE.FindStringSubmatch(line); m != nil {
@@ -87,6 +105,7 @@ func (p *Progress) feed(line string) bool {
 	}
 	if m := beginRE.FindStringSubmatch(line); m != nil {
 		p.Label, p.Pct = m[1], -1
+		p.StepElapsed, p.Tool = "", ""
 		return true
 	}
 	if m := bundleRE.FindStringSubmatch(line); m != nil {

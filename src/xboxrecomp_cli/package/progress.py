@@ -6,8 +6,9 @@ library only.
 Three modes:
   tty    two lines repainted in place (ANSI cursor-up and erase-line);
   line   one line rewritten with \\r, for a console without ANSI;
-  plain  one line per step start and end, and every 10% at most: nothing
-         is rewritten (--plain, not a TTY, CI set, TERM=dumb, --verbose).
+  plain  one line per step start and end, and every 10% at most, and a
+         heartbeat every 20 s of silence: nothing is rewritten (--plain,
+         not a TTY, CI set, TERM=dumb, --verbose).
 
 The bar moves only on real progress parsed from what the tools print today:
 Ninja's [n/m] (through NINJA_STATUS), recomp's "Translating N functions..."
@@ -30,6 +31,10 @@ import time
 KEEP_RUNS = 20
 TAIL_LINES = 40
 REPAINT_S = 0.1
+# Plain mode prints nothing between a step's start and its 10% lines, and
+# recomp loads for minutes before its first one: a line this often keeps a
+# reader (the wizard, a CI log) from taking the silence for a hang.
+HEARTBEAT_S = 20
 
 
 # ── parsers: fragment -> (done, total) or None ───────────────────────────
@@ -190,6 +195,7 @@ class View:
         self.last = ""
         self.drawn = 0  # lines of live area on screen (tty)
         self.last_paint = 0.0
+        self.last_say = 0.0  # the clock at the last permanent line
         self.last_pct = -10
         self.spin = 0
         self.timings = self._load_timings()
@@ -213,6 +219,9 @@ class View:
 
     def say(self, msg=""):
         """A permanent line, above the live area."""
+        # Before the repaint: paint() may say a heartbeat, which must not
+        # find the wait still over and recurse.
+        self.last_say = self.clock()
         self._clear()
         for line in str(msg).split("\n"):
             self._w(line + "\n")
@@ -280,8 +289,22 @@ class View:
             return "under a minute left" if left > 0 else ""
         return "~%d min left" % round(left / 60.0)
 
+    def heartbeat(self):
+        """'  recomp ... 4:12, ~7 min left | [1201/26190] Translating ...':
+        begin's line with the step's elapsed time, the ETA when known and the
+        tool's latest line when it printed one."""
+        s = "  %s ... %s" % (self.label, fmt_time(self.clock() - self.t0))
+        eta = self.eta()
+        if eta:
+            s += ", " + eta
+        if self.last:
+            s += " | " + self.last[:120]
+        return s
+
     def paint(self, force=False):
         if self.mode == "plain":
+            if self.label and self.clock() - max(self.last_say, self.t0) >= HEARTBEAT_S:
+                self.say(self.heartbeat())
             return
         now = self.clock()
         if not force and now - self.last_paint < REPAINT_S:
@@ -386,6 +409,8 @@ def run_step(view, argv, cwd=None, env=None, parser=None, verbose=False):
                 b"",
             ):
                 log.write(chunk)
+                # So build-logs/ can be read while a long step runs.
+                log.flush()
                 frags, buf = split_fragments(buf + chunk)
                 for f in frags:
                     q.put(f)

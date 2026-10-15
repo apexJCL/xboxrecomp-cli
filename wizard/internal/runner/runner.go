@@ -269,7 +269,7 @@ func (r Runner) Start(ctx context.Context, extraEnv []string, lines func(string)
 	go func() {
 		sc := bufio.NewScanner(pr)
 		sc.Buffer(make([]byte, 64<<10), 1<<20)
-		sc.Split(scanLines)
+		sc.Split(ScanLines)
 		for sc.Scan() {
 			lines(sc.Text())
 		}
@@ -285,14 +285,28 @@ func (r Runner) Start(ctx context.Context, extraEnv []string, lines func(string)
 	return p, nil
 }
 
-func scanLines(data []byte, atEOF bool) (int, []byte, error) {
-	if i := bytes.IndexAny(data, "\r\n"); i >= 0 {
-		return i + 1, bytes.TrimRight(data[:i], "\r"), nil
+// ScanLines splits the CLI's output into lines: "\n", "\r\n" (Python's
+// text-mode stdout on Windows) and a lone "\r" (a progress line redrawn in
+// place) each end one. A "\r" that ends the data so far waits for the next
+// byte, so a "\r\n" split across two reads stays one end, not a line and
+// an empty one that would crowd real lines out of the log's tail.
+func ScanLines(data []byte, atEOF bool) (int, []byte, error) {
+	i := bytes.IndexAny(data, "\r\n")
+	if i < 0 {
+		if atEOF && len(data) > 0 {
+			return len(data), data, nil
+		}
+		return 0, nil, nil
 	}
-	if atEOF && len(data) > 0 {
-		return len(data), data, nil
+	if data[i] == '\r' {
+		switch {
+		case i+1 < len(data) && data[i+1] == '\n':
+			return i + 2, data[:i], nil
+		case i+1 == len(data) && !atEOF:
+			return 0, nil, nil
+		}
 	}
-	return 0, nil, nil
+	return i + 1, data[:i], nil
 }
 
 // Wait is the command's end (nil on exit 0).

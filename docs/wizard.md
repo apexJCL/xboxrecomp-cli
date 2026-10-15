@@ -6,7 +6,7 @@ options and gets the game installed. The program is the **build wizard**:
 a front end over the game's own CLI. It never builds anything itself; it
 fetches what the CLI needs to start (uv, and git on Windows), clones the
 game at the release tag, and runs `<game> package <target> --dump DUMP
---plain` there, the same command a developer runs.
+--out OUT --plain` there, the same command a developer runs.
 
 The wizard is generic Go in this repository's `wizard/` module. What makes
 it one game's is a JSON config that `xbr wizard build` reads from
@@ -16,8 +16,9 @@ A game without the table has no wizard.
 ## What the player sees
 
 1. **Welcome**: what the wizard does and what it never does (no game
-   inside, downloads by checksum, sends nothing), the install folder (per
-   OS, changeable), and a box for the newer-release check. The check goes
+   inside, downloads by checksum, sends nothing), the build folder and
+   the output folder (both changeable and remembered), and a box for the
+   newer-release check. The check goes
    out only when the player leaves this page with the box ticked, so
    nothing is sent before they have seen it; a newer release shows as a
    note then.
@@ -39,7 +40,10 @@ A game without the table has no wizard.
    target `doctor` reports blockers for says what it needs there. The full
    output is in a collapsible log pane, whose last line turns red when the
    checks stop.
-3. **Dump**: the disc image or folder (a file dialog, or typed).
+3. **Dump**: the disc image or folder (a file dialog, or typed). Next
+   checks the free space for the build in the build folder and for the
+   bundle (the game files and about 1 GB) in the output folder, as one
+   sum when both are on one disk.
 4. **Target**: one choice per platform, each with its glyph, for the
    targets `[wizard] targets` offers that this host can
    package (Windows and macOS natively; SteamOS on Linux, a Steam Deck
@@ -50,12 +54,25 @@ A game without the table has no wizard.
    and the option's hint and hint link under it. A note at the foot names the chosen
    platform's `config.toml` (its data folder plus `config/config.toml`)
    for the settings the page leaves out.
-6. **Summary**: the game, folder, target and changed options; under
+6. **Summary**: the game, the two folders, target and changed options; under
    "Technical details", the wizard, release, CLI and toolkit versions and
    every command the build will run.
-7. **Build**: the CLI's own `--plain` output with a progress bar; Cancel
+7. **Build**: the CLI's own `--plain` output with a progress bar, the
+   percentage and two clocks ("4:12 in this part · 12:40 in all") that
+   tick every second. While the build runs a sheen sweeps the bar's
+   filled part, so a step that prints nothing for minutes still shows it
+   is running; the collapsed log line shows the CLI's heartbeat (the
+   step's time and the tool's latest line, every 20 s of silence). Cancel
    stops the whole process tree.
-8. **Done**: the bundle's folder, and the target's install step.
+8. **Done**: the bundle, "Open the folder", and the target's install step
+   ("Install now" on the host's own target: the Windows setup program,
+   the `.dmg`, or `install.sh` in a terminal). When the build fails: the
+   part that stopped, what the build said (its last lines, from the
+   Python traceback when there is one, in a box that can be selected and
+   copied), the exit status, where the full logs are, and Retry; the same
+   goes to `wizard.log` in the settings folder. A cancelled build says the
+   player stopped it. Every outcome ends with the notice that the bundle
+   is for the player's own computers only.
 
 The chosen config options are written as a small `config.toml` (the seed)
 and passed as `package --seed-config`; each installer copies it to the data
@@ -72,17 +89,17 @@ must copy `Resources/config.seed.toml` the same way. BLiNX 2's
 `packaging/macos/BLiNX2.in` is the model; a CLI template for that launcher
 is a follow-up.
 
-## The install folder
+## The build folder and the output folder
 
-Everything the wizard fetches and builds goes in one folder, so deleting
-it removes all of it (the installed game and its data folder are
-elsewhere):
+Everything the wizard fetches and builds goes in one folder, the **build
+folder**, so deleting it removes all of it (the installed game and its
+data folder are elsewhere):
 
 | Path | What |
 |---|---|
 | `tools/uv/`, `tools/git/` | uv and MinGit when the host has none |
 | `tools/uv-cache/`, `tools/python/` | uv's cache and the Python it installs (`UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR` for every child) |
-| `src/` | the clone at the tag, with its own `external/`, `.venv/`, build folders and `dist/` |
+| `src/` | the clone at the tag, with its own `external/`, `.venv/`, build folders and `build-logs/` |
 
 The default is `<slug>-recomp` under `%LOCALAPPDATA%`, `~/Library/Application
 Support` or `$XDG_DATA_HOME` (`~/.local/share`). The wizard refuses a
@@ -91,8 +108,25 @@ On Windows the children run with `core.longpaths` on (`GIT_CONFIG_*`), so
 the clone and the CLI's toolkit clone work without the system-wide
 `LongPathsEnabled`.
 
-The binary also takes `--dry` (print the plan and exit, no window),
-`--root DIR`, `--no-dialog`, `--no-update-check` and `--version`.
+The bundle goes to the **output folder** (`package --out`). Its default is
+`dist` beside the wizard (beside the `.app` on a Mac), worked out again on
+every run so a moved wizard is followed. That place is refused when it is
+temporary (a zip's preview, macOS translocating a quarantined app), a
+system folder (Program Files and the Windows folder, `/Applications` and
+`/System`, `/usr` and `/opt`) or cannot be written; the default is then
+the build folder's `dist`, and `wizard.log` says why
+(`output folder: <why>; using <dir>`). A folder the player picks is kept
+until changed; when it is no longer there as a folder (its drive
+unplugged), the default applies, with a log line. The wizard refuses an
+output folder that is, holds or sits inside the game's data folder, the
+build folder's `src` or a dump folder.
+
+Both choices live in the settings file (`settings.json` in the wizard's
+settings folder: `root` for the build folder, a name kept from before the
+output folder existed, and `out`, empty for the default).
+
+The binary also takes `--dry` (print the plan, both folders included, and
+exit, no window), `--root DIR` (the build folder), `--no-dialog`, `--no-update-check` and `--version`.
 Developers run it on a checkout with `--game DIR` (no clone; the config
 comes from `<game> wizard config --json --dev`) or `--config FILE`.
 
@@ -106,7 +140,7 @@ is read from the tag's tree (`git show TAG:game.toml`), never the working
 tree: the binary clones that tag, so its options must be the tag's. The
 checks, on top of `game.toml`'s own ([manifest.md](manifest.md#wizard)):
 
-- `wizard.icon` is a PNG in the tag's tree;
+- `wizard.icon`, when set, is a PNG or an SVG in the tag's tree;
 - each config option's key is in `<package.content>/config.default.toml`,
   with the option's default as its value there, and of the option's kind;
 - each flag is a switch `package` takes, and not one the wizard sets
@@ -124,9 +158,9 @@ to `dist/wizard/`:
 
 | Asset | Built on | How |
 |---|---|---|
-| `<slug>-wizard-<tag>-macos.zip` | macOS | `go build` for arm64 and amd64, `lipo`, `fyne package` (the app bundle with the icon), a zip with fixed dates |
-| `<slug>-wizard-<tag>-windows-x64.zip` | macOS or Linux | `go build` with llvm-mingw's clang (`-H windowsgui`), a zip with fixed dates |
-| `<slug>-wizard-<tag>-linux-x64.tar.gz` | any host with Docker | `docker build --output` from `wizard/linux/Dockerfile` on the pinned builder image; no bind mounts |
+| `<slug>-wizard-<tag>-macos.zip` | macOS | `go build` for arm64 and amd64, `lipo`, `fyne package` (the app bundle, its `.icns` from `Icon.png`), a zip with fixed dates |
+| `<slug>-wizard-<tag>-windows-x64.zip` | macOS or Linux | `go build` with llvm-mingw's clang (`-H windowsgui`) and the icon as a resource (`llvm-windres` into `cmd/wizard/rsrc_windows_amd64.syso`), a zip with fixed dates |
+| `<slug>-wizard-<tag>-linux-x64.tar.gz` | any host with Docker | `docker build --output` from `wizard/linux/Dockerfile` on the pinned builder image; no bind mounts. The tar holds the binary, `<slug>-wizard.png` and `<slug>-wizard.desktop` |
 | `SHA256SUMS` | | the archives |
 
 The module is staged into `<out>/.work/src` with the config in
@@ -138,8 +172,37 @@ the same tag give the same bytes. Each binary that this host can run is
 started with `--dry` (the Linux one in the builder image).
 
 Go and llvm-mingw come from `wizard/pins.json` into `wizard/.tools/` by
-sha256 (`WIZARD_GO=DIR` uses another Go root of the pinned version). Only
-Docker is needed beyond that, and only for the Linux asset.
+sha256 (`WIZARD_GO=DIR` uses another Go root of the pinned version). Go is
+needed for every asset, the Linux one included, since the icons are
+rendered on the host first. Only Docker is needed beyond that, and only
+for the Linux asset.
+
+## The icon
+
+Without `[wizard] icon` the wizard carries the generic icon: Tabler Icons'
+`device-gamepad-2` glyph (MIT, `LICENSES/tabler-icons-MIT.txt`) in white on
+an original deep blue tile, `wizard/icon/wizard-icon.svg`
+(`wizard/icon/README.md` says how it is made). A game sets its own with
+`icon`, a PNG (512 pixels or more) or an SVG in its tree.
+
+`wizard build` renders the set with the module's `cmd/icongen` (`go run
+./cmd/icongen -in FILE -out DIR`, pure Go, no cgo): `icon-16.png` to
+`icon-1024.png`, `wizard.ico` (PNG entries at 16, 24, 32, 48 and 256) and
+`Icon.png` (1024). It draws at 1024 pixels with Fyne's software painter
+and averages down to each size in integers, so two builds give the same
+bytes. The Windows exe carries the `.ico` (Explorer, the taskbar, the
+window), `fyne package` makes the macOS `.icns` from `Icon.png`, and the
+Linux tar has the 256 PNG and a `.desktop` entry. The binary also sets its
+window icon from an embedded 256 render (`wizard/internal/gamecfg/icon.png`,
+the generic one, replaced by the game's in the staged copy), so X11 and
+Wayland taskbars show it.
+
+On Linux and the Steam Deck the wizard runs from the unpacked folder as it
+is. For a menu entry, put the three files where the desktop looks:
+
+    install -Dm755 <slug>-wizard ~/.local/bin/<slug>-wizard
+    install -Dm644 <slug>-wizard.png ~/.local/share/icons/hicolor/256x256/apps/<slug>-wizard.png
+    install -Dm644 <slug>-wizard.desktop ~/.local/share/applications/<slug>-wizard.desktop
 
 ## The pins
 

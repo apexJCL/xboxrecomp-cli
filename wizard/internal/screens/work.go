@@ -50,7 +50,7 @@ func (e *OverlapError) Error() string {
 type SpaceError struct{ Free, Need uint64 }
 
 func (e *SpaceError) Error() string {
-	return fmt.Sprintf("the install folder's disk has %.1f GB free; the build needs about %.1f GB: "+
+	return fmt.Sprintf("the build folder's disk has %.1f GB free; the build needs about %.1f GB: "+
 		"free some space or pick another folder", float64(e.Free)/1e9, float64(e.Need)/1e9)
 }
 

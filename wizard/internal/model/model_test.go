@@ -30,7 +30,7 @@ func TestModel(t *testing.T) {
 		seed  string
 		steps [][]string
 	}{
-		{"defaults", nil, "", [][]string{{"package", "macos", "--dump", "/d/b2.iso", "--seed-config", "S", "--plain"}}},
+		{"defaults", nil, "", [][]string{{"package", "macos", "--dump", "/d/b2.iso", "--seed-config", "S", "--out", "/o", "--plain"}}},
 		{"scale 2 and fullscreen", map[string]string{"scale": "2", "fullscreen": "true"},
 			seedHead + "\n[render]\nscale = 2\n\n[present]\nfullscreen = true\n", nil},
 		{"scale at the range's top", map[string]string{"scale": "4"},
@@ -38,7 +38,7 @@ func TestModel(t *testing.T) {
 		{"hud pack", map[string]string{"hud_pack": "true"}, "", [][]string{
 			{"import", "/d/b2.iso"},
 			{"enhance", "hud"},
-			{"package", "macos", "--dump", "/d/b2.iso", "--hud-pack", "--seed-config", "S", "--plain"},
+			{"package", "macos", "--dump", "/d/b2.iso", "--hud-pack", "--seed-config", "S", "--out", "/o", "--plain"},
 		}},
 	}
 	for _, tc := range cases {
@@ -54,7 +54,7 @@ func TestModel(t *testing.T) {
 				t.Fatalf("seed:\n%s\nwant:\n%s", got, tc.seed)
 			}
 			if tc.steps != nil {
-				if got := s.Steps("S"); !reflect.DeepEqual(got, tc.steps) {
+				if got := s.Steps("S", "/o"); !reflect.DeepEqual(got, tc.steps) {
 					t.Fatalf("steps %q, want %q", got, tc.steps)
 				}
 			}
@@ -76,7 +76,7 @@ func TestNoSeedFile(t *testing.T) {
 	s := New(sample(t), "steamos")
 	s.Dump = "/d"
 	want := []string{"package", "steamos", "--dump", "/d", "--plain"}
-	if got := s.PackageArgs(""); !reflect.DeepEqual(got, want) {
+	if got := s.PackageArgs("", ""); !reflect.DeepEqual(got, want) {
 		t.Fatalf("%q", got)
 	}
 }

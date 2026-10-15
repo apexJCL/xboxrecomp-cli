@@ -115,6 +115,8 @@ def wrap_macos(stage, payload, version, exe, out, overrides, lib, icns, dump_unk
     host.run(["codesign", "--verify", "--deep", "--strict", bundle])
     os.symlink("/Applications", os.path.join(stage, "dmg", "Applications"))
     dmg = os.path.join(out, "%s-%s.dmg" % (a, version))
+    # hdiutil create refuses an existing file: a same-version re-run (the
+    # wizard's Retry) replaces it, as the Windows folder is replaced.
     if os.path.exists(dmg):
         os.remove(dmg)
     host.run(

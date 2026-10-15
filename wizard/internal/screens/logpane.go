@@ -160,6 +160,13 @@ func (p *logPane) flush() {
 	}
 }
 
+// Tail is the last n kept lines (fewer when the pane holds fewer).
+func (p *logPane) Tail(n int) []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.lines[max(len(p.lines)-n, 0):]...)
+}
+
 // all is every kept line, for Copy.
 func (p *logPane) all() string {
 	p.mu.Lock()

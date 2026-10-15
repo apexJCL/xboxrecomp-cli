@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Tabler Icons device-gamepad-2 (MIT, see README.md) at 62% of the tile, centred,
+       its coordinates scaled into the tile; the stroke 7% of the glyph's size. -->
+  <rect width="1024" height="1024" rx="225.28" ry="225.28" fill="#1e4d6b"/>
+  <g fill="none" stroke="#ffffff" stroke-width="44.442" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 512 326.827 h 92.587 a 132.267 132.267 0 0 1 0 264.533 h -145.493 l -106.21 111.818 a 60.843 60.843 0 0 1 -103.776 -53.833 l 43.225 -216.203 a 132.267 132.267 0 0 1 129.727 -106.316 h 89.941 z"/>
+    <path d="M 564.907 591.36 l 107.665 113.326 a 60.843 60.843 0 0 0 103.829 -53.515 l -42.325 -217.764"/>
+    <path d="M 406.187 432.64 v 52.907"/>
+    <path d="M 379.733 459.093 h 52.907"/>
+    <path d="M 564.907 459.093 h 52.907"/>
+  </g>
+</svg>

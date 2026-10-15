@@ -329,6 +329,45 @@ def test_macos_defaults_in_resources(d, monkeypatch):
         assert not os.path.exists(os.path.join(res, "enhance.toml.default"))
 
 
+def test_macos_dmg_rerun(d, monkeypatch):
+    """hdiutil create refuses an existing file, so a same-version re-run
+    (the wizard's Retry, or a second build into one output folder) needs
+    the old .dmg removed first."""
+    from xboxrecomp_cli.package import macos
+
+    with game2_tree(d):
+        host.g().m["package"] = dict(PKG2)
+        monkeypatch.setattr(macos, "templates", lambda: d)
+        monkeypatch.setattr(macos, "render", lambda src, vals, dst, *m: write(dst, ""))
+        monkeypatch.setattr(macos, "write_manifest", lambda *a, **k: None)
+        monkeypatch.setattr(macos, "_otool", lambda f: "")
+        monkeypatch.setattr(pl, "dylib_plan", lambda exe, comp: {"libs": [], "changes": []})
+        made = []
+
+        def run(argv, *a, **k):
+            if argv[:2] == ["hdiutil", "create"]:
+                if os.path.exists(argv[-1]):
+                    raise host.CliError("hdiutil: create failed - File exists")
+                write(argv[-1], "dmg %d" % len(made))
+                made.append(argv[-1])
+
+        monkeypatch.setattr(host, "run", run)
+        exe = os.path.join(d, "exe")
+        write(exe, "exe")
+        icns = os.path.join(d, "a.icns")
+        write(icns, "icns")
+        out = os.path.join(d, "out")
+        os.makedirs(out)
+        for i in range(2):
+            stage = os.path.join(d, "stage%d" % i)
+            payload = os.path.join(stage, "payload")
+            os.makedirs(payload)
+            dmg = macos.wrap_macos(stage, payload, "v", exe, out, [], pl, icns)
+        assert made == [dmg, dmg]
+        with open(dmg) as f:
+            assert f.read() == "dmg 1"
+
+
 def test_host_path():
     from xboxrecomp_cli.bench.remote import host_path
 

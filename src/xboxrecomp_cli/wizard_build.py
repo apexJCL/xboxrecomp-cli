@@ -164,13 +164,69 @@ def go_env(goroot, mod, base=None):
     return e
 
 
-def stage_module(mod, dest, cfg_json):
+def stage_module(mod, dest, cfg_json, icon_png=None):
     """A copy of the module with the game's config.json, the build's
-    sources (and Docker's context)."""
+    sources (and Docker's context). icon_png, the game's own icon at 256
+    pixels, replaces the generic window icon the module embeds."""
     shutil.rmtree(dest, ignore_errors=True)
     shutil.copytree(mod, dest, ignore=lambda d, names: [n for n in names if n in SKIP])
     with open(os.path.join(dest, "internal", "gamecfg", "config.json"), "w", newline="\n") as f:
         f.write(cfg_json)
+    if icon_png is not None:
+        with open(os.path.join(dest, "internal", "gamecfg", "icon.png"), "wb") as f:
+            f.write(icon_png)
+
+
+GENERIC_ICON = os.path.join("icon", "wizard-icon.svg")
+
+
+def icongen_cmd(go, icon, out):
+    """The module's icon renderer: pure Go, so it runs without cgo on any
+    host the build runs on."""
+    return [go, "run", "./cmd/icongen", "-in", icon, "-out", out]
+
+
+def make_icons(go, env, mod, work, icon_bytes):
+    """The icon set in <work>/icon (icon-<n>.png, wizard.ico, Icon.png)
+    from the game's icon, or the module's generic one when it sets none."""
+    icon = os.path.join(mod, GENERIC_ICON)
+    if icon_bytes is not None:
+        icon = os.path.join(work, "game-icon")
+        with open(icon, "wb") as f:
+            f.write(icon_bytes)
+    out = os.path.join(work, "icon")
+    _run(icongen_cmd(go, icon, out), env=dict(env, CGO_ENABLED="0"), cwd=mod)
+    return out
+
+
+def windres_cmd(mingw, rc, syso):
+    """The Windows icon resource as a COFF object: the Go linker takes any
+    .syso in the package, and the _windows_amd64 suffix keeps it out of the
+    other builds. No preprocessor: the script has no includes."""
+    return [
+        os.path.join(mingw, "bin", "llvm-windres"),
+        "--no-preprocess",
+        "--target=pe-x86-64",
+        "-O",
+        "coff",
+        "-i",
+        rc,
+        "-o",
+        syso,
+    ]
+
+
+def desktop_entry(game, name):
+    """The Linux menu entry beside the binary; it works once the three
+    files are where XDG looks (docs/wizard.md, The icon)."""
+    return (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=%s build wizard\n"
+        "Exec=%s\n"
+        "Icon=%s\n"
+        "Categories=Game;Utility;\n" % (game, name, name)
+    )
 
 
 def version_ldflags(tag):
@@ -365,8 +421,14 @@ def build_macos(go, env, src, work, name, tag, icon, appid, tool, epoch, out):
     return {"macos-binary": uni, "macos-app": app}
 
 
-def build_windows(go, env, src, work, name, tag, mingw, epoch, out):
+def build_windows(go, env, src, work, name, tag, mingw, epoch, out, icons):
     exe = os.path.join(work, name + ".exe")
+    rc = os.path.join(icons, "wizard.rc")
+    with open(rc, "w", newline="\n") as f:
+        f.write('1 ICON "wizard.ico"\n')
+    syso = os.path.join(src, "cmd", "wizard", "rsrc_windows_amd64.syso")
+    # The script names the .ico relative to itself: run where both are.
+    _run(windres_cmd(mingw, "wizard.rc", syso), cwd=icons)
     e = dict(
         env,
         CGO_ENABLED="1",
@@ -378,6 +440,16 @@ def build_windows(go, env, src, work, name, tag, mingw, epoch, out):
     _run(go_build_cmd(go, exe, tag, windows=True), env=e, cwd=src)
     write_zip(out, [(name + ".exe", exe)], epoch)
     return {"windows-binary": exe}
+
+
+def stage_linux_icon(src, icons, game, name):
+    """icon/<name>.png (256) and icon/<name>.desktop in Docker's context,
+    for the tar beside the binary."""
+    d = os.path.join(src, "icon")
+    os.makedirs(d, exist_ok=True)
+    shutil.copyfile(os.path.join(icons, "icon-256.png"), os.path.join(d, name + ".png"))
+    with open(os.path.join(d, name + ".desktop"), "w", newline="\n") as f:
+        f.write(desktop_entry(game, name))
 
 
 def build_linux(pins, src, work, name, tag, epoch, out, no_cache=False):
@@ -439,25 +511,29 @@ def build(G, tag="", dev=False, only=ASSETS, out="", keep_work=False, gocache=""
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work)
     src = os.path.join(work, "src")
-    stage_module(mod, src, wizard_mod.config_json(cfg))
     epoch = commit_epoch(G.root, rel["commit"])
     names = asset_names(slug, tag_v)
     host.step("wizard build %s %s (%s)" % (slug, tag_v or "dev", ", ".join(only)))
     host.say("release: %s @ %s" % (rel["repo"], rel["commit"][:12] or "?"))
     built, image, done = {}, None, []
-    if "macos" in only or "windows" in only:
-        goroot = ensure_go(pins, mod)
-        env = go_env(goroot, mod)
-        if gocache:
-            env["GOCACHE"] = gocache
-        go = os.path.join(goroot, "bin", "go" + host.exe_suffix())
-        _run([go, "mod", "download"], env=env, cwd=src)
+    # Go on the host for every asset: the icons come from the module's own
+    # renderer before anything is built.
+    goroot = ensure_go(pins, mod)
+    env = go_env(goroot, mod)
+    if gocache:
+        env["GOCACHE"] = gocache
+    go = os.path.join(goroot, "bin", "go" + host.exe_suffix())
+    _run([go, "mod", "download"], env=env, cwd=mod)
+    icons = make_icons(go, env, mod, work, icon_bytes)
+    game_png = None
+    if icon_bytes is not None:
+        with open(os.path.join(icons, "icon-256.png"), "rb") as f:
+            game_png = f.read()
+    stage_module(mod, src, wizard_mod.config_json(cfg), game_png)
     if "macos" in only:
         if host.host_os() != "macos":
             raise CliError("the macOS asset needs a macOS host (Apple clang, lipo)")
-        icon = os.path.join(work, "Icon.png")
-        with open(icon, "wb") as f:
-            f.write(icon_bytes)
+        icon = os.path.join(icons, "Icon.png")
         built.update(
             build_macos(
                 go,
@@ -478,11 +554,21 @@ def build(G, tag="", dev=False, only=ASSETS, out="", keep_work=False, gocache=""
         mingw = ensure_mingw(pins, mod, G)
         built.update(
             build_windows(
-                go, env, src, work, name, tag_v, mingw, epoch, os.path.join(out, names["windows"])
+                go,
+                env,
+                src,
+                work,
+                name,
+                tag_v,
+                mingw,
+                epoch,
+                os.path.join(out, names["windows"]),
+                icons,
             )
         )
         done.append(names["windows"])
     if "linux" in only:
+        stage_linux_icon(src, icons, cfg["game"]["name"], name)
         b, image = build_linux(
             pins, src, work, name, tag_v, epoch, os.path.join(out, names["linux"]), bool(gocache)
         )

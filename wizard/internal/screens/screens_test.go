@@ -1,6 +1,7 @@
 package screens
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -24,6 +26,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -204,6 +207,77 @@ func TestThinBar(t *testing.T) {
 	}
 }
 
+// The build bar's sheen sweeps inside the fill (the whole track while
+// nothing is filled), hides when the pulse stops and stops at the end.
+func TestBuildBarPulse(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	b := newThinBar(0)
+	b.Height = 10
+	if b.MinSize().Height != 10 || newThinBar(0).MinSize().Height != thinBarHeight {
+		t.Fatal("height")
+	}
+	r := test.WidgetRenderer(b).(*thinBarRenderer)
+	const width = 400
+	r.Layout(fyne.NewSize(width, 10))
+	has := func() bool { return slices.Contains(r.Objects(), fyne.CanvasObject(r.sheen)) }
+	if has() {
+		t.Fatal("a sheen before the pulse")
+	}
+	sweep := func(v float64) (x1, x2 float32) {
+		t.Helper()
+		b.SetValue(v)
+		r.Layout(fyne.NewSize(width, 10))
+		b.anim.Tick(0.25)
+		x1 = r.sheen.Position().X
+		b.anim.Tick(0.75)
+		x2 = r.sheen.Position().X
+		end := float32(width * v)
+		if v == 0 {
+			end = width
+		}
+		for _, x := range []float32{x1, x2} {
+			if x < 0 || x+r.sheen.Size().Width > end+0.01 {
+				t.Errorf("value %v: the sheen at %v (%v wide) leaves [0, %v]", v, x, r.sheen.Size().Width, end)
+			}
+		}
+		if x2 <= x1 {
+			t.Errorf("value %v: the sheen did not move (%v then %v)", v, x1, x2)
+		}
+		return
+	}
+	b.StartPulse()
+	if !has() || !b.Pulse {
+		t.Fatal("no sheen while pulsing")
+	}
+	sweep(0.5)
+	sweep(0)
+	b.StopPulse()
+	if has() {
+		t.Fatal("the sheen stayed after StopPulse")
+	}
+	// The animation runs once however often it is started: twice by
+	// StartPulse, again by a rebuilt renderer.
+	b.StartPulse()
+	b.StartPulse()
+	b.CreateRenderer()
+	if !b.running {
+		t.Fatal("the animation is not running")
+	}
+	b.r.Destroy()
+	if b.running {
+		t.Fatal("the animation ran on after its renderer was dropped")
+	}
+	b.CreateRenderer()
+	if !b.running {
+		t.Fatal("a rebuilt renderer did not restart the sweep")
+	}
+	b.SetValue(1)
+	if b.Pulse || has() || b.running {
+		t.Fatal("a full bar still pulses")
+	}
+}
+
 func TestPrepareStepTotal(t *testing.T) {
 	cfg := sampleOptions(t).Cfg
 	if n := prepareTotal(cfg, "macos"); n != 3 {
@@ -336,7 +410,7 @@ func TestPlainBlocker(t *testing.T) {
 	if got := plainPrepare(&SpaceError{Free: 2 << 30, Need: hostinfo.NeedBytes}); got != fmt.Sprintf(prepareNoSpace, 2.0, 15.0) {
 		t.Errorf("space: %q", got)
 	}
-	if !strings.Contains(fmt.Sprintf(installFolderIs, hostinfo.NeedBytes>>30), "About 15 GB") {
+	if !strings.Contains(fmt.Sprintf(buildFolderIs, hostinfo.NeedBytes>>30), "About 15 GB") {
 		t.Error("the Welcome page's size is not NeedBytes")
 	}
 	if got := plainPrepare(&OverlapError{Root: "/a", Data: "/a/b"}); !strings.Contains(got, "/a/b") {
@@ -481,7 +555,7 @@ func copyStrings(t *testing.T) []string {
 
 func TestCopy(t *testing.T) {
 	game := sampleOptions(t).Cfg.Game.Name
-	for _, s := range []string{welcomeHeading(game), welcomeIntro(game, nil), noGameText(game), dumpIntro(game), bundleRule(game)} {
+	for _, s := range []string{welcomeHeading(game), welcomeIntro(game, nil), noGameText(game), dumpIntro(game), fmt.Sprintf(noticeBody, game)} {
 		if !strings.Contains(s, game) {
 			t.Errorf("does not name the game: %q", s)
 		}
@@ -773,15 +847,23 @@ func TestScreenshots(t *testing.T) {
 
 	w.building = true
 	w.cancelBtn.Enable()
-	w.bar.SetValue(0.35)
-	w.stepLabel.SetText(fmt.Sprintf(buildStep, 2, 5, "setup") + " (llvm-mingw)")
-	logLines(w.buildLog, "$ ./"+opt.Cfg.Game.Slug+" package "+w.st.Target+" --plain",
-		"step 1/5 import", "step 2/5 setup llvm-mingw", "setup: llvm-mingw 20251104: 48% of 182.4 MB")
+	w.bar.SetValue(0.45)
+	w.stepLabel.SetText(fmt.Sprintf(buildStep, 3, 5, "generate") + " (recomp)")
+	// One frame of the pulse, and the clocks 4:12 into the part, 12:40 in.
+	now := time.Now()
+	w.clockFrac, w.partStart, w.buildStart = 0.45, now.Add(-252*time.Second), now.Add(-760*time.Second)
+	w.buildClock.SetText(w.clockText(now))
+	logLines(w.buildLog, "$ ./"+opt.Cfg.Game.Slug+" package "+w.st.Target+" --out "+w.out+" --plain",
+		"== [2/5] setup ==", "  ✓ setup: toolkit  0:02", "== [3/5] generate ==", "  ✓ disasm  1:10", "  recomp ...",
+		"  recomp ... 4:00, ~19 min left | [5500/26190] Translating fn_00012345...")
 	w.render(pBuild)
+	w.bar.StartPulse()
+	w.bar.tick(0.4)
 	shot("building")
 	w.buildLog.setOpen(true)
 	shot("building-log-open")
 	w.buildLog.setOpen(false)
+	w.bar.StopPulse()
 	w.building = false
 
 	w.prog = &runner.Progress{Bundle: filepath.Join(src, "dist", "Game-1.0-"+w.st.Target+".tar")}
@@ -789,11 +871,19 @@ func TestScreenshots(t *testing.T) {
 	w.fillDone()
 	w.render(pDone)
 	shot("done")
-	w.prog = &runner.Progress{Failed: "build", Log: filepath.Join(src, "build-logs", "package-"+w.st.Target+".log")}
-	w.buildErr = errors.New("canceled")
+	w.prog = &runner.Progress{Stage: "package", Label: "package", Log: filepath.Join(src, "build-logs", "package-"+w.st.Target+".log")}
+	w.buildErr = &buildFailure{Step: "package", Cmd: "./" + opt.Cfg.Game.Slug + " package " + w.st.Target, Err: errors.New("exit status 1"),
+		Tail: []string{"== [5/5] package ==", "  package ...", tracebackTop,
+			`  File "package/lib.py", line 212, in make_bundle`,
+			"    os.makedirs(out, exist_ok=True)",
+			"PermissionError: [Errno 13] Permission denied: '" + filepath.Join("~", "Games", "dist") + "'"}}
 	w.fillDone()
 	w.render(pDone)
-	shot("done-stopped")
+	shot("done-failed")
+	w.buildErr = errCanceled
+	w.fillDone()
+	w.render(pDone)
+	shot("done-canceled")
 
 	// A row opened by tapping its line: the plain detail over the CLI's
 	// own lines, which must read as text, not as disabled.
@@ -1030,5 +1120,350 @@ func TestURLOpener(t *testing.T) {
 		if got := urlOpener(goos, u); !slices.Equal(got, want) {
 			t.Errorf("%s: %q, want %q", goos, got, want)
 		}
+	}
+}
+
+// The clocks: the part's and the build's time, the percentage once the
+// bar moved, and a new stage restarting the part.
+func TestBuildClock(t *testing.T) {
+	isolate(t)
+	a := test.NewApp()
+	defer a.Quit()
+	w := New(a, sampleOptions(t))
+	w.prog = &runner.Progress{}
+	t0 := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	w.buildStart, w.partStart = t0, t0
+	for _, c := range []struct {
+		at   time.Duration
+		want string
+	}{
+		{0, "0:00 in this part · 0:00 in all"},
+		{65 * time.Second, "1:05 in this part · 1:05 in all"},
+		{3700 * time.Second, "1:01:40 in this part · 1:01:40 in all"},
+	} {
+		if got := w.clockText(t0.Add(c.at)); got != c.want {
+			t.Errorf("at %v: %q, want %q", c.at, got, c.want)
+		}
+	}
+	at := t0.Add(100 * time.Second)
+	if !w.feedLine("== [2/5] setup ==", at) {
+		t.Fatal("a stage line changed nothing")
+	}
+	if got, want := w.clockText(at.Add(5*time.Second)), "20% · 0:05 in this part · 1:45 in all"; got != want {
+		t.Errorf("after the stage: %q, want %q", got, want)
+	}
+	// A step inside the stage is not a new part.
+	w.feedLine("  setup: toolkit ...", at.Add(30*time.Second))
+	if got := w.clockText(at.Add(40 * time.Second)); !strings.Contains(got, "0:40 in this part") {
+		t.Errorf("a step reset the part: %q", got)
+	}
+	w.newPart(at.Add(50 * time.Second))
+	if got := w.clockText(at.Add(51 * time.Second)); !strings.Contains(got, "0:01 in this part") {
+		t.Errorf("a command start: %q", got)
+	}
+	// A tick queued before the build ended leaves the final clocks alone,
+	// as does one from an earlier build.
+	w.building, w.clockRun = true, 2
+	w.showTick(2, "live")
+	w.showTick(1, "an earlier build")
+	if got := w.buildClock.Text(); got != "live" {
+		t.Errorf("ticks while building: %q", got)
+	}
+	w.building = false
+	w.buildClock.SetText("final")
+	w.showTick(2, "late")
+	if got := w.buildClock.Text(); got != "final" {
+		t.Errorf("a late tick overwrote the end: %q", got)
+	}
+}
+
+func TestFailureExcerpt(t *testing.T) {
+	var tail []string
+	for i := range 10 {
+		tail = append(tail, fmt.Sprintf("line %d", i))
+	}
+	tail = append(tail, tracebackTop, `  File "x.py", line 1, in f`, "PermissionError: no", "", "after")
+	got := failureExcerpt(tail)
+	if got[0] != tracebackTop || got[len(got)-1] != "after" || len(got) != 5 {
+		t.Errorf("traceback: %q", got)
+	}
+	plain := append(slices.Clone(tail[:10]), "", "x", "", "y")
+	got = failureExcerpt(plain)
+	if len(got) != excerptPlain || got[len(got)-1] != "y" || got[len(got)-2] != "x" || slices.Contains(got, "") {
+		t.Errorf("no traceback: %q", got)
+	}
+	if got := failureExcerpt([]string{strings.Repeat("é", 300)}); utf8.RuneCountInString(got[0]) != excerptWidth {
+		t.Errorf("a long line is %d characters", utf8.RuneCountInString(got[0]))
+	}
+	long := []string{tracebackTop}
+	for i := range 59 {
+		long = append(long, fmt.Sprintf("  frame %d", i))
+	}
+	got = failureExcerpt(long)
+	if len(got) != excerptMax || got[0] != tracebackTop || got[len(got)-1] != "  frame 58" {
+		t.Errorf("a long traceback: %d lines, %q ... %q", len(got), got[0], got[len(got)-1])
+	}
+	// Python on Windows ends lines with "\r\n": a 30-line traceback still
+	// fits the kept tail whole, with no blank lines between its lines.
+	var crlf strings.Builder
+	crlf.WriteString("  build windows ... 9:47\r\n" + tracebackTop + "\r\n")
+	for i := range 28 {
+		fmt.Fprintf(&crlf, "  File \"x%d.py\", line 1, in f\r\n", i)
+	}
+	crlf.WriteString("PermissionError: [WinError 5] no\r\n")
+	sc := bufio.NewScanner(strings.NewReader(crlf.String()))
+	sc.Split(runner.ScanLines)
+	var lines []string
+	for sc.Scan() {
+		lines = append(lines, sc.Text())
+	}
+	got = failureExcerpt(lines[max(len(lines)-tailLines, 0):])
+	if len(got) != 30 || got[0] != tracebackTop || got[29] != "PermissionError: [WinError 5] no" || slices.Contains(got, "") {
+		t.Errorf("a CRLF traceback: %d lines, %q", len(got), got)
+	}
+}
+
+// texts are the labels' and rich texts' strings on a page, and whether
+// each label is selectable.
+func texts(o fyne.CanvasObject) (all []string, selectable []string) {
+	walkTree(o, func(c fyne.CanvasObject) {
+		switch v := c.(type) {
+		case *widget.Label:
+			all = append(all, v.Text)
+			if v.Selectable {
+				selectable = append(selectable, v.Text)
+			}
+		case *widget.Button:
+			all = append(all, v.Text)
+		case *quietText:
+			all = append(all, v.Text())
+		}
+	})
+	return
+}
+
+func TestDoneFailure(t *testing.T) {
+	isolate(t)
+	a := test.NewApp()
+	defer a.Quit()
+	w := New(a, sampleOptions(t))
+	w.env = &Env{Root: w.root, Game: w.root}
+	w.prog = &runner.Progress{Stage: "generate", Label: "recomp", Log: filepath.Join("/r", "build-logs", "x.log")}
+	var err error = errors.New("exit status 1")
+	if sh, lerr := exec.LookPath("sh"); lerr == nil {
+		err = exec.Command(sh, "-c", "exit 3").Run()
+	}
+	f := &buildFailure{Step: failedStep(w.prog), Cmd: "./blinx2 package", Err: err,
+		Tail: []string{"  recomp ...", "error: the disk is full", "  FAILED recomp  0:12"}}
+	if f.Step != "generate: recomp" {
+		t.Fatalf("step %q", f.Step)
+	}
+	w.buildErr = f
+	w.fillDone()
+	all, sel := texts(w.doneBox)
+	joined := strings.Join(all, "\n")
+	for _, want := range []string{fmt.Sprintf(doneStoppedAt, "generate: recomp"), doneSaid,
+		fmt.Sprintf(doneLogs, filepath.Join("/r", "build-logs")), openLogFolder, retryText} {
+		if !slices.Contains(all, want) {
+			t.Errorf("no %q in:\n%s", want, joined)
+		}
+	}
+	if _, ok := err.(*exec.ExitError); ok && !slices.Contains(all, fmt.Sprintf(doneExit, 3)) {
+		t.Errorf("no exit status in:\n%s", joined)
+	}
+	if !slices.ContainsFunc(sel, func(s string) bool { return strings.Contains(s, "error: the disk is full") }) {
+		t.Errorf("the excerpt is not in a selectable label: %q", sel)
+	}
+	w.logBuildEnd(f)
+	b, rerr := os.ReadFile(filepath.Join(w.setDir, "wizard.log"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(string(b), "build stopped at generate: recomp: ./blinx2 package: ") ||
+		!strings.Contains(string(b), "\n  error: the disk is full\n") {
+		t.Errorf("wizard.log:\n%s", b)
+	}
+}
+
+func TestDoneCanceled(t *testing.T) {
+	isolate(t)
+	a := test.NewApp()
+	defer a.Quit()
+	w := New(a, sampleOptions(t))
+	w.prog = &runner.Progress{Stage: "generate", Log: "/r/build-logs/x.log"}
+	w.buildErr = errCanceled
+	w.fillDone()
+	all, _ := texts(w.doneBox)
+	if !slices.Contains(all, doneCanceled) || !slices.Contains(all, retryText) {
+		t.Errorf("cancel page: %q", all)
+	}
+	if slices.Contains(all, doneSaid) || slices.ContainsFunc(all, func(s string) bool { return strings.Contains(s, "build-logs") }) {
+		t.Errorf("a cancel shows a log: %q", all)
+	}
+	w.logBuildEnd(errCanceled)
+	if b, _ := os.ReadFile(filepath.Join(w.setDir, "wizard.log")); !strings.Contains(string(b), "build canceled by the player") {
+		t.Errorf("wizard.log:\n%s", b)
+	}
+}
+
+func TestInstallNowWindowsSetup(t *testing.T) {
+	// Glob characters in the player's folder name are only characters.
+	dir := filepath.Join(t.TempDir(), "Games [2026]")
+	if err := os.MkdirAll(filepath.Join(dir, "old-setup.exe"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setupIn(dir); err == nil {
+		t.Fatal("no setup program, no error")
+	}
+	want := filepath.Join(dir, "BLiNX2-1.0-setup.exe")
+	if err := os.WriteFile(want, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "blinx2.exe"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := setupIn(dir); err != nil || got != want {
+		t.Fatalf("%q, %v", got, err)
+	}
+}
+
+// The notice is bold and in the warning colour where it matters, on a
+// tint of the same colour, on both themes.
+func TestNoticeBox(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	//lint:ignore SA1019 the deprecated fixed variants are right for fixed-variant images
+	for name, base := range map[string]fyne.Theme{"light": theme.LightTheme(), "dark": theme.DarkTheme()} {
+		th := Theme(base)
+		a.Settings().SetTheme(th)
+		n := noticeBox(noticeLead, fmt.Sprintf(noticeBody, "Game"), noticeTail)
+		r := test.WidgetRenderer(n).(*noticeRenderer)
+		r.Refresh()
+		lead := n.text.Segments[0].(*widget.TextSegment)
+		if !lead.Style.TextStyle.Bold || lead.Style.ColorName != theme.ColorNameWarning || !strings.HasPrefix(lead.Text, noticeLead) {
+			t.Errorf("%s: the lead %+v", name, lead)
+		}
+		warn := th.Color(theme.ColorNameWarning, a.Settings().ThemeVariant())
+		cr, cg, cb, _ := warn.RGBA()
+		want := color.NRGBA{R: uint8(cr >> 8), G: uint8(cg >> 8), B: uint8(cb >> 8), A: noticeTint}
+		if r.bg.FillColor != want || r.bg.StrokeColor != warn {
+			t.Errorf("%s: fill %v stroke %v, want %v and %v", name, r.bg.FillColor, r.bg.StrokeColor, want, warn)
+		}
+		if img := renderSized(n, fyne.NewSize(500, 80)); img == nil {
+			t.Errorf("%s: no image", name)
+		}
+	}
+}
+
+// Welcome has the two folders; a chosen output folder is kept in
+// settings.json, an empty setting shows the default.
+func TestWelcomeFolders(t *testing.T) {
+	isolate(t)
+	a := test.NewApp()
+	defer a.Quit()
+	opt := sampleOptions(t)
+	w := New(a, opt)
+	all, _ := texts(w.pages[pWelcome].obj)
+	if !slices.Contains(all, buildFolder) || !slices.Contains(all, outputFolder) {
+		t.Fatalf("rows: %q", all)
+	}
+	def, _ := hostinfo.DefaultOut(w.root)
+	if w.out != def || w.outLabel.Text != def || !w.outDefault {
+		t.Fatalf("default %q, shown %q", def, w.outLabel.Text)
+	}
+	// A new build folder moves a defaulted output folder with it.
+	root2 := t.TempDir()
+	w.setRoot(root2)
+	if d2, _ := hostinfo.DefaultOut(root2); w.out != d2 {
+		t.Errorf("after a new root %q, want %q", w.out, d2)
+	}
+	out := t.TempDir()
+	w.setOut(out)
+	w.setRoot(t.TempDir())
+	if w.out != out {
+		t.Errorf("a chosen folder moved with the root: %q", w.out)
+	}
+	w2 := New(a, opt)
+	if w2.out != out || w2.outLabel.Text != out || w2.outDefault {
+		t.Errorf("after a restart %q", w2.out)
+	}
+	// An output folder inside the clone is refused on the row, and Next
+	// waits; a good one clears it.
+	w.setOut(filepath.Join(w.root, "src", "dist"))
+	if !w.outNote.Visible() || w.outNote.Text != outClashText[hostinfo.ClashSrc] || w.pages[pWelcome].ready() {
+		t.Errorf("inside src: shown %v %q", w.outNote.Visible(), w.outNote.Text)
+	}
+	w.setOut(out)
+	if w.outNote.Visible() || !w.pages[pWelcome].ready() {
+		t.Errorf("a good folder still refused: %q", w.outNote.Text)
+	}
+}
+
+func TestSummaryOut(t *testing.T) {
+	isolate(t)
+	a := test.NewApp()
+	defer a.Quit()
+	w := New(a, sampleOptions(t))
+	w.out = filepath.Join(t.TempDir(), "my out")
+	w.st.Dump = "/d/b2.iso"
+	w.fillSummary()
+	all, _ := texts(w.summaryBox)
+	if !slices.Contains(all, fmt.Sprintf(summaryOut, w.out)) {
+		t.Errorf("no output row: %q", all)
+	}
+	if !strings.Contains(w.summaryTech.Text, "--out "+strconv.Quote(w.out)) {
+		t.Errorf("no --out in:\n%s", w.summaryTech.Text)
+	}
+}
+
+// The bundle's space: on the build folder's volume it adds to the build's
+// need; on another it is checked there and named so.
+func TestDumpSpace(t *testing.T) {
+	isolate(t)
+	a := test.NewApp()
+	defer a.Quit()
+	w := New(a, sampleOptions(t))
+	dump := filepath.Join(t.TempDir(), "b2.iso")
+	if err := os.WriteFile(dump, make([]byte, 1000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.dumpEntry.SetText(dump)
+	w.out = t.TempDir()
+	build := uint64(hostinfo.NeedBytes) + 1000
+	bundle := hostinfo.BundleNeed(1000)
+	free := map[string]uint64{}
+	w.free = func(p string) (uint64, error) { return free[p], nil }
+
+	w.sameVolume = func(a, b string) bool { return true }
+	free[w.root] = build + bundle
+	if err := w.checkDump(); err != nil {
+		t.Fatalf("enough for both: %v", err)
+	}
+	free[w.root] = build + bundle - 1
+	if err := w.checkDump(); err == nil || err.Error() != plainPrepare(&SpaceError{Free: build + bundle - 1, Need: build + bundle}) {
+		t.Fatalf("one volume: %v", err)
+	}
+
+	w.sameVolume = func(a, b string) bool { return false }
+	free[w.root], free[w.out] = build, bundle
+	if err := w.checkDump(); err != nil {
+		t.Fatalf("two volumes, enough: %v", err)
+	}
+	free[w.out] = bundle - 1
+	err := w.checkDump()
+	if err == nil || err.Error() != fmt.Sprintf(dumpNoSpaceOut, float64(bundle-1)/1e9, float64(bundle)/1e9) {
+		t.Fatalf("two volumes, the output full: %v", err)
+	}
+
+	// A dump folder that holds the output folder is refused.
+	game := t.TempDir()
+	if err := os.WriteFile(filepath.Join(game, "default.xbe"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.dumpEntry.SetText(game)
+	w.out = filepath.Join(game, "dist")
+	free[w.root], free[w.out] = build+bundle, bundle
+	if err := w.checkDump(); err == nil || err.Error() != outClashText[hostinfo.ClashDump] {
+		t.Fatalf("output inside the dump: %v", err)
 	}
 }

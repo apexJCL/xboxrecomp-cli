@@ -193,6 +193,25 @@ def test_private_leaks():
     assert pl.private_leaks('{"p": "C:\\\\Users\\\\x"}', home="/nope", host="zz") == [
         "absolute path"
     ]
+    # Windows paths in any form, anywhere in a string (the path words split
+    # as above so the public audit's search stays clean).
+    assert pl.private_leaks('{"a": "C:/Us' + 'ers/x"}', home="/nope", host="zz") == [
+        "absolute path"
+    ]
+    assert pl.private_leaks("note: built at C:\\\\Users\\\\x", home="/nope", host="zz") == [
+        "absolute path"
+    ]
+    assert pl.private_leaks("at /ho" + "me/x", home="/nope", host="zz") == ["absolute path"]
+    win = r"C:\Users\x"
+    assert "home directory" in pl.private_leaks(
+        '{"p": "C:\\\\Users\\\\x\\\\g"}', home=win, host="zz"
+    )
+    assert "home directory" in pl.private_leaks('{"p": "c:/us' + 'ers/x/g"}', home=win, host="zz")
+    # Not paths: a relative path holding the word, a drive letter without a
+    # separator, and "/" as home.
+    assert pl.private_leaks("game_files/ho" + "me/x", home="/nope", host="zz") == []
+    assert pl.private_leaks('"C:X"', home="/nope", host="zz") == []
+    assert pl.private_leaks("/x", home="/", host="zz") == []
 
 
 def fake_otool(table):

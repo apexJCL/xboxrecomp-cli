@@ -187,12 +187,13 @@ SPEC = {
         "text": (STRS, []),
     },
     # The player's build wizard (xbr wizard; docs/wizard.md): the repo it
-    # clones at the release tag and asks about newer releases, its icon,
+    # clones at the release tag and asks about newer releases, its icon
+    # (optional: the wizard's own gamepad otherwise),
     # the targets it offers, archives the build needs beyond the clone and
     # the options screen. A game without the table has no wizard.
     "wizard": {
         "repo": (STR, REQUIRED),
-        "icon": (STR, REQUIRED),
+        "icon": (STR, ""),
         "targets": (STRS, DERIVED),
         "fetch": (TABLES, []),
         "option": (TABLES, []),
@@ -677,7 +678,7 @@ def _paths(m):
         for k in ("content", "templates"):
             if m["package"][k]:
                 out.append(("package." + k, m["package"][k]))
-    if "wizard" in m:
+    if "wizard" in m and m["wizard"]["icon"]:
         out.append(("wizard.icon", m["wizard"]["icon"]))
     return out
 

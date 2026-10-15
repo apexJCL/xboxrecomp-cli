@@ -24,6 +24,12 @@ CONFIG_SCHEMA = 1
 PNG = b"\x89PNG\r\n\x1a\n"
 
 
+def is_svg(data):
+    """An SVG by its first bytes: <svg or <?xml after a BOM and whitespace."""
+    head = data[:512].lstrip(b"\xef\xbb\xbf").lstrip()
+    return head.startswith((b"<svg", b"<?xml"))
+
+
 def _git(root, *args, binary=False):
     r = subprocess.run(["git", "-C", root] + list(args), capture_output=True)
     if r.returncode != 0:
@@ -131,17 +137,18 @@ WIZARD_OWN_FLAGS = {"--dump", "--plain", "--seed-config", "--out", "--replace", 
 
 
 def problems(m, read, flags):
-    """[wizard]'s file rules against the tree read() sees: the icon a PNG,
+    """[wizard]'s file rules against the tree read() sees: the icon, when
+    set, a PNG or an SVG,
     each config key in the defaults file with the option's default as its
     value, each flag one package accepts. Returns (errors, options with
     their TOML literals)."""
     w = m["wizard"]
     errors = []
-    icon = read(w["icon"])
+    icon = read(w["icon"]) if w["icon"] else b""
     if icon is None:
         errors.append("wizard.icon: no %s" % w["icon"])
-    elif not icon.startswith(PNG):
-        errors.append("wizard.icon: %s is not a PNG" % w["icon"])
+    elif w["icon"] and not (icon.startswith(PNG) or is_svg(icon)):
+        errors.append("wizard.icon: %s is not a PNG or SVG" % w["icon"])
     defaults_rel = "%s/config.default.toml" % m["package"]["content"]
     defaults = None
     if any(o["config"] for o in w["option"]):
@@ -203,7 +210,8 @@ def problems(m, read, flags):
 
 def resolve(G, tag="", dev=False):
     """(config dict, icon bytes) for game G at the release: the manifest
-    read from the tag's tree, validated, with the file rules."""
+    read from the tag's tree, validated, with the file rules. The icon is
+    None when the game sets none (the wizard's own then applies)."""
     if "wizard" not in G.m:
         raise CliError("game.toml has no [wizard] table: this game has no wizard (docs/wizard.md)")
     rel = release(G.root, tag, dev)
@@ -234,7 +242,7 @@ def resolve(G, tag="", dev=False):
         "fetch": [dict(f) for f in w["fetch"]],
         "options": options,
     }
-    return cfg, read(w["icon"])
+    return cfg, (read(w["icon"]) if w["icon"] else None)
 
 
 def config_json(cfg):
