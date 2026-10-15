@@ -828,6 +828,29 @@ def test_sync_excludes_follow_gitignore():
         assert pat in GAME_EXCLUDES, pat
 
 
+def test_cli_sync_excludes_follow_gitignore():
+    """Every directory the CLI's .gitignore names stays out of the CLI
+    sync: wizard/.tools (a read-only Go module cache) once broke it."""
+    from xboxrecomp_cli.bench.sync import CLI_EXCLUDES
+
+    root = os.path.join(HERE, "..")
+    ex = [x.strip("/") for x in CLI_EXCLUDES]
+    missing = []
+    with open(os.path.join(root, ".gitignore")) as f:
+        for line in f:
+            e = line.strip()
+            if not e or e[0] in "#!" or not e.endswith("/"):
+                continue
+            e = e.strip("/")
+            # build*/ is covered by build/ and build-*/ (the only build trees).
+            if e == "build*":
+                assert "build" in ex and "build-*" in ex
+                continue
+            if e not in ex:
+                missing.append(e)
+    assert not missing, "gitignored but synced to the host: %s" % missing
+
+
 def test_shell_quote_matches_printf_q():
     if SKIP and "bash" in SKIP:
         print("skip: no bash")

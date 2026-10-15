@@ -17,6 +17,16 @@ from .remote import KEEPALIVE, BenchError, host_path
 # rebuild (stale build-win/tests objects).
 SRC_OPTS = ["-az", "--no-times", "--checksum", "--delete", "--info=stats1"]
 TOOLKIT_EXCLUDES = [".git", "build/", "build-*/", ".venv/", "__pycache__/", ".DS_Store"]
+# The CLI checkout: the toolkit's rules plus its own gitignored output. The
+# wizard's Go module cache (wizard/.tools, over a gigabyte) has read-only
+# directories, so syncing it failed with rsync exit 23 and left a copy on
+# the host that --delete could not remove.
+CLI_EXCLUDES = TOOLKIT_EXCLUDES + [
+    "/wizard/.tools/",
+    "/dist/",
+    ".ruff_cache/",
+    ".pytest_cache/",
+]
 # --delete leaves excluded paths alone, so the host's build-win/, bench-logs/
 # and game_files/ survive a sync. game_excludes() puts the game's own
 # directories (game.toml's pipeline.out, data.game_files, the marker beside
@@ -157,7 +167,7 @@ def cmd_sync(b, args):
     b.ok(
         rsync(
             *SRC_OPTS,
-            *excludes(TOOLKIT_EXCLUDES),
+            *excludes(CLI_EXCLUDES),
             cli + "/",
             "%s:%s/xboxrecomp-cli/" % (c.host, c["BENCH_DIR"]),
         )
