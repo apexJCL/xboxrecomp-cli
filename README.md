@@ -1,151 +1,134 @@
 # xboxrecomp-cli
 
-`xbr` turns a dumped original-Xbox game into a native build with the
-[xboxrecomp](https://github.com/apexJCL/xboxrecomp) static recompilation
-toolkit: one command sets up the toolchain, lifts the XBE to C, builds the
-executable and packages a private bundle for Windows, SteamOS or macOS.
-A game is a directory with a `game.toml`; the CLI holds no game's values.
-[BLiNX 2](https://github.com/apexJCL/blinx2-recomp) is the first game that
-runs on it, Burnout 3 the second.
+Turn your own copy of an original Xbox game into a program that runs on
+your PC or Mac. The game's code is translated to C and compiled with the
+[xboxrecomp](https://github.com/apexJCL/xboxrecomp) toolkit. It is not an
+emulator.
 
-**Your dump, your machines.** You supply the dump of a game you own. Nothing
-the CLI fetches is game data (the toolkit at a pinned commit, llvm-mingw and
-NSIS by sha256, Python wheels hashed in `uv.lock`, and a CPython from uv's
-own hashed downloads when the host has no 3.12), nothing it writes to a
-public place contains any, and a bundle, which has your dump inside, is for
-your own machines only. Enhancement assets (upscaled textures, fonts) are
-made locally from your dump and never distributed.
+- You need your own, legally dumped copy of the game (a disc image, or the
+  folder with its files).
+- No game files are included or downloaded. What is built from your copy
+  stays on your own computers.
+- Each game has its own repository. This one holds the tool they share and
+  the **build wizard**, a small program with a window that does the build
+  for you. On Windows and macOS you never need a terminal.
 
-## Installation
+Two words used below: your **game dump** is the copy you made from your
+own disc (a disc image, or a folder with `default.xbe` in it); the
+**bundle** is the installable game the wizard makes from it.
 
-Players and porters do not install this repository: a game's `./<slug>`
-bootstrap fetches the CLI at the release the game pins
-([docs/bootstrap.md](docs/bootstrap.md)). The host needs:
+## Getting started
 
-| | macOS | Linux | Windows |
-|---|---|---|---|
-| **uv** 0.5.31+ | `brew install uv` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | `winget install --id=astral-sh.uv -e` |
-| **git** | `xcode-select --install` | the distribution's | [Git for Windows](https://git-scm.com/download/win) |
-| **Python** 3.9+ | with the Command Line Tools | the system's | [python.org](https://www.python.org/downloads/), with the `py` launcher |
-| **makensis** (the Windows installer only) | `brew install makensis` | `nsis` or `mingw32-nsis` | fetched by `setup` |
+1. Pick your game in the table below and open its **Releases** page.
+2. Download the wizard for your computer: the file whose name ends in
+   `windows-x64.zip`, `macos.zip` or `linux-x64.tar.gz` (`SHA256SUMS` on
+   the same page is optional: it lets you verify the download).
+3. Open it: see [Opening the wizard](#opening-the-wizard) for your
+   computer.
+4. The wizard says what it will do, then checks your computer and fetches
+   or offers to install what is missing: the build tools (each download
+   checked against a known checksum) and, on a Mac, Apple's Command Line
+   Tools and Homebrew (its installer asks for your password). It sends
+   nothing of yours; if you leave the box ticked, it asks the releases
+   page once whether a newer wizard exists.
+5. Point it at your game dump.
+6. Choose the target (usually the computer you are on) and the game's
+   options (render scale, fullscreen and the like).
+7. Build. This takes a while: BLiNX 2 takes about 20 to 40 minutes on the
+   computers it was timed on. Closing the window stops the build; a later
+   build reuses most of the work.
+8. Press **Install now**, or open the output folder and copy the bundle to
+   the computer you play on: on Windows a setup program; on a Mac a `.dmg`
+   (drag the app to Applications); on a Steam Deck or Linux PC a `.tar` to
+   unpack, then `./install.sh --steam` in a terminal opened in the
+   unpacked folder, with Steam open (the bundle's README explains the
+   rest).
 
-`setup` fetches the rest into the game's own tree, every download checked
-against a pinned sha256: CMake, Ninja, the toolkit's Python packages, the
-toolkit, llvm-mingw. No Visual Studio: the Windows executable is
-cross-compiled with llvm-mingw on every host, Windows included. About 15 GB
-free.
+You need about 15 GB free for the build folder, plus room for the bundle
+(your game files and about 1 GB more). The wizard shows both folders on
+its first page and lets you change them; the bundle lands in a `dist`
+folder beside the wizard.
 
-**Windows:** use a short checkout path (`C:\g\mygame`) and run
-`git config --global core.longpaths true`; `doctor` warns when the path is
-long or `LongPathsEnabled` is off. Commands read `mygame` (the `mygame.cmd`
-wrapper; `.\mygame` in PowerShell) or `py -3 mygame.py` instead of
-`./mygame`. Defender scans every generated file, so an exclusion for the
-checkout folder speeds the build up (the CLI never adds one). Building on a
-Windows host is supported and not yet verified on a real machine.
+### Opening the wizard
 
-## Quick start
+**Windows.** Unzip and run `<game>-wizard.exe`. SmartScreen warns because
+the program is not signed: click *More info*, then *Run anyway*. The setup
+program the build makes warns the same way.
+
+**macOS.** Unzip, then move `<game>-wizard.app` out of Downloads (into your
+home folder, say) before opening it; opened in place, macOS runs it from a
+temporary location and the bundle goes to the build folder instead. The
+first time, macOS refuses to open it because it is not signed: close the
+message, open *System Settings > Privacy & Security*, click *Open Anyway*
+near the bottom and confirm. Do the same once for the game's app after
+installing it.
+
+**Linux and Steam Deck.** On the Deck, use Desktop Mode. Extract the
+archive into a folder of its own, open a terminal there (Dolphin:
+right-click > *Open Terminal Here*) and run `./<game>-wizard`
+([docs/wizard.md](docs/wizard.md#the-icon) has the lines for a menu
+entry). After the install the game is in your Steam library; in Game Mode,
+pick the Gamepad template in its controller settings.
+
+## Supported games
+
+| Game | Releases | Status |
+|---|---|---|
+| BLiNX 2: Masters of Time & Space | [apexJCL/blinx2-recomp](https://github.com/apexJCL/blinx2-recomp/releases) | Plays on Windows 11, on Steam Deck and Linux (Proton) and on macOS (Apple silicon) |
+| Burnout 3: Takedown | apexJCL/burnout3 (not published yet) | Coming soon |
+
+Built on the [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) toolkit
+by sp00nznet, which [apexJCL/xboxrecomp](https://github.com/apexJCL/xboxrecomp)
+extends for these ports; its runtime carries code from
+[xemu](https://github.com/xemu-project/xemu). The wizard's credits list
+every project a build relies on.
+
+## Help
+
+- [docs/troubleshooting.md](docs/troubleshooting.md): the messages and
+  their fixes.
+- Logs: `wizard.log` in the wizard's settings folder (`%APPDATA%\<game>-wizard`,
+  `~/Library/Application Support/<game>-wizard` or `~/.config/<game>-wizard`),
+  and the build's own in `src/build-logs/` under the build folder, which a
+  failed build names, with a button to open it.
+- Report a game problem on the game's repository, and a wizard or command
+  line problem at
+  [apexJCL/xboxrecomp-cli/issues](https://github.com/apexJCL/xboxrecomp-cli/issues).
+  Attach the log, never the bundle or your game files.
+
+## Developers
+
+`xbr` is the command line the wizard runs. A game is a folder with a
+`game.toml`; the CLI holds no game's values, and nobody installs this
+repository: a game's `./<game>` bootstrap fetches the CLI at the release
+the game pins ([docs/bootstrap.md](docs/bootstrap.md)). The host needs uv,
+git and Python ([what the host needs](docs/bootstrap.md#what-the-host-needs));
+`setup` fetches the rest. To build an existing game, clone it and run
+`./<game> /path/to/game.iso`. To start a new one:
 
 ```sh
 uvx --from git+https://github.com/apexJCL/xboxrecomp-cli xbr new mygame --xbe /path/to/game.iso
 cd mygame
-./mygame import /path/to/game.iso   # or the dump's folder, or copy it to game_files/
-./mygame setup     # .venv, llvm-mingw, the toolkit; ends with doctor
+./mygame import /path/to/game.iso
+./mygame setup     # the toolchain into the game's tree
 ./mygame all       # analyze, recomp, build: build-win/mygame_recomp.exe
 ```
 
-`xbr new` prepares a game's workbench: `game.toml` with every pin filled in,
-the `mygame` bootstrap and its wrappers, the tools environment
-(`pyproject.toml`, `uv.lock`), a `.gitignore` that keeps the dump, the
-generated code, the toolchain and the bundles out of git, the toolkit's
-`templates/new-game/` with the game's constants, and `config/setup-pins.json`.
-The title, title ID and entry point come from the XBE header, read in place
-from `--xbe` (the disc image, the dump's folder or `default.xbe`) and never
-copied; without it they are left at 0 and `import` refuses every dump until
-`game.toml`'s `title_id` is filled in. `@<tag>` after the repository URL
-pins a release, `@<sha>` a commit (`…/xboxrecomp-cli@v0.6.0 xbr new
-mygame`); the no-pipe way is a clone and `uv run xbr new ../mygame`.
-
-The first build is a Windows x86-64 executable that runs natively on Windows
-and under Proton on Linux (Direct3D 11). The first run crashes; the port
-starts there ([docs/porting.md](docs/porting.md)).
-
-## Commands
-
-`./mygame --help` lists them; `./mygame <command> --help` the options. Full
-reference: [docs/commands.md](docs/commands.md).
-
-| Command | Summary |
-|---|---|
-| `xbr new DIR` | a new game's workbench |
-| `mygame PATH` | import the disc image or dump folder at `PATH`, then the same as `mygame` |
-| `mygame` | package for this computer, building whatever is missing or stale |
-| `mygame package <target>` | the same for `windows`, `steamos` or `macos`, into `dist/` (`--dump PATH` imports first) |
-| `mygame import PATH` | put the dump in `game_files/` from a disc image or a folder, checking its title first |
-| `mygame doctor` | what this host has, what it can package, and the next thing to do |
-| `mygame enhance hud` | the owner's HUD texture pack from their own dump (`package --hud-pack` bundles it) |
-| `mygame setup` | fetch the pinned toolchain into the game's tree |
-| `mygame analyze` / `recomp` / `all` | the pipeline: parse, disasm, funcid, abi, names; lift to C; then build |
-| `mygame build [windows\|macos]` | configure once, compile incrementally |
-| `mygame pins refresh` | maintainers: re-pin the downloads and the lock |
-| `mygame bench <command>` | build, run and golden-test the Windows build under Proton on a remote Linux host |
-| `mygame golden` / `pacing-stats` / `benchlog-retention` / `audio-check` / `wrapper` | developer tools, each with the game's paths from `game.toml` |
-
-## The manifest
-
-Every setting a game has is a key in `game.toml`:
-[docs/manifest.md](docs/manifest.md) documents each table and key with its
-default, from the XBE's title ID and the known dumps (`[xbe]`) through the
-pipeline, the build, the data folders, packaging and the bench.
-
-## macOS
-
-The toolkit builds for macOS (Apple silicon, Metal), and the template
-`main.c` that `new` copies runs on both hosts: a new game lists
-`build.targets = ["windows", "macos"]`, and on a Mac `mygame build` makes
-`build/<exe>` with Apple clang while `mygame build windows` still
-cross-compiles the Windows one. A toolkit pin at or before `blinx2-v0.3.0`
-has the older Win32-only template, which `new` notes; see
-[docs/porting.md](docs/porting.md#macos-as-a-target).
-
-## The bench host
-
-`mygame bench` drives a Linux x86-64 machine over ssh: it syncs the tree,
-builds there in a distrobox, runs the game under Proton with scripted input
-and compares frames against the goldens in `golden.json`. Configuration
-(`BENCH_HOST`, `BENCH_DIR`, the Proton prefix) comes from the environment or
-the game's `scripts/bench.env`. Optional; a game with no `golden.json` can
-still `bench build` and `bench run`. Commands and variables:
-[docs/commands.md](docs/commands.md#mygame-bench-command).
-
-## Documentation
+The first run of a new game crashes; the port starts there.
 
 | Document | Contents |
 |---|---|
 | [docs/commands.md](docs/commands.md) | every command, option and tool |
 | [docs/manifest.md](docs/manifest.md) | `game.toml`, key by key |
-| [docs/porting.md](docs/porting.md) | the porting loop, the keys a port meets first, environment and enhancements, macOS |
-| [docs/wizard.md](docs/wizard.md) | the player's build wizard: the config, the build, the pins, the release workflow |
-| [docs/bootstrap.md](docs/bootstrap.md) | how a game finds the CLI, the pins |
+| [docs/porting.md](docs/porting.md) | the porting loop, the keys a port meets first, macOS |
+| [docs/wizard.md](docs/wizard.md) | the build wizard: the screens, the folders, the config, releases |
+| [docs/bootstrap.md](docs/bootstrap.md) | how a game finds the CLI, the pins, what the host needs |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | the messages and their fixes |
 | [docs/maintainers.md](docs/maintainers.md) | working on the CLI, releases, the audit before a public push |
 | [docs/origin.md](docs/origin.md) | where each file came from |
 
-## Contributing
+## Licence
 
-```sh
-git clone https://github.com/apexJCL/xboxrecomp-cli.git
-cd xboxrecomp-cli
-uv sync
-uv run pytest
-uv run ruff check . && uv run ruff format --check .
-```
-
-A clone beside a game's checkout (or `XBOXRECOMP_CLI_DIR`) is the CLI that
-game runs. Python 3.12 or newer; the runtime uses only the standard library.
-Releases are annotated `v*` tags on `main`, never moved; run
-`scripts/audit-public.sh` before a push ([docs/maintainers.md](docs/maintainers.md)).
-
-## License
-
-MIT, see [LICENSE](LICENSE). The games this builds are not included and
-never will be: a bundle contains the player's own dump.
+MIT, see [LICENSE](LICENSE). Third-party notices: `NOTICES.txt` in each
+wizard archive, and [LICENSES/](LICENSES) here. The games are not included
+and never will be.

@@ -53,7 +53,7 @@ BLiNX 2's manifest is the full example
 |---|---|---|
 | `tag` | `""` | The xboxrecomp-cli release this game is tested with (`v0.2.0`). The bootstrap clones and checks out that tag; `pins refresh` names a newer `v*` release. |
 | `commit` | `""` | The commit (40 hex). Alone, it is the pin. With `tag`, it locks the tag: a tag that names another commit (moved, or re-pushed) is refused. `doctor` compares the running CLI with it. |
-| `url` | `""` | Where the bootstrap clones the CLI from, when it finds none (see the README). |
+| `url` | `""` | Where the bootstrap clones the CLI from, when it finds none ([bootstrap.md](bootstrap.md#search-order)). |
 
 `tag` or `commit` is required; both is the safe form. A tag alone trusts
 the tag: the bootstrap fetches it when the clone lacks it, and a clone that

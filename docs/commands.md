@@ -200,7 +200,9 @@ git+https://github.com/apexJCL/xboxrecomp-cli xbr new mygame`, or `mygame
 new DIR` from an existing game). Whatever it could not finish (offline, or
 with no network) it names as the later command that does it: `setup` for the
 toolkit clone (and the template copy that follows it), `pins refresh` for
-the pins and the lock.
+the pins and the lock. `@<tag>` after the repository URL pins a release,
+`@<sha>` a commit (`…/xboxrecomp-cli@v0.6.0 xbr new mygame`); the no-pipe
+way is a clone and `uv run xbr new ../mygame`.
 
 | Option | Effect |
 |---|---|

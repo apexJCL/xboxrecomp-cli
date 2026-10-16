@@ -4,7 +4,7 @@ Each entry is the message as the CLI prints it, then the fix.
 
 | Message | Fix |
 |---|---|
-| `no uv 0.5.31+ on PATH` | Install uv (the README's table) and open a new shell. `<slug> --help` works without it; nothing else does. |
+| `no uv 0.5.31+ on PATH` | Install uv ([bootstrap.md](bootstrap.md#what-the-host-needs)) and open a new shell. `<slug> --help` works without it; nothing else does. |
 | `xboxrecomp-cli: the pin moved`, `git checkout failed`, `git fetch failed` | The game pins a CLI commit or tag the remote does not have (never pushed), or there is no network for a new pin. Clone the CLI beside the game or set `XBOXRECOMP_CLI_DIR`, and fix `[cli]`. |
 | `tag v0.2.0 is …, not the pinned commit …: the tag moved` | The tag and the `commit` that locks it disagree: the tag was moved or re-pushed (check the release), or `game.toml` names the wrong pair. The same holds for `[toolkit]` in `setup`. |
 | `no config/setup-pins.json` | `<slug> pins refresh` writes it (and `uv.lock`); it needs the network. |

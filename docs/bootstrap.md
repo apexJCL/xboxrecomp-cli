@@ -54,3 +54,32 @@ pins refresh` prints, for a tag pin, the newest release with the same
 prefix and warns when the remote's tag is not the lock; the maintainer then
 edits `game.toml` by hand. `xbr new` writes the release its checkout is at,
 or the newest one on `[cli] url` (`--cli-tag` picks another).
+
+## What the host needs
+
+A developer's or porter's machine (a player's wizard fetches these itself,
+[wizard.md](wizard.md)):
+
+| | macOS | Linux | Windows |
+|---|---|---|---|
+| **uv** 0.5.31+ | `brew install uv` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | `winget install --id=astral-sh.uv -e` |
+| **git** | `xcode-select --install` | the distribution's | [Git for Windows](https://git-scm.com/download/win) |
+| **Python** 3.9+ | with the Command Line Tools | the system's | [python.org](https://www.python.org/downloads/), with the `py` launcher |
+| **makensis** (the Windows installer only) | `brew install makensis` | `nsis` or `mingw32-nsis` | fetched by `setup` |
+
+`setup` fetches the rest into the game's own tree, every download checked
+against a pinned sha256: CMake, Ninja, the toolkit's Python packages
+(hashed in `uv.lock`), the toolkit at its pinned commit, llvm-mingw, and a
+CPython from uv's own hashed downloads when the host has no 3.12. No Visual
+Studio: the Windows executable is cross-compiled with llvm-mingw on every
+host, Windows included. About 15 GB free. Nothing it fetches is game data,
+and nothing it writes to a public place contains any; a bundle, which has
+the dump inside, is for the owner's machines only.
+
+**Windows:** use a short checkout path (`C:\g\mygame`) and run
+`git config --global core.longpaths true`; `doctor` warns when the path is
+long or `LongPathsEnabled` is off. Commands read `mygame` (the `mygame.cmd`
+wrapper; `.\mygame` in PowerShell) or `py -3 mygame.py` instead of
+`./mygame`. Defender scans every generated file, so an exclusion for the
+checkout folder speeds the build up (the CLI never adds one). Building on a
+Windows host works (tested on Windows 11 through the wizard).
