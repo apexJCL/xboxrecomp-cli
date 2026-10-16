@@ -7,7 +7,25 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Added
+- `doctor` names the toolkit's features (env table, enhancements, D3D11,
+  Metal, spin waits) and what it lacks; `doctor --json` gives them as
+  `toolkit_features`.
+
 ### Changed
+- A game can pin upstream xboxrecomp (`sp00nznet/xboxrecomp`) instead of
+  the fork. When the toolkit's recomp has no `--spin-waits`, `recomp`
+  leaves the flag out with one warning, so `gen/` is what the toolkit's
+  own commands give.
+- When the toolkit at the pin has no enhancements layer, the wizard leaves
+  out the options that set a `config.toml` key, which nothing would read,
+  and `wizard config --json` lists them under `omitted` with the reason.
+  The config's new `reads_config` key says whether the build reads
+  `config.toml`; when false, the Options page says the game has no
+  settings file instead of pointing at it. `wizard config` and
+  `wizard build` now read the toolkit at its pin, so they need the toolkit
+  checkout or the network, for a game on the fork too.
+- The README links Burnout 3 to its releases at apexJCL/burnout3-recomp.
 - `golden` treats `render.aniso` as a non-stock key, so goldens run with
   anisotropic filtering off, and the manifest lists it as a toolkit
   enhancement key.

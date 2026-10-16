@@ -62,7 +62,8 @@ A game without the table has no wizard.
    found they give way to "<font> is installed." in the success colour.
    A note at the foot names the chosen platform's `config.toml` (its
    data folder plus `config/config.toml`) for the settings the page
-   leaves out.
+   leaves out; when the config has `reads_config` false (a toolkit that
+   reads no `config.toml`), it says the game has no settings file instead.
 6. **Summary**: the game, the two folders, target and changed options; under
    "Technical details", the wizard, release, CLI and toolkit versions and
    every command the build will run.
@@ -215,6 +216,18 @@ checks, on top of `game.toml`'s own ([manifest.md](manifest.md#wizard)):
 - each flag is a switch `package` takes, and not one the wizard sets
   itself (`--dump`, `--plain`, `--seed-config`, `--out`, `--replace`,
   `--verbose`).
+
+A toolkit pin with no enhancements layer (no `src/enhance/CMakeLists.txt`
+at that commit, as on upstream xboxrecomp) reads no `config.toml`, so the
+config options are left out of `options` and listed under `omitted`, each
+with its `key`, `config` and `why`; flag options stay. `reads_config`
+says whether the build reads `config.toml` at all, so it is false on such
+a pin even for a game whose options are all flags. The toolkit is read at
+the pin whenever the game has a config option or a data folder: from the
+local toolkit checkout's history when it has the commit, else by fetching
+that one commit or tag's trees (no file contents). `wizard config` and
+`wizard build` therefore need the toolkit checkout or the network, for a
+game on the fork too.
 
 With no `--tag`, the release is the one tag on HEAD of a clean checkout.
 `--dev` reads the working tree with no tag; the binary then has no clone

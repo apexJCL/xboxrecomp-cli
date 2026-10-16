@@ -222,6 +222,7 @@ const (
 	optionsIntro    = "The game starts with these. Most players leave them as they are."
 	optionsNone     = "This game has no settings to choose here."
 	optionsLater    = "Later, change these and more in config.toml: %s"
+	optionsNoConfig = "This version of the game has no settings file to change later."
 	optionLabelled  = "%s (%s)"
 	optionFontFound = "%s is installed."
 )

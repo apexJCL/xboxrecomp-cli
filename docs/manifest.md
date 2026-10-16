@@ -66,10 +66,16 @@ you add it. A `url` may not start with `-`.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `url` | required | The toolkit repository `setup` clones. |
+| `url` | required | The toolkit repository `setup` clones: the fork (`https://github.com/apexJCL/xboxrecomp.git`) or upstream (`https://github.com/sp00nznet/xboxrecomp.git`). |
 | `tag` | `""` | The toolkit release (`blinx2-v0.1.0`). `setup` clones and checks out that tag; `pins refresh` names a newer release with the same prefix. |
 | `branch` | `""` | Its branch; `pins refresh` prints that branch's head. Required without `tag`. |
 | `commit` | `""` | The pinned toolkit commit (40 hex). Required without `tag`; with it, it locks the tag as in `[cli]`. |
+
+`$XBOXRECOMP_DIR` names another checkout and wins over the pin: the CLI
+uses it as it is. On upstream's pin the parts only the fork has degrade
+(`doctor`'s `features:` line): recomp gets no `--spin-waits` (one warning),
+and the wizard leaves out the config options (see
+[wizard.md](wizard.md#the-config)).
 
 ## [toolchain]
 
@@ -88,7 +94,7 @@ you add it. A `url` may not start with `-`.
 | `analysis_json` | `""` | Where `parse` writes the XBE analysis. Empty writes it beside the XBE (`<stem>_analysis.json`); a game whose dump is read-only, such as a link to the player's own copy, names a path under its tree (`parse` makes the directory). |
 | `seeds` | `[]` | `--seed-functions` files for disasm. |
 | `icall_seeds` | `true` | Seed from the toolkit's icall_feedback database, when there is one. |
-| `spin_waits` | `""` | `recomp --spin-waits`. Empty passes no flag. |
+| `spin_waits` | `""` | `recomp --spin-waits`. Empty passes no flag; so does a toolkit whose recomp has no such flag (upstream xboxrecomp), with one warning. |
 | `exclude_manual` | `""` | `recomp --exclude-manual`. Empty passes no flag. |
 | `split` | `250` | Functions per generated file. `SPLIT` in the environment overrides it. |
 | `names_hooks` | `[]` | Scripts run after `names`, given the functions.json path. |

@@ -92,13 +92,19 @@ that is not valid TOML gets one `WARNING:` line and no note.
 
 What this host has (uv, the venv, llvm-mingw, makensis, the toolkit and CLI
 pins, the dump, `gen/`), which targets it can package, and `next:` the first
-thing to do. Exit 1 when the game's steamos target is blocked, or when
-anything is missing for a game without one.
+thing to do. `features:` names what the toolkit checkout has of the fork's
+parts and what it lacks: the env table, the enhancements layer (which
+reads `config.toml`), the D3D11 and Metal renderers and recomp's
+`--spin-waits`. Upstream xboxrecomp has none of them, so a build on its
+pin runs on the CPU rasteriser with stock settings. Exit 1 when the game's
+steamos target is blocked, or when anything is missing for a game without
+one.
 
 `--json` prints the same as data for the build wizard: `host`, `lines`,
-`targets`, `blocked`, `problems`, `next`, and `blockers`, for each package
+`targets`, `blocked`, `problems`, `next`, `blockers`, for each package
 target what a run that imports a dump cannot fetch itself (each with its
-fix).
+fix), and `toolkit_features` (`{feature: true|false}`, null before
+`setup`).
 
 ### `mygame enhance hud`
 

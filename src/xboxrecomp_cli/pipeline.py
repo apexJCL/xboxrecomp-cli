@@ -6,11 +6,9 @@ not share one toolkit). The stages and their order follow the toolkit's
 docs/GETTING_STARTED.md, Steps 2-7, and the upstream README's Quick Start.
 """
 
-import glob
 import hashlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -179,36 +177,47 @@ def names_cmds(extra=()):
     ] + [py_cmd(hook, funcs) for hook in G.names_hooks]
 
 
-# The parser definition of recomp's --seeds (toolkit b0eb653), not any
-# mention of the flag.
-SEEDS_FLAG_RE = re.compile(r"""add_argument\(\s*["']--seeds["']""")
-_seeds_probe = {}
+_flag_probe = {}
 
 
-def toolkit_has_seeds(tk=None):
-    """Whether the toolkit's recomp takes --seeds, from its source: a file
-    read, as gen_key() hashes recomp_cmds() on every build and package. A
-    toolkit's sha cannot tell (the public fork's shas differ from a
-    developer's). Cached per process; warns once when it is missing."""
-    tk = tk or toolkit.toolkit_dir()
-    if tk not in _seeds_probe:
-        hit = False
-        for p in sorted(glob.glob(os.path.join(tk, "tools", "recomp", "*.py"))):
-            try:
-                with open(p, errors="replace") as f:
-                    if SEEDS_FLAG_RE.search(f.read()):
-                        hit = True
-                        break
-            except OSError:
-                pass
-        _seeds_probe[tk] = hit
-        if not hit and g().seeds:
-            print(
-                "recomp: the toolkit has no --seeds (before b0eb653); the observed-seed "
-                "report stays empty",
-                file=sys.stderr,
-            )
-    return _seeds_probe[tk]
+def _recomp_has(flag, missing_note):
+    """Whether the toolkit's recomp takes flag (toolkit.recomp_has_flag).
+    Cached per process; prints missing_note once when it is missing and
+    the note is not empty."""
+    tk = toolkit.toolkit_dir()
+    if not os.path.isdir(os.path.join(tk, "tools", "recomp")):
+        # No toolkit yet (before setup): nothing to say, and nothing to
+        # cache, so the answer comes from the checkout once it exists.
+        return False
+    if (tk, flag) not in _flag_probe:
+        hit = toolkit.recomp_has_flag(tk, flag)
+        _flag_probe[(tk, flag)] = hit
+        if not hit and missing_note:
+            print("recomp: " + missing_note, file=sys.stderr)
+    return _flag_probe[(tk, flag)]
+
+
+def toolkit_has_seeds():
+    """--seeds came with toolkit b0eb653."""
+    return _recomp_has(
+        "--seeds",
+        "the toolkit has no --seeds (before b0eb653); the observed-seed report stays empty"
+        if g().seeds
+        else "",
+    )
+
+
+def toolkit_has_spin_waits():
+    """--spin-waits is the fork's (upstream xboxrecomp has none): there the
+    loops stay as the XBE has them, and gen/ is what the toolkit's own
+    commands give."""
+    return _recomp_has(
+        "--spin-waits",
+        "the toolkit has no --spin-waits (upstream xboxrecomp); %s is not applied, the "
+        "busy-wait loops stay as on the Xbox" % g().rel(g().spin_waits)
+        if g().spin_waits
+        else "",
+    )
 
 
 def recomp_cmds(extra=()):
@@ -218,7 +227,8 @@ def recomp_cmds(extra=()):
     # gen/, not emitted. --game-name is fixed by the manifest, not the
     # checkout folder's name: recomp writes it into every gen/ file, so a
     # clone in another folder would generate different bytes from the same
-    # inputs. --spin-waits: the busy-wait loops recomp lowers.
+    # inputs. --spin-waits: the busy-wait loops recomp lowers, when the
+    # toolkit's recomp has the flag.
     args = ["--all", "--split", split_size(), "--gen-dir", G.gen]
     if G.recomp_manual:
         args += ["--exclude-manual", G.recomp_manual]
@@ -232,7 +242,7 @@ def recomp_cmds(extra=()):
         "--abi-dir",
         os.path.join(out, "abi"),
     ]
-    if G.spin_waits:
+    if G.spin_waits and toolkit_has_spin_waits():
         args += ["--spin-waits", G.spin_waits]
     # --seeds: the flag-fallback report lists the sites inside seeds marked
     # "observed" (seen at runtime); without it that list is empty. Only the

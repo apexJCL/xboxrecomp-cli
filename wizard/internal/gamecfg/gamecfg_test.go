@@ -56,6 +56,39 @@ func TestSample(t *testing.T) {
 	}
 }
 
+// Omitted: the options a CLI left out for a toolkit that reads no
+// config.toml. A config without the key reads it.
+func TestOmitted(t *testing.T) {
+	c, err := parse(t, sample(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.ReadsConfig() || c.Omitted != nil {
+		t.Fatalf("sample: %+v", c.Omitted)
+	}
+	m := sample(t)
+	m["omitted"] = []any{map[string]any{"key": "scale", "config": "render.scale", "why": "no enhancements layer"}}
+	m["reads_config"] = false
+	if c, err = parse(t, m); err != nil {
+		t.Fatal(err)
+	}
+	if c.ReadsConfig() || len(c.Omitted) != 1 || c.Omitted[0].Config != "render.scale" || c.Omitted[0].Why == "" {
+		t.Fatalf("omitted: %+v", c.Omitted)
+	}
+	// Flag options only: nothing left out, and still no config.toml.
+	delete(m, "omitted")
+	if c, err = parse(t, m); err != nil {
+		t.Fatal(err)
+	}
+	if c.ReadsConfig() || c.Omitted != nil {
+		t.Fatalf("flags only: %+v", c)
+	}
+	m["reads_config"] = true
+	if c, err = parse(t, m); err != nil || !c.ReadsConfig() {
+		t.Fatalf("reads_config true: %v", err)
+	}
+}
+
 func TestCredits(t *testing.T) {
 	c, err := parse(t, sample(t))
 	if err != nil {

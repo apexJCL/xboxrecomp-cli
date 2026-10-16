@@ -75,7 +75,7 @@ pick the Gamepad template in its controller settings.
 | Game | Releases | Status |
 |---|---|---|
 | BLiNX 2: Masters of Time & Space | [apexJCL/blinx2-recomp](https://github.com/apexJCL/blinx2-recomp/releases) | Plays on Windows 11, on Steam Deck and Linux (Proton) and on macOS (Apple silicon) |
-| Burnout 3: Takedown | apexJCL/burnout3 (not published yet) | Coming soon |
+| Burnout 3: Takedown | [apexJCL/burnout3-recomp](https://github.com/apexJCL/burnout3-recomp/releases) | Coming soon |
 
 Built on the [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) toolkit
 by sp00nznet, which [apexJCL/xboxrecomp](https://github.com/apexJCL/xboxrecomp)

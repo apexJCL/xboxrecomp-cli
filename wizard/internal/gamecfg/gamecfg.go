@@ -108,6 +108,18 @@ type Option struct {
 	Labels map[string]string `json:"labels,omitempty"`
 }
 
+// Omitted is one option the CLI left out, and why.
+type Omitted struct {
+	Key    string `json:"key"`
+	Config string `json:"config"`
+	Why    string `json:"why"`
+}
+
+// ReadsConfig reports whether the build reads config.toml, as the CLI
+// read it at the toolkit pin (reads_config). A config from a CLI older than
+// the key builds on the fork, which always reads it.
+func (c *Config) ReadsConfig() bool { return c.Reads == nil || *c.Reads }
+
 // Link is an option's hint link.
 type Link struct {
 	Text string `json:"text"`
@@ -150,6 +162,13 @@ type Config struct {
 	Data    map[string]string `json:"data"`
 	Fetch   []Fetch           `json:"fetch"`
 	Options []Option          `json:"options"`
+	// Omitted are the game's config options the CLI left out because the
+	// toolkit at the pin reads no config.toml (upstream xboxrecomp has no
+	// enhancements layer); absent from a CLI older than the key.
+	Omitted []Omitted `json:"omitted,omitempty"`
+	// Reads is reads_config: false when the toolkit at the pin has no
+	// config.toml reader, even with no option left out. ReadsConfig.
+	Reads *bool `json:"reads_config,omitempty"`
 	// Credits is absent from a CLI older than the key: CreditList.
 	Credits []Credit `json:"credits,omitempty"`
 }

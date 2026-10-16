@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import zipfile
 
 import pytest
@@ -87,9 +88,11 @@ def write(path, data):
 
 
 @pytest.fixture
-def wgame(d):
+def wgame(d, monkeypatch):
     """The test game with a [wizard] table, its icon and defaults file,
-    committed and tagged v1.0.0; current while the test runs."""
+    committed and tagged v1.0.0; current while the test runs. Its toolkit
+    pin has the enhancements layer (read with no network)."""
+    monkeypatch.setattr(wizard.toolkit, "pin_has_enhance", lambda pin: True)
     root = os.path.join(d, "game")
     shutil.copytree(os.path.join(GAME, "config"), os.path.join(root, "config"))
     write(os.path.join(root, "game.toml"), base_text() + WIZARD)
@@ -500,6 +503,97 @@ def test_config_at_the_tag(wgame):
     assert fs["toml"] == {"true": "true", "false": "false"}
     # Stable bytes: the binary embeds them and the double build compares.
     assert wizard.config_json(cfg) == wizard.config_json(wizard.resolve(wgame)[0])
+
+
+def test_config_without_enhance(wgame, monkeypatch):
+    """A toolkit pin with no enhancements layer (upstream xboxrecomp) reads
+    no config.toml: the config options are left out, with why, and flag
+    options stay. The toolkit is asked at the tag's pin."""
+    asked = []
+
+    def has(pin):
+        asked.append(pin)
+        return False
+
+    monkeypatch.setattr(wizard.toolkit, "pin_has_enhance", has)
+    cfg, _ = wizard.resolve(wgame)
+    assert asked == [wgame.m["toolkit"]]
+    assert [o["key"] for o in cfg["options"]] == ["hud_pack"]
+    assert [(o["key"], o["config"]) for o in cfg["omitted"]] == [
+        ("scale", "render.scale"),
+        ("fullscreen", "present.fullscreen"),
+    ]
+    assert all("no enhancements layer (src/enhance/)" in o["why"] for o in cfg["omitted"])
+    assert '"omitted"' in wizard.config_json(cfg)
+    # Flag options alone need no toolkit read; a toolkit with the layer
+    # leaves the config as it was, with no omitted key.
+    assert cfg["reads_config"] is False
+    # Flag options alone and no data dir: nothing to ask the toolkit. With
+    # a data dir the pin is read, as the page would name config.toml there.
+    asked.clear()
+    m = dict(wgame.m, data=dict(wgame.m["data"], windows="", steamos="", macos=""))
+    assert wizard.reads_config(m, cfg["options"]) and asked == []
+    assert not wizard.reads_config(wgame.m, cfg["options"]) and asked == [wgame.m["toolkit"]]
+    assert wizard.without_enhance(cfg["options"], False, wgame.m["toolkit"]) == (cfg["options"], [])
+    # A toolkit with the layer leaves the config as it was, with no
+    # omitted key.
+    monkeypatch.setattr(wizard.toolkit, "pin_has_enhance", lambda pin: True)
+    cfg, _ = wizard.resolve(wgame)
+    assert "omitted" not in cfg and len(cfg["options"]) == 3 and cfg["reads_config"] is True
+
+
+def _toolkit_repo(d):
+    """A toolkit repository: commit 'fork' has src/enhance/CMakeLists.txt,
+    the next, 'upstream' (tagged v0.14.0), has none. (fork, upstream) shas."""
+    tk = os.path.join(d, "tk-remote")
+    write(os.path.join(tk, "tools", "recomp", "__main__.py"), "#\n")
+    write(os.path.join(tk, "src", "enhance", "CMakeLists.txt"), "#\n")
+    git(tk, "init", "-q")
+    git(tk, "add", "-A")
+    git(tk, "commit", "-qm", "fork")
+    git(tk, "rm", "-rq", "src/enhance")
+    git(tk, "commit", "-qm", "upstream")
+    git(tk, "tag", "-a", "-m", "v0.14.0", "v0.14.0")
+    # As GitHub serves it: without these the file:// fetch ignores
+    # --filter and refuses a bare commit, and the blobless path is untested.
+    git(tk, "config", "uploadpack.allowFilter", "true")
+    git(tk, "config", "uploadpack.allowAnySHA1InWant", "true")
+
+    def sha(rev):
+        r = subprocess.run(["git", "-C", tk, "rev-parse", rev], capture_output=True, check=True)
+        return r.stdout.decode().strip()
+
+    return tk, sha("HEAD~1"), sha("HEAD")
+
+
+def test_pin_has_enhance(wgame, d, monkeypatch):
+    """The toolkit is read at the pin: from the local checkout's history when
+    it has the commit (whatever its working tree), else by a blobless
+    fetch of that one commit or tag; a tag that is not its lock is refused."""
+    monkeypatch.undo()  # the real lookup, not the fixture's stand-in
+    from xboxrecomp_cli import toolkit
+
+    remote, fork, upstream = _toolkit_repo(d)
+    url = "file://" + remote
+    # The local checkout has both commits; its working tree is upstream's.
+    monkeypatch.setenv("XBOXRECOMP_DIR", remote)
+    assert toolkit.pin_has_enhance({"url": url, "tag": "", "commit": fork})
+    assert not toolkit.pin_has_enhance({"url": url, "tag": "", "commit": upstream})
+    assert not toolkit.pin_has_enhance({"url": url, "tag": "v0.14.0", "commit": ""})
+    # No local checkout: fetched from the url, into a scratch repository
+    # that is gone after every call, passing or failing.
+    monkeypatch.setenv("XBOXRECOMP_DIR", os.path.join(d, "no-toolkit"))
+    tmp = os.path.join(d, "tmp")
+    os.makedirs(tmp)
+    monkeypatch.setattr(tempfile, "tempdir", tmp)
+    assert toolkit.pin_has_enhance({"url": url, "tag": "", "commit": fork})
+    assert not toolkit.pin_has_enhance({"url": url, "tag": "v0.14.0", "commit": upstream})
+    with pytest.raises(CliError, match="tag v0.14.0 is .* not the pinned commit"):
+        toolkit.pin_has_enhance({"url": url, "tag": "v0.14.0", "commit": fork})
+    assert os.listdir(tmp) == []
+    with pytest.raises(CliError, match="cannot read .* at v9"):
+        toolkit.pin_has_enhance({"url": url, "tag": "v9", "commit": ""})
+    assert os.listdir(tmp) == []
 
 
 def test_config_reads_the_tag_not_the_tree(wgame):
@@ -921,7 +1015,16 @@ def test_wizard_pins_refresh(d, capsys):
 def test_doctor_json(wgame):
     lines, targets, blocked = doctor.doctor_report()
     out = json.loads(doctor.report_json(lines, targets, blocked))
-    assert set(out) == {"host", "lines", "targets", "blocked", "blockers", "problems", "next"}
+    assert set(out) == {
+        "host",
+        "lines",
+        "targets",
+        "blocked",
+        "blockers",
+        "problems",
+        "next",
+        "toolkit_features",
+    }
     assert set(out["host"]) == {"os", "arch", "python"}
     assert out["lines"] == lines and out["targets"] == targets
     assert set(out["blockers"]) == {"windows", "steamos", "macos"}

@@ -43,6 +43,9 @@ def write(path, text):
         f.write(text)
 
 
+SPIN_FLAG = 'parser.add_argument("--spin-waits", metavar="JSON")\n'
+
+
 @contextlib.contextmanager
 def fake_tree(d):
     """The test game copied to d/cat with the files the pipeline reads, a
@@ -65,6 +68,8 @@ def fake_tree(d):
         write(p, text)
     open(os.path.join(G.gen, "recomp_funcs.h"), "w").close()
     os.makedirs(os.path.join(tk, "tools", "recomp", "output"), exist_ok=True)
+    # The fork's recomp parser has --spin-waits (upstream's has none).
+    write(os.path.join(tk, "tools", "recomp", "spin_waits_flag.py"), SPIN_FLAG)
     keys = ("XBOXRECOMP_DIR", "ICALL_DB", "SPLIT", "XBOXRECOMP_PYTHON", "LLVM_MINGW_ROOT")
     env_saved = {k: os.environ.get(k) for k in keys}
     saved = manifest.current()
@@ -704,7 +709,7 @@ def test_recomp_seeds_probe(d, capsys):
         pipeline.recomp_cmds()
         assert capsys.readouterr().err == ""  # once per process
 
-        pipeline._seeds_probe.clear()
+        pipeline._flag_probe.clear()
         write(main_py, 'parser.add_argument(\n    "--seeds", metavar="JSON", action="append")\n')
         args = pipeline.recomp_cmds()[0][2]
         i = args.index("--seeds")
@@ -712,7 +717,54 @@ def test_recomp_seeds_probe(d, capsys):
         assert args.index("--spin-waits") < i < args.index("-o")
         assert pipeline.stage_argv() != before
         assert "$ROOT/config/seed_functions.json" in pipeline.stage_argv()
-    pipeline._seeds_probe.clear()
+    pipeline._flag_probe.clear()
+
+
+def test_recomp_spin_waits_probe(d, capsys):
+    """Upstream xboxrecomp's recomp has no --spin-waits: the flag is left
+    out with one warning, so the commands are the toolkit's own (regen.sh's
+    gen/); a comment naming the flag is not the parser's."""
+    with fake_tree(d) as (root, tk):
+        os.remove(os.path.join(tk, "tools", "recomp", "spin_waits_flag.py"))
+        write(os.path.join(tk, "tools", "recomp", "__main__.py"), "# no --spin-waits\n")
+        pipeline._flag_probe.clear()
+        before = pipeline.stage_argv()
+        args = pipeline.recomp_cmds()[0][2]
+        assert "--spin-waits" not in args
+        err = capsys.readouterr().err
+        assert "toolkit has no --spin-waits" in err and "config/spin_waits.json" in err
+        pipeline.recomp_cmds()
+        assert "--spin-waits" not in capsys.readouterr().err  # once per process
+
+        pipeline._flag_probe.clear()
+        write(os.path.join(tk, "tools", "recomp", "__main__.py"), SPIN_FLAG)
+        args = pipeline.recomp_cmds()[0][2]
+        assert args[args.index("--spin-waits") + 1] == host.g().spin_waits
+        assert "--spin-waits" not in capsys.readouterr().err
+        assert pipeline.stage_argv() != before
+
+        # A game with no spin_waits file is not warned about the flag.
+        pipeline._flag_probe.clear()
+        write(os.path.join(tk, "tools", "recomp", "__main__.py"), "#\n")
+        p = host.g().m["pipeline"]
+        p["spin_waits"] = ""
+        manifest.use(manifest.Game(host.g().root, host.g().m))
+        pipeline.recomp_cmds()
+        assert "--spin-waits" not in capsys.readouterr().err
+    pipeline._flag_probe.clear()
+
+
+def test_recomp_probe_before_setup(d, capsys, monkeypatch):
+    """No toolkit yet: no flag, no upstream warning, and nothing cached, so
+    the checkout setup then makes answers for itself."""
+    with fake_tree(d) as (root, tk):
+        pipeline._flag_probe.clear()
+        monkeypatch.setenv("XBOXRECOMP_DIR", os.path.join(d, "no-toolkit"))
+        assert not pipeline.toolkit_has_spin_waits()
+        assert capsys.readouterr().err == "" and pipeline._flag_probe == {}
+        monkeypatch.setenv("XBOXRECOMP_DIR", tk)
+        assert pipeline.toolkit_has_spin_waits()
+    pipeline._flag_probe.clear()
 
 
 def test_gen_key_inputs(d):
@@ -1034,6 +1086,38 @@ def test_stock_refusal_text():
     )
     assert msg.startswith("build-pkg-macos is not a stock build: XBOXRECOMP_ENHANCE=OFF (want ON)")
     assert "package macos --reconfigure" in msg and "delete build-pkg-macos/" in msg
+
+
+def test_toolkit_features(d):
+    """doctor names what the toolkit has of the fork's parts, by the file
+    or parser line that brings each: upstream xboxrecomp has none of them."""
+    with fake_tree(d) as (root, tk):
+        os.remove(os.path.join(tk, "tools", "recomp", "spin_waits_flag.py"))
+        assert toolkit.features(tk) == dict.fromkeys(
+            ("env_table", "enhance", "d3d11", "metal", "spin_waits"), False
+        )
+        assert doctor_mod.features_line(toolkit.features(tk)) == (
+            "the base toolkit only; no env table, enhancements, D3D11, Metal, spin waits"
+        )
+        write(os.path.join(tk, "tools", "recomp", "__main__.py"), SPIN_FLAG)
+        write(os.path.join(tk, "src", "d3d", "nv2a_pb_metal.m"), "")
+        assert doctor_mod.features_line(toolkit.features(tk)) == (
+            "Metal, spin waits; no env table, enhancements, D3D11"
+        )
+        for rel in (
+            "src/platform/recomp_env.h",
+            "src/enhance/CMakeLists.txt",
+            "src/d3d/nv2a_pb_d3d11.c",
+        ):
+            write(os.path.join(tk, *rel.split("/")), "")
+        assert all(toolkit.features(tk).values())
+        assert doctor_mod.features_line(toolkit.features(tk)) == (
+            "env table, enhancements, D3D11, Metal, spin waits"
+        )
+        lines = doctor_mod.doctor_report()[0]
+        assert "features:   env table, enhancements, D3D11, Metal, spin waits" in lines
+        out = json.loads(doctor_mod.report_json(*doctor_mod.doctor_report()))
+        assert out["toolkit_features"] == toolkit.features(tk)
 
 
 def test_doctor_cli_row(d):

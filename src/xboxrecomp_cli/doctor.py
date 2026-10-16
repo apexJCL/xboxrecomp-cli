@@ -146,6 +146,9 @@ def unknown_dump_note(sha):
 # What the last doctor_report found missing for any build (setup can fix
 # most of it): doctor's exit status when the game packages no steamos.
 PROBLEMS = []
+# toolkit.features() of the last report, or None before setup: report_json
+# reads it rather than probing the checkout again.
+FEATURES = [None]
 
 
 def doctor_report():
@@ -209,6 +212,8 @@ def doctor_report():
         w = toolkit.drift_warning("toolkit", tk, g.m["toolkit"])
         if w:
             lines.append("warning:    " + w)
+        FEATURES[0] = toolkit.features(tk)
+        lines.append("features:   " + features_line(FEATURES[0]))
     else:
         lines.append("toolkit:    missing at %s (run '%s setup')" % (tk, slug))
         problems.append("no toolkit (%s setup)" % slug)
@@ -292,6 +297,18 @@ def doctor_report():
     return lines, targets, blocked
 
 
+def features_line(feats):
+    """What the toolkit has of the fork's parts, and what it lacks: on
+    upstream xboxrecomp a build still works, with the CPU rasteriser, no
+    config.toml and the busy-wait loops as on the Xbox."""
+    labels = toolkit.feature_labels()
+    has = [labels[k] for k in labels if feats.get(k)]
+    lacks = [labels[k] for k in labels if not feats.get(k)]
+    if not lacks:
+        return ", ".join(has)
+    return "%s; no %s" % (", ".join(has) or "the base toolkit only", ", ".join(lacks))
+
+
 def next_step(problems, gen_ok, game_files):
     """One line for a fresh tree, where everything is missing at once: the
     first fix in setup order (uv, then setup, then the dump, then the
@@ -335,6 +352,8 @@ def report_json(lines, targets, blocked):
             "blockers": {t: setup.host_blockers(t, importing=True) for t in wanted},
             "problems": list(PROBLEMS),
             "next": nxt[-1].split(":", 1)[1].strip() if nxt else "",
+            # {feature: bool} of the toolkit checkout; null before setup.
+            "toolkit_features": FEATURES[0],
         },
         indent=2,
     )

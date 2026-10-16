@@ -1,10 +1,13 @@
 """The toolkit: where it is, the Python that runs its tools, its state for
 the generation key, and the clone at the manifest's pin."""
 
+import glob
 import hashlib
 import os
+import re
 import shutil
 import subprocess
+import tempfile
 
 from . import gitpin, host
 from .host import CliError
@@ -84,6 +87,136 @@ def toolkit_state():
     dirty = h.hexdigest()
     empty = hashlib.sha256(b"").hexdigest()
     return head if dirty == empty else "%s-dirty%s" % (head, dirty[:12])
+
+
+# What a toolkit can do beyond upstream xboxrecomp's base, each told by the
+# file that brings it: the fork (apexJCL/xboxrecomp) has them all, upstream
+# v0.14.0 none. A game builds on either; without one, the part that needs
+# it is compiled out (the game's CMake guards) or left out here.
+FEATURE_FILES = (
+    ("env_table", "env table", "src/platform/recomp_env.h"),
+    # The enhancements layer is also the config.toml reader: without it no
+    # config.toml key is read at all.
+    ("enhance", "enhancements", "src/enhance/CMakeLists.txt"),
+    ("d3d11", "D3D11", "src/d3d/nv2a_pb_d3d11.c"),
+    ("metal", "Metal", "src/d3d/nv2a_pb_metal.m"),
+)
+# The one feature told by recomp's parser rather than a file.
+SPIN_WAITS = ("spin_waits", "spin waits", "--spin-waits")
+
+
+def recomp_flag_re(flag):
+    """The parser definition of a recomp flag, not any mention of it."""
+    return re.compile(r"""add_argument\(\s*["']%s["']""" % re.escape(flag))
+
+
+def recomp_has_flag(tk, flag):
+    """Whether tk's recomp parser defines flag, from its source: a file
+    read, as gen_key() hashes the commands on every build. A toolkit's sha
+    cannot tell (the public fork's shas differ from a developer's)."""
+    pat = recomp_flag_re(flag)
+    for p in sorted(glob.glob(os.path.join(tk, "tools", "recomp", "*.py"))):
+        try:
+            with open(p, errors="replace") as f:
+                if pat.search(f.read()):
+                    return True
+        except OSError:
+            pass
+    return False
+
+
+def features(tk=None):
+    """{name: bool} for the toolkit checkout at tk (default toolkit_dir()),
+    from its working tree."""
+    tk = tk or toolkit_dir()
+    out = {k: os.path.isfile(os.path.join(tk, *rel.split("/"))) for k, _, rel in FEATURE_FILES}
+    out[SPIN_WAITS[0]] = recomp_has_flag(tk, SPIN_WAITS[2])
+    return out
+
+
+def feature_labels():
+    return dict((k, label) for k, label, _ in FEATURE_FILES + (SPIN_WAITS,))
+
+
+def _git_ok(d, *args):
+    return (
+        subprocess.run(
+            ["git", "-C", d] + list(args), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).returncode
+        == 0
+    )
+
+
+def _has_paths(d, commit, rels):
+    """{rel: bool}: whether each file is in commit's tree in repo d. The
+    trees alone answer (ls-tree), so a blobless fetch fetches no file."""
+
+    def has(rel):
+        r = subprocess.run(
+            ["git", "-C", d, "ls-tree", "-r", "--name-only", commit, "--", rel],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        return r.returncode == 0 and r.stdout.decode(errors="replace").strip() == rel
+
+    return {rel: has(rel) for rel in rels}
+
+
+def pin_files(pin, rels):
+    """{rel: bool}: whether each file is in the toolkit at the pin, without
+    a checkout of it. The pin's commit in the local toolkit's history
+    answers; else one commit's trees are fetched (depth 1, no file contents)
+    into a scratch repository that is removed after. A tag is checked
+    against its lock as a clone would."""
+    tk = toolkit_dir()
+    if shutil.which("git") is None:
+        raise CliError("git is needed to read the toolkit at its pin")
+    if os.path.isdir(tk):
+        commit = pin.get("commit") or (pin.get("tag") and gitpin.local_tag(tk, pin["tag"]))
+        if commit and _git_ok(tk, "cat-file", "-e", commit + "^{commit}"):
+            return _has_paths(tk, commit, rels)
+    with tempfile.TemporaryDirectory(prefix="xbr-toolkit-pin-") as tmp:
+        if not (_git_ok(tmp, "init", "-q") and _git_ok(tmp, "remote", "add", "origin", pin["url"])):
+            raise CliError("toolkit: git init failed in %s" % tmp)
+        ref = ("refs/tags/" + pin["tag"]) if pin.get("tag") else pin["commit"]
+        r = subprocess.run(
+            ["git", "-C", tmp, "fetch", "--quiet", "--no-tags", "--depth", "1"]
+            + ["--filter=blob:none", "origin", ref],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            # A private or missing repository answers 401: fail, never
+            # wait on a credential prompt the wizard cannot show.
+            env=dict(os.environ, GIT_TERMINAL_PROMPT="0"),
+        )
+        if r.returncode != 0:
+            err = r.stderr.decode(errors="replace").strip().splitlines()
+            raise CliError(
+                "toolkit: cannot read %s at %s%s (run '%s setup' to clone it, or check the "
+                "network)"
+                % (pin["url"], gitpin.describe(pin), ": " + err[-1] if err else "", host.prog())
+            )
+        r = subprocess.run(
+            ["git", "-C", tmp, "rev-parse", "FETCH_HEAD^{commit}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        got = r.stdout.decode().strip()
+        if r.returncode != 0 or not got:
+            raise CliError(
+                "toolkit: %s at %s fetched no commit" % (pin["url"], gitpin.describe(pin))
+            )
+        if pin.get("tag") and pin.get("commit") and got != pin["commit"]:
+            raise CliError(
+                gitpin.mismatch("toolkit", pin["tag"], got, pin["commit"], "on " + pin["url"])
+            )
+        return _has_paths(tmp, got, rels)
+
+
+def pin_has_enhance(pin):
+    """Whether the toolkit at the pin has the enhancements layer (and with
+    it the config.toml reader)."""
+    rel = dict((k, rel) for k, _, rel in FEATURE_FILES)["enhance"]
+    return pin_files(pin, [rel])[rel]
 
 
 def exclude_pin_mark(tk, mark=PIN_MARK):

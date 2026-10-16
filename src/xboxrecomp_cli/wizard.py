@@ -16,7 +16,7 @@ import os
 import subprocess
 import tomllib
 
-from . import credits, gitpin, host, manifest
+from . import credits, gitpin, host, manifest, toolkit
 from .host import CliError
 
 # The embedded config's format; the Go side refuses another.
@@ -208,6 +208,34 @@ def problems(m, read, flags):
     return errors, options
 
 
+def reads_config(m, options):
+    """Whether the binary built at m's toolkit pin reads config.toml: the
+    enhancements layer is the reader, and upstream xboxrecomp has none. The
+    toolkit is read at the pin, not a checkout's working tree, since the
+    binary builds at that pin; only when the answer shows (a config option,
+    or a data dir the wizard names config.toml under)."""
+    if not any(o["config"] for o in options) and not any(
+        m["data"][t] for t in ("windows", "steamos", "macos")
+    ):
+        return True
+    return toolkit.pin_has_enhance(m["toolkit"])
+
+
+def without_enhance(options, reads, pin):
+    """(options kept, options left out with why): a build that reads no
+    config.toml (reads false) would do nothing with an option that sets a
+    config key. Flag options stay."""
+    if reads:
+        return options, []
+    why = (
+        "the toolkit at %s has no enhancements layer (src/enhance/), which reads config.toml"
+        % gitpin.describe(pin)
+    )
+    kept = [o for o in options if not o["config"]]
+    left = [{"key": o["key"], "config": o["config"], "why": why} for o in options if o["config"]]
+    return kept, left
+
+
 def resolve(G, tag="", dev=False):
     """(config dict, icon bytes) for game G at the release: the manifest
     read from the tag's tree, validated, with the file rules. The icon is
@@ -225,6 +253,8 @@ def resolve(G, tag="", dev=False):
     errors, options = problems(m, read, package_flags())
     if errors:
         raise CliError("game.toml [wizard]:\n  " + "\n  ".join(errors))
+    reads = reads_config(m, options)
+    options, omitted = without_enhance(options, reads, m["toolkit"])
     w, pkg = m["wizard"], m["package"]
     cfg = {
         "schema": CONFIG_SCHEMA,
@@ -241,8 +271,14 @@ def resolve(G, tag="", dev=False):
         "data": {t: m["data"][t] for t in ("windows", "steamos", "macos")},
         "fetch": [dict(f) for f in w["fetch"]],
         "options": options,
+        # False on a toolkit with no config.toml reader: the wizard then
+        # never points the player at that file.
+        "reads_config": reads,
         "credits": credits.merged(w["credit"]),
     }
+    if omitted:
+        # The [[wizard.option]] entries the binary does not offer, and why.
+        cfg["omitted"] = omitted
     return cfg, (read(w["icon"]) if w["icon"] else None)
 
 

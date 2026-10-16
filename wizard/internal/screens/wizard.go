@@ -1221,6 +1221,12 @@ func (w *Wizard) fillOptions() {
 		sync()
 	}
 	w.checkFont()
+	if !w.opt.Cfg.ReadsConfig() {
+		// Pointing at config.toml would send the player to a file this
+		// build never reads.
+		w.optionsNote.SetText(optionsNoConfig)
+		return
+	}
 	if p := ConfigPath(w.opt.Cfg, w.st.Target); p != "" {
 		w.optionsNote.SetText(fmt.Sprintf(optionsLater, p))
 		return

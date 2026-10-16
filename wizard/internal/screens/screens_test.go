@@ -1062,6 +1062,25 @@ func TestOptionsPage(t *testing.T) {
 	}
 }
 
+// A build that reads no config.toml (reads_config false, a toolkit with no
+// settings layer), here with only flag options so nothing was left out: the
+// page says so instead of naming the file.
+func TestOptionsNoConfig(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	opt := sampleOptions(t)
+	opt.Cfg.Options = slices.DeleteFunc(opt.Cfg.Options, func(o gamecfg.Option) bool { return o.Config != "" })
+	no := false
+	opt.Cfg.Reads = &no
+	w := New(a, opt)
+	w.st.Target = "windows"
+	w.render(pOptions)
+	w.fillOptions()
+	if got := w.optionsNote.Text(); got != optionsNoConfig {
+		t.Errorf("note %q", got)
+	}
+}
+
 // A range whose min is not a multiple of its step: Fyne's slider snaps to
 // multiples of Step from 0, so driven by value 3 and 5 would land on 2 and
 // 4. Over indexes every value round-trips and a saved 3 shows as 3.
