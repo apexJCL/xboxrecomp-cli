@@ -1036,6 +1036,10 @@ def run_backend(log):
 
 ENHANCE_SCALE_RE = re.compile(r"\[ENHANCE\] render\.scale=(\d+) ")
 ENHANCE_ASPECT_RE = re.compile(r"\[ENHANCE\].*display\.aspect=([0-9:]+)")
+# The summary line's value, which the toolkit has already clamped and
+# folded (1 is off, so it logs 0); the "out of range" warning before it
+# carries the raw value and is not matched.
+ENHANCE_ANISO_RE = re.compile(r"\[ENHANCE\] render\.scale=\S+ render\.aniso=(\d+)\s")
 ENHANCE_PACING_RE = re.compile(r"\[ENHANCE\].* present\.pacing=(\w+)")
 # "[ENHANCE] textures.pack=none", or "=<path> (N entries, scale S)", or
 # "=<path>: <reason>; no pack" (refused, so stock: the value is "none").
@@ -1045,6 +1049,7 @@ ENHANCE_PACK_RE = re.compile(r"\[ENHANCE\] textures\.pack=(?!.*; no pack$)(\S+?)
 # (fps.mode, fx.glow for BLiNX 2) come from its game.toml (GAME_ENHANCE).
 ENHANCE_STOCK = (
     ("render.scale", ENHANCE_SCALE_RE, "1"),
+    ("render.aniso", ENHANCE_ANISO_RE, "0"),
     ("display.aspect", ENHANCE_ASPECT_RE, "4:3"),
     ("present.pacing", ENHANCE_PACING_RE, "spin"),
     ("textures.pack", ENHANCE_PACK_RE, "none"),
@@ -1074,11 +1079,11 @@ def stock_value(value, stock):
 def enhance_nonstock(log, allow=()):
     """Why a run is not a stock run, from its enhancements lines, or None.
     Goldens always run at the title's stock resolution, aspect, pacing and
-    frame rate: a render.scale other than 1, a display.aspect other than
-    4:3, a present.pacing other than spin or an fps.mode other than lock30
-    (asked for, even where the game falls back) makes the run unusable as a
-    golden, whatever its frames look like. No [ENHANCE] line (a build
-    without the layer) is stock.
+    frame rate: a render.scale other than 1, a render.aniso other than 0,
+    a display.aspect other than 4:3, a present.pacing other than spin or an
+    fps.mode other than lock30 (asked for, even where the game falls back)
+    makes the run unusable as a golden, whatever its frames look like. No
+    [ENHANCE] line (a build without the layer) is stock.
 
     allow: "key=value" strings an evaluation run asked for on purpose
     (--allow-enhance); those are left out here and reported by

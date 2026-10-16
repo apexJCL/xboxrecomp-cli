@@ -332,6 +332,21 @@ def test_enhance_scale_2_fails():
         assert rc == 1 and "not a stock run" in out and "render.scale=2" in out, out
 
 
+def test_enhance_aniso_fails_and_stock_passes():
+    aniso = STOCK.replace("render.scale=1", "render.scale=1 render.aniso=%d")
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = enhance_case(tmp, [aniso % 16])
+        assert rc == 1 and "not a stock run" in out and "render.aniso=16" in out, out
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = enhance_case(
+            tmp, ["[ENHANCE] render.aniso=99 out of range 0..16; using 16", aniso % 16]
+        )
+        assert rc == 1 and "render.aniso=16" in out, out
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = enhance_case(tmp, [aniso % 0])
+        assert rc == 0 and "EXACT" in out, out
+
+
 def test_enhance_aspect_fails():
     with tempfile.TemporaryDirectory() as tmp:
         rc, out = enhance_case(

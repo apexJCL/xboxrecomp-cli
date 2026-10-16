@@ -166,6 +166,15 @@ def test_enhance_hud_table():
             parse(MINIMAL + hud + extra)
 
 
+def test_toolkit_enhance_keys_match_golden():
+    """The manifest refuses a game's enhance_stock entry for a toolkit key
+    because the golden check holds those itself: the two lists must agree,
+    or a new toolkit key (render.aniso) slips through as a game key."""
+    from xboxrecomp_cli import golden
+
+    assert set(manifest.TOOLKIT_ENHANCE_KEYS) == {k for k, _, _ in golden.ENHANCE_STOCK}
+
+
 def test_game_tables():
     """enhance_stock is one key holding a table; bench.gc's refs may leave
     the game root (the workspace's notes beside it), unlike other paths."""

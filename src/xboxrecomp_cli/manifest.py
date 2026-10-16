@@ -260,7 +260,13 @@ CLI_TOOLCHAIN = os.path.join(
 )
 # The toolkit's own enhancement keys, which the golden check holds built in
 # (xboxrecomp_cli.golden.ENHANCE_STOCK); a game's table adds its own.
-TOOLKIT_ENHANCE_KEYS = ("render.scale", "display.aspect", "present.pacing", "textures.pack")
+TOOLKIT_ENHANCE_KEYS = (
+    "render.scale",
+    "render.aniso",
+    "display.aspect",
+    "present.pacing",
+    "textures.pack",
+)
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # The bootstrap reads [cli] with a line parser, and the help without uv
 # reads [game] name the same way: plain one-line strings there.

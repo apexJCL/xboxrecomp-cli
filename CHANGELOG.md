@@ -7,6 +7,11 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Changed
+- `golden` treats `render.aniso` as a non-stock key, so goldens run with
+  anisotropic filtering off, and the manifest lists it as a toolkit
+  enhancement key.
+
 ## [0.7.5] - 2026-10-15
 
 ### Added
