@@ -326,9 +326,17 @@ image runs natively there, as on an Apple-silicon Mac), checks
 to the tag's release. A manual run takes the tag and attaches only when
 `release` is ticked. Every action is pinned by commit.
 
-The build and `verify` jobs are read-only (`contents: read`, checkouts
-with `persist-credentials: false`, setup-uv with no restored cache).
-Only `release` can write, and it runs only on a tag push or a ticked
-`release`; it checks the assets against `SHA256SUMS`, creates a draft
-release for the tag when there is none yet, and attaches the four files
-by name.
+The release notes are the tag's section of the game's `CHANGELOG.md`
+(`## [1.0.0] - YYYY-MM-DD` for `v1.0.0`; `xbr new` writes the file with an
+empty `[Unreleased]`). The first job, `notes`, takes that section from the
+tagged commit and stops the run, before any build, when the tag has none
+or it is empty, so the section belongs in the commit you tag.
+
+The `notes`, build and `verify` jobs are read-only (`contents: read`,
+checkouts with `persist-credentials: false`, setup-uv with no restored
+cache). Only `release` can write, and it runs only on a tag push or a
+ticked `release`. It checks the assets against `SHA256SUMS`, creates the
+release as a draft with the notes (or, when one exists, gives it this
+run's notes), attaches the four files by name, and publishes it last, so
+the release is never public with files missing. A tag with `-rc.` in it
+is published as a pre-release.

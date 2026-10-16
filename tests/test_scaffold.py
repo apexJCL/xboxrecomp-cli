@@ -136,6 +136,7 @@ def test_offline_scaffold_loads_and_names_what_is_left(d, tk, game):
         ".gitignore",
         ".gitattributes",
         "README.md",
+        "CHANGELOG.md",
         "config/seed_functions.json",
         "CMakeLists.txt",
         "src/main.c",

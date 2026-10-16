@@ -5,7 +5,7 @@ starts with one command instead of copying files out of another game.
 
 It writes the manifest with every pin filled in, the bootstrap and its two
 wrappers, the tools pyproject.toml, .gitignore, .gitattributes, README.md,
-and the toolkit's templates/new-game/ with the game's constants patched
+CHANGELOG.md, the release workflow, and the toolkit's templates/new-game/ with the game's constants patched
 in; then, when the network, git and uv allow, it clones the toolkit at the
 pin and writes config/setup-pins.json and uv.lock. Whatever cannot be done
 is named as the command that finishes it. It never overwrites a file and
@@ -146,6 +146,21 @@ WORKFLOW = ".github/workflows/release-wizard.yml"
 def workflow_text(values):
     with open(os.path.join(CLI_TEMPLATES, *WORKFLOW.split("/")), encoding="utf-8") as f:
         return fill(f.read(), values)
+
+
+# The release workflow publishes a tag's section of this file as the
+# release notes and stops the run when the tag has none.
+CHANGELOG = """\
+# Changelog
+
+What changed for players in each release, newest first, in the style of
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). A release tag's
+section is its GitHub release notes: before tagging v1.0.0, add
+`## [1.0.0] - YYYY-MM-DD` with the changes (Added, Changed, Fixed,
+Removed). .github/workflows/release-wizard.yml stops when the tag has none.
+
+## [Unreleased]
+"""
 
 
 PYPROJECT = """\
@@ -782,6 +797,7 @@ def scaffold(root, a):
     write(j(".gitignore"), fill(GITIGNORE, v))
     write(j(".gitattributes"), fill(GITATTRIBUTES, v))
     write(j("README.md"), fill(README, v))
+    write(j("CHANGELOG.md"), CHANGELOG)
     write(j(*WORKFLOW.split("/")), workflow_text(v))
     write(j("config", "seed_functions.json"), "[]\n")
     os.makedirs(G.game_files, exist_ok=True)

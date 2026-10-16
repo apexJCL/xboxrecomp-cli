@@ -267,6 +267,20 @@ def head(d):
     ).stdout.strip()
 
 
+_CLI_HEAD = []
+
+
+def cli_head():
+    """The CLI checkout's own commit, which the provenance names and which
+    may abbreviate to digits only too (2182758); [] outside a git checkout."""
+    if not _CLI_HEAD:
+        try:
+            _CLI_HEAD.append(head(cli_dir()))
+        except (OSError, subprocess.CalledProcessError):
+            _CLI_HEAD.append("")
+    return [h for h in _CLI_HEAD if h]
+
+
 TRACEBACK = re.compile(r"^Traceback \(most recent call last\):\n(?:[ \t].*\n)+", re.M)
 CLI_LINE = re.compile(r"^cli: .*$", re.M)
 
@@ -293,7 +307,10 @@ def norm(s, tmp):
         if h:
             s = s.replace(h, "HOSTNAME")
     s = DATE.sub("DATE", STAMP.sub("STAMP", s))
-    s = HEX.sub(lambda m: "SHA" if any(h.startswith(m.group()) for h in HEADS) else m.group(), s)
+    s = HEX.sub(
+        lambda m: "SHA" if any(h.startswith(m.group()) for h in HEADS + cli_head()) else m.group(),
+        s,
+    )
     return SHA.sub("SHA", s)
 
 
