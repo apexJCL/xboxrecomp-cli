@@ -47,7 +47,7 @@ done
 # Tests an older toolkit does not have yet (another game's pin): built and run
 # when their directory exists, skipped with a line otherwise. template_main
 # builds the new-game template's main.c against the toolkit.
-optional="enhance_cfg template_main"
+optional="enhance_cfg template_main fb_window_wanted"
 have_optional=
 for t in $optional; do
     src=../xboxrecomp/tests/$t
@@ -63,6 +63,18 @@ for t in $optional; do
     cmake --build "build-win/tests/$t"
     have_optional="$have_optional $t"
 done
+# template_main once more with the enhancements layer built in: the template
+# starts it only under XBOXRECOMP_ENHANCE, and a new game may build either way.
+case " $have_optional " in *" template_main "*)
+    t=template_main_enhance
+    fresh_if_stale "build-win/tests/$t"
+    cmake -S ../xboxrecomp/tests/template_main -B "build-win/tests/$t" -G Ninja \
+        -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
+        -DLLVM_MINGW_ROOT="$LLVM_MINGW_ROOT" -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CROSSCOMPILING_EMULATOR="$emu" -DXBOXRECOMP_ENHANCE=ON >/dev/null
+    cmake --build "build-win/tests/$t"
+    have_optional="$have_optional $t" ;;
+esac
 unset PROTON_RUN_LOCK
 export WINEPREFIX="$BENCH_PREFIX"
 fail=0

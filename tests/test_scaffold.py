@@ -514,6 +514,11 @@ def test_real_template_patches_match(d, game, monkeypatch):
     # <windows.h> only inside a _WIN32 section.
     assert "Win32-only template" not in out, out
     assert "#if defined(_WIN32)" in c and "xbox_HostWindowMain" in c
+    # The window's title, in both entry points, once the template names it.
+    template = read(os.path.join(REAL_TOOLKIT, "templates", "new-game", "src", "main.c"))
+    if "xbox_HostWindowSetTitle(" in template:
+        assert template.count('xbox_HostWindowSetTitle("YOUR_GAME_NAME");') == 2
+        assert c.count('xbox_HostWindowSetTitle("g");') == 2
     depth, win32 = [], []
     for line in c.splitlines():
         s = line.strip()
@@ -603,6 +608,32 @@ def test_title_is_made_a_plain_toml_string(d, tk, game):
         assert manifest.load(root).name == want, title
         shutil.rmtree(root)
     assert scaffold.clean_name("", "slug") == "slug"
+
+
+def test_the_title_reaches_the_window(d, tk, game):
+    """The template names its window with xbox_HostWindowSetTitle
+    ("YOUR_GAME_NAME") in both entry points (toolkit fix/fb-window-guard);
+    the every-occurrence YOUR_GAME_NAME patch hands it the game's name.
+    clean_name keeps quotes and backslashes out of the name, so it is a
+    valid C string too."""
+    main_c = os.path.join(tk, "templates", "new-game", "src", "main.c")
+    titled = FAKE_MAIN.replace(
+        "int main(void) {\n",
+        'int main(void) {\n    xbox_HostWindowSetTitle("YOUR_GAME_NAME");\n',
+    )
+    write(main_c, titled)
+    dump = os.path.join(d, "default.xbe")
+    with open(dump, "wb") as f:
+        f.write(header(title='Say "Hi"'))
+    root = os.path.join(d, "g")
+    rc, out, err = new(
+        root, "--offline", "--xbe", dump, "--cli-commit", CLI, "--toolkit-commit", TK
+    )
+    assert rc == 0, err
+    assert "(the template changed)" not in out, out
+    c = read(os.path.join(root, "src", "main.c"))
+    assert '    xbox_HostWindowSetTitle("Say  Hi");\n' in c
+    assert "YOUR_GAME_NAME" not in c
 
 
 def test_ds_store_does_not_make_the_dir_full(d, tk, game):

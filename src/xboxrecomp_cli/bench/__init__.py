@@ -368,7 +368,7 @@ class Bench:
             "tests: d3d8_hlsl_split, d3d11_backend_smoke, input_map, input_keyboard, nv2a_zbuf, apu_irq, "
             "kernel_irql_abi, fp_precision, x87_trig, vblank_ack, vblank_schedule, spin_wait, rt_alias, irq_safe_points, "
             "kernel_missing_report, kernel_file_status, kernel_guest_cpu, dpc_order, kernel_events, "
-            "kernel_regressions, memory_regressions, guest_cpu, flip_hold, apu_voice_mask, apu_voice_lock, enhance_cfg, template_main (when the toolkit has them) "
+            "kernel_regressions, memory_regressions, guest_cpu, flip_hold, apu_voice_mask, apu_voice_lock, enhance_cfg, template_main (enhance off and on), fb_window_wanted (when the toolkit has them) "
             "under Proton"
         )
         rc = self.r.in_box_locked(self.r.ship("tests.sh"), exclusive=True, what="tests")[0]

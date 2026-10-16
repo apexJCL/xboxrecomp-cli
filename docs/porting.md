@@ -174,6 +174,23 @@ older template adds the two lines to `main.c` after
 `recomp_env(RENV_VBLANK)` is unset, and the same for
 `RENV_TITLE_KEVENTS`.
 
+The template also carries what Burnout 3 and BLiNX 2 each added to their
+own `main.c`. When the toolkit is built with `XBOXRECOMP_ENHANCE`, both
+entry points start the enhancements layer (`xbox_enhance_init`, which
+reads `config.toml` over `config.default.toml` and logs one `[ENHANCE]`
+line) and `CMakeLists.txt` links `xbox_enhance`; without the option
+neither happens. `CMakeLists.txt` also copies the game's
+`packaging/config.default.toml` beside the executable when there is one.
+Both entry points name the window with `xbox_HostWindowSetTitle("<name>")`,
+the game's name from `new`. And the template reads two toolkit config
+keys before it maps the drives: `RECOMP_GAME_FILES` (the extracted game
+folder; unset, the `YOUR_GAME_DIR` that `new` filled in) and
+`RECOMP_HDD_DIR` (the emulated hard disk; unset, the toolkit's default
+place for saves), so a launcher can point an installed bundle at the
+owner's files without a rebuild. A game whose own env header still has
+`GAME_FILES` or `HDD_DIR` rows drops them when it moves to a toolkit that
+has them (the table refuses a key defined twice).
+
 A game pinned to a toolkit at or before `blinx2-v0.3.0` has the Win32-only
 template: `new` says so, and `build macos` will not compile. Move the
 toolkit pin forward (`[toolkit] commit` in `game.toml`, then `setup`) and
