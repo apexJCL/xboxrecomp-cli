@@ -317,3 +317,146 @@ def test_installer_counts_game_files(d):
     assert not PLACEHOLDER.findall(text)
     main = text[text.index('Section "') :]
     assert main.index("AddSize 4\n") < main.index("SectionEnd")
+
+
+# ── capability blocks: the README on a toolkit with or without the
+# enhancements layer ──────────────────────────────────────────────────────
+
+FORK_OUT = os.path.join(HERE, "testdata", "readme")
+
+
+def readme_bytes(d, monkeypatch, target, enhance):
+    """README.txt for BLiNX 2's test game as package renders it, with a
+    defaults file that ships "sleep" beside it (the pacing paragraph)."""
+    G = host.g()
+    monkeypatch.setattr(G, "content", os.path.join(d, "content"))
+    monkeypatch.setattr(G, "templates", "")
+    monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
+    monkeypatch.setattr(toolkit, "toolkit_dir", lambda: d)
+    os.makedirs(os.path.join(G.content, "windows"), exist_ok=True)
+    with open(os.path.join(G.content, "windows", "README.part"), "w") as f:
+        f.write("\nInstall @VERSION@\n")
+    out = os.path.join(d, target)
+    os.makedirs(out, exist_ok=True)
+    with open(os.path.join(out, "config.default.toml"), "w") as f:
+        f.write('[present]\npacing = "sleep"\n')
+    dst = os.path.join(out, "README.txt")
+    pacing = pkg.readme(target, "v1", pl, dst, enhance)
+    with open(dst, "rb") as f:
+        return f.read(), pacing
+
+
+@pytest.mark.parametrize("target", ["windows", "steamos"])
+def test_readme_fork_unchanged(d, monkeypatch, target):
+    """On a toolkit with the enhancements layer the README is byte for byte
+    what baa60fb (0.7.6 before the capability blocks) wrote: the files in
+    testdata/readme/ are its output."""
+    got, pacing = readme_bytes(d, monkeypatch, target, True)
+    with open(os.path.join(FORK_OUT, "fork-%s.txt" % target), "rb") as f:
+        want = f.read().replace(b"\r\n", b"\n")
+    assert got == want
+    assert pacing is True
+
+
+@pytest.mark.parametrize("target", ["windows", "steamos"])
+def test_readme_upstream_has_no_fork_text(d, monkeypatch, target):
+    """Without the layer nothing reads a config file, so the README names
+    none, nor the fork's renderer and input settings; the pacing paragraph
+    (it points at config.toml) goes too, and readme() says so."""
+    got, pacing = readme_bytes(d, monkeypatch, target, False)
+    text = got.decode()
+    assert pacing is False
+    assert not PLACEHOLDER.findall(text) and "@if" not in text and "@endif@" not in text
+    for word in (
+        "config.toml",
+        "config.default.toml",
+        "RECOMP_PB_BACKEND",
+        "RECOMP_HOST_GAMESCOPE",
+        "input.bindings",
+        "console-original",
+    ):
+        assert word not in text, word
+    assert "  config/   launch.env (your own launcher settings, KEY=value lines)\n" in text
+    assert "  logs/     one log per launch, the newest 10 kept\n\n" in text
+    if target == "steamos":
+        assert "the Deck's own\ncontrols then drive player 1.\n" in text
+        assert text.endswith("controls then drive player 1.\n")
+
+
+def test_readme_part_capability_blocks(d, monkeypatch, game2):
+    """A game's own README.part words a section per capability: the block
+    for the toolkit's case stays, without its marker lines."""
+    monkeypatch.setattr(game2, "content", os.path.join(d, "content"))
+    monkeypatch.setattr(game2, "templates", "")
+    monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
+    monkeypatch.setattr(toolkit, "toolkit_dir", lambda: d)
+    os.makedirs(os.path.join(game2.content, "windows"))
+    with open(os.path.join(game2.content, "windows", "README.part"), "w") as f:
+        f.write(
+            "\nInstall @VERSION@\n@if enhance@\nOptions: config.toml\n@endif@\n"
+            "@if !enhance@\nNo options file.\n@endif@\nEnd\n"
+        )
+    dst = os.path.join(d, "README.txt")
+    pkg.readme("windows", "v1", pl, dst, True)
+    with open(dst) as f:
+        assert f.read().endswith("\nInstall v1\nOptions: config.toml\nEnd\n")
+    pkg.readme("windows", "v1", pl, dst, False)
+    with open(dst) as f:
+        assert f.read().endswith("\nInstall v1\nNo options file.\nEnd\n")
+
+
+def test_readme_intro_and_macos_blocks(d, monkeypatch, game2):
+    """README.intro takes blocks too, and a macos README on an upstream pin
+    keeps the game's !enhance text and none of the fork's."""
+    content = os.path.join(d, "content")
+    monkeypatch.setattr(game2, "content", content)
+    monkeypatch.setattr(game2, "templates", "")
+    monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
+    monkeypatch.setattr(toolkit, "toolkit_dir", lambda: d)
+    os.makedirs(os.path.join(content, "macos"))
+    with open(os.path.join(content, "README.intro"), "w") as f:
+        f.write(
+            "About @NAME@.\n@if enhance@\nFork build.\n@endif@\n@if !enhance@\nUpstream build.\n@endif@\n"
+        )
+    with open(os.path.join(content, "macos", "README.part"), "w") as f:
+        f.write("\nOpen the dmg.\n@if enhance@\nconfig.toml lives in config/.\n@endif@\n")
+    dst = os.path.join(d, "README.txt")
+    assert pkg.readme("macos", "v1", pl, dst, False) is False
+    with open(dst) as f:
+        text = f.read()
+    assert text.startswith("Second Game: Test v1 - macos-arm64\n")
+    assert "About Second Game: Test.\nUpstream build.\n\nSaves and" in text
+    assert "Fork build." not in text and "config.toml" not in text
+    assert "@if" not in text and text.endswith("\nOpen the dmg.\n")
+    pkg.readme("macos", "v1", pl, dst, True)
+    with open(dst) as f:
+        text = f.read()
+    assert "About Second Game: Test.\nFork build.\n\nSaves and" in text
+    assert text.endswith("\nOpen the dmg.\nconfig.toml lives in config/.\n")
+
+
+@pytest.mark.parametrize(
+    "text, msg",
+    [
+        ("@if enhance\na\n@endif@\n", "is not a marker"),
+        ("@if  enhance@\na\n@endif@\n", "is not a marker"),
+        ("@if enhance@\na\n@end@\n", "is not a marker"),
+        ("@if enhance@\na\n@endif\n", "is not a marker"),
+        ("@ifenhance@\n", "is not a marker"),
+        ("@if enhance@\na\n", "is not closed by @endif@"),
+        ("a\n@endif@\n", "with no @if CAP@ open"),
+        ("@if enhance@\n@if !enhance@\n@endif@\n", "inside the @if enhance@ block"),
+        ("@if metal@\na\n@endif@\n", "names no capability"),
+    ],
+)
+def test_capability_blocks_refused(text, msg):
+    with pytest.raises(CliError, match=re.escape(msg)):
+        pkg.cap_blocks(text, {"enhance"}, "README.part")
+
+
+def test_capability_blocks_leave_other_text():
+    """Text without markers, CRLF and a final line with no newline included,
+    comes back as it was; a marker is a line of its own, never inline."""
+    for text in ("a\r\nb\n", "a\nb", "x @if enhance@ y\n", ""):
+        assert pkg.cap_blocks(text, set(), "t") == text
+    assert pkg.cap_blocks("  @if enhance@\nx\n  @endif@\ny", set(), "t") == "y"

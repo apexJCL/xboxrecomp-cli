@@ -218,6 +218,89 @@ def test_notice_optional(d, monkeypatch):
         assert "NOTICE" in os.listdir(payload)
 
 
+def test_upstream_pin_stages_no_defaults(d, monkeypatch):
+    """A toolkit with no enhancements layer reads no config file: the
+    payload has no config.default.toml (the game need not have one), and
+    readme() is told so."""
+    with game2_tree(d) as (G, _):
+        host.g().m["package"] = {"content": "packaging"}
+        G.content = G.path("packaging")
+        write(os.path.join(G.content, "launch.env.default.windows"), "LOG_KEEP=10\n")
+        write(G.path("LICENSE"), "MIT\n")
+        told = []
+        monkeypatch.setattr(pkg, "readme", lambda *a: told.append(a[-1]))
+        monkeypatch.setattr(pl, "stage_game_files", lambda src, dst: 0)
+        payload = os.path.join(d, "payload")
+        os.makedirs(payload)
+        pkg.write_common(payload, "windows", "v", pl, enhance=False)
+        assert sorted(os.listdir(payload)) == ["LICENSE", "launch.env.default"]
+        assert told == [False]
+        # The old defaults name is no reason to refuse either.
+        write(os.path.join(G.content, "enhance.toml.default"), "# old\n")
+        pkg.check_content(enhance=False)
+
+
+def test_upstream_pin_refuses_config_flags(d, monkeypatch):
+    """--hud-pack and --seed-config only reach the game through its config
+    files: on a toolkit without the layer they are refused before the plan
+    (the build) runs, naming the pin."""
+    with game2_tree(d) as (G, _):
+        host.g().m["package"] = dict(PKG2)
+        G.content = G.path("packaging")
+        monkeypatch.setattr(pkg.setup, "host_blockers", lambda t, importing=False: [])
+        monkeypatch.setattr(pkg.toolkit, "exclude_pin_mark", lambda t: None)
+        monkeypatch.setattr(pkg, "reads_config", lambda: False)
+        monkeypatch.setattr(pkg, "hud_pack_path", lambda arg: {"path": "x"})
+
+        def no_plan(a):
+            raise AssertionError("the plan ran")
+
+        monkeypatch.setattr(pkg, "package_plan", no_plan)
+        for hud, seed, flags in (
+            ("", None, "--hud-pack:"),
+            (None, "seed.toml", "--seed-config:"),
+            ("", "seed.toml", "--hud-pack and --seed-config:"),
+        ):
+            a = type(
+                "A", (), {"target": "windows", "out": d, "hud_pack": hud, "seed_config": seed}
+            )()
+            try:
+                pkg.package(a)
+            except host.CliError as e:
+                msg = str(e)
+            else:
+                raise AssertionError("not refused")
+            assert msg.startswith(flags) and "no enhancements layer" in msg, msg
+
+
+def test_reads_config_source(d, monkeypatch):
+    """What package asks: a developer's own checkout (no pin mark) answers
+    from its working tree, offline, since it is what gets built; a clone
+    setup marked, or no toolkit yet, is asked at game.toml's pin."""
+    with game2_tree(d) as (G, tk):
+        asked = []
+
+        def has(pin):
+            asked.append(pin)
+            return "pin"
+
+        monkeypatch.setattr(pkg.toolkit, "pin_has_enhance", has)
+        monkeypatch.setattr(pkg.toolkit, "toolkit_dir", lambda env=None: tk)
+        enhance = os.path.join(tk, "src", "enhance", "CMakeLists.txt")
+        if os.path.isfile(enhance):
+            os.remove(enhance)
+        assert pkg.reads_config() is False and asked == []
+        write(enhance, "#\n")
+        assert pkg.reads_config() is True and asked == []
+        for mark in (pkg.toolkit.PIN_MARK, pkg.toolkit.legacy_pin_mark()):
+            write(os.path.join(tk, mark), "v1\n")
+            assert pkg.reads_config() == "pin" and asked[-1] == G.m["toolkit"]
+            os.remove(os.path.join(tk, mark))
+        missing = os.path.join(d, "no-toolkit")
+        monkeypatch.setattr(pkg.toolkit, "toolkit_dir", lambda env=None: missing)
+        assert pkg.reads_config() == "pin" and len(asked) == 3
+
+
 # The package table the two tests below need (game2 has none).
 PKG2 = {
     "content": "packaging",
@@ -247,6 +330,7 @@ def test_old_defaults_file_refused(d, monkeypatch):
         # package() refuses before its plan (the build) runs.
         monkeypatch.setattr(pkg.setup, "host_blockers", lambda t, importing=False: [])
         monkeypatch.setattr(pkg.toolkit, "exclude_pin_mark", lambda t: None)
+        monkeypatch.setattr(pkg, "reads_config", lambda: True)
 
         def no_plan(a):
             raise AssertionError("the plan ran")
@@ -574,6 +658,7 @@ def test_package_pacing_note(d, monkeypatch, capsys):
         monkeypatch.setattr(pkg.toolkit, "exclude_pin_mark", lambda t: None)
         monkeypatch.setattr(pkg, "package_plan", lambda a, imp=None: [])
         monkeypatch.setattr(pkg, "run_plan_prefix", lambda a, plan: None)
+        monkeypatch.setattr(pkg, "reads_config", lambda: True)
         monkeypatch.setattr(pkg, "check_staged", lambda root, lib: None)
         monkeypatch.setattr(pkg, "write_manifest", lambda *a, **k: None)
         monkeypatch.setattr(pkg, "stage_payload", lambda t, a, lib: (stage, payload, "v1", [], exe))
@@ -627,3 +712,20 @@ def test_package_pacing_note(d, monkeypatch, capsys):
                     out.index("bundle: ") < out.index("note: frame pacing") < out.index("PRIVATE: ")
                 )
                 assert 'pacing = "spin" under [present]' in out
+            assert "no enhancements layer" not in out
+        # On a toolkit with no enhancements layer: package says so once,
+        # stages no defaults file (the game's is ignored, even at "sleep")
+        # and prints no pacing note.
+        monkeypatch.setattr(pkg, "reads_config", lambda: False)
+        write(os.path.join(G.content, "config.default.toml"), '[present]\npacing = "sleep"\n')
+        shutil.rmtree(stage, ignore_errors=True)
+        os.makedirs(payload)
+        capsys.readouterr()
+        pkg.package(a)
+        out = capsys.readouterr().out
+        note = pkg.NO_CONFIG_NOTE % pkg.gitpin.describe(G.m["toolkit"])
+        assert out.count(note) == 1, out
+        assert out.index(note) < out.index("bundle: ")
+        assert "note: frame pacing" not in out
+        assert not os.path.exists(os.path.join(payload, "config.default.toml"))
+        assert "config.toml" not in open(os.path.join(payload, "README.txt")).read()

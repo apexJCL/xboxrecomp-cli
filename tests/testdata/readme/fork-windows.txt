@@ -1,0 +1,42 @@
+BLiNX 2 v1 - windows-x86_64
+================================================================
+
+PRIVATE: This bundle contains your own copy of BLiNX 2 and code generated
+from it. It is for your own machines only. The game is not yours to
+redistribute: never share, upload or publish this bundle.
+
+This is a static recompilation of the original Xbox game, built on your
+machine from your own disc dump by the blinx2-recomp project. It is not
+affiliated with the game's owners. Built from: cat abcdef0, toolkit abcdef0.
+
+Saves and settings live outside the program files and survive every
+install, update and uninstall:
+
+  %LOCALAPPDATA%\BLiNX2\   (hdd, config, logs)
+
+  hdd/      the emulated Xbox hard disk: your save games
+  config/   config.toml (graphics options) and launch.env (your own
+            launcher settings, KEY=value lines, e.g. RECOMP_PB_BACKEND=cpu)
+  logs/     one log per launch, the newest 10 kept
+
+The options come from two files. config.default.toml, in the program
+files, lists every option at its default; the game reads it on each launch
+and an update replaces it, so new options and defaults reach you. Your
+config/config.toml holds only the options you change (copy a line from
+config.default.toml and edit it); the game creates it with a short comment
+on the first launch and never overwrites it. Environment variables, such
+as the lines in config/launch.env, override both. An earlier version's
+config/enhance.toml is renamed to config.toml once.
+
+Frame pacing defaults to "sleep": the game's frame wait sleeps until the
+next vblank, which saves CPU and battery. "spin" is the console-original
+timing, where that wait holds a CPU core as it did on the Xbox. To switch,
+put
+
+  [present]
+  pacing = "spin"
+
+in config/config.toml, or RECOMP_PRESENT_PACING=spin in config/launch.env.
+
+
+Install v1

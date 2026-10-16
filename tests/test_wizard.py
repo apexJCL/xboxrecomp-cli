@@ -566,11 +566,12 @@ def _toolkit_repo(d):
     return tk, sha("HEAD~1"), sha("HEAD")
 
 
-def test_pin_has_enhance(wgame, d, monkeypatch):
+def test_pin_has_enhance(wgame, d, monkeypatch, pin_stub):
     """The toolkit is read at the pin: from the local checkout's history when
     it has the commit (whatever its working tree), else by a blobless
     fetch of that one commit or tag; a tag that is not its lock is refused."""
-    monkeypatch.undo()  # the real lookup, not the fixture's stand-in
+    monkeypatch.undo()  # the real lookup, not the fixtures' stand-ins
+    pin_stub.undo()
     from xboxrecomp_cli import toolkit
 
     remote, fork, upstream = _toolkit_repo(d)
@@ -594,6 +595,31 @@ def test_pin_has_enhance(wgame, d, monkeypatch):
     with pytest.raises(CliError, match="cannot read .* at v9"):
         toolkit.pin_has_enhance({"url": url, "tag": "v9", "commit": ""})
     assert os.listdir(tmp) == []
+
+
+def test_pin_has_enhance_asks_once(wgame, d, monkeypatch, pin_stub):
+    """The wizard and package ask the same question of the same pin: the
+    toolkit is read once per pin (and toolkit dir) in a process."""
+    monkeypatch.undo()
+    pin_stub.undo()
+    from xboxrecomp_cli import toolkit
+
+    monkeypatch.setattr(toolkit, "_PIN_ENHANCE", {})
+    monkeypatch.setenv("XBOXRECOMP_DIR", d)
+    reads = []
+
+    def pin_files(pin, rels):
+        reads.append(pin["commit"])
+        return {rel: pin["commit"] == "fork" for rel in rels}
+
+    monkeypatch.setattr(toolkit, "pin_files", pin_files)
+    fork = {"url": "u", "tag": "", "commit": "fork"}
+    up = {"url": "u", "tag": "", "commit": "upstream"}
+    assert toolkit.pin_has_enhance(fork) and toolkit.pin_has_enhance(dict(fork))
+    assert not toolkit.pin_has_enhance(up) and not toolkit.pin_has_enhance(up)
+    assert reads == ["fork", "upstream"]
+    monkeypatch.setenv("XBOXRECOMP_DIR", os.path.join(d, "other"))
+    assert toolkit.pin_has_enhance(fork) and reads == ["fork", "upstream", "fork"]
 
 
 def test_config_reads_the_tag_not_the_tree(wgame):

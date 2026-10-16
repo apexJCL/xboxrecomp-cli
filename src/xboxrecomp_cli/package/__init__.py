@@ -15,7 +15,7 @@ import shutil
 import tomllib
 
 from .. import build as build_mod
-from .. import cli_dir, doctor, host, pipeline, setup, toolkit
+from .. import cli_dir, doctor, gitpin, host, pipeline, setup, toolkit
 from ..host import CliError
 from . import lib as lib_mod
 
@@ -165,12 +165,78 @@ def pacing_sleeps(defaults):
     return isinstance(present, dict) and present.get("pacing") == "sleep"
 
 
-def readme(target, version, lib, dst):
+def reads_config():
+    """Whether the bundle's game reads config.default.toml and config.toml:
+    the toolkit it builds on has the enhancements layer, the reader
+    (upstream xboxrecomp has none). A developer's own checkout (no pin
+    mark: theirs, or an XBOXRECOMP_DIR) is what gets built, so its working
+    tree answers, offline. A clone setup made at the pin, or none yet (the
+    plan's setup makes one), is the pin's: the wizard's own check, which
+    reads the clone's history and fetches only a commit it lacks."""
+    tk = toolkit.toolkit_dir()
+    marked = any(
+        os.path.isfile(os.path.join(tk, m)) for m in (toolkit.PIN_MARK, toolkit.legacy_pin_mark())
+    )
+    if os.path.isdir(tk) and not marked:
+        return toolkit.features(tk)["enhance"]
+    return toolkit.pin_has_enhance(g().m["toolkit"])
+
+
+# The capability blocks of the README frame and parts: a line holding
+# only one marker, each block closed by @endif@, no nesting.
+CAP_IF = re.compile(r"@if (!?)([a-z_]+)@")
+CAP_END = "@endif@"
+CAPS = ("enhance",)
+
+
+def cap_blocks(text, caps, where):
+    """text with each `@if CAP@` block kept when CAP is in caps (an
+    `@if !CAP@` block when it is not) and dropped otherwise, the marker
+    lines always dropped. Text without markers comes back as it was."""
+    out, keep, opened = [], True, None
+    for line in text.splitlines(keepends=True):
+        mark = line.strip()
+        m = CAP_IF.fullmatch(mark)
+        if not m and mark != CAP_END and mark.startswith(("@if", "@end")):
+            # A mistyped marker would otherwise reach the player's README.
+            raise CliError(
+                "%s: %r is not a marker (@if CAP@, @if !CAP@ or %s, alone on the line)"
+                % (where, mark, CAP_END)
+            )
+        if m:
+            if opened is not None:
+                raise CliError("%s: %s inside the %s block" % (where, mark, opened))
+            if m.group(2) not in CAPS:
+                raise CliError(
+                    "%s: %s names no capability (known: %s)" % (where, mark, ", ".join(CAPS))
+                )
+            opened = mark
+            keep = (m.group(2) in caps) != bool(m.group(1))
+        elif mark == CAP_END:
+            if opened is None:
+                raise CliError("%s: %s with no @if CAP@ open" % (where, CAP_END))
+            opened, keep = None, True
+        elif keep:
+            out.append(line)
+    if opened is not None:
+        raise CliError("%s: %s is not closed by %s" % (where, opened, CAP_END))
+    return "".join(out)
+
+
+def read_template(path, caps):
+    with open(path) as f:
+        return cap_blocks(f.read(), caps, path)
+
+
+def readme(target, version, lib, dst, enhance=True):
     """README.txt at `dst`, beside the staged config.default.toml. Returns
     whether the frame pacing paragraph went in (package() then prints the
-    terminal note)."""
+    terminal note). enhance: reads_config()'s answer; without it the
+    `@if enhance@` blocks of the frame, the intro and the part go."""
     G = g()
-    pacing = pacing_sleeps(os.path.join(os.path.dirname(dst), "config.default.toml"))
+    caps = {"enhance"} if enhance else set()
+    # The paragraph names config.toml: only for a game that reads it.
+    pacing = enhance and pacing_sleeps(os.path.join(os.path.dirname(dst), "config.default.toml"))
     cat = lib.tree_state(G.root)
     tk = lib.tree_state(toolkit.toolkit_dir())
     values = {
@@ -186,17 +252,18 @@ def readme(target, version, lib, dst):
     }
     # The PRIVATE and "built by" paragraphs: the game's README.intro (in
     # package.content) when it words them its own way, else the CLI's.
-    with open(template("", "README.intro", content=True)) as f:
-        intro = f.read()
+    intro = read_template(template("", "README.intro", content=True), caps)
     for k, v in values.items():
         intro = intro.replace("@%s@" % k, v)
     values["INTRO"] = intro
-    frame = template("", "README.txt.in")
+    text = read_template(template("", "README.txt.in"), caps)
     # A game's own README.txt.in from before the placeholder gets no
     # paragraph, so no note either: the note promises the README says it.
-    with open(frame) as f:
-        pacing = pacing and "@OPTION_NOTES@" in f.read()
-    render(frame, values, dst)
+    pacing = pacing and "@OPTION_NOTES@" in text
+    for k, v in values.items():
+        text = text.replace("@%s@" % k, v)
+    with open(dst, "w", newline="\n") as f:
+        f.write(text)
     part_values = {"VERSION": version}
     if target == "steamos":
         # The CLI's own install section, unless the game has its own.
@@ -206,8 +273,7 @@ def readme(target, version, lib, dst):
         part_values.update(steamos.steamos_values(lib))
     else:
         part_path = os.path.join(G.content, target, "README.part")
-    with open(part_path) as f:
-        part = f.read()
+    part = read_template(part_path, caps)
     for k, v in part_values.items():
         part = part.replace("@%s@" % k, v)
     with open(dst, "a", newline="\n") as f:
@@ -341,12 +407,16 @@ def has_textures_table(path):
         return any(re.match(r"\s*\[\s*textures\s*\]", line) for line in f)
 
 
-def check_content(hud_pack=None):
+def check_content(hud_pack=None, enhance=True):
     """Refuse, before anything is built, a game whose packaging content
     still has the old defaults file: the runtime reads config.default.toml
     beside the executable, and a bundle without it would ship no
     defaults. With --hud-pack, also refuse defaults that already have a
-    [textures] table, which the appended key would duplicate."""
+    [textures] table, which the appended key would duplicate. Without the
+    enhancements layer (enhance false) nothing reads the defaults, so
+    neither applies."""
+    if not enhance:
+        return
     G = g()
     old = os.path.join(G.content, "enhance.toml.default")
     new = os.path.join(G.content, "config.default.toml")
@@ -393,6 +463,28 @@ def stage_hud_pack(payload, target, info):
 
 
 SEED_NAME = "config.seed.toml"
+NO_CONFIG_NOTE = (
+    "config: the toolkit at %s has no enhancements layer, so the game reads no "
+    "config file: no config.default.toml staged, and README.txt says nothing of "
+    "config.toml"
+)
+
+
+def refuse_no_config(hud_pack, seed_path):
+    """--hud-pack and --seed-config, refused before anything is built when
+    the game reads no config file: both only reach the game through one
+    (the pack's key in config.default.toml, the seed as config.toml)."""
+    flags = [f for f, on in (("--hud-pack", hud_pack), ("--seed-config", seed_path)) if on]
+    if flags:
+        raise CliError(
+            "%s: the toolkit at %s has no enhancements layer (src/enhance/), which reads "
+            "config.toml; the game would never read %s"
+            % (
+                " and ".join(flags),
+                gitpin.describe(g().m["toolkit"]),
+                "them" if len(flags) > 1 else "it",
+            )
+        )
 
 
 def _flat_keys(doc, prefix=""):
@@ -433,12 +525,14 @@ def check_seed(path):
     return raw.decode("utf-8").replace("\r\n", "\n")
 
 
-def write_common(payload, target, version, lib, hud_pack=None, seed=None):
+def write_common(payload, target, version, lib, hud_pack=None, seed=None, enhance=True):
     """The files every target shares. Returns readme()'s answer: whether
     the README has the frame pacing paragraph. seed: --seed-config's text,
     staged as config.seed.toml beside config.default.toml; each installer
     copies it to the data folder's config/config.toml when that file does
-    not exist."""
+    not exist. enhance: reads_config()'s answer; without it the game
+    reads no config file, so config.default.toml is not staged (package()
+    has refused a seed and a hud pack already)."""
     G = g()
     fam = "macos" if target == "macos" else "windows"
     copy_lf(
@@ -447,10 +541,11 @@ def write_common(payload, target, version, lib, hud_pack=None, seed=None):
     )
     # Read by the game beside its executable (Contents/Resources on macOS,
     # where the payload goes), never copied to the player's config/.
-    copy_lf(
-        os.path.join(G.content, "config.default.toml"),
-        os.path.join(payload, "config.default.toml"),
-    )
+    if enhance:
+        copy_lf(
+            os.path.join(G.content, "config.default.toml"),
+            os.path.join(payload, "config.default.toml"),
+        )
     if seed is not None:
         with open(os.path.join(payload, SEED_NAME), "w", newline="\n") as f:
             f.write(seed)
@@ -460,7 +555,7 @@ def write_common(payload, target, version, lib, hud_pack=None, seed=None):
     for n in ("LICENSE", "NOTICE"):
         if n == "LICENSE" or os.path.isfile(os.path.join(G.root, n)):
             copy_lf(os.path.join(G.root, n), os.path.join(payload, n))
-    pacing = readme(target, version, lib, os.path.join(payload, "README.txt"))
+    pacing = readme(target, version, lib, os.path.join(payload, "README.txt"), enhance)
     n = lib.stage_game_files(G.game_files, os.path.join(payload, "game_files"))
     host.say("game files: %d entries staged" % n)
     return pacing
@@ -604,8 +699,11 @@ def package(a):
     hud_pack = hud_pack_path(a.hud_pack) if getattr(a, "hud_pack", None) is not None else None
     seed_path = getattr(a, "seed_config", None)
     try:
+        enhance = reads_config()
+        if not enhance:
+            refuse_no_config(hud_pack, seed_path)
         seed = check_seed(seed_path) if seed_path else None
-        check_content(hud_pack)
+        check_content(hud_pack, enhance)
         plan = package_plan(a, imp)
     except BaseException:
         if imp is not None:
@@ -620,7 +718,9 @@ def package(a):
     run_plan_prefix(a, plan)
     os.makedirs(a.out, exist_ok=True)
     stage, payload, version, overrides, exe = stage_payload(a.target, a, lib)
-    pacing_note = write_common(payload, a.target, version, lib, hud_pack, seed)
+    if not enhance:
+        host.say(NO_CONFIG_NOTE % gitpin.describe(G.m["toolkit"]))
+    pacing_note = write_common(payload, a.target, version, lib, hud_pack, seed, enhance)
     if seed is not None:
         host.say("seed config: %s (copied to config/config.toml on a first install)" % SEED_NAME)
     if hud_pack:

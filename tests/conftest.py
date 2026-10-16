@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-from xboxrecomp_cli import golden, manifest
+from xboxrecomp_cli import golden, manifest, toolkit
 from xboxrecomp_cli.package import plib
 
 GAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata", "game")
@@ -27,3 +27,15 @@ golden.configure(
 def d(tmp_path):
     """A scratch directory, as a str (the tests join paths onto it)."""
     return str(tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def pin_stub():
+    """toolkit.pin_has_enhance answers True with no git and no network:
+    package and the wizard ask it of the test games' real GitHub pins. Its
+    own MonkeyPatch, so a test's monkeypatch.undo() keeps it; a test of the
+    real lookup calls pin_stub.undo()."""
+    mp = pytest.MonkeyPatch()
+    mp.setattr(toolkit, "pin_has_enhance", lambda pin: True)
+    yield mp
+    mp.undo()

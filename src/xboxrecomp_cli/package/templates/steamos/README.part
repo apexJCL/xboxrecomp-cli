@@ -66,12 +66,14 @@ Troubleshooting
 - The notice window gets in the way: LAUNCH_NOTICE=0 in
   config/launch.env turns it off. It closes by itself when the game
   starts, or after NOTICE_MAX seconds (1200; set it there too).
+@if enhance@
 - Steam's scaling filter (FSR): under gamescope (Game Mode) the launcher
   sets RECOMP_HOST_GAMESCOPE=1 and the game hands gamescope the frame at
   its internal resolution to scale. FSR applies only when that is smaller
   than the screen (render scale 1 on a Steam Deck).
   RECOMP_HOST_GAMESCOPE=0 in config/launch.env goes back to a window the
   size of the screen.
+@endif@
 - Settings go in @DEFAULT_ROOT@/config/launch.env (KEY=value lines). The
   installer creates config/ and never changes what is in it.
 - Proton's own log for a bug report: PROTON_LOG=1 in config/launch.env
@@ -83,6 +85,7 @@ Controls
 --------
 A controller works as player 1. On a Steam Deck in Game Mode, pick the
 Gamepad template in the game's controller settings: the Deck's own
+@if enhance@
 controls then drive player 1. When the game turns them on, the keyboard
 and the mouse work too, merged with a pad on player 1, while the game
 window has the focus. config.default.toml beside the game lists its
@@ -94,3 +97,7 @@ and grabs it again. To change a key, put the control under
 (@DEFAULT_ROOT@/config/config.toml), for example
   a = ["Space", "J"]
 keyboard = false or mouse = false under [input] there turns either off.
+@endif@
+@if !enhance@
+controls then drive player 1.
+@endif@

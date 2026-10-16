@@ -2,7 +2,8 @@
 (templates/new-game/.github/workflows/release-wizard.yml): its notes step
 takes the tag's CHANGELOG.md section or stops the run, and its release
 step drafts the release, attaches the assets, then publishes it, with a
--rc. tag as a pre-release. Each step's `run:` block is taken from the
+-rc. tag as a pre-release; a release a maintainer made by hand keeps its
+title, notes and state, and gets the assets only when it has none of them. Each step's `run:` block is taken from the
 template and run by bash, the release step against a stand-in gh.
 
   uv run pytest tests/test_release_workflow.py
@@ -42,13 +43,24 @@ CHANGELOG = """# Changelog
 [2026.10.0-rc.2]: https://example.invalid/compare/v2026.10.0-rc.1...v2026.10.0-rc.2
 """
 
-# A stand-in gh: logs each call, and `release view` fails unless
-# $GH_HAS_RELEASE is set (no release for the tag yet).
+# A stand-in gh: logs each call. `release view` fails with $GH_VIEW_ERROR
+# when set, else as gh does with no release for the tag ("release not
+# found") unless $GH_RELEASE_STATE is set; then it answers the --jq of the
+# isDraft,author view with it ("true <login>") and the assets view with
+# $GH_ASSETS (one name per line).
 FAKE_GH = """#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
-if [ "$1 $2" = "release view" ] && [ -z "${GH_HAS_RELEASE:-}" ]; then exit 1; fi
+if [ "$1 $2" = "release view" ]; then
+  if [ -n "${GH_VIEW_ERROR:-}" ]; then echo "$GH_VIEW_ERROR" >&2; exit 1; fi
+  if [ -z "${GH_RELEASE_STATE:-}" ]; then echo "release not found" >&2; exit 1; fi
+  case "$*" in
+    *"--json isDraft,author"*) echo "$GH_RELEASE_STATE" ;;
+    *"--json assets"*) printf '%s' "${GH_ASSETS:-}" ;;
+  esac
+fi
 exit 0
 """
+BOT = "github-actions[bot]"
 
 
 def step_script(name):
@@ -109,7 +121,7 @@ def test_no_changelog_stops_the_run(tmp_path):
     assert "::error::v1.0.0 has no CHANGELOG.md" in r.stdout
 
 
-def run_release(tmp_path, tag, has_release=False):
+def run_release(tmp_path, tag, state="", assets="", out=None, view_error="", ok=True):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "gh").write_text(FAKE_GH, encoding="utf-8")
@@ -122,8 +134,11 @@ def run_release(tmp_path, tag, has_release=False):
         GH_LOG=str(log),
         PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
     )
-    if has_release:
-        env["GH_HAS_RELEASE"] = "1"
+    if view_error:
+        env["GH_VIEW_ERROR"] = view_error
+    if state:
+        env["GH_RELEASE_STATE"] = state
+        env["GH_ASSETS"] = assets
     for f in ("assets/a-macos.zip", "assets/a-linux-x64.tar.gz", "assets/SHA256SUMS"):
         (tmp_path / f).parent.mkdir(exist_ok=True)
         (tmp_path / f).write_text("x", encoding="utf-8")
@@ -131,7 +146,9 @@ def run_release(tmp_path, tag, has_release=False):
     r = subprocess.run(
         ["bash", "-e", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True
     )
-    assert r.returncode == 0, r.stdout + r.stderr
+    assert (r.returncode == 0) == ok, r.stdout + r.stderr
+    if out is not None:
+        out.append(r.stdout + r.stderr)
     return [ln.split(" --repo ")[0] for ln in log.read_text(encoding="utf-8").splitlines()]
 
 
@@ -152,11 +169,71 @@ def test_an_rc_tag_is_a_prerelease(tmp_path):
     assert "--prerelease=true" in calls[1]
 
 
-def test_an_existing_release_takes_the_notes_and_is_published(tmp_path):
-    calls = run_release(tmp_path, "v2026.10.0-rc.1", has_release=True)
+def test_the_workflows_own_draft_takes_the_notes_and_is_published(tmp_path):
+    """A draft an earlier run left (its author is the Actions bot) takes
+    this run's title, notes and pre-release mark, then is published."""
+    calls = run_release(tmp_path, "v2026.10.0-rc.1", state="true " + BOT)
     assert calls[1] == (
         "release edit v2026.10.0-rc.1 --title v2026.10.0-rc.1 --notes-file notes/notes.md"
         " --prerelease=true"
     )
+    assert calls[2].endswith(" --clobber")
     assert calls[-1] == "release edit v2026.10.0-rc.1 --draft=false"
     assert not any(c.startswith("release create") for c in calls)
+
+
+HAND_MADE = ["false someone", "true someone", "false " + BOT]
+HAND_IDS = ["published-by-hand", "draft-by-hand", "published-by-an-earlier-run"]
+
+
+@pytest.mark.parametrize("state", HAND_MADE, ids=HAND_IDS)
+def test_a_hand_made_release_gets_the_assets_and_keeps_its_text(tmp_path, state):
+    """A release this run did not draft (a maintainer's, or one already
+    published) keeps its title, notes, pre-release mark and draft state:
+    no edit, no create. With none of the files yet it gets all four,
+    never clobbering."""
+    out = []
+    calls = run_release(tmp_path, "v1.0.0", state=state, out=out)
+    assert not any(c.startswith(("release edit", "release create")) for c in calls), calls
+    assert [c for c in calls if c.startswith("release upload")] == [
+        "release upload v1.0.0 assets/a-macos.zip assets/a-linux-x64.tar.gz assets/SHA256SUMS"
+    ]
+    assert (
+        "::notice::v1.0.0 is a release this run did not draft (published, or made by hand)"
+        in out[0]
+    )
+
+
+@pytest.mark.parametrize("state", HAND_MADE, ids=HAND_IDS)
+def test_a_hand_made_release_with_any_asset_gets_none(tmp_path, state):
+    """All or nothing: one name already there and no file goes up, so
+    SHA256SUMS never sits beside another build's files; the warning names
+    each clash."""
+    out = []
+    names = "a-macos.zip\nSHA256SUMS\n"
+    calls = run_release(tmp_path, "v1.0.0", state=state, assets=names, out=out)
+    assert not any(
+        c.startswith(("release upload", "release edit", "release create")) for c in calls
+    )
+    assert "::warning::v1.0.0 already has a-macos.zip SHA256SUMS; no asset uploaded" in out[0]
+
+
+def test_a_failed_view_is_not_read_as_no_release(tmp_path):
+    """gh failing for another reason than "release not found" (network,
+    auth) stops the step: nothing is created, edited or uploaded."""
+    out = []
+    calls = run_release(tmp_path, "v1.0.0", view_error="HTTP 502: Bad Gateway", out=out, ok=False)
+    assert calls == ["release view v1.0.0"]
+    assert "HTTP 502" in out[0] and "::error::cannot read the release for v1.0.0" in out[0]
+
+
+def test_only_the_release_job_can_write():
+    """The workflow's token reads by default; contents: write is the
+    release job's alone, and nothing asks for more."""
+    with open(WORKFLOW, encoding="utf-8") as f:
+        text = f.read()
+    assert "permissions:\n  contents: read\n" in text
+    assert text.count("contents: write") == 1
+    assert text.index("contents: write") > text.index("\n  release:\n")
+    perms = [ln.strip() for ln in text.splitlines() if ln.strip().endswith((": write", ": read"))]
+    assert sorted(perms) == ["contents: read", "contents: write"]

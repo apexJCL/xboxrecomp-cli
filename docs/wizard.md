@@ -349,7 +349,15 @@ The `notes`, build and `verify` jobs are read-only (`contents: read`,
 checkouts with `persist-credentials: false`, setup-uv with no restored
 cache). Only `release` can write, and it runs only on a tag push or a
 ticked `release`. It checks the assets against `SHA256SUMS`, creates the
-release as a draft with the notes (or, when one exists, gives it this
-run's notes), attaches the four files by name, and publishes it last, so
-the release is never public with files missing. A tag with `-rc.` in it
-is published as a pre-release.
+release as a draft with the notes (or, for a draft an earlier run of the
+workflow left, gives it this run's title and notes), attaches the four
+files by name, and publishes it last, so the release is never public with
+files missing. A tag with `-rc.` in it is published as a pre-release.
+A release this run did not draft (published, or made by hand) is left as
+it is: its title, notes, pre-release mark and draft state stay. The job
+attaches the four files only when the release has none of them; if any
+name is there already it uploads nothing and warns with the names, so
+`SHA256SUMS` never sits beside files from another build. The job tells
+its own drafts by their author: a release made with the job's token
+belongs to `github-actions[bot]`. A failure to read the release other
+than "release not found" stops the job before it creates anything.

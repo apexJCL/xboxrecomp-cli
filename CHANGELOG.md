@@ -29,6 +29,19 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - `golden` treats `render.aniso` as a non-stock key, so goldens run with
   anisotropic filtering off, and the manifest lists it as a toolkit
   enhancement key.
+- README text can depend on the toolkit: a line holding only
+  `@if enhance@` or `@if !enhance@` opens a block that `@endif@` closes, in
+  `README.txt.in`, `README.intro` and any `README.part`. The first is kept
+  when the toolkit at the pin has the enhancements layer, the second when
+  it has none (docs/manifest.md, "Capability blocks"). A game on the fork
+  gets the same README as before.
+- The release workflow `xbr new` writes edits and publishes only a draft
+  the workflow made. A release a maintainer made by hand, or one already
+  published, keeps its title, notes, pre-release mark and draft state; the
+  job attaches the assets only when the release has none of them, and
+  otherwise uploads nothing and names the clashing files. It creates a
+  release only when gh says there is none; any other error stops the job.
+  Games made before this version copy the new workflow from the template.
 
 ### Fixed
 - `build` and `package` configure a build tree afresh when its cache names
@@ -36,6 +49,18 @@ a release by its tag in `game.toml`'s `[cli]` table.
   fork pins, or a new `XBOXRECOMP_DIR`), and say so in one line. The tree
   kept the old toolkit, so `build macos` linked the fork's `gen/` against
   upstream libraries and failed on an undefined `g_xbox_spin_sleep`.
+- On a toolkit pin with no enhancements layer, `package` no longer tells
+  players about files the game does not read. It stages no
+  `config.default.toml` (a game needs none), README.txt no longer says the
+  game makes `config.toml` or lists the options, and the SteamOS section
+  drops the gamescope scaling and key binding text. `--hud-pack` and
+  `--seed-config` are refused before the build. A developer's own toolkit
+  checkout (no pin mark, or `XBOXRECOMP_DIR`) answers from its working
+  tree, offline, as that is what gets built. A clone made by setup is
+  checked at the pin with the wizard's check, from the clone's history;
+  that needs the network only when the clone lacks the pinned commit or
+  there is no toolkit yet (when setup needs it anyway). Each pin is read
+  once per run.
 
 ## [0.7.5] - 2026-10-15
 

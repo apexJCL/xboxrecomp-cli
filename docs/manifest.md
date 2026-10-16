@@ -164,7 +164,7 @@ This table is optional. Without it, `package` says so.
 | `targets` | `["windows", "steamos"]` | The bundles: `windows`, `steamos`, `macos`. `macos` needs `build.targets` to include it. The command with no arguments packages this host's own bundle when it is listed, else the first listed one this host can make. |
 | `brew` | `[]` | The Homebrew formulae the macos target links. `doctor` checks them. |
 | `dylib_companions` | `[]` | `NAME=brew:FORMULA`: libraries loaded with dlopen, bundled too. |
-| `content` | `"packaging"` | The game's own packaging content: `launch.env.default.<windows\|macos>`, `config.default.toml` (the option defaults the game reads beside its executable; a game that still has `enhance.toml.default` is refused until it renames it; `[present] pacing = "sleep"` there adds the frame pacing paragraph to README.txt and the note to `package`'s output), `<target>/README.part` for windows and macos, and optionally `README.intro`. |
+| `content` | `"packaging"` | The game's own packaging content: `launch.env.default.<windows\|macos>`, `config.default.toml` (the option defaults the game reads beside its executable; a game that still has `enhance.toml.default` is refused until it renames it; `[present] pacing = "sleep"` there adds the frame pacing paragraph to README.txt and the note to `package`'s output; not staged, nor needed, when the toolkit at the pin has no enhancements layer, see "Capability blocks" below), `<target>/README.part` for windows and macos, and optionally `README.intro`. |
 | `templates` | `""` | The game's own packaging templates: the macos ones (required for `macos`), and any copy of a CLI template that must differ, at the same path (`README.txt.in`, `windows/launcher.c`, `steamos/launch.sh`, ...), which then wins. |
 | `icon` | `"xbe"` | The XBE's title image, or the generic icon. |
 
@@ -204,6 +204,39 @@ under `package.content`).
   the CLI's `running_game.py` with `build.exe` baked in, for
   `install.sh status`.
 - **macos**: still the game's own, in `<package.templates>/macos/`.
+
+### Capability blocks
+
+A game may pin upstream xboxrecomp, which has no enhancements layer
+(`src/enhance/`) and so reads neither `config.default.toml` nor
+`config.toml`. `package` asks the toolkit it builds on: a developer's own
+checkout (no pin mark, or `XBOXRECOMP_DIR`) from its working tree, a
+clone setup made at game.toml's pin as the wizard does (`reads_config`).
+Without the layer it stages no
+`config.default.toml`, refuses `--hud-pack` and `--seed-config` before
+building, and drops the text that describes those files.
+
+That text sits in capability blocks, which work in `README.txt.in`,
+`README.intro` and every `README.part`, the CLI's and a game's own. A
+block opens with a line that holds only `@if enhance@` (kept when the
+toolkit has the layer) or `@if !enhance@` (kept when it has none), and
+closes with a line that holds only `@endif@` (spaces around a marker
+are allowed):
+
+```
+@if enhance@
+Options: copy a line from config.default.toml to config/config.toml.
+@endif@
+@if !enhance@
+This build has no options file.
+@endif@
+```
+
+The marker lines never reach the README, and text outside a block is
+kept as it is, so a game pinned to the fork gets the same README as
+before. Blocks do not nest; an unclosed block, a stray `@endif@` or an
+unknown capability stops `package` with the file's name. `enhance` is the
+one capability so far.
 
 ## [wizard]
 

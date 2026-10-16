@@ -212,11 +212,21 @@ def pin_files(pin, rels):
         return _has_paths(tmp, got, rels)
 
 
+# pin_has_enhance's answers in this process, by (toolkit dir, url, tag,
+# commit): the wizard and package both ask, and a pin outside the local
+# history costs a fetch each time.
+_PIN_ENHANCE = {}
+
+
 def pin_has_enhance(pin):
     """Whether the toolkit at the pin has the enhancements layer (and with
-    it the config.toml reader)."""
-    rel = dict((k, rel) for k, _, rel in FEATURE_FILES)["enhance"]
-    return pin_files(pin, [rel])[rel]
+    it the config.toml reader). The one answer for every caller: the
+    wizard's options and the bundle's config files and README text."""
+    key = (toolkit_dir(), pin["url"], pin.get("tag", ""), pin.get("commit", ""))
+    if key not in _PIN_ENHANCE:
+        rel = dict((k, rel) for k, _, rel in FEATURE_FILES)["enhance"]
+        _PIN_ENHANCE[key] = pin_files(pin, [rel])[rel]
+    return _PIN_ENHANCE[key]
 
 
 def exclude_pin_mark(tk, mark=PIN_MARK):
