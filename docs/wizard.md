@@ -13,6 +13,8 @@ it one game's is a JSON config that `xbr wizard build` reads from
 `game.toml`'s `[wizard]` table at a release tag and embeds in the binary.
 A game without the table has no wizard.
 
+Players: see [For players](#for-players).
+
 ## What the player sees
 
 1. **Welcome**: what the wizard does and what it never does (no game
@@ -119,6 +121,71 @@ must copy `Resources/config.seed.toml` the same way. BLiNX 2's
 `packaging/macos/BLiNX2.in` is the model; a CLI template for that launcher
 is a follow-up.
 
+## For players
+
+1. Open the game's **Releases** page and download the wizard for your
+   computer: the file whose name ends in `windows-x64.zip`, `macos.zip`
+   or `linux-x64.tar.gz` (`SHA256SUMS` on the same page is optional: it
+   lets you verify the download).
+2. Open it (below, for your computer).
+3. The wizard says what it will do, then checks your computer and fetches
+   or offers to install what is missing: the build tools (each download
+   checked against a known checksum) and, on a Mac, Apple's Command Line
+   Tools and Homebrew (its installer asks for your password). It sends
+   nothing of yours; if you leave the box ticked, it asks the releases
+   page once whether a newer wizard exists.
+4. Point it at your game dump: a disc image, or the folder with
+   `default.xbe` in it.
+5. Choose the target (usually the computer you are on) and the game's
+   options (render scale, fullscreen and the like).
+6. Build. This takes a while: BLiNX 2 takes about 20 to 40 minutes on the
+   computers it was timed on. Closing the window stops the build; a later
+   build reuses most of the work.
+7. Press **Install now**, or open the output folder and copy the
+   **bundle** (the installable game the wizard made from your dump) to
+   the computer you play on: on Windows a setup program; on a Mac a `.dmg`
+   (drag the app to Applications); on a Steam Deck or Linux PC a `.tar` to
+   unpack, then `./install.sh --steam` in a terminal opened in the
+   unpacked folder, with Steam open (the bundle's README explains the
+   rest).
+
+You need about 15 GB free for the build folder, plus room for the bundle
+(your game files and about 1 GB more). The wizard shows both folders on
+its first page and lets you change them; the bundle lands in a `dist`
+folder beside the wizard.
+
+### Opening the wizard
+
+**Windows.** Unzip and run `<game>-wizard.exe`. SmartScreen warns because
+the program is not signed: click *More info*, then *Run anyway*. The setup
+program the build makes warns the same way.
+
+**macOS.** Unzip, then move `<game>-wizard.app` out of Downloads (into your
+home folder, say) before opening it; opened in place, macOS runs it from a
+temporary location and the bundle goes to the build folder instead. The
+first time, macOS refuses to open it because it is not signed: close the
+message, open *System Settings > Privacy & Security*, click *Open Anyway*
+near the bottom and confirm. Do the same once for the game's app after
+installing it.
+
+**Linux and Steam Deck.** On the Deck, use Desktop Mode. Extract the
+archive into a folder of its own, open a terminal there (Dolphin:
+right-click > *Open Terminal Here*) and run `./<game>-wizard`
+([The icon](#the-icon) has the lines for a menu entry). After the install
+the game is in your Steam library; in Game Mode, pick the Gamepad template
+in its controller settings.
+
+### Logs
+
+`wizard.log` is in the wizard's settings folder (`%APPDATA%\<game>-wizard`,
+`~/Library/Application Support/<game>-wizard` or `~/.config/<game>-wizard`),
+and the build's own logs are in `src/build-logs/` under the build folder;
+a failed build names the log, with a button to open it. Report a game
+problem on the game's repository, and a wizard or command line problem at
+[apexJCL/xboxrecomp-cli/issues](https://github.com/apexJCL/xboxrecomp-cli/issues).
+Attach the log, never the bundle or your game files. The messages and
+their fixes: [troubleshooting.md](troubleshooting.md).
+
 ## Credits
 
 The wizard credits the open-source projects it and the build rely on.
@@ -135,7 +202,7 @@ smaller window, and follows a resize. Welcome hides the button, since the
 list is already on the page. Each link opens in the browser.
 
 The CLI owns the list and its order (`credits.py`), and `wizard config`
-puts it in the config as `credits`. Our repos come first, then the
+puts it in the config as `credits`. My repos come first, then the
 third-party projects:
 
 1. the game's own repository (or repositories): its `[[wizard.credit]]`

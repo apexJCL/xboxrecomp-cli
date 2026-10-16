@@ -7,6 +7,10 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Changed
+- The README is now for porters; the player's guide moved to
+  docs/wizard.md, For players.
+
 ## [0.7.6] - 2026-10-16
 
 ### Added

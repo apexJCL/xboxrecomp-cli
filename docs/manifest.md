@@ -297,7 +297,7 @@ two entries share a url.
 | `role` | required | What it does for this game, in a few plain words. |
 | `license` | required | An SPDX licence expression (`MIT`, `OFL-1.1`, `MIT OR Apache-2.0`). |
 | `url` | required | Its page, `https://` with no spaces or control characters: the GitHub page when there is one. |
-| `own` | `false` | `true` for the game's own repository: listed with our repos, first. |
+| `own` | `false` | `true` for the game's own repository: listed with my repos, first. |
 
 ## [enhance.hud]
 
