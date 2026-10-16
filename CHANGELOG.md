@@ -7,6 +7,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-10-16
+
 ### Added
 - `doctor` names the toolkit's features (env table, enhancements, D3D11,
   Metal, spin waits) and what it lacks; `doctor --json` gives them as
@@ -286,7 +288,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.5...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.6...HEAD
+[0.7.6]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.2...v0.7.3
