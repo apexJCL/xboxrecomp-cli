@@ -30,6 +30,13 @@ a release by its tag in `game.toml`'s `[cli]` table.
   anisotropic filtering off, and the manifest lists it as a toolkit
   enhancement key.
 
+### Fixed
+- `build` and `package` configure a build tree afresh when its cache names
+  another toolkit than the current one (a move between the upstream and
+  fork pins, or a new `XBOXRECOMP_DIR`), and say so in one line. The tree
+  kept the old toolkit, so `build macos` linked the fork's `gen/` against
+  upstream libraries and failed on an undefined `g_xbox_spin_sleep`.
+
 ## [0.7.5] - 2026-10-15
 
 ### Added

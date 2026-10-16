@@ -7,6 +7,7 @@ move. Synthetic tree, fake toolkit, no network, no build.
 
 import contextlib
 import json
+import ntpath
 import os
 import shutil
 import subprocess
@@ -431,6 +432,48 @@ def test_other_toolchain_reset(d):
     assert build.reset_stale_toolchain(bdir, manifest.CLI_TOOLCHAIN)
     assert not os.path.exists(cache)
     assert not os.path.exists(os.path.join(bdir, "CMakeFiles"))
+
+
+def test_other_toolkit_reset(d, monkeypatch, capsys):
+    """A tree configured against another toolkit (a game moved between the
+    upstream and fork pins) starts afresh: the cached XBOXRECOMP_DIR linked
+    fork gen/ against upstream libraries. The same toolkit by another
+    spelling (a symlink) keeps its tree."""
+    with game2_tree(d) as (G, tk):
+        write(os.path.join(tk, "CMakeLists.txt"), "")
+        other = os.path.join(d, "upstream")
+        os.makedirs(other)
+        link = os.path.join(d, "tk-link")
+        os.symlink(tk, link)
+        bdir = os.path.join(d, "build")
+        cache = os.path.join(bdir, "CMakeCache.txt")
+        assert not build.reset_stale_toolkit(bdir, tk)  # no tree yet
+        write(cache, "XBOXRECOMP_DIR:PATH=%s\n" % link)
+        assert not build.reset_stale_toolkit(bdir, tk)
+        write(cache, "CMAKE_BUILD_TYPE:STRING=Release\n")
+        assert not build.reset_stale_toolkit(bdir, tk)  # nothing to compare
+        assert capsys.readouterr().err == ""
+        # Native Windows: CMake's spelling and toolkit_dir()'s differ in case
+        # and slashes for one directory.
+        assert build.same_dir("d:/xbr/tk", "D:\\xbr\\tk", ntpath)
+        assert not build.same_dir("d:/xbr/tk", "D:\\xbr\\upstream", ntpath)
+
+        monkeypatch.setattr(pipeline, "refuse_stale_gen", lambda *a: None)
+        monkeypatch.setattr(host, "refuse_while_regenerating", lambda: None)
+        monkeypatch.setattr(build, "build_tools", lambda st: ("cmake", None))
+        monkeypatch.setattr(build, "check_build_target", lambda t: None)
+        monkeypatch.setattr(G, "exe", lambda b, t: G.xbe)
+        runs = []
+        monkeypatch.setattr(host, "run", lambda argv, **k: runs.append(argv))
+        write(cache, "XBOXRECOMP_DIR:PATH=%s\n" % other)
+        write(os.path.join(bdir, "CMakeFiles", "x"), "")
+        build.build("macos", bdir=bdir)
+        err = capsys.readouterr().err
+        assert "configured with the toolkit %s, not %s; configuring afresh" % (other, tk) in err
+        assert not os.path.exists(os.path.join(bdir, "CMakeFiles"))
+        assert runs[0][:5] == ["cmake", "-S", G.root, "-B", bdir]
+        assert "-DXBOXRECOMP_DIR=" + tk in runs[0]
+        assert runs[1][:3] == ["cmake", "--build", bdir]
 
 
 def host_fresh_if_stale(script):

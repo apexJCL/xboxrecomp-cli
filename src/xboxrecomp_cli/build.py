@@ -110,10 +110,53 @@ def reset_stale_toolchain(bdir, toolchain=None):
         % (bdir, stale[0]),
         file=sys.stderr,
     )
+    start_afresh(bdir)
+    return True
+
+
+CACHED_TOOLKIT = re.compile(r"^XBOXRECOMP_DIR:[A-Z]+=(.*)$", re.M)
+
+
+def reset_stale_toolkit(bdir, tk):
+    """A tree configured against another toolkit (a game moved between the
+    upstream and fork pins, or XBOXRECOMP_DIR changed) keeps the old one: a
+    configure without -DXBOXRECOMP_DIR reads the cached path, so gen/ for
+    one toolkit links against the other's libraries (undefined
+    g_xbox_spin_sleep). Passing the new path is not enough either: the
+    toolkit builds in the same add_subdirectory binary dir whichever source
+    it comes from, so the old toolkit's cached options and find results
+    would carry over. Start the cache afresh, as cmake --fresh does."""
+    cache = os.path.join(bdir, "CMakeCache.txt")
+    if not os.path.isfile(cache):
+        return False
+    with open(cache, encoding="utf-8", errors="replace") as f:
+        m = CACHED_TOOLKIT.search(f.read())
+    old = m.group(1).strip() if m else ""
+    if not old or same_dir(old, tk):
+        return False
+    print(
+        "%s: configured with the toolkit %s, not %s; configuring afresh" % (bdir, old, tk),
+        file=sys.stderr,
+    )
+    start_afresh(bdir)
+    return True
+
+
+def same_dir(a, b, path=os.path):
+    """One directory by both spellings. On Windows CMake caches a path with
+    forward slashes and the drive letter as it saw it (d:/xbr/...), while
+    toolkit_dir() may give D:\\xbr\\...: compare case-folded too, or every
+    build would start afresh."""
+    return path.normcase(path.realpath(a)) == path.normcase(path.realpath(b))
+
+
+def start_afresh(bdir):
+    """Drop a tree's CMakeCache.txt and CMakeFiles (what cmake --fresh
+    drops), so the next configure starts from the arguments it is given."""
+    cache = os.path.join(bdir, "CMakeCache.txt")
     if os.path.isfile(cache):
         os.remove(cache)
     shutil.rmtree(os.path.join(bdir, "CMakeFiles"), ignore_errors=True)
-    return True
 
 
 def build(
@@ -147,10 +190,9 @@ def build(
         )
     if target == "windows":
         reset_stale_toolchain(bdir, toolchain_file())
+    reset_stale_toolkit(bdir, tk)
     if reconfigure:
-        if os.path.isfile(os.path.join(bdir, "CMakeCache.txt")):
-            os.remove(os.path.join(bdir, "CMakeCache.txt"))
-        shutil.rmtree(os.path.join(bdir, "CMakeFiles"), ignore_errors=True)
+        start_afresh(bdir)
     if stock:
         cmake_args = list(stock_cmake_args()) + list(cmake_args)
     if stock or not os.path.isfile(os.path.join(bdir, "CMakeCache.txt")):
