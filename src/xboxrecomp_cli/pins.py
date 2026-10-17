@@ -41,11 +41,11 @@ UMU_LAUNCHER = {
 # "dir" is the tarball's top directory, the name Steam and umu-run use.
 # Moved like UMU_LAUNCHER: a reviewed edit with the asset's sha256.
 GE_PROTON = {
-    "version": "GE-Proton11-9",
-    "dir": "GE-Proton11-9-x86_64",
+    "version": "GE-Proton11-7",
+    "dir": "GE-Proton11-7-x86_64",
     "url": "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
-    "GE-Proton11-9/GE-Proton11-9-x86_64.tar.gz",
-    "sha256": "b2cf4a632a70ec321cdb9904fa396a2a45d4061129f9fdc89d8a27ea5ceeb9d6",
+    "GE-Proton11-7/GE-Proton11-7-x86_64.tar.gz",
+    "sha256": "c5448b76a230384e2d7bc6beb5ccb97bafb7e2c3b6c527cb03a1a546bbcb00a0",
 }
 
 

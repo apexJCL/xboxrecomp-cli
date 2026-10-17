@@ -11,6 +11,15 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The README is now for porters; the player's guide moved to
   docs/wizard.md, For players.
 
+### Fixed
+- The SteamOS bundle pins GE-Proton11-7 instead of GE-Proton11-9. Under
+  11-9, winedevice crashes in hidclass.sys (`unimplemented function
+  win32u.dll.__wine_send_input`), so winebus never starts and the game sees
+  no controllers, in Desktop and Game Mode alike. 11-7 is the release the
+  Proton benches and goldens run on. Updating downloads 11-7 once; the
+  GE-Proton11-9 copy in compatibilitytools.d can then be deleted, and
+  rolling back to an 11-9 bundle brings the missing controllers back.
+
 ## [0.7.6] - 2026-10-16
 
 ### Added

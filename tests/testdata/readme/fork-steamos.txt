@@ -44,7 +44,7 @@ This bundle runs on a Steam Deck with stock SteamOS, and on a Linux gaming
 distribution that ships umu-run. The game runs under Proton through umu-run
 (umu-launcher): a stock Steam Deck does not have it, and the installer
 offers to download it (see "umu-run" below). The installer also downloads
-GE-Proton11-9, the Proton this bundle pins (about 560 MB, once; see
+GE-Proton11-7, the Proton this bundle pins (about 560 MB, once; see
 "Proton" below).
 
 Copy BLiNX2-v1-steamos.tar to the PC (USB stick, network share,
@@ -70,7 +70,7 @@ unpacked folder can be deleted after the install.
 
 Play from Game Mode: the shortcut is "BLiNX2" in your library. Leave
 "Force the use of a specific Steam Play compatibility tool" OFF for it: the
-launcher starts Proton itself (umu-run, GE-Proton11-9).
+launcher starts Proton itself (umu-run, GE-Proton11-7).
 
 The first launch downloads the Steam Linux Runtime (about 500 MB) and
 creates the Wine prefix, which takes a few minutes. A window (or, in Game
@@ -99,7 +99,7 @@ Game Mode too, whose PATH lacks ~/.local/bin.
 
 Proton
 ------
-The game runs on GE-Proton11-9, the one release this bundle pins. The
+The game runs on GE-Proton11-7, the one release this bundle pins. The
 installer puts it in ~/.local/share/Steam/compatibilitytools.d (checked
 against its sha256), unless it is there already, and the launcher uses it,
 so no launch downloads a Proton. A later bundle may pin a newer one; its
@@ -111,7 +111,7 @@ PROTONPATH, `./install.sh --no-proton` skips the download.
 
 Troubleshooting
 ---------------
-- "GE-Proton11-9 is not installed" at launch: run `./install.sh` in
+- "GE-Proton11-7 is not installed" at launch: run `./install.sh` in
   the unpacked bundle folder again, from Desktop Mode.
 - "umu-run is not installed" (a notification at launch, or from
   install.sh): run `./install.sh --fetch-umu` in the unpacked bundle
