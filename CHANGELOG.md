@@ -7,6 +7,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-10-17
+
 ### Changed
 - The README is now for porters; the player's guide moved to
   docs/wizard.md, For players.
@@ -19,6 +21,13 @@ a release by its tag in `game.toml`'s `[cli]` table.
   Proton benches and goldens run on. Updating downloads 11-7 once; the
   GE-Proton11-9 copy in compatibilitytools.d can then be deleted, and
   rolling back to an 11-9 bundle brings the missing controllers back.
+- The SteamOS launcher pins its own sha256-checked umu and Proton: a
+  `PROTONPATH` in the bundle's `launch.env.default` no longer overrides the
+  pin (only the environment or `config/launch.env` do), so umu stops
+  querying GitHub on every launch. A second launch while the game is
+  starting or running says so instead of starting twice, and the
+  runtime-update marker is cleared when the runtime is absent, so the
+  "Checking the Steam Linux Runtime" notice shows once.
 
 ## [0.7.6] - 2026-10-16
 
@@ -301,7 +310,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.6...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.7...HEAD
+[0.7.7]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.3...v0.7.4
