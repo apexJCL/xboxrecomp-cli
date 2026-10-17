@@ -350,7 +350,8 @@ def readme_bytes(d, monkeypatch, target, enhance):
 def test_readme_fork_unchanged(d, monkeypatch, target):
     """On a toolkit with the enhancements layer the README is byte for byte
     what baa60fb (0.7.6 before the capability blocks) wrote: the files in
-    testdata/readme/ are its output."""
+    testdata/readme/ are its output, plus later edits to the README text
+    itself (the steamos pinned Proton)."""
     got, pacing = readme_bytes(d, monkeypatch, target, True)
     with open(os.path.join(FORK_OUT, "fork-%s.txt" % target), "rb") as f:
         want = f.read().replace(b"\r\n", b"\n")

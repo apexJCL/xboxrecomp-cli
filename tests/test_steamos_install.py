@@ -1,8 +1,8 @@
 """Tests for the steamos templates (templates/steamos/): the installer
 (install_lib.py) on fake bundles, rendered with the test game's values as
-`package steamos` renders them; the umu-run search and the pinned fetch with
-a fake download; and launch.sh with a fake umu-run, zenity and HOME (no
-game data, no Proton, no network).
+`package steamos` renders them; the umu-run search and the pinned umu-run
+and Proton fetches with a fake download; and launch.sh with a fake umu-run,
+zenity, flock and HOME (no game data, no Proton, no network).
 
 Every installer command runs between two snapshots of hdd/, config/ and
 logs/ (paths, sizes, mtimes, contents): the installer must never write the
@@ -146,9 +146,13 @@ def found_umu(want_fetch, umu_dir):
     return "/opt/umu/umu-run"
 
 
-def run(il, bundle, root, *args, bench="/nonexistent-bench", umu=found_umu):
-    """install_lib.main with the host check off and umu-run stubbed;
-    returns (exit, output) and asserts the user data is untouched."""
+def found_proton():
+    return "/opt/compat/GE-Proton"
+
+
+def run(il, bundle, root, *args, bench="/nonexistent-bench", umu=found_umu, proton=found_proton):
+    """install_lib.main with the host check off and umu-run and Proton
+    stubbed; returns (exit, output) and asserts the user data is untouched."""
     before = snapshot(il, root)
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
@@ -157,6 +161,7 @@ def run(il, bundle, root, *args, bench="/nonexistent-bench", umu=found_umu):
             host_check=False,
             bench=bench,
             umu=umu,
+            proton=proton,
         )
     if "--import-saves" not in args:
         assert snapshot(il, root) == before, "user data changed by %s" % (args,)
@@ -817,6 +822,197 @@ def test_install_fetch_umu(il, d, home, fake_release, monkeypatch):
     assert rc == 0 and "umu-run:  %s/umu-run (recorded by install)" % umu_dir in out, out
 
 
+# ── Proton: the pinned fetch ─────────────────────────────────────────────
+
+
+def proton_tar(path, top=None, extra=()):
+    """A release-shaped tar.gz: <top>/proton, a file, a relative link and a
+    hard link inside the tree, plus any extra (TarInfo, data) members."""
+    top = top or VALUES["PROTON_DIR"]
+    with tarfile.open(path, "w:gz") as t:
+
+        def add(name, data=None, **kw):
+            ti = tarfile.TarInfo(name)
+            for k, v in kw.items():
+                setattr(ti, k, v)
+            if data is not None:
+                ti.size = len(data)
+                t.addfile(ti, io.BytesIO(data))
+            else:
+                t.addfile(ti)
+
+        add(top, type=tarfile.DIRTYPE, mode=0o755)
+        add(top + "/proton", b"#!/usr/bin/env python3\n", mode=0o755)
+        add(top + "/files", type=tarfile.DIRTYPE, mode=0o755)
+        add(top + "/files/lib.so", b"lib", mode=0o644)
+        add(top + "/files/lib.so.1", type=tarfile.SYMTYPE, linkname="lib.so")
+        add(top + "/files/lib.hard", type=tarfile.LNKTYPE, linkname=top + "/files/lib.so")
+        for ti, data in extra:
+            if data is None:
+                t.addfile(ti)
+            else:
+                ti.size = len(data)
+                t.addfile(ti, io.BytesIO(data))
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+@pytest.fixture
+def proton_release(il, d, monkeypatch):
+    """make(extra=()) -> a fake download of a Proton tar.gz whose sha256 is
+    the pin; fetch.calls lists the URLs fetched."""
+
+    def make(extra=(), top=None):
+        src = os.path.join(d, "proton.tar.gz")
+        monkeypatch.setattr(il, "PROTON_SHA256", proton_tar(src, top, extra))
+        calls = []
+
+        def fetch(url, dst):
+            calls.append(url)
+            shutil.copyfile(src, dst)
+
+        fetch.calls = calls
+        return fetch
+
+    return make
+
+
+def compat_left(compat):
+    return sorted(os.listdir(compat)) if os.path.isdir(compat) else []
+
+
+def test_fetch_proton(il, d, home, proton_release):
+    fetch = proton_release()
+    compat = il.compat_dir()
+    assert compat == os.path.join(home, ".local", "share", "Steam", "compatibilitytools.d")
+    got = il.ensure_proton(fetch=fetch)
+    tree = os.path.join(compat, VALUES["PROTON_DIR"])
+    assert got == tree and fetch.calls == [VALUES["PROTON_URL"]]
+    assert os.access(os.path.join(tree, "proton"), os.X_OK)
+    assert os.readlink(os.path.join(tree, "files", "lib.so.1")) == "lib.so"
+    with open(os.path.join(tree, "files", "lib.hard"), "rb") as f:
+        assert f.read() == b"lib"
+    # Only the tree: no tarball or partial tree left beside it.
+    assert compat_left(compat) == [VALUES["PROTON_DIR"]]
+    # There already (an earlier install, umu-run or ProtonUp-Qt): no download.
+    assert il.ensure_proton(fetch=fetch) == tree and len(fetch.calls) == 1
+
+
+def test_fetch_proton_replaces_dangling_link(il, d, home, proton_release):
+    """A link left where the pinned tree goes (a removed ProtonUp-Qt
+    folder, say) is replaced by the tree; its target is not touched."""
+    compat = il.compat_dir()
+    os.makedirs(compat)
+    os.symlink(os.path.join(d, "gone"), os.path.join(compat, VALUES["PROTON_DIR"]))
+    tree = il.ensure_proton(fetch=proton_release())
+    assert not os.path.islink(tree) and os.path.isfile(os.path.join(tree, "proton"))
+
+
+def test_fetch_proton_keeps_others(il, d, home, proton_release):
+    """compatibilitytools.d is Steam's: other releases are never touched."""
+    other = make_exe(os.path.join(il.compat_dir(), "GE-Proton10-1", "proton"))
+    il.ensure_proton(fetch=proton_release())
+    assert os.path.isfile(other)
+
+
+def test_fetch_proton_hash_mismatch(il, d, home, proton_release, monkeypatch):
+    fetch = proton_release()
+    monkeypatch.setattr(il, "PROTON_SHA256", "0" * 64)
+    with pytest.raises(il.InstallError, match="not the pinned"):
+        il.ensure_proton(fetch=fetch)
+    assert compat_left(il.compat_dir()) == []
+
+
+def test_fetch_proton_unpinned_refused(il, d, home, monkeypatch):
+    monkeypatch.setattr(il, "PROTON_SHA256", "@PROTON_SHA256@")
+    with pytest.raises(il.InstallError, match="no Proton pin"):
+        il.fetch_proton(il.compat_dir(), fetch=lambda u, p: pytest.fail("fetched"))
+
+
+def test_fetch_proton_failed_download(il, d, home):
+    def fetch(url, dst):
+        open(dst, "w").close()
+        raise OSError("network down")
+
+    with pytest.raises(il.InstallError, match="download failed"):
+        il.ensure_proton(fetch=fetch)
+    assert compat_left(il.compat_dir()) == []
+
+
+def _ti(name, **kw):
+    ti = tarfile.TarInfo(name)
+    for k, v in kw.items():
+        setattr(ti, k, v)
+    return ti
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        (_ti("../evil"), b"x"),
+        (_ti("/abs"), b"x"),
+        (_ti("Other-Proton/x"), b"x"),
+        (_ti("%s/../../x" % VALUES["PROTON_DIR"]), b"x"),
+        (_ti("%s/out" % VALUES["PROTON_DIR"], type=tarfile.SYMTYPE, linkname="../../etc"), None),
+        (_ti("%s/abs" % VALUES["PROTON_DIR"], type=tarfile.SYMTYPE, linkname="/etc/passwd"), None),
+        (_ti("%s/hard" % VALUES["PROTON_DIR"], type=tarfile.LNKTYPE, linkname="etc/passwd"), None),
+        (_ti("%s/dev" % VALUES["PROTON_DIR"], type=tarfile.CHRTYPE), None),
+    ],
+    ids=[
+        "dotdot",
+        "absolute",
+        "other-top",
+        "inner-dotdot",
+        "link-out",
+        "link-abs",
+        "hard-out",
+        "dev",
+    ],
+)
+def test_fetch_proton_unsafe_members(il, d, home, proton_release, member):
+    fetch = proton_release(extra=[member])
+    with pytest.raises(il.InstallError):
+        il.ensure_proton(fetch=fetch)
+    assert compat_left(il.compat_dir()) == []
+    assert not os.path.exists(os.path.join(d, "evil")) and not os.path.exists(os.path.join(d, "x"))
+
+
+def test_fetch_proton_wrong_top(il, d, home, proton_release):
+    """A pin whose tarball unpacks under another name is refused whole."""
+    fetch = proton_release(top="GE-Proton9-1")
+    with pytest.raises(il.InstallError):
+        il.ensure_proton(fetch=fetch)
+    assert compat_left(il.compat_dir()) == []
+
+
+def test_install_proton_and_runtime_mark(il, d, home):
+    """install ensures the pin (unless --no-proton) and marks the next
+    launch for a runtime update; rollback marks it too; status names the
+    pinned Proton."""
+    root = os.path.join(d, "r")
+    v1 = make_bundle(os.path.join(d, "1"), "20261001.0000-ca-tb-g1")
+    v2 = make_bundle(os.path.join(d, "2"), "20261002.0000-ca-tb-g2", exe=b"MZ v2")
+    calls = []
+    rc, out = run(il, v1, root, "install", proton=lambda: calls.append(1))
+    assert rc == 0 and calls == [1], out
+    mark = os.path.join(root, "state", "runtime-update")
+    assert os.path.isfile(mark)
+    os.remove(mark)
+    rc, out = run(il, v2, root, "install", "--no-proton", proton=lambda: calls.append(2))
+    assert rc == 0 and calls == [1] and "--no-proton" in out, out
+    assert os.path.isfile(mark)
+    os.remove(mark)
+    rc, out = run(il, v2, root, "rollback")
+    assert rc == 0 and os.path.isfile(mark), out
+    rc, out = run(il, v2, root, "status")
+    assert "proton:   %s MISSING" % VALUES["PROTON_VERSION"] in out, out
+    make_exe(os.path.join(pinned_proton(home), "proton"))
+    rc, out = run(il, v2, root, "status")
+    assert "proton:   %s (%s)" % (pinned_proton(home), VALUES["PROTON_VERSION"]) in out, out
+    with pytest.raises(SystemExit):
+        run(il, v2, root, "status", "--no-proton")
+
+
 # ── launch.sh ────────────────────────────────────────────────────────────
 
 
@@ -832,7 +1028,14 @@ def fake_install(d, home):
         f.write("[render]\n")
     os.makedirs(os.path.join(root, "game_files"))
     open(os.path.join(root, "game_files", "default.xbe"), "w").close()
+    make_exe(os.path.join(pinned_proton(home), "proton"))
     return root, os.path.join(v, "launch.sh")
+
+
+def pinned_proton(home):
+    return os.path.join(
+        home, ".local", "share", "Steam", "compatibilitytools.d", VALUES["PROTON_DIR"]
+    )
 
 
 # The fake umu-run: records its argv and the gamescope hint, then plays the
@@ -878,7 +1081,7 @@ def test_launch_umu_search(d, home):
     assert r.returncode == 1 and b"--fetch-umu" in r.stdout, r.stdout
     # The copy install.sh recorded (a --umu-dir).
     rec = make_exe(os.path.join(d, "elsewhere", "umu-run"), FAKE_UMU)
-    os.makedirs(os.path.join(root, "state"))
+    os.makedirs(os.path.join(root, "state"), exist_ok=True)
     with open(os.path.join(root, "state", "umu-run"), "w") as f:
         f.write(rec + "\n")
     assert launch(launcher, home, "/usr/bin:/bin").returncode == 0
@@ -987,8 +1190,7 @@ def test_first_launch_notice(d, home):
 
 
 def test_no_notice_once_set_up(d, home):
-    """Runtime, Proton and prefix there: no notice, the launcher is umu-run
-    (exec), as before."""
+    """Runtime, Proton and prefix there: no notice."""
     root, launcher = fake_install(d, home)
     os.makedirs(os.path.join(home, ".local", "share", "umu", "steamrt3"))
     os.makedirs(
@@ -1030,7 +1232,7 @@ def test_notice_notification_without_window_tools(d, home):
     r = launch(launcher, home, bindir + ":" + tools, WAYLAND_DISPLAY="wayland-0")
     assert r.returncode == 0, r.stdout
     with open(os.path.join(home, "notify.argv")) as f:
-        assert "First launch" in f.read()
+        assert "Setting up Proton" in f.read()
 
 
 def test_launch_caps_old_logs(d, home):
@@ -1067,3 +1269,176 @@ def test_launch_caps_old_logs(d, home):
     assert launch(launcher, home, "/usr/bin:/bin").returncode == 0
     with open(os.path.join(logs, "steam-default.log"), "rb") as f:
         assert f.read() == big
+
+
+# ── launch.sh: the pinned Proton, the runtime, one launch at a time ──────
+
+# Records what umu-run would see: PROTONPATH, UMU_RUNTIME_UPDATE and
+# whether the launcher's lock (fd 9) reached it.
+FAKE_UMU_ENV = """echo "${PROTONPATH:-unset}" > "$HOME/umu.protonpath"
+echo "${UMU_RUNTIME_UPDATE-unset}" > "$HOME/umu.runtime"
+if [ -e /dev/fd/9 ]; then echo open; else echo closed; fi > "$HOME/umu.fd9"
+echo x >> "$HOME/umu.count"
+"""
+
+
+def read_text(path):
+    with open(path) as f:
+        return f.read().strip()
+
+
+def test_launch_pinned_proton(d, home):
+    root, launcher = fake_install(d, home)
+    make_exe(os.path.join(home, ".local", "bin", "umu-run"), FAKE_UMU_ENV + FAKE_UMU)
+    r = launch(launcher, home, "/usr/bin:/bin")
+    assert r.returncode == 0, r.stdout
+    assert read_text(os.path.join(home, "umu.protonpath")) == pinned_proton(home)
+    # Removed: a clear failure naming install.sh, and umu-run never starts.
+    os.remove(os.path.join(home, "umu.protonpath"))
+    shutil.rmtree(pinned_proton(home))
+    r = launch(launcher, home, "/usr/bin:/bin")
+    assert r.returncode == 1 and b"install.sh" in r.stdout, r.stdout
+    assert VALUES["PROTON_VERSION"].encode() in r.stdout
+    assert not os.path.exists(os.path.join(home, "umu.protonpath"))
+    # PROTONPATH=GE-Proton in config/launch.env: the explicit opt-in to the
+    # newest release, passed to umu-run as is.
+    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+        f.write("PROTONPATH=GE-Proton\n")
+    assert launch(launcher, home, "/usr/bin:/bin").returncode == 0
+    assert read_text(os.path.join(home, "umu.protonpath")) == "GE-Proton"
+
+
+def test_launch_default_protonpath_ignored(d, home):
+    """A game shares launch.env.default with its Windows installer, whose
+    PROTONPATH=GE-Proton line would undo the pin: the launcher drops it. The
+    environment's PROTONPATH and config/launch.env's still win."""
+    root, launcher = fake_install(d, home)
+    make_exe(os.path.join(home, ".local", "bin", "umu-run"), FAKE_UMU_ENV + FAKE_UMU)
+    with open(os.path.join(root, "versions", "v", "launch.env.default"), "a") as f:
+        f.write("PROTONPATH=GE-Proton\n")
+
+    def protonpath(**env):
+        r = launch(launcher, home, "/usr/bin:/bin", **env)
+        assert r.returncode == 0, r.stdout
+        return read_text(os.path.join(home, "umu.protonpath"))
+
+    assert protonpath() == pinned_proton(home)
+    assert protonpath(PROTONPATH="/opt/my-proton") == "/opt/my-proton"
+    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+        f.write("PROTONPATH=GE-Proton\n")
+    assert protonpath() == "GE-Proton"
+
+
+def test_launch_runtime_update(d, home):
+    """No runtime: umu-run downloads it (no UMU_RUNTIME_UPDATE). Installed:
+    UMU_RUNTIME_UPDATE=0, except once after an install or rollback
+    (state/runtime-update). The player's value wins."""
+    root, launcher = fake_install(d, home)
+    make_exe(os.path.join(home, ".local", "bin", "umu-run"), FAKE_UMU_ENV + FAKE_UMU)
+
+    def runtime():
+        r = launch(launcher, home, "/usr/bin:/bin")
+        assert r.returncode == 0, r.stdout
+        return read_text(os.path.join(home, "umu.runtime"))
+
+    assert runtime() == "unset"
+    # No runtime yet, the mark set (the first launch after an install): the
+    # download is the newest runtime, so the mark goes, and the next launch
+    # neither checks again nor shows the notice for it.
+    mark = os.path.join(root, "state", "runtime-update")
+    open(mark, "w").close()
+    assert runtime() == "unset" and not os.path.exists(mark)
+    os.makedirs(os.path.join(home, ".local", "share", "umu", "steamrt4"))
+    assert runtime() == "0"
+    open(mark, "w").close()
+    assert runtime() == "unset" and not os.path.exists(mark)
+    assert runtime() == "0"
+    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+        f.write("UMU_RUNTIME_UPDATE=1\n")
+    assert runtime() == "1"
+
+
+def test_codename_notice(d, home):
+    """PROTONPATH=GE-Proton: umu-run may download a newer release, whatever
+    is installed, so the notice shows."""
+    root, launcher = fake_install(d, home)
+    os.makedirs(os.path.join(home, ".local", "share", "umu", "steamrt4"))
+    os.makedirs(os.path.join(root, "prefix"))
+    open(os.path.join(root, "prefix", "system.reg"), "w").close()
+    os.makedirs(os.path.join(root, "config"), exist_ok=True)
+    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+        f.write("PROTONPATH=GE-Proton\n")
+    bindir = os.path.join(d, "bin")
+    make_exe(os.path.join(bindir, "umu-run"), FAKE_UMU)
+    make_exe(os.path.join(bindir, "zenity"), FAKE_ZENITY)
+    r = launch(launcher, home, bindir + ":/usr/bin:/bin", DISPLAY=":0", FAKE_DELAY="2")
+    assert r.returncode == 0, r.stdout
+    assert "# Checking for the newest GE-Proton ..." in read_text(
+        os.path.join(home, "zenity.lines")
+    )
+
+
+def test_runtime_check_notice(d, home):
+    """The launch after an install shows the notice while umu-run checks
+    the runtime for updates."""
+    root, launcher = fake_install(d, home)
+    os.makedirs(os.path.join(home, ".local", "share", "umu", "steamrt4"))
+    os.makedirs(os.path.join(root, "prefix"))
+    open(os.path.join(root, "prefix", "system.reg"), "w").close()
+    os.makedirs(os.path.join(root, "state"))
+    open(os.path.join(root, "state", "runtime-update"), "w").close()
+    bindir = os.path.join(d, "bin")
+    make_exe(os.path.join(bindir, "umu-run"), FAKE_UMU)
+    make_exe(os.path.join(bindir, "zenity"), FAKE_ZENITY)
+    r = launch(launcher, home, bindir + ":/usr/bin:/bin", DISPLAY=":0", FAKE_DELAY="2")
+    assert r.returncode == 0, r.stdout
+    assert "# Checking the Steam Linux Runtime for updates ..." in read_text(
+        os.path.join(home, "zenity.lines")
+    )
+
+
+def fake_flock(bindir):
+    """flock -n FD for a Mac: util-linux is not there. fcntl.flock on the
+    inherited descriptor locks the same open file the launcher keeps."""
+    import sys
+
+    make_exe(
+        os.path.join(bindir, "flock"),
+        'exec "%s" -c "import fcntl, sys; fcntl.flock(int(sys.argv[1]), '
+        'fcntl.LOCK_EX | fcntl.LOCK_NB)" "$2"\n' % sys.executable,
+    )
+
+
+def test_single_instance(d, home):
+    root, launcher = fake_install(d, home)
+    bindir = os.path.join(d, "bin")
+    fake_flock(bindir)
+    make_exe(os.path.join(bindir, "notify-send"), 'echo "$*" > "$HOME/notify.argv"\n')
+    # The game leaves a child behind, as a wineserver does after the game.
+    make_exe(
+        os.path.join(bindir, "umu-run"),
+        FAKE_UMU_ENV + "(sleep 5) &\n" + FAKE_UMU,
+    )
+    path = bindir + ":/usr/bin:/bin"
+    e = {"HOME": home, "PATH": path, "LANG": "C", "FAKE_DELAY": "2", "DISPLAY": ":0"}
+    first = subprocess.Popen(
+        [BASH, launcher], env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+    )
+    try:
+        for _ in range(100):
+            if os.path.exists(os.path.join(home, "umu.count")):
+                break
+            time.sleep(0.05)
+        logs_before = sorted(os.listdir(os.path.join(root, "logs")))
+        r = launch(launcher, home, path, DISPLAY=":0")
+        assert r.returncode == 0 and b"already starting or running" in r.stdout, r.stdout
+        assert "already starting or running" in read_text(os.path.join(home, "notify.argv"))
+        assert read_text(os.path.join(home, "umu.count")) == "x"
+        assert sorted(os.listdir(os.path.join(root, "logs"))) == logs_before
+    finally:
+        assert first.wait(timeout=30) == 0
+    assert read_text(os.path.join(home, "umu.fd9")) == "closed"
+    # Quit and launch again at once: the left-behind child holds no lock.
+    r = launch(launcher, home, path, DISPLAY=":0")
+    assert r.returncode == 0 and b"already" not in r.stdout, r.stdout
+    assert read_text(os.path.join(home, "umu.count")) == "x\nx"

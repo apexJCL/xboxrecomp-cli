@@ -5,7 +5,7 @@ that ships umu-run (the steamos bundle).
 Run through install.sh from the bundle directory:
 
   ./install.sh [install] [--root DIR] [--keep N] [--steam] [--import-saves DIR]
-               [--fetch-umu] [--umu-dir DIR]
+               [--fetch-umu] [--umu-dir DIR] [--no-proton]
   ./install.sh rollback [VERSION] | status | list | uninstall   [--root DIR]
 
 Layout under the root (default @DEFAULT_ROOT@):
@@ -14,7 +14,8 @@ Layout under the root (default @DEFAULT_ROOT@):
   current -> versions/<v>
   versions/<v>/          program files, hard-linked against the previous version
   game_files/            the dump, synced from the bundle on every install
-  state/                 history, layout, umu-run (the umu-run install found)
+  state/                 history, layout, umu-run (the umu-run install found),
+                         runtime-update, launch.lock (held while the game runs)
   prefix/                Wine prefix, made by the first launch; disposable
   hdd/ config/ logs/     yours: saves, settings, logs
 
@@ -26,6 +27,10 @@ The game runs under Proton through umu-run (umu-launcher). Some gaming
 distributions ship it; a stock Steam Deck does not, so install finds it on PATH, in
 ~/.local/bin or in the copy it fetched itself, and otherwise offers to
 download the one release the CLI pins, checked against its sha256.
+
+The Proton it runs on is pinned the same way: install puts the one GE-Proton
+release the CLI pins into ~/.local/share/Steam/compatibilitytools.d (once,
+sha256 checked) and the launcher uses it, so no launch downloads a Proton.
 """
 
 import argparse
@@ -456,6 +461,130 @@ def free_bytes(path):
     return shutil.disk_usage(path).free
 
 
+# ── Proton ───────────────────────────────────────────────────────────────
+
+# The one GE-Proton release the game runs on: the CLI's pin, written in when
+# the bundle is packaged. The launcher points PROTONPATH at it, so umu-run
+# never fetches the newest release at launch; it is downloaded here, once.
+PROTON_VERSION = "@PROTON_VERSION@"
+PROTON_DIR = "@PROTON_DIR@"
+PROTON_URL = "@PROTON_URL@"
+PROTON_SHA256 = "@PROTON_SHA256@"
+
+
+def compat_dir():
+    """Where umu-run and Steam look for a Proton by name."""
+    return os.path.join(data_home(), "Steam", "compatibilitytools.d")
+
+
+def proton_installed(compat=None):
+    return os.path.isfile(os.path.join(compat or compat_dir(), PROTON_DIR, "proton"))
+
+
+def check_members(members, top):
+    """Every member of the Proton tarball inside top/, and nothing that
+    writes outside it once unpacked: no absolute or .. names, links that
+    stay in the tree, no devices. The tarball is sha256-checked before
+    this, so a refusal means a pin that names the wrong file."""
+    root = os.path.join(os.sep, "x")
+    tree = os.path.join(root, top)
+
+    def inside(p):
+        p = os.path.normpath(p)
+        return p == tree or p.startswith(tree + os.sep)
+
+    for m in members:
+        if m.name.startswith("/") or ".." in m.name.split("/"):
+            raise InstallError("proton: unsafe name in the release tar: %s" % m.name)
+        p = os.path.join(root, m.name)
+        if not inside(p):
+            raise InstallError("proton: %s is not under %s/" % (m.name, top))
+        if m.issym():
+            if m.linkname.startswith("/") or not inside(
+                os.path.join(os.path.dirname(p), m.linkname)
+            ):
+                raise InstallError("proton: link %s leaves the tree" % m.name)
+        elif m.islnk():
+            if not inside(os.path.join(root, m.linkname)):
+                raise InstallError("proton: hard link %s leaves the tree" % m.name)
+        elif not (m.isfile() or m.isdir()):
+            raise InstallError("proton: %s is not a file, directory or link" % m.name)
+
+
+def fetch_proton(compat, fetch=None):
+    """The pinned GE-Proton tarball, checked against its sha256 before
+    anything is unpacked, into <compat>/.<dir>.partial/, then renamed to
+    <compat>/<dir> in one step. Nothing else in compat is touched: Steam
+    and other games share it."""
+    if "@" in PROTON_URL or not re.match(r"^[0-9a-f]{64}$", PROTON_SHA256):
+        raise InstallError("this bundle carries no Proton pin")
+    fetch = fetch or download
+    os.makedirs(compat, exist_ok=True)
+    final = os.path.join(compat, PROTON_DIR)
+    tar = os.path.join(compat, ".%s.tar.gz.part" % PROTON_DIR)
+    partial = os.path.join(compat, ".%s.partial" % PROTON_DIR)
+    say("proton: downloading %s (about 560 MB, once) ..." % PROTON_VERSION)
+    try:
+        try:
+            fetch(PROTON_URL, tar)
+        except Exception as e:
+            raise InstallError("proton: download failed: %s (%s)" % (e, PROTON_URL)) from e
+        got = sha256_file(tar)
+        if got != PROTON_SHA256:
+            raise InstallError(
+                "proton: the download's sha256 is %s, not the pinned %s; nothing installed"
+                % (got, PROTON_SHA256)
+            )
+        import tarfile
+
+        shutil.rmtree(partial, ignore_errors=True)
+        os.makedirs(partial)
+        with tarfile.open(tar) as t:
+            members = t.getmembers()
+            check_members(members, PROTON_DIR)
+            if hasattr(tarfile, "data_filter"):
+                t.extractall(partial, members, filter="data")
+            else:
+                t.extractall(partial, members)
+        got_tree = os.path.join(partial, PROTON_DIR)
+        if not os.path.isfile(os.path.join(got_tree, "proton")):
+            raise InstallError("proton: the release tar has no %s/proton" % PROTON_DIR)
+        if os.path.islink(final):
+            os.remove(final)
+        elif os.path.lexists(final):
+            # A broken earlier copy (no proton file): replaced, never merged.
+            shutil.rmtree(final)
+        os.replace(got_tree, final)
+    finally:
+        if os.path.exists(tar):
+            os.remove(tar)
+        shutil.rmtree(partial, ignore_errors=True)
+    say("proton: %s (%s, sha256 checked)" % (final, PROTON_VERSION))
+    return final
+
+
+def ensure_proton(compat=None, fetch=None):
+    """The pinned Proton, fetched only when it is not there yet (umu-run,
+    ProtonUp-Qt or an earlier install may have put it there)."""
+    compat = compat or compat_dir()
+    final = os.path.join(compat, PROTON_DIR)
+    if proton_installed(compat):
+        say("proton: %s (%s)" % (final, PROTON_VERSION))
+        return final
+    if free_bytes(compat) < 2 * 1024**3:
+        raise InstallError(
+            "not enough space at %s for %s: need 2 GB (or --no-proton)" % (compat, PROTON_VERSION)
+        )
+    return fetch_proton(compat, fetch)
+
+
+def mark_runtime_update(root):
+    """state/runtime-update: the next launch may update the Steam Linux
+    Runtime; every other launch runs with UMU_RUNTIME_UPDATE=0."""
+    with open(root.p("state", "runtime-update"), "w") as f:
+        f.write("%s\n" % utcnow())
+
+
 def check_ours(root, installing):
     """Only a root this installer made is ever changed: install refuses an
     existing, non-empty directory without state/layout (it would sync
@@ -800,8 +929,11 @@ def cmd_install(
     fetch_umu_now=False,
     umu_dir=None,
     umu=None,
+    proton=True,
 ):
-    """umu: ensure_umu's stand-in for the tests (None runs the real one)."""
+    """umu: ensure_umu's stand-in for the tests (None runs the real one).
+    proton: False skips the pinned Proton (--no-proton), or ensure_proton's
+    stand-in for the tests."""
     if host_check:
         check_host()
     check_not_dev_tree(root.path, bench)
@@ -818,12 +950,17 @@ def cmd_install(
     # Only now: umu-launcher may be a download, which a damaged bundle or a
     # full disk would waste.
     umu_run = (umu or ensure_umu)(fetch_umu_now, umu_dir)
+    if proton:
+        (ensure_proton if proton is True else proton)()
+    else:
+        say("proton: not checked (--no-proton); set PROTONPATH in config/launch.env")
     os.makedirs(root.p("versions"), exist_ok=True)
     os.makedirs(root.p("state"), exist_ok=True)
     with open(root.p("state", "layout"), "w") as f:
         f.write("%d\n" % LAYOUT)
     if umu_run:
         record_umu(root, umu_run)
+    mark_runtime_update(root)
     # config/ exists from the start, so a setting can be added to
     # config/launch.env by hand before the first launch; what is in it is
     # never touched.
@@ -880,6 +1017,7 @@ def cmd_rollback(root, version=None):
         say("current is already %s" % cur)
         return
     switch(root, target, "rollback")
+    mark_runtime_update(root)
     say("current: %s -> %s (saves untouched)" % (cur, target))
 
 
@@ -951,6 +1089,14 @@ def cmd_status(root, bundle_dir):
     if not p and is_exe(recorded):
         p, where = recorded, "recorded by install"
     say("umu-run:  %s" % ("%s (%s)" % (p, where) if p else "not found (./install.sh --fetch-umu)"))
+    say(
+        "proton:   %s"
+        % (
+            "%s (%s)" % (os.path.join(compat_dir(), PROTON_DIR), PROTON_VERSION)
+            if proton_installed()
+            else "%s MISSING (./install.sh)" % PROTON_VERSION
+        )
+    )
     say("launcher: %s" % (root.p(APP) if os.access(root.p(APP), os.X_OK) else "missing"))
     games = running_games(bundle_dir)
     say("running:  %s" % ("; ".join(games) if games else "no game process"))
@@ -972,9 +1118,14 @@ def cmd_uninstall(root):
     say("removed the program from %s" % root.path)
     say("kept: %s" % (", ".join(root.p(d) for d in kept) or "(no user data yet)"))
     say("Remove the %s shortcut in Steam yourself (right-click > Manage > Remove)." % shortcut)
+    if proton_installed():
+        say(
+            "%s stays in %s (about 1.5 GB; other games may use it): remove it yourself"
+            " when nothing needs it." % (PROTON_VERSION, os.path.join(compat_dir(), PROTON_DIR))
+        )
 
 
-def main(argv=None, host_check=True, bench=None, umu=None):
+def main(argv=None, host_check=True, bench=None, umu=None, proton=True):
     ap = argparse.ArgumentParser(
         prog="install.sh", description="Install, update and manage %s on this PC." % NAME
     )
@@ -1005,6 +1156,11 @@ def main(argv=None, host_check=True, bench=None, umu=None):
         % default_umu_dir().replace(os.path.expanduser("~"), "~", 1),
     )
     ap.add_argument(
+        "--no-proton",
+        action="store_true",
+        help="skip the pinned %s (you set PROTONPATH in config/launch.env)" % PROTON_VERSION,
+    )
+    ap.add_argument(
         "--bundle", default=os.path.dirname(os.path.abspath(__file__)), help=argparse.SUPPRESS
     )
     a = ap.parse_args(argv)
@@ -1012,8 +1168,8 @@ def main(argv=None, host_check=True, bench=None, umu=None):
         ap.error("a version is only taken by rollback")
     if a.keep < 1:
         ap.error("--keep must be at least 1")
-    if (a.fetch_umu or a.umu_dir) and a.command != "install":
-        ap.error("--fetch-umu and --umu-dir are taken by install")
+    if (a.fetch_umu or a.umu_dir or a.no_proton) and a.command != "install":
+        ap.error("--fetch-umu, --umu-dir and --no-proton are taken by install")
     root = Root(a.root)
     try:
         if a.command == "install":
@@ -1028,6 +1184,7 @@ def main(argv=None, host_check=True, bench=None, umu=None):
                 a.fetch_umu,
                 a.umu_dir,
                 umu,
+                False if a.no_proton else proton,
             )
         elif a.command == "rollback":
             cmd_rollback(root, a.version)

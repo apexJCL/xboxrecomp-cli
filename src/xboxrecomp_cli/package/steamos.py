@@ -32,6 +32,7 @@ def steamos_values(lib):
     """The @KEY@ values of the steamos templates."""
     G = g()
     umu = pins.UMU_LAUNCHER
+    proton = pins.GE_PROTON
     return {
         "NAME": lib.PRODUCT_NAME,
         "APP": app(),
@@ -43,6 +44,10 @@ def steamos_values(lib):
         "UMU_VERSION": umu["version"],
         "UMU_URL": umu["url"],
         "UMU_SHA256": umu["sha256"],
+        "PROTON_VERSION": proton["version"],
+        "PROTON_DIR": proton["dir"],
+        "PROTON_URL": proton["url"],
+        "PROTON_SHA256": proton["sha256"],
     }
 
 

@@ -14,8 +14,15 @@
 # the keys you change; it writes that file's comment header itself, and
 # renames an earlier version's config/enhance.toml to it once.
 #
-# No lock: this is the game for play. A bench on the same machine checks for
-# a running game itself (scripts/running_game.py).
+# Proton is the release the CLI pins, which install.sh put in
+# compatibilitytools.d: no launch downloads one, and the Steam Linux Runtime
+# is updated only on the first launch after an install.
+#
+# One launch at a time: <root>/state/launch.lock is held while the game
+# runs, so a second tap in Game Mode says so instead of starting a second
+# game on the same prefix and saves. It is not the bench's run lock; a bench
+# on the same machine checks for a running game itself
+# (scripts/running_game.py).
 #
 set -euo pipefail
 
@@ -28,6 +35,21 @@ fail() {
         notify-send -a "@NAME@" "@NAME@ cannot start" "$*" || true
     fi
     exit 1
+}
+
+# A message for the player, not an error: a notification, else a window
+# that closes by itself.
+tell() {
+    echo "@NAME@: $*" >&2
+    { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } || return 0
+    if command -v notify-send >/dev/null && notify-send -a "@NAME@" -t 10000 "@NAME@" "$*" 2>/dev/null; then
+        return 0
+    fi
+    if command -v zenity >/dev/null; then
+        zenity --info --title "@NAME@" --text "$*" --timeout 10 >/dev/null 2>&1 || true
+    elif command -v kdialog >/dev/null; then
+        kdialog --title "@NAME@" --passivepopup "$*" 10 >/dev/null 2>&1 || true
+    fi
 }
 
 # KEY=value lines; blank lines and # comments skipped; anything else is an
@@ -52,8 +74,26 @@ if [ -z "${RECOMP_HOST_GAMESCOPE:-}" ] \
     export RECOMP_HOST_GAMESCOPE=1
 fi
 
+# The bundle's defaults never pick the Proton: a game shares that file with
+# its Windows installer, and a PROTONPATH=GE-Proton line there would undo
+# the pin (umu-run asking GitHub at every launch). The environment's
+# PROTONPATH and config/launch.env's still win.
+proton_set="${PROTONPATH+set}" proton_env="${PROTONPATH-}"
 load_env "$HERE/launch.env.default"
+if [ -n "$proton_set" ]; then export PROTONPATH="$proton_env"; else unset PROTONPATH; fi
 load_env "$ROOT/config/launch.env"
+
+# Before anything touches logs/: the running game's logs are trimmed by the
+# next launch, which must not be a second one. fd 9 is closed for umu-run
+# and the notice, so a wineserver that outlives the game never holds it.
+mkdir -p "$ROOT/state"
+if command -v flock >/dev/null; then
+    exec 9>>"$ROOT/state/launch.lock"
+    if ! flock -n 9; then
+        tell "@NAME@ is already starting or running."
+        exit 0
+    fi
+fi
 
 [ -f "$ROOT/game_files/default.xbe" ] || fail "no game files at $ROOT/game_files/default.xbe; run install.sh from the bundle again"
 
@@ -111,23 +151,52 @@ export RECOMP_GAME_FILES="Z:$ROOT/game_files"
 export RECOMP_HDD_DIR="Z:$ROOT/hdd"
 export RECOMP_CONFIG="Z:$ROOT/config/config.toml"
 export RECOMP_STDIO_LOG="Z:$log"
-export WINEPREFIX="$ROOT/prefix" GAMEID="${GAMEID:-umu-default}" PROTONPATH="${PROTONPATH:-GE-Proton}"
+# The pinned Proton by its path: a codename (GE-Proton) makes umu-run ask
+# GitHub for the newest release, and download it, on every launch. Setting
+# PROTONPATH=GE-Proton in config/launch.env opts into exactly that.
+DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
+PINNED_PROTON="$DATA/Steam/compatibilitytools.d/@PROTON_DIR@"
+if [ -z "${PROTONPATH:-}" ]; then
+    [ -f "$PINNED_PROTON/proton" ] \
+        || fail "@PROTON_VERSION@ is not installed (it runs the game); run './install.sh' from the bundle folder again"
+    PROTONPATH="$PINNED_PROTON"
+fi
+export WINEPREFIX="$ROOT/prefix" GAMEID="${GAMEID:-umu-default}" PROTONPATH
+# The runtime: downloaded by umu-run when absent, and otherwise checked for
+# updates only on the first launch after an install or rollback
+# (state/runtime-update, which install.sh writes). A download is the newest
+# runtime, so it uses up the mark too. A value in config/launch.env wins.
+runtime_check=0
+if [ -z "${UMU_RUNTIME_UPDATE+set}" ]; then
+    if ! compgen -G "$DATA/umu/steamrt*" >/dev/null; then
+        rm -f "$ROOT/state/runtime-update"
+    elif [ -f "$ROOT/state/runtime-update" ]; then
+        runtime_check=1
+        rm -f "$ROOT/state/runtime-update"
+    else
+        export UMU_RUNTIME_UPDATE=0
+    fi
+fi
 # PROTON_LOG=1 in launch.env: Proton's log goes to logs/ (trimmed above),
 # not to the home folder.
 [ -z "${PROTON_LOG:-}" ] || export PROTON_LOG_DIR="${PROTON_LOG_DIR:-$ROOT/logs}"
 
-# The first launch shows nothing for minutes while umu-run downloads its
-# runtime and Proton and makes the Wine prefix. setup_pending says which
-# step is still to come; none means a quick launch and no notice.
+# A launch that downloads shows nothing for minutes while umu-run fetches
+# its runtime (or a codename's Proton) and makes the Wine prefix.
+# setup_pending says which step is still to come; none means a quick launch
+# and no notice.
 setup_pending() {
-    local data="${XDG_DATA_HOME:-$HOME/.local/share}"
-    if ! compgen -G "$data/umu/steamrt*" >/dev/null; then
+    if ! compgen -G "$DATA/umu/steamrt*" >/dev/null; then
         echo "Downloading the Steam Linux Runtime ..."
-    elif [ "${PROTONPATH#/}" = "$PROTONPATH" ] \
-        && ! compgen -G "$HOME/.local/share/Steam/compatibilitytools.d/$PROTONPATH*" >/dev/null; then
-        echo "Downloading $PROTONPATH ..."
+    elif [ "${PROTONPATH#/}" = "$PROTONPATH" ]; then
+        # A codename: umu-run asks GitHub for the newest release and
+        # downloads it when it is not the one installed, which no local
+        # check can tell beforehand.
+        echo "Checking for the newest $PROTONPATH ..."
     elif [ ! -f "$ROOT/prefix/system.reg" ]; then
         echo "Creating the Wine prefix ..."
+    elif [ "$runtime_check" = 1 ]; then
+        echo "Checking the Steam Linux Runtime for updates ..."
     else
         return 1
     fi
@@ -137,7 +206,7 @@ setup_pending() {
 # notification in Game Mode (gamescope) or when neither is there. It closes
 # when the game writes its log (its window is up), when umu-run ends, or
 # after NOTICE_MAX seconds.
-NOTICE_TEXT="First launch: setting up Proton. This takes a few minutes, once; the game starts by itself."
+NOTICE_TEXT="Setting up Proton and the Steam Linux Runtime. This can take a few minutes; the game starts by itself."
 notice_pids=()
 notice_wait() {   # $1: umu-run's pid; prints the step each second
     local t=0
@@ -176,17 +245,20 @@ notice_start() {   # $1: umu-run's pid
 
 # xbox_kernel.log opens in the working directory. umu-run's and Proton's own
 # output (Steam shows none of it) goes to umu.log, the last launch's only.
-# Without a notice the launcher becomes umu-run, as it always did;
+# The launcher stays umu-run's parent, holding the lock until it ends;
 # LAUNCH_NOTICE=0 in config/launch.env turns the notice off.
+# Whether a notice is due is decided before umu-run starts making the
+# runtime's directory.
 cd "$ROOT/logs"
-if [ "${LAUNCH_NOTICE:-1}" = 0 ] || { [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; } \
-    || ! setup_pending >/dev/null; then
-    exec "$UMU" "$HERE/@EXE@.exe" "$@" >"$ROOT/logs/umu.log" 2>&1
+notice=0
+if [ "${LAUNCH_NOTICE:-1}" != 0 ] && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } \
+    && setup_pending >/dev/null; then
+    notice=1
 fi
-"$UMU" "$HERE/@EXE@.exe" "$@" >"$ROOT/logs/umu.log" 2>&1 &
+"$UMU" "$HERE/@EXE@.exe" "$@" >"$ROOT/logs/umu.log" 2>&1 9>&- &
 umu_pid=$!
 trap 'kill -TERM "$umu_pid" 2>/dev/null || true' TERM INT HUP
-notice_start "$umu_pid"
+[ "$notice" = 0 ] || notice_start "$umu_pid" 9>&-
 rc=0
 wait "$umu_pid" || rc=$?
 # A trapped signal ends the first wait early; the game is still ending.

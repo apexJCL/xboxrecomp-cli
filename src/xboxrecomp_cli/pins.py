@@ -34,6 +34,20 @@ UMU_LAUNCHER = {
     "sha256": "eb590691841f7fad3fc3ad8fd5db4ccb87849fe7948e62b28ece7a4ee48cc851",
 }
 
+# The Proton a steamos bundle runs on. umu-run given a codename (GE-Proton)
+# asks GitHub for the newest release on every launch and downloads it
+# before the game starts, so the installer fetches this one release into
+# compatibilitytools.d instead and the launcher points PROTONPATH at it.
+# "dir" is the tarball's top directory, the name Steam and umu-run use.
+# Moved like UMU_LAUNCHER: a reviewed edit with the asset's sha256.
+GE_PROTON = {
+    "version": "GE-Proton11-9",
+    "dir": "GE-Proton11-9-x86_64",
+    "url": "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
+    "GE-Proton11-9/GE-Proton11-9-x86_64.tar.gz",
+    "sha256": "b2cf4a632a70ec321cdb9904fa396a2a45d4061129f9fdc89d8a27ea5ceeb9d6",
+}
+
 
 def _get_json(url):
     req = urllib.request.Request(
