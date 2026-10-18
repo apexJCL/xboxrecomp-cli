@@ -152,7 +152,9 @@ def test_link_name():
 def test_data_dir_must_be_below_localappdata(monkeypatch):
     data = host.g().m["data"]
     assert windows.data_dir() == "BLiNX2"
-    for bad in ("C:\\Games\\X", "%LOCALAPPDATA%\\", "%APPDATA%\\X"):
+    monkeypatch.setitem(data, "windows", "%LOCALAPPDATA%\\\\BLiNX2\\")
+    assert windows.data_dir() == "BLiNX2"
+    for bad in ("C:\\Games\\X", "%LOCALAPPDATA%\\", "%LOCALAPPDATA%\\\\", "%APPDATA%\\X"):
         monkeypatch.setitem(data, "windows", bad)
         with pytest.raises(CliError):
             windows.data_dir()

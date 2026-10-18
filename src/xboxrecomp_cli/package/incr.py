@@ -584,6 +584,87 @@ def bases(st, target):
     return out
 
 
+# ── the pack store: the HUD packs bundles were made with (D4) ────────────
+
+PACKS = "packs"
+# The packs of the newest records of each target stay: the 3 versions a
+# SteamOS install keeps by default.
+KEEP_PACKS = 3
+
+
+def packs_dir(st):
+    return os.path.join(st.dir, PACKS)
+
+
+def pack_in_store(st, sha):
+    return os.path.join(packs_dir(st), sha + ".pack")
+
+
+def store_pack(st, src, sha):
+    """The pack at src into the store as <sha256>.pack: a hard link when on
+    the same volume (pack.write replaces hud.pack rather than rewriting
+    it, so the link keeps these bytes), else a clone or a copy. Returns
+    its path."""
+    from . import lib as plib_mod
+
+    dst = pack_in_store(st, sha)
+    if os.path.isfile(dst):
+        return dst
+    os.makedirs(packs_dir(st), exist_ok=True)
+    tmp = dst + ".tmp"
+    if os.path.lexists(tmp):
+        os.remove(tmp)
+    try:
+        os.link(src, tmp)
+    except OSError:
+        plib_mod.copy_file(src, tmp, plib_mod._clonefile())
+    os.replace(tmp, dst)
+    return dst
+
+
+def record_packs(st, keep=KEEP_PACKS):
+    """{sha256} of the packs the newest `keep` bundle records of each
+    target name."""
+    out = set()
+    root = os.path.join(st.dir, BUNDLES)
+    if not os.path.isdir(root):
+        return out
+    for target in sorted(os.listdir(root)):
+        d = os.path.join(root, target)
+        if not os.path.isdir(d):
+            continue
+        for b in bases(st, target)[:keep]:
+            man = buildstate.load_json(os.path.join(d, b["sha256"] + ".json"), None)
+            hp = (
+                ((man or {}).get("enhance") or {}).get("hud_pack")
+                if isinstance(man, dict)
+                else None
+            )
+            if isinstance(hp, dict) and isinstance(hp.get("sha256"), str):
+                out.add(hp["sha256"])
+    return out
+
+
+def prune_packs(st, current=None):
+    """Drop the stored packs no recent record names and this run did not
+    stage. Returns the removed paths."""
+    d = packs_dir(st)
+    if not os.path.isdir(d):
+        return []
+    want = record_packs(st)
+    if current:
+        want.add(current)
+    gone = []
+    for n in sorted(os.listdir(d)):
+        p = os.path.join(d, n)
+        if n.endswith(".pack") and n[: -len(".pack")] in want:
+            continue
+        if os.path.isfile(p) or os.path.islink(p):
+            os.remove(p)
+            gone.append(p)
+    return gone
+
+
 def bundle_patterns(target, app):
     import glob
 

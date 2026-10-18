@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"wizard/internal/model"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
@@ -64,6 +65,7 @@ func TestLocalSource(t *testing.T) {
 		t.Fatal("the update check does not use the binary's release")
 	}
 	w.render(pWelcome)
+	w.setPath(model.PathFresh)
 	test.Tap(w.next)
 	for i := 0; i < 100 && asked.Load() == 0; i++ {
 		time.Sleep(10 * time.Millisecond)

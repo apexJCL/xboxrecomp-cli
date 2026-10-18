@@ -213,6 +213,12 @@ func dry(w io.Writer, cfg *gamecfg.Config, pins *fetch.Pins, f flags, l *local) 
 	st.Dump = "DUMP"
 	fmt.Fprintf(w, "targets: %s (default %s)\n", strings.Join(cfg.Targets, ", "), st.Target)
 	st.PatchFrom = f.patchFrom
+	st.Path = model.PathFresh
+	if f.patchFrom != "" {
+		// An update; the dry run asks no plan, so it shows the disc's
+		// steps as when the build folder lacks the game files.
+		st.Path, st.NeedDisc = model.PathUpdate, true
+	}
 	for _, s := range st.Steps("", out) {
 		fmt.Fprintf(w, "run: %s\n", runner.Display(cfg.Game.Slug, s))
 	}

@@ -1,0 +1,135 @@
+{
+ "schema": 1,
+ "target": "steamos",
+ "version": "20261018.0815-c8646df7-tc1b737b-g209e11c4-dirtyc459f80b",
+ "stages": [
+  {
+   "stage": "import",
+   "action": "reuse",
+   "why": [],
+   "estimate_s": null
+  },
+  {
+   "stage": "generate",
+   "action": "reuse",
+   "why": [],
+   "estimate_s": null
+  },
+  {
+   "stage": "icon",
+   "action": "reuse",
+   "why": [],
+   "estimate_s": null
+  },
+  {
+   "stage": "compile:windows",
+   "action": "run",
+   "why": [
+    "env changed",
+    "toolkit changed"
+   ],
+   "estimate_s": null
+  },
+  {
+   "stage": "stage:steamos",
+   "action": "run",
+   "why": [
+    "the program is rebuilt"
+   ],
+   "estimate_s": null
+  },
+  {
+   "stage": "wrap:steamos",
+   "action": "run",
+   "why": [
+    "the files are staged again"
+   ],
+   "estimate_s": null
+  }
+ ],
+ "estimate_s": 0,
+ "unknown": [
+  "compile:windows",
+  "stage:steamos",
+  "wrap:steamos"
+ ],
+ "bases": [
+  {
+   "version": "20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
+   "made": "2026-10-18T08:15:03.568628Z",
+   "sha256": "93bd038f36c97b9257fc2fff066eacf645b31ee752badd3530b36113d02793cb",
+   "size": 122880,
+   "on_disk": true,
+   "patch_size": null,
+   "id": "93bd038f",
+   "usable": true,
+   "why": [],
+   "why_codes": [],
+   "tweaks": {
+    "hud_pack": null
+   },
+   "seed_config": false,
+   "game_files": {
+    "changed": 0,
+    "new": 0,
+    "deleted": 0
+   }
+  }
+ ],
+ "full_size": 122880,
+ "output": {
+  "kind": "patch",
+  "why": "from the installed 20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
+  "why_codes": [],
+  "base": {
+   "version": "20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
+   "made": "",
+   "sha256": "93bd038f36c97b9257fc2fff066eacf645b31ee752badd3530b36113d02793cb",
+   "origin": "installed 20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
+   "path": "/tmp/game/deck/versions/20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
+   "size": null,
+   "id": "93bd038f",
+   "usable": true,
+   "why": [],
+   "why_codes": [],
+   "patch_size": null,
+   "tweaks": {
+    "hud_pack": null
+   },
+   "seed_config": false,
+   "game_files": {
+    "changed": 0,
+    "new": 0,
+    "deleted": 0
+   }
+  },
+  "patch_size": null,
+  "installed": {
+   "version": "20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
+   "made": "",
+   "sha256": "93bd038f36c97b9257fc2fff066eacf645b31ee752badd3530b36113d02793cb",
+   "origin": "installed 20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
+   "path": "/tmp/game/deck/versions/20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
+   "size": null,
+   "id": "93bd038f",
+   "usable": true,
+   "why": [],
+   "why_codes": [],
+   "patch_size": null,
+   "tweaks": {
+    "hud_pack": null
+   },
+   "seed_config": false,
+   "game_files": {
+    "changed": 0,
+    "new": 0,
+    "deleted": 0
+   }
+  }
+ },
+ "import": {
+  "needed": false,
+  "why": ""
+ },
+ "config_overrides": []
+}

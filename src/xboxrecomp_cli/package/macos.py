@@ -3,6 +3,7 @@ dylib inside, relinked to @rpath and signed ad hoc, then a DMG."""
 
 import json
 import os
+import re
 import shutil
 import subprocess
 
@@ -85,6 +86,18 @@ def build_swap(dst, app_dir):
     host.run(["codesign", "--force", "--sign", "-", dst])
 
 
+def data_env():
+    """patch.env's DATA_DIR and DATA_DIR_ENV: where the game keeps
+    config/config.toml (data.macos, a leading ~/ left for the script to
+    expand) and the variable that moves it. apply.command reads that file
+    only to name a textures.pack line that overrides the new build (D8)."""
+    d = host.g().m["data"]
+    env = d.get("dir_env") or ""
+    if env and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", env):
+        raise CliError("game.toml's data.dir_env (%s) must be a variable name" % env)
+    return {"DATA_DIR": d["macos"], "DATA_DIR_ENV": env}
+
+
 def patch_tree(dst, app_dir, choice, version):
     """The patch DMG's folder: apply.command, xbr-swap and patch/, which
     holds the changed and new files of Resources/ and the WHOLE parts at
@@ -118,6 +131,7 @@ def patch_tree(dst, app_dir, choice, version):
         "BASE_VERSION": choice.base.version,
         "BASE_SHA": choice.base.sha256,
         "NEW_SHA": host.sha256_path(os.path.join(res, "manifest.json")),
+        **data_env(),
     }
     for k, v in env.items():
         if "'" in v or "\n" in v:

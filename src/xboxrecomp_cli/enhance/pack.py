@@ -16,6 +16,7 @@ text scale; read_header still accepts it.
 
 import hashlib
 import json
+import os
 import struct
 
 MAGIC = b"XRTP"
@@ -103,7 +104,10 @@ def write(path, entries, scale, text_scale=0):
     index_off = HEADER.size
     payload_off = index_off + len(entries) * ENTRY.size
     h = hashlib.sha256()
-    with open(path, "wb") as f:
+    # A new file renamed over the old one, never the old one rewritten:
+    # package's pack store may hold a hard link to it (a kept pack's bytes).
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
         head = HEADER.pack(MAGIC, VERSION, len(entries), scale, index_off, text_scale)
         f.write(head)
         h.update(head)
@@ -116,6 +120,7 @@ def write(path, entries, scale, text_scale=0):
         for e in entries:
             f.write(e.texels)
             h.update(e.texels)
+    os.replace(tmp, path)
     return h.hexdigest()
 
 
@@ -145,9 +150,21 @@ def kind_stats(entries):
     return {k: tuple(v) for k, v in stats.items()}
 
 
-def manifest_text(entries, scale, kernel, tool, xbe_sha256, font=None, text_scale=0, languages=()):
+def manifest_text(
+    entries,
+    scale,
+    kernel,
+    tool,
+    xbe_sha256,
+    font=None,
+    text_scale=0,
+    languages=(),
+    made=None,
+):
     """hud-pack.toml: what the pack holds, for the owner (the runtime never
-    reads it). Names archive entries and hashes; no texels."""
+    reads it). Names archive entries and hashes; no texels. made: the
+    pack's sha256 and the settings package records as the pack's
+    made_with, to make the same pack again ({pack_sha256, only, config})."""
     lines = [
         "# Texture pack manifest, written by xbr enhance hud. The pack is made",
         "# from your own game files: keep it private.",
@@ -164,6 +181,10 @@ def manifest_text(entries, scale, kernel, tool, xbe_sha256, font=None, text_scal
         lines.append('font_sha256 = "%s"' % font["sha256"])
     lines.append("languages = [%s]" % ", ".join('"%s"' % x for x in languages))
     lines.append("entries = %d" % len(entries))
+    if made:
+        lines.append('pack_sha256 = "%s"' % made["pack_sha256"])
+        lines.append("only = [%s]" % ", ".join(json.dumps(x) for x in made.get("only", ())))
+        lines.append('config = "%s"' % made["config"])
     lines.append("")
     stats = kind_stats(entries)
     for k in KINDS:

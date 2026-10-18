@@ -705,6 +705,48 @@ static void install_self(void)
     replace_file(tmp, dst);
 }
 
+/* The data folder the launcher uses (launcher.c's data_dir):
+ * @DATA_DIR_ENV@ when set, else %LOCALAPPDATA%\@DATA_DIR@. 0 when
+ * neither is known. */
+static int data_folder(wchar_t *out)
+{
+    wchar_t appdata[PATH_CHARS];
+    DWORD n = GetEnvironmentVariableW(L"@DATA_DIR_ENV@", out, PATH_CHARS);
+    if (n > 0 && n < PATH_CHARS)
+        return 1;
+    n = GetEnvironmentVariableW(L"LOCALAPPDATA", appdata, PATH_CHARS);
+    if (n == 0 || n >= PATH_CHARS)
+        return 0;
+    return swprintf(out, PATH_CHARS, L"%ls\\@DATA_DIR@", appdata) > 0;
+}
+
+/* D8: the player's config.toml wins over the new version's
+ * config.default.toml, so a textures.pack there that hides this build's
+ * pack, or names one it no longer ships, gets one line. Read only. */
+static void override_note(const wchar_t *version_dir_)
+{
+    wchar_t data[PATH_CHARS], p[PATH_CHARS];
+    char *config, *defaults, val[1024];
+    enum plan_note k;
+    if (!data_folder(data))
+        return;
+    swprintf(p, PATH_CHARS, L"%ls\\config\\config.toml", data);
+    config = read_all(p, NULL);
+    swprintf(p, PATH_CHARS, L"%ls\\config.default.toml", version_dir_);
+    defaults = read_all(p, NULL);
+    k = plan_override(config, defaults, val, sizeof(val));
+    if (k == NOTE_HIDES)
+        say(L"note: your config\\config.toml sets textures.pack = \"%hs\", which overrides "
+            L"this build's HUD pack; remove that line to use it",
+            val);
+    else if (k == NOTE_STALE)
+        say(L"note: your config\\config.toml sets textures.pack = \"%hs\", and this build "
+            L"ships no HUD pack; remove that line",
+            val);
+    free(config);
+    free(defaults);
+}
+
 static void cmd_patch(int keep, int yes)
 {
     wchar_t here[PATH_CHARS], lst[PATH_CHARS], files[PATH_CHARS], p[PATH_CHARS], q[PATH_CHARS];
@@ -862,6 +904,7 @@ static void cmd_patch(int keep, int yes)
     say(L"current: %hs -> %hs", cur, pt.version);
     if (game_data)
         say(L"game files: %d written, %d removed", written, removed);
+    override_note(final_);
     install_self();
     prune(keep);
     free(steps);

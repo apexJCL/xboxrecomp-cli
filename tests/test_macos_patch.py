@@ -44,6 +44,13 @@ NEW_FILES = {
 }
 
 
+DATA_ENV = "FIX_DATA_DIR"
+
+
+def data_env():
+    return {"DATA_DIR": "~/Library/Application Support/Fix", "DATA_DIR_ENV": DATA_ENV}
+
+
 def sha(b):
     return hashlib.sha256(b).hexdigest()
 
@@ -109,6 +116,7 @@ def built(tmp_path_factory):
     """The base app, the new app and the patch folder of new against base."""
     mp = pytest.MonkeyPatch()
     mp.setattr(macos, "app", lambda: APP)
+    mp.setattr(macos, "data_env", data_env)
     d = str(tmp_path_factory.mktemp("macpatch"))
     base = make_app(os.path.join(d, "v1"), V1, BASE_FILES, "v1")
     new = make_app(os.path.join(d, "v2"), V2, NEW_FILES, "v2")
@@ -140,6 +148,8 @@ def apply(inst, *args, stop=None, swap=None, script=None):
     env = dict(os.environ, HOME=inst["home"])
     env.pop("XBR_APPLY_STOP", None)
     env.pop("XBR_SWAP", None)
+    env.pop(DATA_ENV, None)
+    env.update(inst.get("env", {}))
     if stop:
         env["XBR_APPLY_STOP"] = stop
     if swap:
@@ -236,6 +246,7 @@ def test_patch_folder(built):
 
 def test_patch_folder_is_deterministic(built, tmp_path, monkeypatch):
     monkeypatch.setattr(macos, "app", lambda: APP)
+    monkeypatch.setattr(macos, "data_env", data_env)
     again = make_patch(str(tmp_path), built["base"], built["new"], V2)
     a, b = tree(built["patch"]), tree(again)
     # xbr-swap's ad hoc signature is the same for the same bytes; clang's
@@ -422,3 +433,135 @@ def test_into_another_folder(inst, built):
     assert r.returncode == 0, r.stderr
     assert tree(os.path.join(into, APP + ".app")) == tree(built["new"])
     assert_untouched(inst, built)
+
+
+# ── the override note (D8) ──────────────────────────────────────────────
+
+
+def player_config(home, text):
+    p = os.path.join(home, "Library", "Application Support", "Fix", "config")
+    os.makedirs(p, exist_ok=True)
+    with open(os.path.join(p, "config.toml"), "w") as f:
+        f.write(text)
+    return p
+
+
+def test_patch_env_names_the_data_folder(built):
+    with open(os.path.join(built["patch"], "patch", "patch.env")) as f:
+        text = f.read()
+    assert "DATA_DIR='~/Library/Application Support/Fix'\n" in text
+    assert "DATA_DIR_ENV='%s'\n" % DATA_ENV in text
+
+
+def test_data_env_refuses_a_bad_variable(monkeypatch):
+    import types
+
+    from xboxrecomp_cli import host
+    from xboxrecomp_cli.host import CliError
+
+    m = {"data": {"macos": "~/x"}}
+    monkeypatch.setattr(host, "g", lambda: types.SimpleNamespace(m=m))
+    for bad in ("A;rm", "1A", "A-B", "\u00e9"):
+        m["data"]["dir_env"] = bad
+        with pytest.raises(CliError):
+            macos.data_env()
+    m["data"]["dir_env"] = "BLINX2_DATA_DIR"
+    assert macos.data_env() == {"DATA_DIR": "~/x", "DATA_DIR_ENV": "BLINX2_DATA_DIR"}
+
+
+@pytest.mark.parametrize(
+    "text, note",
+    [
+        ('[textures]\npack = "enhance/hud.pack"\n', "ships no HUD pack"),
+        ('[textures]\npack = "none"\n', None),
+        ("[render]\nscale = 2\n", None),
+    ],
+)
+def test_override_note_after_apply(inst, built, text, note):
+    # The fixture's new app ships no config.default.toml, so no HUD pack.
+    player_config(inst["home"], text)
+    r = apply(inst)
+    assert r.returncode == 0, r.stderr
+    assert_is_new(inst, built)
+    notes = [ln for ln in r.stdout.splitlines() if ln.startswith("note:")]
+    if note is None:
+        assert notes == []
+    else:
+        assert len(notes) == 1 and note in notes[0] and '"enhance/hud.pack"' in notes[0]
+
+
+def test_override_note_follows_the_data_variable(inst, built, tmp_path):
+    data = tmp_path / "elsewhere"
+    (data / "config").mkdir(parents=True)
+    (data / "config" / "config.toml").write_text('[textures]\npack = "a.pack"\n')
+    # The default folder says nothing; the variable moves the data folder.
+    player_config(inst["home"], "")
+    inst["env"] = {DATA_ENV: str(data)}
+    r = apply(inst)
+    assert r.returncode == 0, r.stderr
+    assert 'textures.pack = "a.pack", and this build ships no HUD pack' in r.stdout
+
+
+def note_functions():
+    """say, pack_key and override_note from apply.command, to run alone."""
+    with open(os.path.join(macos.DEFAULTS_MACOS, "apply.command")) as f:
+        text = f.read()
+    start = text.index("pack_key() {")
+    end = text.index("# Every name the lists give")
+    return "say() { printf '%s\\n' \"$*\"; }\n" + text[start:end]
+
+
+def as_bytes(t):
+    return t.encode() if isinstance(t, str) else t
+
+
+def test_override_note_agrees_with_install_lib(tmp_path, tmp_path_factory):
+    from test_steamos_install import load_il
+    from test_windows_apply import OVERRIDE_CASES
+
+    il = load_il(tmp_path_factory)
+    script = tmp_path / "note.sh"
+    script.write_text(note_functions() + 'override_note "$1"\n')
+    for i, (config, defaults, _want) in enumerate(OVERRIDE_CASES):
+        data = tmp_path / ("data%d" % i)
+        app = tmp_path / ("app%d" % i) / "Contents" / "Resources"
+        (data / "config").mkdir(parents=True)
+        app.mkdir(parents=True)
+        if config is not None:
+            (data / "config" / "config.toml").write_bytes(as_bytes(config))
+        if defaults is not None:
+            (app / "config.default.toml").write_bytes(as_bytes(defaults))
+        env = dict(os.environ, DATA_DIR_ENV="", DATA_DIR=str(data))
+        r = subprocess.run(
+            ["sh", str(script), str(tmp_path / ("app%d" % i))],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        note = il.override_note(
+            str(data / "config" / "config.toml"), str(app / "config.default.toml")
+        )
+        assert r.stdout.strip() == note, (config, defaults)
+
+
+def test_override_note_evals_only_a_variable_name(tmp_path):
+    """An edited patch.env's DATA_DIR_ENV that is not a name is ignored,
+    never run; a name still moves the data folder."""
+    script = tmp_path / "note.sh"
+    script.write_text(note_functions() + 'override_note "$1"\n')
+    data = tmp_path / "moved"
+    (data / "config").mkdir(parents=True)
+    (data / "config" / "config.toml").write_text('[textures]\npack = "mine.pack"\n')
+    (tmp_path / "app" / "Contents" / "Resources").mkdir(parents=True)
+    canary = tmp_path / "ran"
+    for env_name, moved in (("MOVED_DATA", True), ("x;touch %s" % canary, False), ("1A", False)):
+        env = dict(os.environ, DATA_DIR_ENV=env_name, DATA_DIR="", MOVED_DATA=str(data))
+        r = subprocess.run(
+            ["sh", str(script), str(tmp_path / "app")],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert not canary.exists()
+        assert ("mine.pack" in r.stdout) == moved, (env_name, r.stdout, r.stderr)

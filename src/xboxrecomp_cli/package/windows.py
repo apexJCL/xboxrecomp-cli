@@ -28,9 +28,12 @@ def data_dir():
     """data.windows below %LOCALAPPDATA%: the launcher finds that folder with
     SHGetKnownFolderPath, so it can be nowhere else."""
     d = g().m["data"]["windows"]
-    if not d.upper().startswith(LOCALAPPDATA) or len(d) == len(LOCALAPPDATA):
+    # A doubled or trailing separator in game.toml would reach the
+    # launcher's path join as an empty path part.
+    rest = d[len(LOCALAPPDATA) :].strip("\\/") if d.upper().startswith(LOCALAPPDATA) else ""
+    if not rest:
         raise CliError("game.toml's data.windows (%s) must be %%LOCALAPPDATA%%\\<folder>" % d)
-    return d[len(LOCALAPPDATA) :]
+    return rest
 
 
 def c_escape(s):
@@ -105,7 +108,11 @@ def build_root_tools(work, ico, name):
         os.path.join(out, STUB), [stub, res], ["-mwindows", '-DAPP_NAME=L"%s"' % c_escape(name)], []
     )
     apply_c = os.path.join(work, "apply.c")
-    render(template("windows", "apply.c"), vals, apply_c)
+    # The data folder, for the config.toml note after a patch (D8).
+    apply_vals = dict(
+        vals, DATA_DIR=c_escape(data_dir()), DATA_DIR_ENV=c_escape(g().m["data"]["dir_env"])
+    )
+    render(template("windows", "apply.c"), apply_vals, apply_c)
     for n in ("apply_plan.c", "apply_plan.h"):
         shutil.copyfile(template("windows", n), os.path.join(work, n))
     _cc(

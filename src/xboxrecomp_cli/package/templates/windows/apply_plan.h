@@ -94,4 +94,18 @@ void plan_prune(char **names, size_t n, int keep, const char *cur, const char *p
  * a .partial or .old work folder. */
 int plan_version_ok(const char *v);
 
+/* textures.pack in a config.toml, by a line scan (a [textures] header,
+ * then pack = before the next header), as install_lib and apply.command
+ * read it; not a TOML parser, so an unusual layout only loses the note
+ * (D8). Copies the value without quotes into out (cap bytes, truncated)
+ * and returns 1, or returns 0 when there is none. */
+int plan_pack_key(const char *text, char *out, size_t cap);
+
+/* The note after a patch for a player's config.toml (it wins over the
+ * version's config.default.toml): HIDES, it sets another pack than the
+ * defaults' one; STALE, the defaults set none and it names a pack that
+ * is not "none". val gets its value. */
+enum plan_note { NOTE_NONE, NOTE_HIDES, NOTE_STALE };
+enum plan_note plan_override(const char *config, const char *defaults, char *val, size_t cap);
+
 #endif

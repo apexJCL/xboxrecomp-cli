@@ -1,2 +1,3 @@
 doctor.json: a real `doctor --json` of a fresh tree on a Mac. doctor-blocked.json: doctor.json edited by hand (the makensis line and the windows and macos blockers) for a Mac where Homebrew lacks sdl3, libepoxy and makensis.
 package-heartbeat.txt: written by hand from the plain-mode heartbeat format of package/progress.py (View.heartbeat), around a recomp step.
+plan-update.json: a real `package steamos --plan --json` of an Update, with an install on the host and a bundle record, written by the CLI's tests/test_incremental.py::test_plan_json_contract (XBR_WRITE_PLAN_FIXTURE=1), which also checks it keeps the CLI's keys and value types.

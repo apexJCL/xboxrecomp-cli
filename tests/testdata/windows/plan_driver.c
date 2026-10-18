@@ -8,6 +8,8 @@
  *                              "remove <name>" per pruned version
  *   path PATH...               "<0|1> <path>" (plan_path_ok)
  *   version NAME...            "<0|1> <name>" (plan_version_ok)
+ *   override CONFIG DEFAULTS   "<none|hides|stale> <value>" (plan_override;
+ *                              "-" for a missing file)
  */
 #include "apply_plan.h"
 
@@ -99,6 +101,16 @@ int main(int argc, char **argv)
         int path = !strcmp(argv[1], "path");
         for (int i = 2; i < argc; i++)
             printf("%d %s\n", path ? plan_path_ok(argv[i]) : plan_version_ok(argv[i]), argv[i]);
+        return 0;
+    }
+    if (argc >= 4 && !strcmp(argv[1], "override")) {
+        static const char *KINDS[] = {"none", "hides", "stale"};
+        char *c = strcmp(argv[2], "-") ? slurp(argv[2]) : NULL;
+        char *d = strcmp(argv[3], "-") ? slurp(argv[3]) : NULL, val[1024] = "";
+        enum plan_note k = plan_override(c, d, val, sizeof(val));
+        printf("%s %s\n", KINDS[k], k == NOTE_NONE ? "" : val);
+        free(c);
+        free(d);
         return 0;
     }
     fprintf(stderr, "usage: see the comment\n");

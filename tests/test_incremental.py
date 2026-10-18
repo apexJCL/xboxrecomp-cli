@@ -234,6 +234,8 @@ def game(d, monkeypatch, capsys):
         )
         os.chmod(G.game_files, 0o755)
         write(os.path.join(G.game_files, "media", "a.bin"), "media")
+        # An imported dump's marker: without it the plan asks for the disc.
+        write(os.path.join(G.game_files, ".xbr-dump.json"), "{}\n")
         write(os.path.join(tk, "CMakeLists.txt"), "# tk\n")
         write(os.path.join(tk, "src", "runtime.c"), "int x;\n")
         for t in (G.root, tk):
@@ -759,11 +761,18 @@ def first_record(game):
     return b
 
 
+def bulk(G):
+    """Game data that dwarfs the program, as on a real disc: a patch of the
+    program alone is then under half the full bundle (strict --patch-from)."""
+    write(os.path.join(G.game_files, "media", "big.bin"), "m" * 100000)
+
+
 def test_patch_from_a_record(game):
     """--patch-from <record sha>: the tar holds the new exe, the applier,
     the manifest, the sums and patch.json, and no game file; the plan's
     base row knows the patch's size."""
     G = game["G"]
+    bulk(G)
     game["run"]()
     base = first_record(game)
     recompile(game)
@@ -792,8 +801,11 @@ def test_patch_from_an_unusable_base_is_refused(game, d):
     p = os.path.join(d, "other.json")
     write(p, json.dumps(m))
     recompile(game)
-    with pytest.raises(host.CliError, match="another target.*--full"):
+    builds = game["calls"]["build"]
+    with pytest.raises(host.Refusal, match="another target.*--full") as e:
         game["run"](patch_from=p)
+    # Refused on the manifests alone, before the build (D7).
+    assert e.value.code == "target" and game["calls"]["build"] == builds
 
 
 def test_default_patch_against_the_installed_version(game, d, monkeypatch):
@@ -831,19 +843,100 @@ def test_default_patch_against_the_installed_version(game, d, monkeypatch):
     assert "bundle: full (a patch would be" in out, out
 
 
-def test_game_data_patch_warns(game):
-    """A changed game file is shipped, with D10's warning. (A game-file
-    change alone keeps the version, and a base at this version is refused:
-    the version would be the current one.)"""
+class FakeImport:
+    """dump.prepare's result for a --dump whose files are already in
+    game_files/ (the test writes them): the run counts as an import."""
+
+    writes = False
+
+    class src:
+        @staticmethod
+        def close():
+            pass
+
+    def run(self, warn_unknown=True):
+        pass
+
+    def plan_why(self):
+        return "--dump"
+
+
+def with_dump(game, monkeypatch):
+    from xboxrecomp_cli import dump
+
+    monkeypatch.setattr(dump, "prepare", lambda path, replace=False: FakeImport())
+    game["a"].replace = False
+
+
+def test_game_data_patch_warns(game, monkeypatch):
+    """A changed game file is refused without --dump (the base was built
+    from other game files); with it, the file is shipped with D10's
+    warning. (A game-file change alone keeps the version, and a base at
+    this version is refused: the version would be the current one.)"""
     G = game["G"]
+    bulk(G)
     game["run"]()
     base = first_record(game)
     write(os.path.join(G.game_files, "media", "a.bin"), "other media")
     recompile(game)
-    out = game["run"](patch_from=base["sha256"])
+    with pytest.raises(host.Refusal, match="built from other game files") as e:
+        game["run"](patch_from=base["sha256"])
+    assert e.value.code == "game_files"
+    with_dump(game, monkeypatch)
+    out = game["run"](patch_from=base["sha256"], dump="disc.iso")
     assert "patch: this update also changes game data" in out, out
     (p,) = patches(G)
     assert "game_files/media/a.bin" in tar_names(G.path("dist", p))
+
+
+def test_patch_removing_game_files_needs_the_flag(game, monkeypatch, d):
+    """A patch that would remove game files is refused, even after an
+    import, unless --allow-game-file-deletes; a base that records no game
+    tree is refused even with it. The plan counts the base's game-file
+    changes and says why with a code."""
+    G = game["G"]
+    bulk(G)
+    write(os.path.join(G.game_files, "media", "gone.bin"), "g" * 10)
+    game["run"]()
+    base = first_record(game)
+    os.remove(os.path.join(G.game_files, "media", "gone.bin"))
+    recompile(game)
+    with_dump(game, monkeypatch)
+    with pytest.raises(host.Refusal, match="remove 1 game files") as e:
+        game["run"](patch_from=base["sha256"], dump="disc.iso")
+    assert e.value.code == "game_deletes"
+    # A manifest made before game_tree: no flag lets it remove game files.
+    m = tar_manifest(G.path("dist", bundles(G)[0]))
+    del m["game_tree"]
+    old = os.path.join(d, "old.json")
+    write(old, json.dumps(m))
+    with pytest.raises(host.Refusal, match="records no game tree"):
+        game["run"](patch_from=old, dump="disc.iso", allow_game_file_deletes=True)
+    out = game["run"](patch_from=base["sha256"], dump="disc.iso", allow_game_file_deletes=True)
+    assert "patch: this update also changes game data" in out, out
+    # The plan, from the new record against the first one.
+    rows = {b["version"]: b for b in plan_of(game)["bases"]}
+    row = rows[base["version"]]
+    assert row["game_files"] == {"changed": 0, "new": 0, "deleted": 1}, row
+    assert row["why_codes"] == ["game_files"] and not row["usable"], row
+
+
+def test_manifest_records_its_game_tree(game):
+    """The manifest names the game files it was built from: the XBE's
+    sha256, the count and the listing's digest, the same as computed from
+    its entries."""
+    from xboxrecomp_cli.package import patch as patch_mod
+
+    G = game["G"]
+    game["run"]()
+    m = tar_manifest(G.path("dist", bundles(G)[0]))
+    tree = m["game_tree"]
+    games = [f for f in m["files"] if f["path"].startswith("game_files/")]
+    assert tree["files"] == len(games) > 0
+    xbe = next(f for f in games if f["path"] == patch_mod.xbe_path())
+    assert tree["xbe_sha256"] == xbe["sha256"]
+    del m["game_tree"]
+    assert patch_mod.game_tree(m) == tree
 
 
 def test_patches_are_listed_apart_from_bundles(tmp_path):
@@ -892,6 +985,8 @@ def test_plan_output_line(game, d, monkeypatch):
     out = plan_of(game)["output"]
     assert out["kind"] == "full" and "this version already" in out["why"], out
     assert out["installed"]["version"] == m["version"] and not out["installed"]["usable"]
+    # The folder the wizard passes back as --patch-from (D2).
+    assert out["installed"]["path"] == os.path.join(root, "versions", m["version"])
     recompile(game)
     out = plan_of(game)["output"]
     assert out["kind"] == "patch" and out["why"] == "from the installed %s" % m["version"], out
@@ -909,6 +1004,88 @@ def test_plan_output_line(game, d, monkeypatch):
         del game["a"].patch_from
     assert out["kind"] == "patch" and "(--patch-from)" in out["why"], out
     assert out["base"]["sha256"] == base["sha256"]
+
+
+PLAN_FIXTURE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..",
+    "wizard",
+    "internal",
+    "runner",
+    "testdata",
+    "plan-update.json",
+)
+
+
+def shape(v):
+    """A JSON value's shape: the keys of each object and the type of each
+    value, a list by the union of its items' shapes; None matches any."""
+    if isinstance(v, dict):
+        return {k: shape(x) for k, x in v.items()}
+    if isinstance(v, list):
+        out = {}
+        for x in v:
+            sx = shape(x)
+            out = merge(out, sx) if isinstance(sx, dict) else sx
+        return [out]
+    if v is None:
+        return None
+    return "number" if isinstance(v, (int, float)) and not isinstance(v, bool) else type(v).__name__
+
+
+def merge(a, b):
+    if isinstance(a, dict) and isinstance(b, dict):
+        return {
+            k: merge(a.get(k), b.get(k)) if k in a and k in b else a.get(k, b.get(k)) for k in a | b
+        }
+    return a if b is None else b
+
+
+def same_shape(a, b, at="plan"):
+    """[] when shape a and b agree (a None on either side is any type)."""
+    if a is None or b is None:
+        return []
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = ["%s.%s: only in one" % (at, k) for k in sorted(set(a) ^ set(b))]
+        for k in sorted(set(a) & set(b)):
+            out += same_shape(a[k], b[k], "%s.%s" % (at, k))
+        return out
+    if isinstance(a, list) and isinstance(b, list):
+        return same_shape(a[0] if a else None, b[0] if b else None, at + "[]")
+    return [] if a == b else ["%s: %s, the fixture has %s" % (at, a, b)]
+
+
+def test_plan_json_contract(game, d, monkeypatch):
+    """The wizard's ParsePlan reads wizard/internal/runner/testdata/
+    plan-update.json (runner_test.go): an Update plan as `package --plan
+    --json` writes it, with an install on this host and a bundle record.
+    This keeps that fixture the CLI's: the same keys and value types.
+    XBR_WRITE_PLAN_FIXTURE=1 writes it again."""
+    G = game["G"]
+    bulk(G)
+    game["run"]()
+    (full,) = bundles(G)
+    root = os.path.join(d, "deck")
+    m = tar_manifest(G.path("dist", full))
+    os.makedirs(os.path.join(root, "versions", m["version"]))
+    with tarfile.open(G.path("dist", full)) as t:
+        data = t.extractfile(next(n for n in t.getnames() if n.endswith("/manifest.json"))).read()
+    with open(os.path.join(root, "versions", m["version"], "manifest.json"), "wb") as f:
+        f.write(data)
+    os.symlink(os.path.join("versions", m["version"]), os.path.join(root, "current"))
+    monkeypatch.setattr(host, "host_os", lambda system=None: "linux")
+    monkeypatch.setenv(host.g().m["game"]["slug"].upper().replace("-", "_") + "_ROOT", root)
+    recompile(game)
+    doc = json.loads(game["run"](plan=True, json=True))
+    assert doc["output"]["kind"] == "patch" and doc["bases"], doc
+    assert all(isinstance(r["why"], list) for r in doc["stages"])
+    if os.environ.get("XBR_WRITE_PLAN_FIXTURE"):
+        text = json.dumps(doc, indent=1).replace(str(d), "/tmp/game") + "\n"
+        with open(PLAN_FIXTURE, "w", newline="\n") as f:
+            f.write(text)
+    with open(PLAN_FIXTURE, encoding="utf-8") as f:
+        fixture = json.load(f)
+    assert same_shape(shape(doc), shape(fixture)) == []
 
 
 def without_volatile(m):

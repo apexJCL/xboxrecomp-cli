@@ -11,8 +11,9 @@ Categories:
            (disasm, func_id, abi): the next run redoes the analysis,
            the slow part
   state    the rest of the state directory (the game-file hash cache, the
-           bundle records), never the wizard's mark: without it the next
-           wizard run would refuse a clone that is not at a tag
+           bundle records, the HUD pack store that --keep-hud-pack reads),
+           never the wizard's mark: without it the next wizard run would
+           refuse a clone that is not at a tag
 
 Nothing outside the game folder (or its state directory, which a git
 worktree keeps in the main checkout's git directory) is ever deleted: a

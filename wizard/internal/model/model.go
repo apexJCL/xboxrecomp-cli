@@ -26,19 +26,53 @@ var Prerequisites = map[string][][]string{
 	"--hud-pack": {{"import", "DUMP"}, {"enhance", "hud"}},
 }
 
+// The two paths (D1): a Fresh build is the full installer; an Update
+// build is a patch for a device that has a build made with this wizard.
+const (
+	PathFresh  = "fresh"
+	PathUpdate = "update"
+)
+
+// Tweak is a package flag whose result an update takes from its base
+// when the player leaves it alone (D3): Plan names it in the plan's
+// tweaks, Keep and Clear are the CLI's flags that keep or remove the
+// base's. The table is the CLI's own flag set, so it holds for every
+// game.
+type Tweak struct {
+	Plan, Keep, Clear string
+}
+
+var Tweaks = map[string]Tweak{
+	"--hud-pack": {Plan: "hud_pack", Keep: "--keep-hud-pack", Clear: "--clear-hud-pack"},
+}
+
 type State struct {
 	Cfg    *gamecfg.Config
 	Target string
 	Dump   string
-	// The output choice (D13): Full makes the full installer even when an
-	// update could be made; PatchFrom names the update's base (a path, or
-	// a bundle record's sha256 prefix from the plan's bases); Clean
-	// rebuilds everything (package --clean, never --clean=all).
-	Full      bool
+	// Path is PathFresh or PathUpdate, "" before the player chose; an
+	// unchosen path builds as Fresh.
+	Path string
+	// The update's choices (D2, D3, D6): PatchFrom names the base (a
+	// path, or a bundle record's sha256 prefix from the plan's bases);
+	// BaseHas the tweaks it carries, by their plan key; Clear removes
+	// them all; NeedDisc is the plan's import.needed, which brings the
+	// disc page, --dump and the import step back.
 	PatchFrom string
-	Clean     bool
-	values    map[string]string
+	BaseHas   map[string]bool
+	Clear     bool
+	NeedDisc  bool
+	// Clean rebuilds everything (package --clean, never --clean=all).
+	Clean  bool
+	values map[string]string
 }
+
+// Update says the chosen path is Update.
+func (s *State) Update() bool { return s.Path == PathUpdate }
+
+// usesDisc says the build passes --dump: always on Fresh, on Update only
+// when the plan asked for the game files again.
+func (s *State) usesDisc() bool { return !s.Update() || s.NeedDisc }
 
 // New is the state with every option at its default and the target the
 // host's own when the config offers it.
@@ -80,12 +114,24 @@ func (s *State) Set(key, v string) error {
 	return nil
 }
 
-// Flags are the set flag options' arguments, in the config's order.
+// Flags are the flag options' arguments, in the config's order. On
+// Update a tweak is one of three (D3): Clear removes it, a ticked box
+// makes it again, and a base that carries it keeps it; a base without it
+// and an unticked box pass nothing.
 func (s *State) Flags() []string {
 	var out []string
 	for _, o := range s.Cfg.Options {
-		if o.Flag != "" && s.values[o.Key] == "true" {
+		if o.Flag == "" {
+			continue
+		}
+		t, tweak := Tweaks[o.Flag]
+		switch {
+		case s.Update() && tweak && s.Clear:
+			out = append(out, t.Clear)
+		case s.values[o.Key] == "true":
 			out = append(out, o.Flag)
+		case s.Update() && tweak && s.BaseHas[t.Plan]:
+			out = append(out, t.Keep)
 		}
 	}
 	return out
@@ -130,15 +176,12 @@ func (s *State) Seed() string {
 	return b.String()
 }
 
-// PackageArgs is the package command (after `xbr`): the target, the dump,
-// the flags, the seed file when there is one, the output folder when one
-// is set, the output choice, and --plain for the log pane.
+// PackageArgs is the package command (after `xbr`): the target, the dump
+// when the build reads it, the flags, the seed file when there is one
+// (Fresh only, D5), the output folder when one is set, the path's output
+// flags, and --plain for the log pane.
 func (s *State) PackageArgs(seedPath, out string) []string {
-	args := []string{"package", s.Target, "--dump", s.Dump}
-	args = append(args, s.Flags()...)
-	if seedPath != "" {
-		args = append(args, "--seed-config", seedPath)
-	}
+	args := s.common(seedPath)
 	if out != "" {
 		args = append(args, "--out", out)
 	}
@@ -147,24 +190,40 @@ func (s *State) PackageArgs(seedPath, out string) []string {
 }
 
 // PlanArgs is `package --plan --json` for the same build: what the
-// output choice and the plan screen show before anything runs.
+// Changes and Summary pages show before anything runs.
 func (s *State) PlanArgs(seedPath string) []string {
-	args := []string{"package", s.Target, "--dump", s.Dump}
-	args = append(args, s.Flags()...)
-	if seedPath != "" {
-		args = append(args, "--seed-config", seedPath)
-	}
-	args = append(args, s.choiceArgs()...)
+	args := append(s.common(seedPath), s.choiceArgs()...)
 	return append(args, "--plan", "--json")
 }
 
+// BasesArgs is the plan the Base page lists from: the folder's records
+// and this computer's install, which a plan of a full build reports too,
+// without a disc or a base chosen.
+func (s *State) BasesArgs() []string {
+	return []string{"package", s.Target, "--full", "--plan", "--json"}
+}
+
+func (s *State) common(seedPath string) []string {
+	args := []string{"package", s.Target}
+	if s.usesDisc() {
+		args = append(args, "--dump", s.Dump)
+	}
+	args = append(args, s.Flags()...)
+	if seedPath != "" && !s.Update() {
+		args = append(args, "--seed-config", seedPath)
+	}
+	return args
+}
+
+// choiceArgs: Fresh is always the full installer (D1); Update names its
+// base, so package never picks one the player did not see (D2).
 func (s *State) choiceArgs() []string {
 	var args []string
 	if s.Clean {
 		args = append(args, "--clean")
 	}
 	switch {
-	case s.Full:
+	case !s.Update():
 		args = append(args, "--full")
 	case s.PatchFrom != "":
 		args = append(args, "--patch-from", s.PatchFrom)
@@ -172,17 +231,18 @@ func (s *State) choiceArgs() []string {
 	return args
 }
 
-// Steps are the CLI commands of the build in order: each set flag's
-// prerequisites (once each), then the package line. seedPath is where the
-// caller writes Seed(), or "" when the seed is empty; out is the output
-// folder.
+// Steps are the CLI commands of the build in order: each passed flag's
+// prerequisites (once each), then the package line. On Update the import
+// runs only when the plan asked for the disc (D6); a kept or cleared
+// tweak has none. seedPath is where the caller writes Seed(), or "" when
+// the seed is empty; out is the output folder.
 func (s *State) Steps(seedPath, out string) [][]string {
 	var steps [][]string
 	seen := map[string]bool{}
 	for _, f := range s.Flags() {
 		for _, p := range Prerequisites[f] {
 			k := strings.Join(p, " ")
-			if seen[k] {
+			if seen[k] || slices.Contains(p, "DUMP") && !s.usesDisc() {
 				continue
 			}
 			seen[k] = true

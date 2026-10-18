@@ -22,7 +22,7 @@ import os
 import re
 import tarfile
 
-from .. import buildstate, host
+from .. import host
 from ..host import CliError
 
 SCHEMA = 1
@@ -42,7 +42,7 @@ class Base:
     the applier compares the installed manifest.json against) and where it
     was read from."""
 
-    def __init__(self, data, origin, versioned=None):
+    def __init__(self, data, origin, versioned=None, path=""):
         try:
             self.manifest = json.loads(data)
         except ValueError as e:
@@ -55,6 +55,10 @@ class Base:
         # windows: True when read from the versioned layout (current.txt),
         # None when the source cannot tell (a manifest file, a record).
         self.versioned = versioned
+        # The folder --patch-from takes for this base ("" when unknown):
+        # the plan names the host's install by it, so the wizard passes
+        # the same base it showed.
+        self.path = path
 
 
 def _read(path):
@@ -128,30 +132,146 @@ def entries(manifest):
     return out
 
 
-def problems(base, new, target):
-    """Why the base cannot take this patch ([] when it can): D5's rules."""
+# The reasons' codes (the plan's why_codes, and Refusal's code): a front
+# end tells the reasons apart by these, never by their text.
+PRODUCT = "product"
+TARGET = "target"
+LAYOUT = "data_layout"
+ENTRIES = "entries"
+IN_PLACE = "in_place"
+STUB = "stub_abi"
+GAME_FILES = "game_files"
+GAME_DELETES = "game_deletes"
+SAME = "same_version"
+SHARE = "share"
+UNREADABLE = "unreadable"
+HUD_GUARD = "hud_guard"
+HUD_KEEP = "hud_keep"
+NO_BASE = "no_base"
+# The flag that lets a patch remove game files (D10: a rollback does not
+# bring them back).
+ALLOW_DELETES = "--allow-game-file-deletes"
+
+
+def problem_codes(base, new, target, imported=False, early=False):
+    """Why the base cannot take this patch, as [(code, reason)] ([] when it
+    can): D5's rules. early: only what the two manifests' fixed fields
+    decide (new holds just those), before anything is built; the version
+    and the game files are judged on the built manifest. imported: this
+    run imported the game files (--dump), so other game files are the
+    point of the run, not a base built from another tree."""
     bm, nm = base.manifest, new
     why = []
     if bm.get("product") != nm.get("product"):
-        why.append("another game (%s)" % bm.get("product"))
+        why.append((PRODUCT, "another game (%s)" % bm.get("product")))
     if bm.get("target") != nm.get("target"):
-        why.append("another target (%s)" % bm.get("target"))
+        why.append((TARGET, "another target (%s)" % bm.get("target")))
     if bm.get("data_layout") != nm.get("data_layout"):
-        why.append("game data layout changed")
+        why.append((LAYOUT, "game data layout changed"))
     if entries(bm) is None:
-        why.append("the base lists a file without its sha256 and size")
+        why.append((ENTRIES, "the base lists a file without its sha256 and size"))
     if target == "windows":
         if base.versioned is False:
-            why.append("an in-place install (no current.txt): the full installer migrates it")
+            why.append(
+                (IN_PLACE, "an in-place install (no current.txt): the full installer migrates it")
+            )
         b_abi = (bm.get("root") or {}).get("stub_abi")
         n_abi = (nm.get("root") or {}).get("stub_abi")
         if b_abi is None:
-            why.append("an in-place install (no versioned layout)")
+            why.append((IN_PLACE, "an in-place install (no versioned layout)"))
         elif b_abi != n_abi:
-            why.append("the launcher stub changed (stub_abi %s to %s)" % (b_abi, n_abi))
+            why.append((STUB, "the launcher stub changed (stub_abi %s to %s)" % (b_abi, n_abi)))
+    if early:
+        return why
+    if not imported and entries(bm) is not None:
+        other = tree_diff(game_tree(bm), game_tree(nm))
+        if other:
+            why.append((GAME_FILES, "built from other game files (%s)" % other))
     if base.version == nm.get("version") and not why:
-        why.append("it is this version already")
+        why.append((SAME, "it is this version already"))
     return why
+
+
+def problems(base, new, target, imported=False):
+    return [m for _c, m in problem_codes(base, new, target, imported)]
+
+
+def xbe_path():
+    """The XBE's path in a manifest (game.toml's xbe.path under game_files/)."""
+    G = host.g()
+    rel = os.path.relpath(G.xbe, G.game_files).replace(os.sep, "/")
+    return GAME_DIR + rel
+
+
+def game_tree(manifest):
+    """The game files' identity: the manifest's game_tree when it records
+    one, else the same fields from its game_files/ entries (a manifest
+    made before it). {"xbe_sha256", "files", "listing"}: the XBE's
+    sha256, the file count and the sha256 of the sorted (path, sha256,
+    size) lines."""
+    rec = manifest.get("game_tree")
+    if isinstance(rec, dict) and all(k in rec for k in ("xbe_sha256", "files", "listing")):
+        return {k: rec[k] for k in ("xbe_sha256", "files", "listing")}
+    return tree_of(manifest.get("files", []))
+
+
+def tree_of(files):
+    games = sorted(
+        (f["path"], f["sha256"], f["size"])
+        for f in files
+        if isinstance(f, dict) and str(f.get("path", "")).startswith(GAME_DIR)
+    )
+    xbe = xbe_path()
+    text = "".join("%s %s %d\n" % e for e in games)
+    return {
+        "xbe_sha256": next((sha for path, sha, _n in games if path == xbe), ""),
+        "files": len(games),
+        "listing": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    }
+
+
+def tree_diff(a, b):
+    """'' when two game trees are the same, else what differs, for the
+    reason (the XBE's sha256 and the count when they differ)."""
+    if a["listing"] == b["listing"]:
+        return ""
+    out = []
+    if a["xbe_sha256"] != b["xbe_sha256"]:
+        out.append(
+            "XBE %s, now %s" % (a["xbe_sha256"][:8] or "none", b["xbe_sha256"][:8] or "none")
+        )
+    if a["files"] != b["files"]:
+        out.append("%d files, now %d" % (a["files"], b["files"]))
+    return "; ".join(out) or "the same count, other contents"
+
+
+def game_counts(d):
+    """{changed, new, deleted}: the game files a patch changes, adds and
+    removes."""
+    return {
+        k: sum(1 for e in d[k] if e["path"].startswith(GAME_DIR))
+        for k in ("changed", "new", "deleted")
+    }
+
+
+def deletes_problem(base, d, allow):
+    """(code, reason) when the patch removes game files and may not, else
+    None. A base whose manifest records no game_tree cannot say what tree
+    it was built from, so its deletions are refused even with the flag."""
+    n = game_counts(d)["deleted"]
+    if not n:
+        return None
+    if not isinstance(base.manifest.get("game_tree"), dict):
+        return (
+            GAME_DELETES,
+            "the patch would remove %d game files, and the base records no game tree" % n,
+        )
+    if allow:
+        return None
+    return (
+        GAME_DELETES,
+        "the patch would remove %d game files (%s allows it)" % (n, ALLOW_DELETES),
+    )
 
 
 def diff(base_manifest, new_manifest):
@@ -238,12 +358,15 @@ def host_base(target, app, m):
         except OSError:
             return None
         man = os.path.join(root, "versions", cur, "manifest.json")
-        return Base(_read(man), "installed %s" % cur) if os.path.isfile(man) else None
+        if not os.path.isfile(man):
+            return None
+        return Base(_read(man), "installed %s" % cur, path=os.path.dirname(man))
     if target == "macos" and hos == "macos":
         for d in ("/Applications", os.path.expanduser("~/Applications")):
             man = os.path.join(d, app + ".app", "Contents", "Resources", "manifest.json")
             if os.path.isfile(man):
-                return Base(_read(man), os.path.join(d, app + ".app"))
+                at = os.path.join(d, app + ".app")
+                return Base(_read(man), at, path=at)
         return None
     if target == "windows" and hos == "windows":
         loc = windows_install_location(app)
@@ -253,13 +376,13 @@ def host_base(target, app, m):
         if not os.path.isfile(cur_txt):
             # The in-place layout: the full installer migrates it (D8).
             man = os.path.join(loc, "manifest.json")
-            return Base(_read(man), loc, versioned=False) if os.path.isfile(man) else None
+            return Base(_read(man), loc, versioned=False, path=loc) if os.path.isfile(man) else None
         with open(cur_txt, encoding="utf-8") as f:
             cur = f.read().strip()
         man = os.path.join(loc, "versions", cur, "manifest.json")
-        return (
-            Base(_read(man), "installed %s" % cur, versioned=True) if os.path.isfile(man) else None
-        )
+        if not os.path.isfile(man):
+            return None
+        return Base(_read(man), "installed %s" % cur, versioned=True, path=os.path.dirname(man))
     return None
 
 
@@ -294,42 +417,53 @@ def choose(a, new_manifest, target, app, m, records):
     the full bundle, else the full bundle."""
     if getattr(a, "full", False):
         return Choice("full", "--full")
+    imported = bool(getattr(a, "dump", None))
+    allow = bool(getattr(a, "allow_game_file_deletes", False))
     spec = getattr(a, "patch_from", None)
     if spec:
+        # Strict (D7): a named base gets a patch or a refusal, never a
+        # full bundle the caller did not ask for.
         base = load(spec, records)
-        why = problems(base, new_manifest, target)
+        why, d = judge(base, new_manifest, target, imported, allow)
         if why:
-            raise CliError(
+            raise host.Refusal(
                 "--patch-from %s (%s): %s; make the full bundle with --full"
-                % (spec, base.version or "?", "; ".join(why))
+                % (spec, base.version or "?", "; ".join(m for _c, m in why)),
+                why[0][0],
             )
-        d = diff(base.manifest, new_manifest)
         return Choice("patch", "from %s (--patch-from)" % base.version, base, d)
     base = host_base(target, app, m)
     if base is None:
         return Choice("full", "no install found")
-    why = problems(base, new_manifest, target)
+    why, d = judge(base, new_manifest, target, imported, allow)
+    if why and why[0][0] == SHARE:
+        return Choice("full", why[0][1])
     if why:
-        return Choice("full", "the installed %s: %s" % (base.version or "?", "; ".join(why)))
-    d = diff(base.manifest, new_manifest)
-    size, full = payload_size(d), full_size(new_manifest)
-    if full and size >= DEFAULT_SHARE * full:
-        return Choice("full", "a patch would be %d%% of the full bundle" % (100 * size // full))
+        return Choice(
+            "full",
+            "the installed %s: %s" % (base.version or "?", "; ".join(m for _c, m in why)),
+        )
     return Choice("patch", "from the installed %s" % base.version, base, d)
 
 
-def record_patch_sizes(bases, records, newest_manifest):
-    """Fill each plan base's patch_size: the files a patch from it to the
-    newest bundle record would ship (an estimate when this run rebuilds
-    the program, which then changes too)."""
-    if newest_manifest is None:
-        return bases
-    for b in bases:
-        p = os.path.join(records, b["sha256"] + ".json")
-        try:
-            bm = buildstate.load_json(p, None)
-            if isinstance(bm, dict) and entries(bm) is not None:
-                b["patch_size"] = payload_size(diff(bm, newest_manifest))
-        except CliError:
-            pass
-    return bases
+def judge(base, new_manifest, target, imported, allow):
+    """([(code, reason)], the diff or None): every rule, the ones on the
+    diff (game files removed, the half-size rule) once the rest pass."""
+    why = problem_codes(base, new_manifest, target, imported)
+    if why:
+        return why, None
+    d = diff(base.manifest, new_manifest)
+    dp = deletes_problem(base, d, allow)
+    if dp:
+        return [dp], d
+    share = share_problem(d, new_manifest)
+    return ([(SHARE, share)] if share else []), d
+
+
+def share_problem(d, new_manifest):
+    """The half-size rule: "" when the patch is under DEFAULT_SHARE of the
+    full bundle, else the reason."""
+    size, full = payload_size(d), full_size(new_manifest)
+    if full and size >= DEFAULT_SHARE * full:
+        return "a patch would be %d%% of the full bundle" % (100 * size // full)
+    return ""

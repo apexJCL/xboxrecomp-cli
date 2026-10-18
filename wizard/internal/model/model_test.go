@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -31,7 +32,7 @@ func TestModel(t *testing.T) {
 		seed  string
 		steps [][]string
 	}{
-		{"defaults", nil, "", [][]string{{"package", "macos", "--dump", "/d/b2.iso", "--seed-config", "S", "--out", "/o", "--plain"}}},
+		{"defaults", nil, "", [][]string{{"package", "macos", "--dump", "/d/b2.iso", "--seed-config", "S", "--out", "/o", "--full", "--plain"}}},
 		{"scale 2 and fullscreen", map[string]string{"scale": "2", "fullscreen": "true"},
 			seedHead + "\n[render]\nscale = 2\n\n[present]\nfullscreen = true\n", nil},
 		{"scale at the range's top", map[string]string{"scale": "4"},
@@ -39,7 +40,7 @@ func TestModel(t *testing.T) {
 		{"hud pack", map[string]string{"hud_pack": "true"}, "", [][]string{
 			{"import", "/d/b2.iso"},
 			{"enhance", "hud"},
-			{"package", "macos", "--dump", "/d/b2.iso", "--hud-pack", "--seed-config", "S", "--out", "/o", "--plain"},
+			{"package", "macos", "--dump", "/d/b2.iso", "--hud-pack", "--seed-config", "S", "--out", "/o", "--full", "--plain"},
 		}},
 	}
 	for _, tc := range cases {
@@ -76,26 +77,79 @@ func TestSetRefuses(t *testing.T) {
 func TestNoSeedFile(t *testing.T) {
 	s := New(sample(t), "steamos")
 	s.Dump = "/d"
-	want := []string{"package", "steamos", "--dump", "/d", "--plain"}
+	want := []string{"package", "steamos", "--dump", "/d", "--full", "--plain"}
 	if got := s.PackageArgs("", ""); !reflect.DeepEqual(got, want) {
 		t.Fatalf("%q", got)
 	}
 }
 
-func TestOutputChoice(t *testing.T) {
+// Fresh is always the full installer; Update names its base, never
+// passes the seed, and reads the disc only when the plan asked (D1, D5,
+// D6).
+func TestPaths(t *testing.T) {
 	s := New(&gamecfg.Config{Targets: []string{"steamos"}}, "steamos")
 	s.Dump = "D"
-	got := strings.Join(s.PackageArgs("", "/o"), " ")
-	if got != "package steamos --dump D --out /o --plain" {
+	if got := strings.Join(s.PackageArgs("", "/o"), " "); got != "package steamos --dump D --out /o --full --plain" {
 		t.Fatal(got)
 	}
-	s.PatchFrom, s.Clean = "abc123def456", true
-	if got := strings.Join(s.PackageArgs("", "/o"), " "); got != "package steamos --dump D --out /o --clean --patch-from abc123def456 --plain" {
+	s.Path, s.PatchFrom, s.Clean = PathUpdate, "abc123def456", true
+	if got := strings.Join(s.PackageArgs("/s.toml", "/o"), " "); got != "package steamos --out /o --clean --patch-from abc123def456 --plain" {
 		t.Fatal(got)
 	}
-	// --full and --patch-from are exclusive in the CLI: Full wins.
-	s.Full = true
-	if got := strings.Join(s.PlanArgs("/s.toml"), " "); got != "package steamos --dump D --seed-config /s.toml --clean --full --plan --json" {
+	s.NeedDisc = true
+	if got := strings.Join(s.PlanArgs("/s.toml"), " "); got != "package steamos --dump D --clean --patch-from abc123def456 --plan --json" {
 		t.Fatal(got)
+	}
+	if got := strings.Join(s.BasesArgs(), " "); got != "package steamos --full --plan --json" {
+		t.Fatal(got)
+	}
+}
+
+// The HUD box on Update (D3, D6): ticked makes a new pack after the
+// import (only when the disc is needed) and enhance hud; unticked keeps
+// the base's or passes nothing; Clear removes it, ticked or not.
+func TestUpdateTweaks(t *testing.T) {
+	cases := []struct {
+		name           string
+		tick, has, clr bool
+		disc           bool
+		steps          []string
+	}{
+		{"unticked, no pack on the device", false, false, false, false,
+			[]string{"package steamos --patch-from P --plain"}},
+		{"unticked keeps the device's", false, true, false, false,
+			[]string{"package steamos --keep-hud-pack --patch-from P --plain"}},
+		{"ticked makes a new one", true, true, false, false,
+			[]string{"enhance hud", "package steamos --hud-pack --patch-from P --plain"}},
+		{"ticked with the disc", true, false, false, true,
+			[]string{"import /d", "enhance hud", "package steamos --dump /d --hud-pack --patch-from P --plain"}},
+		{"keep with the disc", false, true, false, true,
+			[]string{"package steamos --dump /d --keep-hud-pack --patch-from P --plain"}},
+		{"clear", false, true, true, false,
+			[]string{"package steamos --clear-hud-pack --patch-from P --plain"}},
+		{"clear wins over the box", true, true, true, false,
+			[]string{"package steamos --clear-hud-pack --patch-from P --plain"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(sample(t), "steamos")
+			s.Dump, s.Path, s.PatchFrom = "/d", PathUpdate, "P"
+			s.BaseHas = map[string]bool{"hud_pack": tc.has}
+			s.Clear, s.NeedDisc = tc.clr, tc.disc
+			if err := s.Set("hud_pack", fmt.Sprint(tc.tick)); err != nil {
+				t.Fatal(err)
+			}
+			// Settings an update cannot change stay out of it (D5).
+			if err := s.Set("scale", "2"); err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, st := range s.Steps("S", "") {
+				got = append(got, strings.Join(st, " "))
+			}
+			if !reflect.DeepEqual(got, tc.steps) {
+				t.Fatalf("steps %q, want %q", got, tc.steps)
+			}
+		})
 	}
 }

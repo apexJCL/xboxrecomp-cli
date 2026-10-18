@@ -329,3 +329,29 @@ func TestFont(t *testing.T) {
 		t.Fatalf("%+v %v", f, err)
 	}
 }
+
+// TestParsePlanFixture reads a plan the CLI wrote (testdata/README): the
+// contract test on the CLI side keeps its shape the CLI's.
+func TestParsePlanFixture(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "plan-update.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := ParsePlan(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Stages) == 0 || len(p.Bases) == 0 || p.Output == nil || p.Output.Kind != "patch" ||
+		p.Output.Installed == nil || p.Output.Installed.Path == "" || p.Bases[0].GameFiles == nil {
+		t.Fatalf("%+v", p)
+	}
+	ran := false
+	for _, s := range p.Stages {
+		if s.Action == "run" && len(s.Why) > 0 {
+			ran = true
+		}
+	}
+	if !ran {
+		t.Errorf("no stage runs with a reason: %+v", p.Stages)
+	}
+}

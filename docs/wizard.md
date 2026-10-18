@@ -17,8 +17,23 @@ Players: see [For players](#for-players).
 
 ## What the player sees
 
+The wizard has two paths, chosen on Welcome and kept for the next run:
+
+- **Fresh build**: the complete installer (`package --full`), for a
+  first install, a new device or a start over. Its pages are Welcome,
+  Checks, Dump, Target, Options, Summary, Build and Done.
+- **Update build**: a small update for a device that already has a
+  build made with the wizard (`package --patch-from`). Its pages are
+  Welcome, Checks, Target, *What does the device have now?*, *Changes*,
+  Dump only when the build folder lacks the game files, Summary, Build
+  and Done.
+
+"Step n of m" counts the chosen path's pages. The developers'
+`--patch-from` starts on Update with that build chosen.
+
 1. **Welcome**: what the wizard does and what it never does (no game
-   inside, downloads by checksum, sends nothing), the build folder and
+   inside, downloads by checksum, sends nothing), the path, the build
+   folder and
    the output folder (both changeable and remembered), and a box for the
    newer-release check. The check goes
    out only when the player leaves this page with the box ticked, so
@@ -70,18 +85,50 @@ Players: see [For players](#for-players).
    data folder plus `config/config.toml`) for the settings the page
    leaves out; when the config has `reads_config` false (a toolkit that
    reads no `config.toml`), it says the game has no settings file instead.
+   *What does the device have now?* (Update only) lists, from
+   `package T --full --plan --json`, this computer's install when the
+   target is the host's own platform (the plan's `output.installed`,
+   with its folder as the `--patch-from`), the bundles this folder made
+   for the target (version and date; the `--patch-from` is the record's
+   sha256 prefix), and "A file from the device…", a `manifest.json`
+   picked with the system's file dialog (where each platform keeps it
+   is said under it; on SteamOS `./install.sh status` shows the update
+   ID too). Each row shows its update ID (the first 8 hex of the
+   manifest's sha256, which the appliers print), its tweaks ("Sharper
+   HUD, 4x" or "no tweaks") and the update's size. A build that cannot
+   take the update is shown disabled with the plan's reason in plain
+   words, chosen by its `why_codes` (the data layout changed, the update
+   would be most of the full installer, it was made from other game
+   files, the update would remove game files). A build that is this
+   version already stays pickable: its update can still change a tweak,
+   and the Summary's plan says when nothing changed. The host's own
+   install, or the one bundle made here, is chosen for the player. With nothing listed,
+   "Make a Fresh build instead" goes to the Fresh path, keeping the
+   target and the folders.
+
+   *Changes* (Update only) shows what the chosen build has, and the
+   options that are tweaks (`--hud-pack`): ticked makes a new one;
+   unticked keeps the build's (`--keep-hud-pack`) or leaves none.
+   "Clear previous tweaks", shown only when the build has one, passes
+   `--clear-hud-pack` and unticks the others. The page asks the plan
+   without the disc on every change: its `import.needed` decides
+   whether the Dump page follows (a failed ask asks for the disc). A
+   picked file's tweaks come from that plan's `output.base`, and the
+   plan is asked again with the flags they call for. The page names the
+   device's `config.toml`, which an update never changes; on the host's
+   own platform a `textures.pack` line there that overrides the build's
+   choice is named (the plan's `config_overrides`), and for another
+   device a static note says the installer will tell.
 6. **Summary**: the game, the two folders, target and changed options,
-   and "Makes:", what the build will make, from `package --plan --json`:
-   an update (its size, and the version it updates) or the full
-   installer with why ("the installed v1 is this build already", "no
-   install found"). Change… picks between them: on the host's own target
-   "An update for the installed v1" when that install can take one; for
-   another platform "An update" with "<Device> has:", the bundles this
-   folder made for it (version, date, update size), since the wizard
-   cannot see that computer. "Rebuild everything" there passes `--clean`.
-   Each change asks the plan again. Under "Technical details", the
-   wizard, release, CLI and toolkit versions, every command the build
-   will run, and the plan's stages.
+   then from `package --plan --json`: on Fresh "Makes: the full
+   installer" with its size; on Update the build it updates (version
+   and update ID), what it keeps and changes, the update's size, and how many game
+   files it removes when it removes any. When the plan's output is `none` (the update cannot be made), the
+   Summary says why, Build waits, and "Make a Fresh build instead" is
+   offered. "Rebuild everything" passes `--clean` and asks the plan
+   again. Under "Technical details", the wizard, release, CLI and
+   toolkit versions, every command the build will run, and the plan's
+   stages.
 7. **Build**: a checklist of the build's parts, in order. The wizard
    knows its own commands (each prerequisite, such as `import` and
    `enhance hud`, then `package`); `package`'s row reads "Build the
@@ -112,7 +159,8 @@ Players: see [For players](#for-players).
    the `.dmg`, or `install.sh` in a terminal). An update (a bundle named
    `-patch-from-`) gets its own step: `apply.exe` in the folder on
    Windows, `apply.command` in the `.dmg` on a Mac, `./install.sh` in the
-   unpacked folder on SteamOS ([bundle.md](bundle.md)). Under it, the
+   unpacked folder on SteamOS ([bundle.md](bundle.md)), and a line that
+   the update refuses another build and changes nothing. Under it, the
    build folder's size and "Free space", which asks first and then runs
    `clean --bundles --build`: the compiled program and the kept bundles
    go, the game files, the translated code and the output folder stay,
@@ -122,7 +170,11 @@ Players: see [For players](#for-players).
    is one, in a box that can be selected and copied), the exit status,
    where the full logs are, and Retry ("Retry runs the build again and
    reuses most of what already finished."); the same goes to `wizard.log` in
-   the settings folder. A cancelled build says the player stopped it and
+   the settings folder. When `package` refused an update the plan
+   expected (its `refused: CODE` line: the strict `--patch-from`, or a
+   HUD pack it cannot keep), the failure page offers "Make a Fresh build
+   instead". A cancelled
+   build says the player stopped it and
    shows the checklist. Every outcome ends with the notice that the bundle
    is for the player's own computers only.
 
@@ -373,7 +425,8 @@ window or its settings, only on the command line.
   embeds, so a game with a `repo` still gets it. The next run without
   `--source` sets origin back to the repo and checks out the release.
   `--source` and `--game` exclude each other.
-- `--patch-from X` is passed to `package` as the patch's base (a
+- `--patch-from X` starts on the Update path with X chosen, and is
+  passed to `package` as the patch's base (a
   `manifest.json`, an installed version folder, an `.app`, a bundle tar,
   or a bundle record's sha256 prefix; [bundle.md](bundle.md)).
 - Neither flag is saved in the settings, and `--help` leaves both out.

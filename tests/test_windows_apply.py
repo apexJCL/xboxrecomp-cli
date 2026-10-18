@@ -494,7 +494,8 @@ def make_patch(tmp_path, base_files=V1, new_files=V2):
     m2 = man(new_files, "20261017-c2-g1")
     base = patch.Base((json.dumps(m1, indent=2) + "\n").encode(), "base")
     payload_of(str(payload), new_files, m2)
-    assert patch.problems(base, m2, "windows") == []
+    # V2 changes a game file: a run that imported the game files (--dump).
+    assert patch.problems(base, m2, "windows", imported=True) == []
     choice = patch.Choice("patch", "test", base, patch.diff(m1, m2))
     out = tmp_path / "out"
     out.mkdir()
@@ -570,7 +571,11 @@ def test_base_rules(game2):
     equal stub_abi (D5)."""
     m2 = man(V2, "v2")
     ok = patch.Base(json.dumps(man(V1, "v1")).encode(), "x", versioned=True)
-    assert patch.problems(ok, m2, "windows") == []
+    assert patch.problems(ok, m2, "windows", imported=True) == []
+    # Without the import, V2's other game file is another tree.
+    assert patch.problems(ok, m2, "windows") == [
+        "built from other game files (the same count, other contents)"
+    ]
     inplace = patch.Base(json.dumps(man(V1, "v1")).encode(), "x", versioned=False)
     assert "in-place" in patch.problems(inplace, m2, "windows")[0]
     old = man(V1, "v1")
@@ -776,3 +781,106 @@ def test_d10_messages_on_every_applier():
         assert "with another manifest" in flat, n
     assert "this install is not installed" in re.sub(r'"\s*L?"', "", texts["windows/apply.c"])
     assert '"not installed"' in texts["steamos/install_lib.py"]
+
+
+# ── the HUD tweaks across a chain (wizard-paths 6.3) ─────────────────────
+
+PACK = "enhance/hud.pack"
+DEFAULTS = "config.default.toml"
+STOCK = b"[render]\nscale = 1\n"
+WITH_PACK = STOCK + b'\n[textures]\npack = "enhance/hud.pack"\n'
+
+
+def chain_patch(tmp_path, base_files, new_files, v_base, v_new):
+    stage = tmp_path / "stage"
+    payload = stage / "payload"
+    payload.mkdir(parents=True)
+    tools = stage / windows.ROOT_TOOLS
+    tools.mkdir()
+    (tools / windows.APPLY).write_bytes(b"MZapply")
+    m1, m2 = man(base_files, v_base), man(new_files, v_new)
+    base = patch.Base((json.dumps(m1, indent=2) + "\n").encode(), "base")
+    payload_of(str(payload), new_files, m2)
+    choice = patch.Choice("patch", "test", base, patch.diff(m1, m2))
+    out = tmp_path / "out"
+    out.mkdir()
+    return windows.wrap_windows_patch(str(stage), str(payload), m2["version"], str(out), choice)
+
+
+def applied(folder, installed, driver):
+    """The tree apply.exe leaves, by the plan the C code decides (its steps
+    are the model's): kept files linked from the base, changed and new ones
+    from files/, game files written and deleted in place."""
+    lst_path = os.path.join(folder, "patch.lst")
+    text = open(lst_path, encoding="utf-8").read()
+    assert driver("steps", lst_path) == model_steps(text)
+    assert driver("cover", lst_path, os.path.join(folder, "files", "SHA256SUMS")) == ["ok"]
+    _keys, entries = parse_patch(text)
+    out = {p: b for p, b in installed.items() if p.startswith(GAME)}
+    for kind, _size, _h, p in entries:
+        if kind == "K" and not p.startswith(GAME):
+            out[p] = installed[p]
+        elif kind in "CN":
+            with open(os.path.join(folder, "files", *p.split("/")), "rb") as f:
+                out[p] = f.read()
+        elif kind == "D" and p.startswith(GAME):
+            del out[p]
+    return out
+
+
+def test_clear_then_new_pack_chain_equals_full_installs(game2, tmp_path, driver):
+    """Full with pack A; then --clear-hud-pack (deletes the pack, changes
+    the defaults); then --hud-pack B (both back with B's bytes). Each
+    applied tree is that version's full install."""
+    v1 = dict(V1, **{PACK: b"pack A", DEFAULTS: WITH_PACK})
+    v2 = dict(V1, **{"second_recomp.exe": b"exe2", DEFAULTS: STOCK})
+    v3 = dict(v2, **{PACK: b"pack B", DEFAULTS: WITH_PACK})
+    vs = [("20261016-c1-g1", v1), ("20261017-c2-g1", v2), ("20261018-c3-g1", v3)]
+    tree = dict(v1)
+    for i, ((vb, base), (vn, new)) in enumerate(zip(vs, vs[1:])):
+        folder = chain_patch(tmp_path / str(i), base, new, vb, vn)
+        text = open(os.path.join(folder, "patch.lst"), encoding="utf-8").read()
+        kinds = {p: k for k, _s, _h, p in parse_patch(text)[1]}
+        assert kinds[PACK] == ("D" if i == 0 else "N")
+        assert kinds[DEFAULTS] == "C"
+        tree = applied(folder, tree, driver)
+        assert tree == new
+    assert tree[PACK] == b"pack B"
+
+
+# ── the config.toml note (D8): apply_plan.c and install_lib agree ───────
+
+OVERRIDE_CASES = [
+    ('[textures]\npack = "none"\n', WITH_PACK, "hides none"),
+    ('[render]\nscale = 2\n[textures]\npack = "enhance/hud.pack"\n', WITH_PACK, "none "),
+    ('[textures]\npack = "enhance/hud.pack"\n', STOCK, "stale enhance/hud.pack"),
+    ('[textures]\npack = "none"\n', STOCK, "none "),
+    ("[ textures ] # t\r\npack='a b' # c\r\n", WITH_PACK, "hides a b"),
+    ("[textures]\npack = x.pack # c\n", None, "stale x.pack"),
+    ('[render]\npack = "x"\n[textures]\n', WITH_PACK, "none "),
+    ('[textures]\npacked = "x"\n', WITH_PACK, "none "),
+    ('[textures]\n[other]\npack = "x"\n', WITH_PACK, "none "),
+    (None, WITH_PACK, "none "),
+]
+
+
+def test_override_note_agrees_with_install_lib(driver, tmp_path, tmp_path_factory):
+    from test_steamos_install import load_il
+
+    il = load_il(tmp_path_factory)
+    for i, (config, defaults, want) in enumerate(OVERRIDE_CASES):
+        paths = []
+        for name, text in (("config", config), ("defaults", defaults)):
+            if text is None:
+                paths.append("-")
+                continue
+            p = tmp_path / ("%s%d.toml" % (name, i))
+            p.write_bytes(text.encode() if isinstance(text, str) else text)
+            paths.append(str(p))
+        assert driver("override", *paths) == [want], (config, defaults)
+        note = il.override_note(*(p if p != "-" else str(tmp_path / "missing") for p in paths))
+        kind, _, val = want.partition(" ")
+        if kind == "none":
+            assert note == "", (config, note)
+        else:
+            assert ('"%s"' % val) in note and ("overrides" in note) == (kind == "hides"), note

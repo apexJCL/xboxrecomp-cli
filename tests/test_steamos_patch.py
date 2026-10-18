@@ -464,3 +464,102 @@ def test_reinstall_stopped_between_renames_is_repaired(il, d, monkeypatch):
     assert rc == 0 and "repaired" in out, out
     assert launchable(root) and read(os.path.join(root, "current", PACK)) == b"pack 1"
     assert not os.path.exists(os.path.join(root, "versions", V1 + ".old"))
+
+
+# ── the HUD tweaks across a chain (wizard-paths 6.3) ─────────────────────
+
+DEFAULTS = "config.default.toml"
+STOCK = b"[render]\nscale = 1\n"
+WITH_PACK = STOCK + b'\n[textures]\npack = "enhance/hud.pack"\n'
+
+
+def test_clear_then_new_pack_chain_equals_full_installs(il, d):
+    """Full with pack A; then --clear-hud-pack (the patch deletes the pack
+    and changes the defaults); then --hud-pack B (both back, B's bytes).
+    After each patch the root is the one full installs make."""
+    v1 = make_bundle(
+        os.path.join(d, "1"), V1, game=dict(GAME), extra={PACK: b"pack A", DEFAULTS: WITH_PACK}
+    )
+    v2 = make_bundle(
+        os.path.join(d, "2"), V2, exe=b"MZ v2", game=dict(GAME), extra={DEFAULTS: STOCK}
+    )
+    v3 = make_bundle(
+        os.path.join(d, "3"),
+        V3,
+        exe=b"MZ v2",
+        game=dict(GAME),
+        extra={PACK: b"pack B", DEFAULTS: WITH_PACK},
+    )
+    p12 = make_patch(d, v1, v2, "p12")
+    doc = json.loads(read(os.path.join(p12, "patch.json")))
+    assert [e["path"] for e in doc["deleted"]] == [PACK]
+    assert DEFAULTS in [e["path"] for e in doc["changed"]]
+    p23 = make_patch(d, v2, v3, "p23")
+    doc = json.loads(read(os.path.join(p23, "patch.json")))
+    assert [e["path"] for e in doc["new"]] == [PACK]
+    assert [e["path"] for e in doc["changed"]] == [DEFAULTS]
+    assert read(os.path.join(p23, PACK)) == b"pack B"
+    a = installed(il, d, v1, "a")
+    b = installed(il, d, v1, "b")
+    for patch_dir, full in ((p12, v2), (p23, v3)):
+        rc, out = run(il, patch_dir, a, "patch", "--yes")
+        assert rc == 0, out
+        rc, out = run(il, full, b, "install")
+        assert rc == 0, out
+        assert tree(a) == tree(b)
+    assert read(os.path.join(a, "current", PACK)) == b"pack B"
+    assert read(os.path.join(a, "current", DEFAULTS)) == WITH_PACK
+    assert not os.path.exists(os.path.join(a, "versions", V2, PACK))
+
+
+def test_override_note_after_install_and_patch(il, d):
+    """D8: a player's textures.pack that hides the build's pack, or names
+    one the build no longer ships, gets one line; the file is untouched."""
+    v1 = make_bundle(
+        os.path.join(d, "1"), V1, game=dict(GAME), extra={PACK: b"pack A", DEFAULTS: WITH_PACK}
+    )
+    v2 = make_bundle(
+        os.path.join(d, "2"), V2, exe=b"MZ v2", game=dict(GAME), extra={DEFAULTS: STOCK}
+    )
+    root = installed(il, d, v1)
+    assert "note: " not in run(il, v1, root, "install")[1]
+    cfg = os.path.join(root, "config", "config.toml")
+    with open(cfg, "w") as f:
+        f.write('[render]\nscale = 2\n[textures]\npack = "none"  # mine\n')
+    rc, out = run(il, v1, root, "install")
+    assert rc == 0 and 'textures.pack = "none", which overrides this build\'s HUD pack' in out, out
+    # The clear: "none" then hides nothing.
+    rc, out = run(il, make_patch(d, v1, v2), root, "patch", "--yes")
+    assert rc == 0 and "note: " not in out, out
+    with open(cfg, "w") as f:
+        f.write('[textures]\npack = "enhance/hud.pack"\n')
+    rc, out = run(il, v2, root, "install")
+    assert rc == 0 and "this build ships no HUD pack" in out, out
+    assert read(cfg) == b'[textures]\npack = "enhance/hud.pack"\n'
+
+
+def test_scan_pack_key(il, d):
+    p = os.path.join(d, "c.toml")
+    for text, want in (
+        ('[textures]\npack = "none"\n', "none"),
+        ("[ textures ] # t\npack='a b' # c\n", "a b"),
+        ("[textures]\npack = x # c\n", "x"),
+        ('[render]\npack = "x"\n[textures]\n', None),
+        ('[textures]\npacked = "x"\n', None),
+        ('[textures]\n[other]\npack = "x"\n', None),
+    ):
+        with open(p, "w") as f:
+            f.write(text)
+        assert il.scan_pack_key(p) == want, text
+    assert il.scan_pack_key(os.path.join(d, "missing.toml")) is None
+
+
+def test_status_names_the_update_id_and_tweaks(il, d):
+    v1 = make_bundle(os.path.join(d, "1"), V1, game=dict(GAME))
+    root = installed(il, d, v1)
+    rc, out = run(il, v1, root, "status")
+    want = patch_mod.hashlib.sha256(read(os.path.join(v1, "manifest.json"))).hexdigest()[:8]
+    assert rc == 0 and "update id: %s\n" % want in out, out
+    assert "tweaks:   none\n" in out, out
+    hp = {"sha256": "ab" * 32, "scale": 4, "entries": 12}
+    assert il.tweaks_line({"enhance": {"hud_pack": hp}}) == "HUD pack 4x, 12 entries (abababab)"

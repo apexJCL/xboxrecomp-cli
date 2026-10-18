@@ -117,13 +117,14 @@ func OutClash(out, root, data, dump string) string {
 
 // Settings is the wizard's own file: the chosen build folder (root, the
 // key's name from before the output folder existed), the chosen output
-// folder and the update-check switch, kept between runs. An empty Out is
-// the default, worked out again on every run so a moved wizard is
-// followed.
+// folder, the update-check switch and the path last chosen (fresh or
+// update), kept between runs. An empty Out is the default, worked out
+// again on every run so a moved wizard is followed.
 type Settings struct {
 	Root          string `json:"root,omitempty"`
 	Out           string `json:"out,omitempty"`
 	NoUpdateCheck bool   `json:"no_update_check,omitempty"`
+	Path          string `json:"path,omitempty"`
 }
 
 // SettingsDir is <user config dir>/<slug>-wizard: %APPDATA% on Windows,

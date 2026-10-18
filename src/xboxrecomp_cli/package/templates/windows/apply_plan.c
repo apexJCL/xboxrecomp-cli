@@ -380,3 +380,94 @@ void plan_prune(char **names, size_t n, int keep, const char *cur, const char *p
         remove[i] = !protect;
     }
 }
+
+/* One line of text at *cur, trimmed of blanks and a trailing CR, into
+ * buf (truncated); advances *cur past it. Returns 0 at the end. */
+static int scan_line(const char **cur, char *buf, size_t cap)
+{
+    const char *s = *cur, *e;
+    size_t n;
+    if (!*s)
+        return 0;
+    e = strchr(s, '\n');
+    *cur = e ? e + 1 : s + strlen(s);
+    if (!e)
+        e = s + strlen(s);
+    while (s < e && (*s == ' ' || *s == '\t'))
+        s++;
+    while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r'))
+        e--;
+    n = (size_t)(e - s) < cap - 1 ? (size_t)(e - s) : cap - 1;
+    memcpy(buf, s, n);
+    buf[n] = 0;
+    return 1;
+}
+
+static int is_textures_header(const char *line)
+{
+    char h[16];
+    size_t n = 0;
+    for (const char *c = line; *c && *c != '#'; c++) {
+        if (*c == ' ' || *c == '\t')
+            continue;
+        if (n + 1 >= sizeof(h))
+            return 0;
+        h[n++] = *c;
+    }
+    h[n] = 0;
+    return strcmp(h, "[textures]") == 0;
+}
+
+static void copy_value(const char *s, size_t len, char *out, size_t cap)
+{
+    while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\t'))
+        len--;
+    if (len > cap - 1)
+        len = cap - 1;
+    memcpy(out, s, len);
+    out[len] = 0;
+}
+
+int plan_pack_key(const char *text, char *out, size_t cap)
+{
+    char line[1024];
+    int inside = 0;
+    while (scan_line(&text, line, sizeof(line))) {
+        char *eq, *v, *k;
+        if (line[0] == '[') {
+            inside = is_textures_header(line);
+            continue;
+        }
+        if (!inside || !(eq = strchr(line, '=')))
+            continue;
+        k = line;
+        while (eq > k && (eq[-1] == ' ' || eq[-1] == '\t'))
+            eq--;
+        if ((size_t)(eq - k) != 4 || strncmp(k, "pack", 4) != 0)
+            continue;
+        v = strchr(line, '=') + 1;
+        while (*v == ' ' || *v == '\t')
+            v++;
+        if (*v == '"' || *v == '\'') {
+            char *end = strchr(v + 1, *v);
+            copy_value(v + 1, end ? (size_t)(end - v - 1) : strlen(v + 1), out, cap);
+        } else {
+            char *hash = strchr(v, '#');
+            copy_value(v, hash ? (size_t)(hash - v) : strlen(v), out, cap);
+        }
+        return 1;
+    }
+    return 0;
+}
+
+enum plan_note plan_override(const char *config, const char *defaults, char *val, size_t cap)
+{
+    char ours[1024];
+    int have_ours;
+    if (!config || !plan_pack_key(config, val, cap))
+        return NOTE_NONE;
+    have_ours = defaults && plan_pack_key(defaults, ours, sizeof(ours)) && ours[0];
+    if (have_ours)
+        return strcmp(val, ours) ? NOTE_HIDES : NOTE_NONE;
+    return strcmp(val, "none") ? NOTE_STALE : NOTE_NONE;
+}

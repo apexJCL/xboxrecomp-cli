@@ -15,6 +15,16 @@ class CliError(Exception):
     pass
 
 
+class Refusal(CliError):
+    """A refusal a front end tells apart without reading its text: main
+    prints "refused: CODE" after the message (the codes are the plan's
+    why_codes, package/patch.py)."""
+
+    def __init__(self, msg, code):
+        super().__init__(msg)
+        self.code = code
+
+
 # The progress view (package/progress.py) while `package` runs, else None:
 # say, step and run go through it, and child output goes to build-logs/.
 VIEW = None

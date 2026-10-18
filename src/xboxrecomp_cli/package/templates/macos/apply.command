@@ -185,6 +185,54 @@ if [ "$cur_sha" != "$BASE_SHA" ]; then
 	die "This update is for $BASE_VERSION; this install is $found. Use the full installer for $VERSION."
 fi
 
+# textures.pack in a config.toml, by a line scan as install.sh and
+# apply.exe do it (a [textures] header, then pack = before the next
+# header): "=" and the value without quotes, or nothing. Not a TOML
+# parser: an unusual layout only loses the note.
+pack_key() {
+	[ -f "$1" ] || return 0
+	awk '
+	/^[ \t]*\[/ { s = $0; sub(/#.*/, "", s); gsub(/[ \t\r]/, "", s); inside = (s == "[textures]"); next }
+	inside && /^[ \t]*pack[ \t]*=/ {
+		v = $0; sub(/^[^=]*=[ \t]*/, "", v); sub(/[ \t\r]+$/, "", v)
+		q = substr(v, 1, 1)
+		if (q == "\"" || q == "\047") { v = substr(v, 2); i = index(v, q); if (i > 0) v = substr(v, 1, i - 1) }
+		else { sub(/#.*/, "", v); sub(/[ \t]+$/, "", v) }
+		print "=" v
+		exit
+	}' "$1"
+}
+
+# The player's config.toml wins over the new config.default.toml, so a
+# textures.pack line there hides the build's HUD pack or names one it no
+# longer ships (D8). Only a note: the file is the player's.
+override_note() {
+	data=""
+	# Only a variable name reaches the eval: patch.env is ours, but an
+	# edited one must not run code.
+	case "${DATA_DIR_ENV:-}" in
+	"" | [!A-Za-z_]* | *[!A-Za-z0-9_]*) ;;
+	*) eval "data=\${$DATA_DIR_ENV:-}" ;;
+	esac
+	if [ -z "$data" ]; then
+		case "${DATA_DIR:-}" in
+		"") return 0 ;;
+		"~/"*) data="$HOME/${DATA_DIR#\~/}" ;;
+		*) data=$DATA_DIR ;;
+		esac
+	fi
+	theirs=$(pack_key "$data/config/config.toml")
+	[ -n "$theirs" ] || return 0
+	val=${theirs#=}
+	ours=$(pack_key "$1/Contents/Resources/config.default.toml")
+	ours=${ours#=}
+	if [ -n "$ours" ] && [ "$val" != "$ours" ]; then
+		say "note: your config/config.toml sets textures.pack = \"$val\", which overrides this build's HUD pack; remove that line to use it"
+	elif [ -z "$ours" ] && [ "$val" != none ]; then
+		say "note: your config/config.toml sets textures.pack = \"$val\", and this build ships no HUD pack; remove that line"
+	fi
+}
+
 # Every name the lists give, before anything is written: they become
 # rm -rf and rm -f arguments, so each must stay inside the app.
 safe_rel() {
@@ -281,6 +329,7 @@ if [ -n "$INTO" ]; then
 	"$SWAP" sync "$INTO" >/dev/null 2>&1 || true
 	rm -f "$J"
 	say "$APP $VERSION is installed at $INTO/$APP.app ($APP_PATH is still the old version)"
+	override_note "$INTO/$APP.app"
 	exit 0
 fi
 
@@ -300,3 +349,4 @@ journal previous
 keep_previous
 say "$APP $BASE_VERSION -> $VERSION at $APP_PATH"
 say "rollback: $TOOLS/apply.command rollback"
+override_note "$APP_PATH"

@@ -1136,3 +1136,28 @@ def test_doctor_cli_row(d):
         assert cli_dir.doctor_line().endswith("@ %s (pinned)" % head[:12])
         host.g().m["cli"]["commit"] = "0" * 40
         assert cli_dir.doctor_line().endswith("(not the pin 000000000000)")
+
+
+def test_refusal_prints_its_code(monkeypatch):
+    """A Refusal's code follows its message on its own line, for a front
+    end to tell the refusals apart without reading their text."""
+
+    def refuse(a):
+        raise host.Refusal("--patch-from X (v1): another target; make the full bundle", "target")
+
+    real = main.make_parser
+
+    def parser(prog=None):
+        ap, sub = real(prog)
+        sub.choices["doctor"].set_defaults(func=refuse)
+        return ap, sub
+
+    monkeypatch.setattr(main, "make_parser", parser)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        rc = main.main(["--game", GAME, "--prog", "g", "doctor"])
+    assert rc == 1
+    assert err.getvalue().splitlines()[-2:] == [
+        "g: --patch-from X (v1): another target; make the full bundle",
+        "g: refused: target",
+    ], err.getvalue()

@@ -328,37 +328,13 @@ var installText = map[string]string{
 	"steamos": "Copy the .tar to the Steam Deck or Linux PC, unpack it and run ./install.sh --steam in a terminal: it installs the game and adds it to Steam.",
 }
 
-// The build folder's line on Welcome, the output choice on the Summary
-// and the disk line on Done (D13). A player never reads "patch", "base"
-// or a version's commits here: an update is for a version, which shows
-// as its date and time.
+// The build folder's line on Welcome and the disk line on Done (D13). A
+// player never reads "patch", "base" or a version's commits here: an
+// update is for a version, which shows as its date and time.
 const (
 	folderFoundRelease = "Build folder found: %s %s (%s). This release will reuse it."
 	folderFoundDev     = "Build folder found: %s, a developer build at %s. This release will reuse it."
 	folderFoundLocal   = "Build folder found: %s at %s. The local source %s will reuse it."
-	summaryOutput      = "Makes:"
-	outputAsking       = "Checking what this build makes…"
-	outputUnknown      = "The build chooses between an update and the full installer."
-	outputUpdate       = "Update%s for the installed %s"
-	outputUpdateOn     = "Update%s for %s on %s"
-	outputFull         = "Full installer%s: %s"
-	outputChosen       = "you chose it"
-	outputRefused      = "that version cannot take an update"
-	outputSame         = "the installed %s is this build already"
-	outputCannot       = "the installed %s cannot take an update"
-	outputNoInstall    = "no install found"
-	outputPick         = "for an update, choose what %s has under Change…"
-	outputFirst        = "the first build for %s made here"
-	choiceTitle        = "What to make"
-	choiceUpdate       = "An update for the installed %s"
-	choiceUpdateOn     = "An update"
-	choiceFull         = "The full installer"
-	choiceHas          = "%s has:"
-	choiceHasEntry     = "%s, made %s%s"
-	choiceRebuild      = "Rebuild everything"
-	choiceRebuildHint  = "Slower. Only for when a build misbehaves: your game files and the translated code stay."
-	choiceOK           = "OK"
-	choiceCancel       = "Cancel"
 	diskMeasuring      = "Build folder: measuring…"
 	diskLine           = "Build folder: %s"
 	diskFreeing        = "Build folder: freeing space…"
@@ -369,6 +345,94 @@ const (
 	freeText           = "This deletes the compiled program and the bundles kept in the build folder. " +
 		"Your game files and the translated code stay, and the output folder is not touched. The next build compiles again."
 )
+
+// The two paths (the wizard-paths design, D1): the choice on Welcome,
+// what the device has now (D2), the changes (D9), and what the Summary,
+// the failure page and Done say of an update (D7, D8).
+const (
+	pathHeading    = "What do you want to make?"
+	pathFresh      = "Fresh build"
+	pathFreshHint  = "A complete installer: for a first install, a new device, or to start over. Your saves and settings on the device are kept."
+	pathUpdate     = "Update build"
+	pathUpdateHint = "A small update for a device that already has a build made with this wizard. Only what changed is copied."
+
+	titleHas        = "What does the device have now?"
+	hasIntro        = "An update only works on the build it was made for. Pick the one %s has now."
+	hasAsking       = "Looking for the builds made here…"
+	hasNoPlan       = "The builds made here could not be listed. Pick a file from the device, or make a Fresh build."
+	hasNone         = "No build for %s was made in this build folder yet. Pick a file from the device, or make a Fresh build."
+	hasInstalled    = "This computer's install: %s"
+	hasBuild        = "%s, made %s"
+	hasFile         = "A file from the device…"
+	hasFileChosen   = "From the device: %s"
+	hasFileWhere    = "The file is manifest.json, at %s on %s. Copy it here and pick it."
+	hasStatus       = "On the Steam Deck or Linux PC, run ./install.sh status in the game's folder: it shows the update ID."
+	hasDetail       = "Update ID %s · %s"
+	hasSize         = " · update about %s"
+	hasNoTweaks     = "no tweaks"
+	hasCannot       = "It cannot take this update (%s)."
+	hasUnreadable   = "Its record cannot be read."
+	hasSameCode     = "the code is the same: an update to it changes its tweaks"
+	pickManifest    = "The device's manifest.json"
+	freshInstead    = "Make a Fresh build instead"
+	cannotLayout    = "The game data layout changed since that build, so it can't be updated."
+	cannotShare     = "This update would be most of the full installer (%s)."
+	cannotShareAny  = "This update would be most of the full installer."
+	cannotGuard     = "That build has tweaks, and this update does not say whether to keep them. Tick the box to make them new, or clear them."
+	cannotGameFiles = "That build was made from other game files, so it can't be updated."
+	cannotDeletes   = "This update would remove game files that build has, so it is not made."
+	cannotSame      = "Nothing changed since that build."
+	cannotKeep      = "The device's tweaks cannot be made again the same here. Tick the box to make them new, or clear them."
+	cannotOther     = "An update cannot be made for that build."
+	titleChanges    = "Changes"
+	changesNow      = "On the device now: %s"
+	changesAsking   = "Checking what the update needs…"
+	changesClear    = "Clear previous tweaks"
+	changesDisc     = "The game files in the build folder are missing or changed: the next page asks for your game."
+	changesNoDisc   = "Your game is not needed: the build folder has its files."
+	changesConfig   = "The game's settings are in config.toml on the device (%s). An update never changes them."
+	changesOverride = "Your config.toml (%s) sets %s = %q, which overrides this build's choice. Remove that line to use it."
+	changesStatic   = "If your config.toml on the device sets pack under [textures], it overrides this. The installer will say so."
+	summaryAsking   = "Checking what the build will make…"
+	summaryRebuild  = "Rebuild everything"
+	rebuildHint     = "Slower. Only for when a build misbehaves: your game files and the translated code stay."
+	summaryUpdates  = "Updates: %s (update ID %s)"
+	summaryFresh    = "Makes: the full installer%s"
+	summaryUpdSize  = "Update size: about %s"
+	summaryKeeps    = "Keeps: %s"
+	summaryChanges  = "Changes: %s"
+	summaryNothing  = "Keeps: no tweaks"
+	summaryRemoves  = "Removes %d game files from that build."
+	summaryRemove1  = "Removes 1 game file from that build."
+	doneWrongBuild  = "If the device has another version, the update refuses and changes nothing. Make a Fresh build then."
+	failedFresh     = "This update cannot be made for that build. A Fresh build makes the complete installer."
+)
+
+// Tweak words by the plan's key: the name on the device, what ticking
+// the box does, and what leaving it does when the device has the tweak
+// or not, and what Clear does (D9).
+type tweakText struct {
+	name, made, keeps, none, clear, removes string
+}
+
+var tweakTexts = map[string]tweakText{
+	"hud_pack": {
+		name:    "Sharper HUD",
+		made:    "A new sharper HUD is made from your game files and replaces the device's.",
+		keeps:   "Unticked: the device's sharper HUD stays as it is.",
+		none:    "Unticked: no sharper HUD.",
+		clear:   "Removes the sharper HUD from the device's build.",
+		removes: "removes the sharper HUD",
+	},
+}
+
+// manifestWhere is where a target keeps the current build's manifest.json
+// (D2): %[1]s is the data folder, %[2]s the app's name.
+var manifestWhere = map[string]string{
+	"steamos": "%[1]s/current/manifest.json",
+	"windows": `%%LOCALAPPDATA%%\Programs\%[2]s\versions\<the version in current.txt>\manifest.json`,
+	"macos":   "%[2]s.app/Contents/Resources/manifest.json",
+}
 
 // targetDevice is the computer a target installs on, inside a sentence.
 var targetDevice = map[string]string{

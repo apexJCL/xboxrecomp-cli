@@ -22,12 +22,13 @@ import types
 from .. import build as build_mod
 from .. import buildstate, cli_dir, host, pipeline, setup, toolkit
 from ..host import CliError
-from . import incr
+from . import incr, tweaks
 from .progress import load_timings
 
 # enhance hud on BLiNX 2, measured 4 to 8 s: the estimate before its first
 # run on this machine.
 HUD_DEFAULT_S = 6.0
+TIMING_HUD = "enhance hud"
 GENERATE_STEPS = ("parse", "disasm", "funcid", "abi", "ghidra", "names", "recomp")
 WRAP_STEPS = {"steamos": "tar", "windows": "installer", "macos": "app and dmg"}
 
@@ -56,10 +57,15 @@ class Plan:
         )
         return not why
 
+    def row(self, name, action, why, est=None):
+        """A row whose action is neither run nor reuse: the HUD pack kept
+        ("keep") or a run that would refuse ("refuse")."""
+        self.rows.append({"stage": name, "action": action, "why": list(why), "estimate_s": est})
+
 
 def make_plan(a, lib, imp=None, enhance=True, seed=None):
     """The plan as a dict (the --json document)."""
-    from . import build_target, config_layer, exe_icon_args
+    from . import build_target, config_layer, exe_icon_args, fixed_fields
 
     G = g()
     target = a.target
@@ -73,6 +79,8 @@ def make_plan(a, lib, imp=None, enhance=True, seed=None):
     st.verify = getattr(a, "verify", False)
     timings = load_timings(G.logs)
     p = Plan(timings)
+    p.base, p.base_error = chosen_base(a, st, target)
+    p.hud = {"choice": tweaks.hud_choice(a), "refusal": "", "code": "", "pack": None}
     version = None
 
     def rest(why, names):
@@ -80,19 +88,31 @@ def make_plan(a, lib, imp=None, enhance=True, seed=None):
             p.add(n, [why])
 
     importing = imp is not None and imp.writes
+    p.imported = importing
+    p.allow = bool(getattr(a, "allow_game_file_deletes", False))
+    p.fixed = fixed_fields(target, lib)
     if importing:
         p.add("import", [imp.plan_why()])
+        p.importing = {"needed": True, "why": imp.plan_why()}
         imp_key = None
     else:
-        imp_key = buildstate.stage_key(incr.import_inputs(lib))
-        p.add("import", [])
+        # D6: without --dump, whether the run needs the disc after all.
+        need = import_needed(st, lib)
+        p.importing = {"needed": bool(need), "why": need}
+        if need:
+            p.add("import", ["needs the disc", need])
+            imp_key = None
+        else:
+            imp_key = buildstate.stage_key(incr.import_inputs(lib))
+            p.add("import", [])
     needs = [] if getattr(a, "no_setup", False) else setup.setup_needs(target, a.system_tools)
     if needs:
         p.add("setup", needs, [k for k in timings if k.startswith("setup: ")])
     cstage = incr.compile_stage(btarget)
     sname, wname = incr.stage_name(target), incr.wrap_name(target)
     hud_on = getattr(a, "hud_pack", None) is not None
-    later = (["hud"] if hud_on else []) + [cstage, sname, wname]
+    keeping = p.hud["choice"] == "keep"
+    later = (["hud"] if hud_on or keeping else []) + [cstage, sname, wname]
     if "no toolkit" in needs:
         rest("checked after setup", ["generate", "icon"] + later)
         return finish(p, st, target, version, a)
@@ -130,6 +150,8 @@ def make_plan(a, lib, imp=None, enhance=True, seed=None):
     hud_runs = False
     if hud_on:
         hud_runs, hud_sha = hud_row(a, p, st, imp_key)
+    elif keeping:
+        hud_sha = keep_row(p, st, timings)
 
     # compile
     exe = G.exe(bdir, btarget)
@@ -238,10 +260,85 @@ def hud_row(a, p, st, imp_key):
     return False, host.sha256_path(pack)
 
 
+def import_needed(st, lib):
+    """Why the run needs the disc although no --dump was given ("" when it
+    does not): game_files/ is missing, its dump marker is, or its listing
+    moved since the import was recorded."""
+    G = g()
+    if not os.path.isdir(G.game_files):
+        return "%s/ is missing" % G.rel(G.game_files)
+    inputs = incr.import_inputs(lib)
+    if inputs["marker"] == "absent":
+        return "%s/ has no dump marker" % G.rel(G.game_files)
+    rec = st.get("import") or {}
+    old = (rec.get("inputs") or {}).get("listing")
+    if old is not None and old != inputs["listing"]:
+        return "%s/ changed since the import" % G.rel(G.game_files)
+    return ""
+
+
+def chosen_base(a, st, target):
+    """(the base the run would patch, or None; the error naming it)."""
+    try:
+        return tweaks.run_base(a, target, st), ""
+    except CliError as e:
+        return None, str(e)
+
+
+def keep_row(p, st, timings):
+    """The hud row for --keep-hud-pack: where the base's pack would come
+    from, or why the run would refuse. Returns the pack's sha256 ("" for
+    none)."""
+    base = p.base
+    if base is None:
+        why = p.base_error or (
+            "--keep-hud-pack keeps the base's pack, and this run has no base: "
+            "name it with --patch-from"
+        )
+        p.hud["refusal"], p.hud["code"] = why, patch_mod().NO_BASE
+        p.row("hud", "refuse", [why])
+        return ""
+    where, why = tweaks.plan_keep(st, base)
+    hp = tweaks.base_pack(base)
+    if where == "none":
+        p.row("hud", "keep", [why])
+        return ""
+    if where == "refuse":
+        p.hud["refusal"], p.hud["code"] = why, patch_mod().HUD_KEEP
+        p.row("hud", "refuse", [why])
+        return ""
+    p.hud["pack"] = hp
+    if where == "remake":
+        est = timings.get(TIMING_HUD)
+        est = round(est, 1) if isinstance(est, (int, float)) else HUD_DEFAULT_S
+        p.row("hud", "keep", ["made again"] + ([why] if why else []), est)
+    else:
+        p.row("hud", "keep", ["from the store" if where == "store" else "from dist/enhance/hud/"])
+    return hp["sha256"]
+
+
+def patch_mod():
+    from . import patch
+
+    return patch
+
+
 def finish(p, st, target, version, a=None):
-    run = [r for r in p.rows if r["action"] == "run"]
+    run = [r for r in p.rows if r["action"] in ("run", "keep")]
     known = [r["estimate_s"] for r in run if r["estimate_s"] is not None]
     bases, newest = plan_bases(st, target)
+    proxy = dict(newest, version=version or "") if newest else None
+    for b in bases:
+        b.update(judged(b.pop("base"), proxy, newest, target, version, p))
+    out = plan_output(a, p, target, version, newest, proxy)
+    build_pack = None
+    choice = p.hud["choice"]
+    if choice == "make" or (choice == "keep" and p.hud["pack"]):
+        build_pack = "../Resources/enhance/hud.pack" if target == "macos" else "enhance/hud.pack"
+    try:
+        overrides = tweaks.config_overrides(target, build_pack)
+    except (KeyError, OSError):
+        overrides = []
     return {
         "schema": 1,
         "target": target,
@@ -253,82 +350,146 @@ def finish(p, st, target, version, a=None):
         "bases": bases,
         # The full bundle's size as last made here (None before the first).
         "full_size": bases[0]["size"] if bases else None,
-        "output": plan_output(a, st, target, version, newest),
+        "output": out,
+        "import": dict(getattr(p, "importing", None) or {"needed": False, "why": ""}),
+        "config_overrides": overrides,
     }
 
 
 def plan_bases(st, target):
-    """The bundle records, each with the size of a patch from it to the
-    newest one (what this run would make if nothing changes), and the
-    newest record's manifest (None before the first bundle)."""
+    """The bundle records, newest first, each with its manifest as a Base
+    (popped by finish once judged), and the newest record's manifest (None
+    before the first bundle)."""
     from . import patch
 
     bases = incr.bases(st, target)
     records = incr.bundles_dir(st, target)
     newest = None
-    if bases:
-        newest = buildstate.load_json(os.path.join(records, bases[0]["sha256"] + ".json"), None)
-    newest = newest if isinstance(newest, dict) else None
-    return patch.record_patch_sizes(bases, records, newest), newest
+    for b in bases:
+        b["base"] = None
+        try:
+            with open(os.path.join(records, b["sha256"] + ".json"), "rb") as f:
+                b["base"] = patch.Base(f.read(), "bundle record %s" % b["sha256"][:12])
+        except (OSError, CliError):
+            continue
+        if newest is None and b is bases[0]:
+            newest = b["base"].manifest
+    return bases, newest
 
 
-def plan_output(a, st, target, version, newest):
-    """What the run is expected to make (D13's output line), as package
-    would choose (patch.choose) but before the new manifest exists: the
-    newest bundle record stands in for it, for the rules on product,
-    target, layout and stub, and for the patch's size. The run decides
-    again on the real manifest (the half-size rule among it).
-
-    {"kind": "full" | "patch", "why", "base": {version, sha256, origin} or
-    None, "patch_size": bytes or None}. "installed" is the host's current
-    install when the target is the host's own platform, with "usable" and
-    "why" (what keeps it from taking a patch), else None."""
+def judged(base, proxy, newest, target, version, p=None):
+    """A base's plan fields (D2, D7): its update ID, whether it can take
+    this patch and why not (why, and why_codes for a front end), the
+    patch's size and the game files it changes, adds and removes, its
+    tweaks and seed. The newest record stands in for the new manifest,
+    for the rules on product, target, layout, stub and game files and for
+    the half-size rule; the run decides again on the real one. Without a
+    record, the fields known before the build (fixed_fields) are judged."""
     from . import patch
 
-    out = {"kind": "full", "why": "", "base": None, "patch_size": None, "installed": None}
+    imported = bool(getattr(p, "imported", False))
+    allow = bool(getattr(p, "allow", False))
+    if base is None:
+        return {
+            "id": "",
+            "usable": False,
+            "why": ["its record cannot be read"],
+            "why_codes": [patch.UNREADABLE],
+            "tweaks": {"hud_pack": None},
+            "seed_config": False,
+            "game_files": None,
+        }
+    fixed = getattr(p, "fixed", None)
+    if proxy is not None:
+        why = patch.problem_codes(base, proxy, target, imported)
+    else:
+        why = patch.problem_codes(base, fixed, target, early=True) if fixed else []
+        if not why and version and base.version == version:
+            why = [(patch.SAME, "it is this version already")]
+    size = None
+    counts = None
+    if newest is not None and patch.entries(base.manifest) is not None:
+        d = patch.diff(base.manifest, newest)
+        counts = patch.game_counts(d)
+        # 0: the base is the newest record, and the patch is only what
+        # this run changes, which is not known yet.
+        size = patch.payload_size(d) or None
+        if not why:
+            dp = patch.deletes_problem(base, d, allow)
+            share = patch.share_problem(d, newest) if size else ""
+            if dp:
+                why = [dp]
+            elif share:
+                why = [(patch.SHARE, share)]
+    return {
+        "id": base.sha256[:8],
+        "usable": not why,
+        "why": [m for _c, m in why],
+        "why_codes": [c for c, _m in why],
+        "patch_size": size,
+        "tweaks": tweaks.tweaks_of(base.manifest),
+        "seed_config": bool(base.manifest.get("seed_config")),
+        "game_files": counts,
+    }
 
-    # The newest record with this run's version: a base at the newest
-    # record is no base only when the run makes that same version again.
-    proxy = dict(newest, version=version or "") if newest else None
 
-    def judge(base):
-        if proxy is not None:
-            return patch.problems(base, proxy, target)
-        return ["it is this version already"] if version and base.version == version else []
+def plan_output(a, p, target, version, newest, proxy):
+    """What the run is expected to make (D13's output line), as package
+    would choose (patch.choose) but before the new manifest exists.
 
-    def size(base):
-        if newest is None or patch.entries(base.manifest) is None:
-            return None
-        n = patch.payload_size(patch.diff(base.manifest, newest))
-        # 0: the base is the newest record, and the patch is only what this
-        # run changes, which is not known yet.
-        return n or None
+    {"kind": "full" | "patch" | "none", "why", "base": the base's row or
+    None, "patch_size": bytes or None}. "none": the run would refuse (a
+    --patch-from base that cannot take this patch, the HUD flags the base
+    asks for, a kept pack found nowhere), with the reason. "installed" is
+    the host's current install when the target is the host's own
+    platform, in a base's shape, else None."""
+    from . import patch
+
+    out = {
+        "kind": "full",
+        "why": "",
+        "why_codes": [],
+        "base": None,
+        "patch_size": None,
+        "installed": None,
+    }
 
     def row(base):
-        return {"version": base.version, "sha256": base.sha256, "origin": base.origin}
+        r = {"version": base.version, "made": "", "sha256": base.sha256, "origin": base.origin}
+        r["path"] = getattr(base, "path", "")
+        r["size"] = None
+        r.update(judged(base, proxy, newest, target, version, p))
+        return r
 
     try:
         inst = patch.host_base(target, g().package["app"], g().m)
     except (CliError, OSError, KeyError):
         inst = None
     if inst is not None:
-        why = judge(inst)
-        out["installed"] = dict(row(inst), usable=not why, why=why, patch_size=size(inst))
+        out["installed"] = row(inst)
     spec = getattr(a, "patch_from", None) if a is not None else None
+    base = None
     if getattr(a, "full", False):
         out["why"] = "--full"
     elif spec:
-        try:
-            base = patch.load(spec, incr.bundles_dir(st, target))
-        except CliError as e:
-            out["why"] = "--patch-from %s: %s" % (spec, e)
+        if p.base is None:
+            out.update(
+                kind="none",
+                why=p.base_error or "--patch-from %s: not found" % spec,
+                why_codes=[patch.NO_BASE],
+            )
             return out
-        why = judge(base)
-        if why:
-            out["why"] = "--patch-from %s: %s" % (spec, "; ".join(why))
+        base = row(p.base)
+        out["base"] = base
+        if base["why"]:
+            out.update(
+                kind="none",
+                why="--patch-from %s: %s" % (spec, "; ".join(base["why"])),
+                why_codes=list(base["why_codes"]),
+            )
         else:
-            out.update(kind="patch", why="from %s (--patch-from)" % base.version)
-            out.update(base=row(base), patch_size=size(base))
+            out.update(kind="patch", why="from %s (--patch-from)" % p.base.version)
+            out["patch_size"] = base["patch_size"]
     elif inst is None:
         out["why"] = "no install found"
     elif out["installed"]["why"]:
@@ -336,9 +497,19 @@ def plan_output(a, st, target, version, newest):
             inst.version or "?",
             "; ".join(out["installed"]["why"]),
         )
+        out["why_codes"] = list(out["installed"]["why_codes"])
     else:
-        out.update(kind="patch", why="from the installed %s" % inst.version)
-        out.update(base=row(inst), patch_size=out["installed"]["patch_size"])
+        base = out["installed"]
+        out.update(kind="patch", why="from the installed %s" % inst.version, base=base)
+        out["patch_size"] = base["patch_size"]
+    # The HUD flags (D3) and a kept pack that cannot be found refuse the
+    # run before it builds, as package() does: on any base it reads,
+    # usable or not.
+    if not getattr(a, "full", False):
+        if p.hud["choice"] is None and tweaks.base_pack(p.base) is not None:
+            out.update(kind="none", why=tweaks.guard_message(p.base), why_codes=[patch.HUD_GUARD])
+        elif p.hud["refusal"]:
+            out.update(kind="none", why=p.hud["refusal"], why_codes=[p.hud["code"]])
     return out
 
 

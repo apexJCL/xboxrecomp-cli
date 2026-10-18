@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
 	"fyne.io/fyne/v2/test"
 
-	"wizard/internal/hostinfo"
 	"wizard/internal/repo"
 	"wizard/internal/runner"
 )
@@ -59,190 +57,6 @@ func TestFolderFound(t *testing.T) {
 	w.showFolderFound()
 	if w.foundLabel.Visible() {
 		t.Error("a foreign mark counts")
-	}
-}
-
-func samplePlan() *runner.Plan {
-	return &runner.Plan{
-		Schema: 1, Target: "steamos", FullSize: 3_500_000_000,
-		Stages: []runner.PlanStage{{Stage: "generate", Action: "reuse"}, {Stage: "build", Action: "run", Why: "toolkit moved"}},
-		Bases: []runner.PlanBase{
-			{Version: "20261016.1200-cabc-t1-g2", Made: "2026-10-16T12:00:00.000Z", Sha256: strings.Repeat("a", 64), Size: 3_500_000_000},
-			{Version: "20261012.0900-cdef-t1-g2", Made: "2026-10-12T09:00:00.000Z", Sha256: strings.Repeat("b", 64), PatchSize: 190_000_000},
-		},
-		Output: &runner.PlanOutput{Kind: "full", Why: "no install found"},
-	}
-}
-
-func TestOutputText(t *testing.T) {
-	p := samplePlan()
-	inst := &runner.PlanInstalled{PlanVersion: runner.PlanVersion{Version: "20261012.0900-cdef-t1-g2"}, Usable: true}
-	patch := func(size int64, v string) *runner.Plan {
-		q := *p
-		q.Output = &runner.PlanOutput{Kind: "patch", Base: &runner.PlanVersion{Version: v}, PatchSize: size, Installed: inst}
-		return &q
-	}
-	full := func(inst *runner.PlanInstalled) *runner.Plan {
-		q := *p
-		q.Output = &runner.PlanOutput{Kind: "full", Installed: inst}
-		return &q
-	}
-	same := &runner.PlanInstalled{PlanVersion: inst.PlanVersion, Why: []string{"it is this version already"}}
-	other := &runner.PlanInstalled{PlanVersion: inst.PlanVersion, Why: []string{"game data layout changed"}}
-	for _, c := range []struct {
-		p         *runner.Plan
-		native    bool
-		full      bool
-		patchFrom string
-		want      string
-	}{
-		{nil, true, false, "", outputUnknown},
-		{&runner.Plan{Schema: 1}, true, false, "", outputUnknown},
-		{patch(190_000_000, inst.Version), true, false, "", "Update (190 MB) for the installed 20261012.0900"},
-		{patch(0, inst.Version), true, false, "", "Update for the installed 20261012.0900"},
-		{patch(190_000_000, inst.Version), false, false, "bbbbbbbbbbbb", "Update (190 MB) for 20261012.0900 on the Steam Deck or Linux PC"},
-		{full(nil), true, false, "", "Full installer (3.5 GB): no install found"},
-		{full(nil), true, true, "", "Full installer (3.5 GB): you chose it"},
-		{full(same), true, false, "", "Full installer (3.5 GB): the installed 20261012.0900 is this build already"},
-		{full(other), true, false, "", "Full installer (3.5 GB): the installed 20261012.0900 cannot take an update"},
-		{full(nil), false, false, "", "Full installer (3.5 GB): for an update, choose what the Steam Deck or Linux PC has under Change…"},
-		{full(nil), false, false, "bbbb", "Full installer (3.5 GB): that version cannot take an update"},
-		{&runner.Plan{Schema: 1, Output: &runner.PlanOutput{Kind: "full"}}, false, false, "", "Full installer: the first build for the Steam Deck or Linux PC made here"},
-	} {
-		if got := outputText(c.p, "steamos", c.native, c.full, c.patchFrom); got != c.want {
-			t.Errorf("got  %q\nwant %q", got, c.want)
-		}
-	}
-	if sizeText(400_000) != "1 MB" || sizeText(999_000_000) != "999 MB" || sizeText(9_800_000_000) != "9.8 GB" {
-		t.Error("sizeText")
-	}
-}
-
-// The Summary asks the CLI for the plan with the build's own arguments,
-// shows the line, and Change… sets the choice and asks again: the version
-// another computer has becomes --patch-from, Rebuild everything --clean,
-// the full installer --full. An answer a newer ask overtook is dropped.
-func TestOutputChoiceFlow(t *testing.T) {
-	isolate(t)
-	a := test.NewApp()
-	defer a.Quit()
-	w := New(a, sampleOptions(t))
-	other := "steamos"
-	if hostinfo.NativeTarget() == "steamos" {
-		other = "windows"
-	}
-	w.st.Target = other
-	w.st.Dump = "/d/game.iso"
-	var jobs []func()
-	w.async = func(f func()) { jobs = append(jobs, f) }
-	var asks [][]string
-	answer := samplePlan()
-	w.planAsk = func(r runner.Runner, args []string) (*runner.Plan, error) {
-		asks = append(asks, args)
-		return answer, nil
-	}
-	w.fillSummary() // no checks yet: no plan
-	if len(jobs) != 0 || w.outputLine.Text != outputUnknown || !w.outputChange.Disabled() {
-		t.Fatalf("before the checks: %q", w.outputLine.Text)
-	}
-	w.env = &Env{}
-	w.fillSummary()
-	if w.outputLine.Text != outputAsking || len(jobs) != 1 {
-		t.Fatalf("asking: %q", w.outputLine.Text)
-	}
-	jobs[0]()
-	if len(asks) != 1 || !slices.Contains(asks[0], "--plan") || !slices.Contains(asks[0], "--json") || asks[0][1] != other {
-		t.Fatalf("plan args %q", asks)
-	}
-	if !strings.HasPrefix(w.outputLine.Text, "Full installer (3.5 GB): for an update") || w.outputChange.Disabled() {
-		t.Fatalf("line %q", w.outputLine.Text)
-	}
-	if !strings.Contains(w.summaryTech.Text, "run build (toolkit moved)") || !strings.Contains(w.summaryTech.Text, "reuse generate") {
-		t.Errorf("the plan is not in the details:\n%s", w.summaryTech.Text)
-	}
-	_, f, body := w.outputDialog()
-	if f.has == nil || len(f.has.Options) != 2 || f.kind.Selected != choiceFull {
-		t.Fatalf("dialog: %+v", f)
-	}
-	if txt := allText(body); strings.Contains(strings.ToLower(txt), "base") || strings.Contains(txt, "patch") {
-		t.Errorf("the dialog says base or patch:\n%s", txt)
-	}
-	f.has.SetSelectedIndex(1)
-	if f.kind.Selected != choiceUpdateOn {
-		t.Fatal("choosing a version does not choose the update")
-	}
-	f.rebuild.SetChecked(true)
-	w.applyChoice(f)
-	if w.st.PatchFrom != strings.Repeat("b", 12) || w.st.Full || !w.st.Clean {
-		t.Fatalf("state %+v", w.st)
-	}
-	answer = samplePlan()
-	answer.Output = &runner.PlanOutput{Kind: "patch", Base: &runner.PlanVersion{Version: answer.Bases[1].Version}, PatchSize: 190_000_000}
-	jobs[1]()
-	got := strings.Join(asks[1], " ")
-	if !strings.Contains(got, "--clean --patch-from bbbbbbbbbbbb --plan --json") {
-		t.Fatalf("args %q", got)
-	}
-	if w.outputLine.Text != "Update (190 MB) for 20261012.0900 on "+targetDevice[other] {
-		t.Fatalf("line %q", w.outputLine.Text)
-	}
-	if !strings.Contains(strings.Join(w.st.PackageArgs("", ""), " "), "--clean --patch-from bbbbbbbbbbbb --plain") {
-		t.Error("the build does not get the choice")
-	}
-	// The full installer clears the version.
-	_, f, _ = w.outputDialog()
-	if f.kind.Selected != choiceUpdateOn || f.has.SelectedIndex() != 1 {
-		t.Fatalf("the dialog does not show the choice: %q %d", f.kind.Selected, f.has.SelectedIndex())
-	}
-	f.kind.SetSelected(choiceFull)
-	f.rebuild.SetChecked(false)
-	w.applyChoice(f)
-	if !w.st.Full || w.st.PatchFrom != "" || w.st.Clean {
-		t.Fatalf("state %+v", w.st)
-	}
-	// A late answer of an older ask is dropped; a failed one leaves the
-	// choice to the build.
-	w.planAsk = func(runner.Runner, []string) (*runner.Plan, error) { return nil, errors.New("exit status 2") }
-	w.askPlan()
-	jobs[3]()
-	jobs[2]()
-	if w.outputLine.Text != outputUnknown || !w.outputChange.Disabled() {
-		t.Errorf("after a failed plan: %q", w.outputLine.Text)
-	}
-}
-
-// On the host's own platform the update is for the installed version:
-// Change… offers it and the full installer, and the update leaves the
-// choice of version to package.
-func TestOutputChoiceNative(t *testing.T) {
-	isolate(t)
-	a := test.NewApp()
-	defer a.Quit()
-	w := New(a, sampleOptions(t))
-	w.st.Target = hostinfo.NativeTarget()
-	w.plan = samplePlan()
-	inst := &runner.PlanInstalled{PlanVersion: runner.PlanVersion{Version: "20261012.0900-x"}, Usable: true}
-	w.plan.Output = &runner.PlanOutput{Kind: "patch", Base: &inst.PlanVersion, Installed: inst}
-	w.st.Full = true
-	_, f, _ := w.outputDialog()
-	if f.has != nil || len(f.kind.Options) != 2 || f.kind.Selected != choiceFull {
-		t.Fatalf("dialog %q %q", f.kind.Options, f.kind.Selected)
-	}
-	f.kind.SetSelected(fmt.Sprintf(choiceUpdate, "20261012.0900"))
-	w.applyChoice(f)
-	if w.st.Full || w.st.PatchFrom != "" {
-		t.Fatalf("state %+v", w.st)
-	}
-	// The ask after the choice had no checks to run with: no plan.
-	if w.plan != nil {
-		t.Fatal("a plan without the checks")
-	}
-	w.plan = samplePlan()
-	inst.Usable = false
-	w.plan.Output = &runner.PlanOutput{Kind: "full", Installed: inst}
-	_, f, _ = w.outputDialog()
-	if len(f.kind.Options) != 1 {
-		t.Errorf("an install that cannot take an update is offered: %q", f.kind.Options)
 	}
 }
 
@@ -311,14 +125,21 @@ func TestDoneUpdateAndDisk(t *testing.T) {
 
 func TestParsePlanOutput(t *testing.T) {
 	p, err := runner.ParsePlan([]byte(`note
-{"schema": 1, "target": "steamos", "version": "v2", "stages": [{"stage": "build", "action": "run", "why": "x", "estimate_s": 3}],
- "estimate_s": 3, "unknown": [], "bases": [{"version": "v1", "made": "m", "sha256": "aa", "size": 10, "on_disk": true, "patch_size": null}],
+{"schema": 1, "target": "steamos", "version": "v2", "stages": [{"stage": "build", "action": "run", "why": ["x", "y"], "estimate_s": 3}],
+ "estimate_s": 3, "unknown": [], "bases": [{"version": "v1", "made": "m", "sha256": "aa", "size": 10, "on_disk": true, "patch_size": null, "id": "1a2b3c4d",
+   "usable": true, "why": [], "tweaks": {"hud_pack": {"sha256": "cc", "scale": 4, "entries": 9}}, "seed_config": false}],
  "full_size": 10, "output": {"kind": "patch", "why": "from the installed v1", "base": {"version": "v1", "sha256": "aa", "origin": "host"},
- "patch_size": 4, "installed": {"version": "v1", "sha256": "aa", "origin": "host", "usable": true, "why": [], "patch_size": 4}}}`))
+ "patch_size": 4, "installed": {"version": "v1", "sha256": "aa", "origin": "host", "usable": true, "why": [], "patch_size": 4, "path": "/g/versions/v1"}},
+ "import": {"needed": true, "why": "no game files"}, "config_overrides": [{"key": "textures.pack", "value": "none"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Output.Kind != "patch" || p.Output.Base.Version != "v1" || !p.Output.Installed.Usable || p.FullSize != 10 || p.Bases[0].PatchSize != 0 {
+	if len(p.Stages) != 1 || strings.Join(p.Stages[0].Why, ",") != "x,y" {
+		t.Errorf("stages: %+v", p.Stages)
+	}
+	if p.Output.Kind != "patch" || p.Output.Base.Version != "v1" || !p.Output.Installed.Usable || p.FullSize != 10 || p.Bases[0].PatchSize != 0 ||
+		p.Output.Installed.Path != "/g/versions/v1" || p.Bases[0].ID != "1a2b3c4d" || p.Bases[0].Tweaks.HudPack == nil ||
+		p.Bases[0].Tweaks.HudPack.Scale != 4 || !p.Import.Needed || len(p.ConfigOverrides) != 1 || p.ConfigOverrides[0].Value != "none" {
 		t.Errorf("%+v", p)
 	}
 	if _, err := runner.ParsePlan([]byte(`{"schema": 2}`)); err == nil {
@@ -326,7 +147,10 @@ func TestParsePlanOutput(t *testing.T) {
 	}
 	// A CLI before the output fields: no output, so the build chooses.
 	p, err = runner.ParsePlan([]byte(`{"schema": 1, "stages": [], "bases": []}`))
-	if err != nil || p.Output != nil || outputText(p, "steamos", true, false, "") != outputUnknown {
+	if err != nil || p.Output != nil || p.Import.Needed {
 		t.Errorf("old plan: %+v %v", p, err)
+	}
+	if sizeText(400_000) != "1 MB" || sizeText(999_000_000) != "999 MB" || sizeText(9_800_000_000) != "9.8 GB" {
+		t.Error("sizeText")
 	}
 }

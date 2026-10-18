@@ -621,6 +621,7 @@ func TestUpdateCheckWaits(t *testing.T) {
 	w := New(a, opt)
 	var asked atomic.Int32
 	w.latest = func() (*update.Release, string) { asked.Add(1); return nil, "stub" }
+	w.setPath(model.PathFresh)
 	// A finished doctor and env keep the Checks page from running Prepare.
 	w.doctor = loadDoctor(t, "doctor.json")
 	w.env = &Env{Root: w.root, Game: w.root}
@@ -1403,6 +1404,10 @@ func TestWelcomeFolders(t *testing.T) {
 		t.Errorf("inside src: shown %v %q", w.outNote.Visible(), w.outNote.Text)
 	}
 	w.setOut(out)
+	if w.pages[pWelcome].ready() {
+		t.Error("Welcome is ready before a path is chosen")
+	}
+	w.setPath(model.PathUpdate)
 	if w.outNote.Visible() || !w.pages[pWelcome].ready() {
 		t.Errorf("a good folder still refused: %q", w.outNote.Text)
 	}

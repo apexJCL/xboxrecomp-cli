@@ -182,15 +182,32 @@ type Wizard struct {
 	summaryBox  *fyne.Container
 	summaryTech *widget.Label
 	summaryAcc  *widget.Accordion
-	// the output choice (D13): plan is the CLI's last answer, planRun
-	// counts asks so a late one is dropped, planAsk asks (the tests
-	// replace it); techBase is the technical details before the plan.
-	outputLine   *widget.Label
-	outputChange *widget.Button
-	plan         *runner.Plan
-	planRun      int
-	planAsk      func(runner.Runner, []string) (*runner.Plan, error)
-	techBase     string
+	// summaryPlan holds the lines from the plan: what the build makes,
+	// and for an update what it keeps and changes.
+	summaryPlan *fyne.Container
+	// the Summary's plan: plan is the CLI's last answer, planRun counts
+	// asks so a late one is dropped, planAsk asks (the tests replace it);
+	// techBase is the technical details before the plan.
+	plan     *runner.Plan
+	planRun  int
+	planAsk  func(runner.Runner, []string) (*runner.Plan, error)
+	techBase string
+
+	// the paths (paths.go): pathRadios are Welcome's Fresh and Update;
+	// the Base page's plan, its ask counter and rows, the file picked;
+	// the Changes page's plan and ask counter.
+	pathRadios   map[string]*widget.RadioGroup
+	baseBox      *fyne.Container
+	basePlan     *runner.Plan
+	baseAsked    bool
+	baseRun      int
+	baseRadios   []*widget.RadioGroup
+	baseFile     string
+	baseTarget   string
+	changesBox   *fyne.Container
+	changesPlan  *runner.Plan
+	changesAsked bool
+	changesRun   int
 
 	// build and done
 	buildLog *logPane
@@ -237,6 +254,9 @@ const (
 	pSummary
 	pBuild
 	pDone
+	// Update's pages, after the others so the indices above stay.
+	pBase
+	pChanges
 )
 
 // New builds the window and every page; Show starts it.
@@ -271,6 +291,12 @@ func New(a fyne.App, opt Options) *Wizard {
 	}
 	w.st = model.New(opt.Cfg, hostinfo.NativeTarget())
 	w.st.PatchFrom = opt.PatchFrom
+	switch {
+	case opt.PatchFrom != "":
+		w.st.Path = model.PathUpdate
+	case w.settings.Path == model.PathFresh || w.settings.Path == model.PathUpdate:
+		w.st.Path = w.settings.Path
+	}
 	w.latest = func() (*update.Release, string) {
 		if opt.Cfg.Private {
 			return nil, "none (a private game has no public releases)"
@@ -281,12 +307,13 @@ func New(a fyne.App, opt Options) *Wizard {
 	}
 	w.win = a.NewWindow(opt.Cfg.Game.Name + " build wizard")
 	w.body = container.NewStack()
-	w.back = widget.NewButton(backText, func() { w.show(w.cur - 1) })
+	w.back = widget.NewButton(backText, func() { w.move(-1) })
 	w.next = widget.NewButton(nextText, w.onNext)
 	w.next.Importance = widget.HighImportance
 	w.pages = []*page{
 		w.welcomePage(), w.checksPage(), w.dumpPage(), w.targetPage(),
 		w.optionsPage(), w.summaryPage(), w.buildPage(), w.donePage(),
+		w.basePage(), w.changesPage(),
 	}
 	page := container.NewBorder(w.header(), w.bottom(), nil, nil, container.NewPadded(w.body))
 	w.win.SetContent(container.NewStack(newSizeWatch(w.fitDialogs), page))
@@ -416,9 +443,17 @@ func (w *Wizard) render(i int) {
 	w.cur = i
 	p := w.pages[i]
 	w.title.SetText(p.title)
-	w.step.SetText(fmt.Sprintf(stepText, i+1, len(w.pages)))
+	// The step is the page's place on the chosen path, whose length
+	// differs (D1).
+	o := w.order()
+	k := slices.Index(o, i)
+	if k < 0 {
+		k = min(i, len(o)-1)
+	}
+	w.step.SetText(fmt.Sprintf(stepText, k+1, len(o)))
 	// The current page counts as reached: step 2 of 8 fills two segments.
-	w.stepBar.SetValue(float64(i+1) / float64(len(w.pages)))
+	w.stepBar.Segments = len(o)
+	w.stepBar.SetValue(float64(k+1) / float64(len(o)))
 	if i == pWelcome {
 		w.info.Hide()
 	} else {
@@ -478,7 +513,7 @@ func (w *Wizard) onNext() {
 		w.app.Quit()
 		return
 	}
-	w.show(w.cur + 1)
+	w.move(1)
 }
 
 func (w *Wizard) onClose() {
@@ -587,6 +622,7 @@ func (w *Wizard) welcomePage() *page {
 		statement(noGameLead, noGameText(c.Game.Name)),
 		statement(downloadsLead, downloadsText),
 		statement(sendsLead, sendsText),
+		w.pathChoice(),
 		container.NewBorder(nil, nil, bold(buildFolder), nil, folderIs),
 		container.NewBorder(nil, nil, nil, change, w.rootLabel),
 		w.foundLabel,
@@ -601,7 +637,7 @@ func (w *Wizard) welcomePage() *page {
 	w.showOutClash()
 	w.showFolderFound()
 	return &page{title: titleWelcome, obj: container.NewVScroll(container.NewVBox(items...)), enter: w.showOutClash,
-		ready: func() bool { return w.root != "" && w.out != "" && w.outClash() == "" }}
+		ready: func() bool { return w.st.Path != "" && w.root != "" && w.out != "" && w.outClash() == "" }}
 }
 
 // outClash is the folder the output folder overlaps, or "": the game's
@@ -1389,15 +1425,9 @@ func (w *Wizard) summaryPage() *page {
 	w.summaryBox = container.NewVBox()
 	w.summaryTech = mono("")
 	w.summaryAcc = widget.NewAccordion(widget.NewAccordionItem(technicalDetails, w.summaryTech))
-	w.outputLine = para("")
-	w.outputChange = widget.NewButton(changeText, func() {
-		if w.plan != nil && w.plan.Output != nil {
-			d, _, _ := w.outputDialog()
-			d.Show()
-		}
-	})
+	w.summaryPlan = container.NewVBox()
 	return &page{title: titleSummary, obj: container.NewVScroll(container.NewVBox(w.summaryBox, w.summaryAcc)),
-		next: summaryNext, enter: w.fillSummary}
+		next: summaryNext, enter: w.fillSummary, ready: func() bool { return !w.cannotUpdate() }}
 }
 
 func (w *Wizard) seedArg() string {
@@ -1428,7 +1458,7 @@ func (w *Wizard) fillSummary() {
 		para(fmt.Sprintf(summaryFolder, w.root)),
 		para(fmt.Sprintf(summaryOut, w.out)),
 		para(fmt.Sprintf(summaryPlatform, model.TargetLabels[w.st.Target])),
-		container.NewBorder(nil, nil, bold(summaryOutput), container.NewVBox(w.outputChange), w.outputLine),
+		w.summaryPlan,
 	}
 	var changed []fyne.CanvasObject
 	for _, o := range c.Options {
@@ -1443,6 +1473,13 @@ func (w *Wizard) fillSummary() {
 			container.New(layout.NewCustomPaddedLayout(0, 0, 2*theme.Padding(), 0), container.NewVBox(changed...)))
 	}
 	items = append(items, para(fmt.Sprintf(summaryData, c.Data[w.st.Target])))
+	rebuild := widget.NewCheck(summaryRebuild, nil)
+	rebuild.SetChecked(w.st.Clean)
+	rebuild.OnChanged = func(on bool) {
+		w.st.Clean = on
+		w.fillSummary()
+	}
+	items = append(items, rebuild, under(hintText(rebuildHint)))
 	w.summaryBox.Objects = items
 	w.summaryBox.Refresh()
 
@@ -1795,7 +1832,15 @@ func (w *Wizard) fillDone() {
 		if w.st.Target == hostinfo.NativeTarget() {
 			row = append(row, widget.NewButton(installNowText, func() { w.installNow(bundle) }))
 		}
-		items = append(items, container.NewHBox(row...), para(fmt.Sprintf(doneData, c.Data[w.st.Target])),
+		items = append(items, container.NewHBox(row...))
+		if w.st.Update() && isPatch(bundle) {
+			// The applier refuses another build; the override note is D8's.
+			items = append(items, para(doneWrongBuild))
+			if note := w.overrideNote(w.plan); note != "" {
+				items = append(items, para(note))
+			}
+		}
+		items = append(items, para(fmt.Sprintf(doneData, c.Data[w.st.Target])),
 			container.NewBorder(nil, nil, nil, w.freeBtn, w.diskLabel))
 		w.showDisk()
 	case errors.Is(w.buildErr, errCanceled):
@@ -1835,6 +1880,10 @@ func (w *Wizard) fillDone() {
 			row = append([]fyne.CanvasObject{widget.NewButton(openLogFolder, func() { w.openPath(logDir) })}, retry...)
 		}
 		items = append(items, container.NewHBox(row...), para(doneRetry))
+		if w.st.Update() && refusedUpdate(f.Tail) {
+			// package refused the update the plan expected (D7).
+			items = append(items, para(failedFresh), container.NewHBox(freshButton(w)))
+		}
 	}
 	items = append(items, spaced(noticeBox(noticeLead, fmt.Sprintf(noticeBody, c.Game.Name), noticeTail)))
 	w.doneBox.Objects = items

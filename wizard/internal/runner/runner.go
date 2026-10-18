@@ -389,46 +389,107 @@ type Plan struct {
 	Bases    []PlanBase  `json:"bases"`
 	FullSize int64       `json:"full_size"`
 	Output   *PlanOutput `json:"output"`
+	// Import says whether the build needs the disc again (D6).
+	Import PlanImport `json:"import"`
+	// ConfigOverrides are the lines of this computer's config.toml that
+	// override what the build ships (D8).
+	ConfigOverrides []PlanOverride `json:"config_overrides"`
 }
 
-// PlanStage is one stage of the plan: "reuse" or "run", and why.
+// PlanStage is one stage of the plan: "reuse", "run", "keep" or
+// "refuse", and why (the CLI's reasons, a list).
 type PlanStage struct {
-	Stage  string `json:"stage"`
-	Action string `json:"action"`
+	Stage  string   `json:"stage"`
+	Action string   `json:"action"`
+	Why    []string `json:"why"`
+}
+
+// PlanBase is a version an update can start from (D2): a bundle this
+// folder made, this computer's install, or a --patch-from file. ID is
+// the update ID the device prints; Usable and Why say whether this
+// build can patch it.
+type PlanBase struct {
+	Version   string   `json:"version"`
+	Made      string   `json:"made"`
+	Sha256    string   `json:"sha256"`
+	ID        string   `json:"id"`
+	Size      int64    `json:"size"`
+	PatchSize int64    `json:"patch_size"`
+	Usable    bool     `json:"usable"`
+	Why       []string `json:"why"`
+	// WhyCodes name the reasons in Why, one each (the Why* constants):
+	// the wizard tells them apart by these, never by their text.
+	WhyCodes []string   `json:"why_codes"`
+	Tweaks   PlanTweaks `json:"tweaks"`
+	// GameFiles counts the game files the patch from this build changes,
+	// adds and removes; nil when the CLI cannot tell.
+	GameFiles *PlanGameFiles `json:"game_files"`
+	Seed      bool           `json:"seed_config"`
+	// Origin and Path are the install's: where it was found, and the
+	// folder --patch-from takes for it.
+	Origin string `json:"origin"`
+	Path   string `json:"path"`
+}
+
+// PlanGameFiles are a base's game-file counts.
+type PlanGameFiles struct {
+	Changed int `json:"changed"`
+	New     int `json:"new"`
+	Deleted int `json:"deleted"`
+}
+
+// The plan's why_codes (package/patch.py) and the code after "refused:"
+// in a refused run's output.
+const (
+	WhyProduct     = "product"
+	WhyTarget      = "target"
+	WhyLayout      = "data_layout"
+	WhyEntries     = "entries"
+	WhyInPlace     = "in_place"
+	WhyStub        = "stub_abi"
+	WhyGameFiles   = "game_files"
+	WhyGameDeletes = "game_deletes"
+	WhySame        = "same_version"
+	WhyShare       = "share"
+	WhyUnreadable  = "unreadable"
+	WhyHudGuard    = "hud_guard"
+	WhyHudKeep     = "hud_keep"
+	WhyNoBase      = "no_base"
+)
+
+// PlanTweaks are a base's tweaks; nil is none.
+type PlanTweaks struct {
+	HudPack *PlanPack `json:"hud_pack"`
+}
+
+// PlanPack is a base's HUD pack.
+type PlanPack struct {
+	Sha256  string `json:"sha256"`
+	Scale   int    `json:"scale"`
+	Entries int    `json:"entries"`
+}
+
+// PlanOutput is the full installer or the update the run would make, or
+// "none" when the run would refuse (D7).
+type PlanOutput struct {
+	Kind      string    `json:"kind"` // "full", "patch" or "none"
+	Why       string    `json:"why"`
+	WhyCodes  []string  `json:"why_codes"`
+	Base      *PlanBase `json:"base"`
+	PatchSize int64     `json:"patch_size"`
+	Installed *PlanBase `json:"installed"`
+}
+
+// PlanImport is the plan's import.needed and its reason.
+type PlanImport struct {
+	Needed bool   `json:"needed"`
 	Why    string `json:"why"`
 }
 
-// PlanBase is a bundle this folder made: what an update can start from.
-type PlanBase struct {
-	Version   string `json:"version"`
-	Made      string `json:"made"`
-	Sha256    string `json:"sha256"`
-	Size      int64  `json:"size"`
-	PatchSize int64  `json:"patch_size"`
-}
-
-// PlanOutput is the full installer or the update the run would make.
-type PlanOutput struct {
-	Kind      string         `json:"kind"` // "full" or "patch"
-	Why       string         `json:"why"`
-	Base      *PlanVersion   `json:"base"`
-	PatchSize int64          `json:"patch_size"`
-	Installed *PlanInstalled `json:"installed"`
-}
-
-// PlanVersion names an installed or made version.
-type PlanVersion struct {
-	Version string `json:"version"`
-	Sha256  string `json:"sha256"`
-}
-
-// PlanInstalled is the version installed on this computer, and whether
-// an update can start from it.
-type PlanInstalled struct {
-	PlanVersion
-	Usable    bool     `json:"usable"`
-	Why       []string `json:"why"`
-	PatchSize int64    `json:"patch_size"`
+// PlanOverride is one config.toml line that overrides the build.
+type PlanOverride struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 func ParsePlan(b []byte) (*Plan, error) {

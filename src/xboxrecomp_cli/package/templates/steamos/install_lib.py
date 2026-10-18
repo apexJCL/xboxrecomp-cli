@@ -1376,6 +1376,66 @@ def cmd_patch(
             lock.close()
 
 
+def scan_pack_key(path):
+    """textures.pack in a TOML file by a line scan (a [textures] header,
+    then pack = before the next header), as apply.exe and apply.command
+    read it: the value without quotes, or None. An unusual layout only
+    loses the note; the file is never changed."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    inside = False
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith("["):
+            inside = line.split("#", 1)[0].strip().replace(" ", "") == "[textures]"
+            continue
+        key, eq, val = line.partition("=")
+        if not inside or not eq or key.strip() != "pack":
+            continue
+        val = val.strip()
+        if val[:1] in ('"', "'"):
+            end = val.find(val[0], 1)
+            return val[1:end] if end > 0 else val[1:]
+        return val.split("#", 1)[0].strip()
+    return None
+
+
+def override_note(config_toml, defaults):
+    """The note for a player's config.toml whose textures.pack hides this
+    build's HUD pack, or names one it no longer ships, else "" (D8): the
+    player's file wins over config.default.toml."""
+    val = scan_pack_key(config_toml)
+    if val is None:
+        return ""
+    ours = scan_pack_key(defaults)
+    if ours and val != ours:
+        return (
+            'note: your config/config.toml sets textures.pack = "%s", which overrides '
+            "this build's HUD pack; remove that line to use it" % val
+        )
+    if not ours and val != "none":
+        return (
+            'note: your config/config.toml sets textures.pack = "%s", and this build '
+            "ships no HUD pack; remove that line" % val
+        )
+    return ""
+
+
+def tweaks_line(m):
+    """status's tweaks: the HUD pack the manifest records, or none."""
+    hp = (m.get("enhance") or {}).get("hud_pack")
+    if not isinstance(hp, dict) or not hp.get("sha256"):
+        return "none"
+    return "HUD pack %sx, %s entries (%s)" % (
+        hp.get("scale", "?"),
+        hp.get("entries", "?"),
+        hp["sha256"][:8],
+    )
+
+
 def pre_steps(root, need, host_check, bench):
     """What every install and patch checks before it changes anything.
     Returns the launch lock, held until the run ends."""
@@ -1441,6 +1501,11 @@ def post_steps(root, version, name, what, keep, steam, saves_from):
         say("WARNING: %s was built from uncommitted changes" % version)
     say("saves: %s (never touched by install, update, rollback or uninstall)" % root.p("hdd"))
     say("launch: %s" % root.p(APP))
+    note = override_note(
+        root.p("config", "config.toml"), root.p("versions", version, "config.default.toml")
+    )
+    if note:
+        say(note)
     say()
     say(NOTICE)
 
@@ -1550,6 +1615,9 @@ def cmd_status(root, bundle_dir):
                 m.get("built", "?"),
             )
         )
+        # The wizard's Base page names a base by this ID (D2).
+        say("update id: %s" % sha256_file(root.p("versions", cur, "manifest.json"))[:8])
+        say("tweaks:   %s" % tweaks_line(m))
     else:
         say("current:  none")
     say("previous: %s" % (root.previous() or "none"))

@@ -17,7 +17,7 @@ import tomllib
 from .. import build as build_mod
 from .. import buildstate, cli_dir, doctor, gitpin, host, manifest, pipeline, setup, toolkit
 from ..host import CliError
-from . import incr
+from . import incr, patch, tweaks
 from . import lib as lib_mod
 
 NOTICE_TEXT = (
@@ -56,6 +56,34 @@ TARGET_NAMES = {
 
 def g():
     return host.g()
+
+
+def fixed_fields(target, lib):
+    """The new manifest's fields known before anything is built: what
+    patch.problem_codes(early=True) judges a base by."""
+    out = {"product": lib.PRODUCT, "target": TARGET_NAMES[target], "data_layout": lib.DATA_LAYOUT}
+    if target == "windows":
+        from . import windows
+
+        out["root"] = {"stub_abi": windows.STUB_ABI}
+    return out
+
+
+def early_base_check(a, base, lib):
+    """--patch-from's rules on the manifests' fixed fields, before anything
+    is built (D7): another game, target, data layout or launcher stub is
+    refused now; the version, the game files and the half-size rule wait
+    for the built manifest."""
+    spec = getattr(a, "patch_from", None)
+    if not spec or base is None:
+        return
+    why = patch.problem_codes(base, fixed_fields(a.target, lib), a.target, early=True)
+    if why:
+        raise host.Refusal(
+            "--patch-from %s (%s): %s; make the full bundle with --full"
+            % (spec, base.version or "?", "; ".join(m for _c, m in why)),
+            why[0][0],
+        )
 
 
 def app():
@@ -515,6 +543,7 @@ def stage_hud_pack(payload, target, info):
     os.makedirs(d, exist_ok=True)
     shutil.copy2(info["path"], os.path.join(d, "hud.pack"))
     rel = "../Resources/enhance/hud.pack" if target == "macos" else "enhance/hud.pack"
+    sha = host.sha256_path(info["path"])
     defaults = os.path.join(payload, "config.default.toml")
     if os.path.isfile(defaults) and has_textures_table(defaults):
         raise CliError("--hud-pack: the staged config.default.toml already has a [textures] table")
@@ -526,12 +555,14 @@ def stage_hud_pack(payload, target, info):
             '# put pack = "none" under [textures] in config/config.toml.\n'
             'pack = "%s"\n' % (info["entries"], info["scale"], rel)
         )
-    return {
-        "sha256": host.sha256_path(info["path"]),
-        "scale": info["scale"],
-        "entries": info["entries"],
-        "path": rel,
-    }
+    if info.get("base"):
+        # A kept pack: the base's record, so the manifest says the same.
+        return dict(info["base"], sha256=sha, path=rel)
+    rec = {"sha256": sha, "scale": info["scale"], "entries": info["entries"], "path": rel}
+    made = tweaks.made_with(info["path"], sha)
+    if made:
+        rec["made_with"] = made
+    return rec
 
 
 SEED_NAME = "config.seed.toml"
@@ -692,6 +723,9 @@ def write_manifest(
         built=lib.build_time((G.root, toolkit.toolkit_dir())),
         hasher=hasher if hasher is not None else HASHER,
     )
+    # What game files the build was made from: a patch to a device built
+    # from another tree is refused (patch.problem_codes).
+    man["game_tree"] = patch.tree_of(man["files"])
     text = json.dumps(man, indent=2) + "\n"
     leaks = lib.private_leaks(text)
     if leaks:
@@ -848,7 +882,6 @@ def wrap(a, stage, payload, version, exe, overrides, lib, unknown):
 
     def choose(man_path):
         from ..clean import human
-        from . import patch
 
         with open(man_path, encoding="utf-8") as f:
             man = json.load(f)
@@ -900,6 +933,7 @@ def wrap(a, stage, payload, version, exe, overrides, lib, unknown):
             st.record(wname, key, inputs, outs, meta={"basis": dict(basis)})
         incr.record_bundle(st, target, man_path, outs[0], made=not ok)
         prune_bundles(a, target, outs[0])
+        incr.prune_packs(st, (HUD_PACK or {}).get("sha256"))
 
     if target == "macos":
         host.step("app and dmg")
@@ -1041,10 +1075,29 @@ def package(a):
     # The pack is checked before the plan runs: a missing one must not
     # cost a build. --plan only names it: the wizard makes it after.
     planning = getattr(a, "plan", False)
-    want_hud = getattr(a, "hud_pack", None) is not None
-    hud_pack = hud_pack_path(a.hud_pack) if want_hud and not planning else None
+    choice = tweaks.hud_choice(a)
+    want_hud = choice in ("make", "keep")
+    hud_pack = hud_pack_path(a.hud_pack) if choice == "make" and not planning else None
     seed_path = getattr(a, "seed_config", None)
+    base, remake = None, False
     try:
+        if not planning:
+            # The base is read before anything is built (manifests only):
+            # its pack decides the HUD flags (D3), and a bad --patch-from
+            # costs nothing.
+            st0 = buildstate.State(G.root)
+            base = tweaks.run_base(a, a.target, st0)
+            early_base_check(a, base, lib)
+            tweaks.guard(a, base)
+            if choice == "keep":
+                if base is None:
+                    raise host.Refusal(
+                        "--keep-hud-pack keeps the base's pack, and this run has no base: "
+                        "name it with --patch-from",
+                        patch.NO_BASE,
+                    )
+                hud_pack, remake = tweaks.keep_early(st0, base)
+                want_hud = hud_pack is not None
         enhance = reads_config()
         if not enhance:
             refuse_no_config(hud_pack or want_hud, seed_path)
@@ -1079,6 +1132,8 @@ def package(a):
     st.verify = getattr(a, "verify", False)
     incr.record_import(st, lib)
     incr.record_generate(st)
+    if remake:
+        hud_pack = tweaks.remake(st, base)
     os.makedirs(a.out, exist_ok=True)
     stage, payload, version, overrides, exe = stage_payload(a.target, a, lib, seed, hud_pack)
     # The build's own cache has the last word: a layer the configure left
@@ -1096,6 +1151,11 @@ def package(a):
         host.say("seed config: %s (copied to config/config.toml on a first install)" % SEED_NAME)
     if hud_pack:
         host.say("hud pack: %d entries at %dx" % (hud_pack["entries"], hud_pack["scale"]))
+        if HUD_PACK:
+            # A later --keep-hud-pack finds these bytes here (D4).
+            incr.store_pack(st, hud_pack["path"], HUD_PACK["sha256"])
+    elif choice == "clear":
+        host.say("hud pack: none (--clear-hud-pack)")
     unknown = getattr(a, "dump_unknown", False)
     global HASHER
     hc = buildstate.HashCache(st.dir)

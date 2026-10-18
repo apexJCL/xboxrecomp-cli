@@ -193,7 +193,10 @@ def _cfg_package(p):
     p.add_argument(
         "--archive", action="store_true", help="windows: also a stored .zip of the folder"
     )
-    p.add_argument(
+    # One of the three when the base carries a pack (D3): a patch without
+    # any would drop the pack the device has.
+    hud = p.add_mutually_exclusive_group()
+    hud.add_argument(
         "--hud-pack",
         nargs="?",
         const="",
@@ -201,6 +204,17 @@ def _cfg_package(p):
         metavar="DIR",
         help="put your HUD texture pack (enhance hud; default dist/enhance/hud/) in the "
         "bundle and enable it in its config.default.toml (first installs and upgrades)",
+    )
+    hud.add_argument(
+        "--keep-hud-pack",
+        action="store_true",
+        help="put the base's HUD pack in the patch again, the same bytes (from this "
+        "folder's pack store, dist/enhance/hud/, or made again the same); needs a base",
+    )
+    hud.add_argument(
+        "--clear-hud-pack",
+        action="store_true",
+        help="no HUD pack: a patch from a base with one removes it",
     )
     p.add_argument(
         "--seed-config",
@@ -249,6 +263,12 @@ def _cfg_package(p):
         help="the full bundle, even when this host has an install a patch could update",
     )
     p.add_argument(
+        "--allow-game-file-deletes",
+        action="store_true",
+        help="let a patch remove game files the base has (a rollback does not bring "
+        "them back); refused by default",
+    )
+    p.add_argument(
         "--keep-bundles",
         type=_positive,
         default=None,
@@ -287,6 +307,11 @@ def cmd_package(a):
 
     if a.json and not a.plan:
         raise host.CliError("--json goes with --plan")
+    if a.keep_hud_pack and a.full:
+        raise host.CliError(
+            "--keep-hud-pack keeps the base's pack, and --full has no base: "
+            "pass --hud-pack for a pack in the full bundle"
+        )
     package.cmd_package(a)
 
 
@@ -623,6 +648,8 @@ def main(argv=None):
         return a.func(a) or 0
     except (CliError, manifest.ManifestError) as e:
         print("%s: %s" % (name, e), file=sys.stderr)
+        if isinstance(e, host.Refusal):
+            print("%s: refused: %s" % (name, e.code), file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         return 130

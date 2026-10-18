@@ -339,7 +339,10 @@ def run(a):
         if lang not in langs:
             host.say("language %s (%s): not picked, its text is left out" % (lang, ", ".join(arcs)))
     st = rec = None
-    if not a.list:
+    # package's remake of a kept pack (D4) writes into a folder of its own
+    # and records nothing: the stage stays the player's own pack's.
+    record = not getattr(a, "no_record", False)
+    if not a.list and record:
         st, rec = hud_record(a, cfg, s, langs, out_dir)
         why = st.check("hud", *rec)
         if not why:
@@ -447,6 +450,11 @@ def run(a):
                 font_info,
                 text_scale,
                 langs,
+                made={
+                    "pack_sha256": sha,
+                    "only": list(a.only or ()),
+                    "config": config_digest(cfg),
+                },
             )
         )
     stats = pack.kind_stats(entries)
@@ -462,11 +470,20 @@ def run(a):
         )
     )
     host.say("the pack is made from your game files: keep it private (see hud-pack.toml beside it)")
-    st.record(
-        "hud", rec[0], rec[1], [path, os.path.join(out_dir, "hud-pack.toml")], upstream=rec[2]
-    )
+    if record:
+        st.record(
+            "hud", rec[0], rec[1], [path, os.path.join(out_dir, "hud-pack.toml")], upstream=rec[2]
+        )
     host.progress_lib().save_timing(G.logs, TIMING_LABEL, time.time() - t0)
     return 0
+
+
+def config_digest(cfg):
+    """The [enhance.hud] table's digest: a pack is made again the same only
+    while it is unchanged."""
+    from .. import buildstate
+
+    return buildstate.digest(cfg)
 
 
 def hud_record(a, cfg, scale, langs, out_dir, st=None, imp=None):
@@ -483,7 +500,7 @@ def hud_record(a, cfg, scale, langs, out_dir, st=None, imp=None):
     st = st or buildstate.State(G.root)
     font_arg = a.font or cfg.get("font", "")
     inputs = {
-        "config": buildstate.digest(cfg),
+        "config": config_digest(cfg),
         "scale": scale,
         "languages": list(langs),
         "only": list(a.only or ()),
