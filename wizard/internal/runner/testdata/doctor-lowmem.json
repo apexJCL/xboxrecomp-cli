@@ -1,0 +1,65 @@
+{
+  "host": {
+    "os": "macos",
+    "arch": "aarch64",
+    "python": "3.13.15"
+  },
+  "lines": [
+    "host:       macos aarch64, Python 3.13.15",
+    "uv:         /usr/local/bin/uv 0.12.21",
+    "lock:       uv.lock in step with pyproject.toml",
+    "cmake:      missing in .venv (run 'blinx2 setup'); system: /usr/local/bin/cmake",
+    "ninja:      missing in .venv (run 'blinx2 setup'); system: /usr/local/bin/ninja",
+    "tools py:   no Python environment for the toolkit's tools: run 'blinx2 setup' (or set XBOXRECOMP_PYTHON)",
+    "cli:        /work/src/xboxrecomp-cli @ 500e699dd792 (not the pin v0.6.7 (a7cdc15c80fa))",
+    "toolkit:    missing at /work/src/xboxrecomp (run 'blinx2 setup')",
+    "llvm-mingw: no llvm-mingw: run 'blinx2 setup' (or set LLVM_MINGW_ROOT)",
+    "memory:     8.6 GB, 2.1 GB available now",
+    "cores:      8",
+    "disk:       42.9 GB free in /work/src (a build needs about 9.9 GB)",
+    "build jobs: 1 (generated code 1 at a time, about 1.3 GB each: game.toml)",
+    "warning:    memory is low (2.1 GB available): the build will compile one file at a time and may use swap; close other programs first",
+    "warning:    disasm needs about 1.8 GB in one process and 2.1 GB is available; close other programs first",
+    "game files: MISSING: run './blinx2 import PATH' with your disc image or folder, or put the files in game_files/",
+    "gen/:       not generated yet (blinx2 analyze, blinx2 recomp)",
+    "game env:   src/env/recomp_env_game.h, docs/env.md",
+    "DEVELOPER_DIR: /Library/Developer/CommandLineTools",
+    "makensis:   /usr/local/bin/makensis",
+    "next:       './blinx2 setup' (no cmake in .venv; no ninja in .venv; no tools Python; no toolkit; no llvm-mingw)"
+  ],
+  "targets": [],
+  "blocked": {
+    "steamos": "no cmake in .venv (blinx2 setup; or --system-tools); no ninja in .venv (blinx2 setup; or --system-tools); no tools Python (blinx2 setup); no toolkit (blinx2 setup); no llvm-mingw (blinx2 setup); no game_files/default.xbe",
+    "windows": "no cmake in .venv (blinx2 setup; or --system-tools); no ninja in .venv (blinx2 setup; or --system-tools); no tools Python (blinx2 setup); no toolkit (blinx2 setup); no llvm-mingw (blinx2 setup); no game_files/default.xbe",
+    "macos": "no cmake in .venv (blinx2 setup; or --system-tools); no ninja in .venv (blinx2 setup; or --system-tools); no tools Python (blinx2 setup); no toolkit (blinx2 setup); no llvm-mingw (blinx2 setup); no game_files/default.xbe"
+  },
+  "blockers": {
+    "windows": [],
+    "steamos": [],
+    "macos": []
+  },
+  "problems": [
+    "no cmake in .venv (blinx2 setup; or --system-tools)",
+    "no ninja in .venv (blinx2 setup; or --system-tools)",
+    "no tools Python (blinx2 setup)",
+    "no toolkit (blinx2 setup)",
+    "no llvm-mingw (blinx2 setup)",
+    "no game_files/default.xbe"
+  ],
+  "next": "'./blinx2 setup' (no cmake in .venv; no ninja in .venv; no tools Python; no toolkit; no llvm-mingw)",
+  "resources": {
+    "cores": 8,
+    "mem_total": 8589934592,
+    "mem_available": 2147483648,
+    "disk_free": 42949672960,
+    "disk_need": 9878424576,
+    "jobs": 1,
+    "gen_jobs": 1,
+    "gen_job_bytes": 1279262720,
+    "gen_job_source": "game",
+    "warnings": [
+      "memory is low (2.1 GB available): the build will compile one file at a time and may use swap; close other programs first",
+      "disasm needs about 1.8 GB in one process and 2.1 GB is available; close other programs first"
+    ]
+  }
+}

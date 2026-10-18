@@ -54,7 +54,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if s := LoadSettings(d); s != (Settings{}) {
 		t.Fatalf("missing file: %+v", s)
 	}
-	want := Settings{Root: "/r", NoUpdateCheck: true}
+	want := Settings{Root: "/r", NoUpdateCheck: true, Jobs: 3}
 	if err := SaveSettings(d, want); err != nil {
 		t.Fatal(err)
 	}

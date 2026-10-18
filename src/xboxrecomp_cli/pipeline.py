@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 
-from . import doctor, host, toolkit
+from . import doctor, host, resources, toolkit
 from .host import CliError
 
 
@@ -46,6 +46,9 @@ def run_cmds(cmds):
     for kind, what, args in cmds:
         if kind == "tool":
             host.run([toolkit.tool_python(), "-m", "tools." + what] + args, cwd=tk)
+            # The largest single tool process (disasm) is warned about
+            # before the next generate when it no longer fits.
+            resources.record("tool:" + what, host.LAST_PEAK)
         else:
             host.run([toolkit.tool_python(), what] + args)
 

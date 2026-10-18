@@ -90,7 +90,7 @@ func (w *Wizard) askPlan() {
 	}
 	r := w.env.Runner
 	seed, body := w.seedArg(), w.st.Seed()
-	args := w.st.PlanArgs(seed)
+	args := w.st.PlanArgs(seed, w.out)
 	w.async(func() {
 		var p *runner.Plan
 		var err error
@@ -124,6 +124,8 @@ func (w *Wizard) showPlan(p *runner.Plan) {
 	w.plan = p
 	var items []fyne.CanvasObject
 	switch {
+	case diskShort(p):
+		items = append(items, para(fmt.Sprintf(summaryDisk, p.Output.Why)))
 	case w.st.Update():
 		items = w.updateLines(p)
 	case p != nil:

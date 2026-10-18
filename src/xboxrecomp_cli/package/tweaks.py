@@ -218,10 +218,11 @@ def info_of(path, hp):
     return {"path": path, "entries": hp.get("entries"), "scale": hp.get("scale"), "base": hp}
 
 
-def remake(st, base):
+def remake(st, base, jobs=0):
     """The base's pack made again into a folder under the build state, by
     enhance hud with the recorded settings, and moved to the store when its
-    sha256 is the base's. Returns hud_pack_path's dict. Refuses otherwise."""
+    sha256 is the base's. Returns hud_pack_path's dict. Refuses otherwise.
+    jobs: package's --jobs (0: sized to the free memory)."""
     from ..enhance import hud
 
     hp = base_pack(base)
@@ -234,7 +235,7 @@ def remake(st, base):
         shutil.rmtree(tmp)
     os.makedirs(tmp)
     host.say("keep: making the HUD pack of %s again" % base.version)
-    ns = _hud_args(made, tmp, font_path)
+    ns = _hud_args(made, tmp, font_path, jobs)
     try:
         hud.run(ns)
         path = os.path.join(tmp, "hud.pack")
@@ -249,7 +250,7 @@ def remake(st, base):
     return info_of(stored, hp)
 
 
-def _hud_args(made, out, font_path):
+def _hud_args(made, out, font_path, jobs=0):
     import types
 
     return types.SimpleNamespace(
@@ -259,7 +260,7 @@ def _hud_args(made, out, font_path):
         only=list(made.get("only") or ()),
         language=list(made.get("languages") or ()),
         list=False,
-        jobs=None,
+        jobs=jobs or 0,
         no_record=True,
     )
 

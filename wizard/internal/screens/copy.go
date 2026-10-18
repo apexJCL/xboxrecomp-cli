@@ -136,10 +136,13 @@ const (
 	checksDone      = "Checks finished."
 	checksStopped   = "The checks stopped: %s"
 
-	rowTools   = "Build tools"
-	rowSource  = "Game source"
-	rowNotes   = "Notes"
-	rowPrepare = "Getting ready"
+	rowTools      = "Build tools"
+	rowSource     = "Game source"
+	rowNotes      = "Notes"
+	rowComputer   = "This computer"
+	statusEnough  = "Enough memory and disk space"
+	statusUnknown = "unknown"
+	rowPrepare    = "Getting ready"
 
 	statusChecking  = "Checking…"
 	statusReady     = "Ready"
@@ -151,6 +154,13 @@ const (
 	statusNeeds     = "Needs something first"
 	statusNotes     = "Worth knowing"
 	statusFailed    = "Could not finish"
+	statusLowRes    = "Short of memory or disk space"
+
+	computerSays    = "Memory: %s (%s free now). Cores: %s. Disk: %s free. The build will compile %d files at a time."
+	computerOne     = "Memory: %s (%s free now). Cores: %s. Disk: %s free. The build will compile one file at a time."
+	computerLowMem  = "Little memory is free, so the build compiles one file at a time and takes longer. Closing other programs (a browser, a game) lets it go faster."
+	computerTool    = "One step of the build needs a lot of memory on its own. Close other programs before you start, or the computer may slow down a lot."
+	computerLowDisk = "The build folder's disk has %s free and the build needs about %s. Free some space before you start: the build stops if there is not enough."
 
 	toolsFetched = "The build fetches these itself: %s."
 	toolsAllHere = "Every build tool is in place."
@@ -249,6 +259,11 @@ const (
 	techSeed         = "config.toml for a first install:"
 	techNoSeed       = "Every option at its default: no config.toml is written."
 	techPlan         = "The plan, from package --plan --json:"
+	summaryDisk      = "There is not enough free disk space for this build (%s). Free some space before you build: the build stops at the start otherwise."
+	summaryJobs      = "Build jobs"
+	jobsAuto         = "Automatic"
+	jobsAutoN        = "Automatic (%d at a time)"
+	jobsHint         = "How many files the build compiles at once. Automatic fits them in the memory free when it starts; fewer is slower and leaves more for other programs."
 )
 
 // Building.
@@ -310,6 +325,7 @@ const (
 	doneCanceled     = "You stopped the build."
 	openLogFolder    = "Open the log folder"
 	doneRetry        = "Retry runs the build again and reuses most of what already finished."
+	doneDisk         = "There was not enough free disk space for the build. The message above says how much it needs and where: free that much, then press Retry."
 )
 
 // The notice on the Done page (notice.go): the lead and the tail in bold,

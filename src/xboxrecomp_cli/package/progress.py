@@ -28,6 +28,8 @@ import sys
 import threading
 import time
 
+from .. import host, resources
+
 KEEP_RUNS = 20
 TAIL_LINES = 40
 REPAINT_S = 0.1
@@ -399,6 +401,7 @@ def run_step(view, argv, cwd=None, env=None, parser=None, verbose=False):
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
         )
+        job = resources.watch(p)
 
         def reader():
             buf = b""
@@ -446,12 +449,14 @@ def run_step(view, argv, cwd=None, env=None, parser=None, verbose=False):
         except BaseException:
             p.kill()
             p.wait()
+            if job is not None:
+                job.close()
             # A grandchild (Ninja's compilers) can hold the pipe open a little
             # longer; it got the same Ctrl-C from the terminal, so wait briefly.
             t.join(timeout=5)
             raise
         t.join()
-        rc = p.wait()
+        rc, host.LAST_PEAK = resources.wait(p, job)
     if rc != 0:
         view.end(False)
         view.say("%s failed (exit %d); the last lines:" % (os.path.basename(str(argv[0])), rc))

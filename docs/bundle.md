@@ -92,7 +92,9 @@ against the newest bundle record; `full_size` is that record's size.
 `import` says whether the run must import the game files again
 (`needed`, `why`), and `config_overrides` lists the `textures.pack`
 line of this host's `config.toml` that would override the build's
-choice. The run decides again on the real manifest.
+choice. `disk` lists each volume the run writes to (`path`, `free`,
+`need` in bytes with 1 GiB of slack, and `stages`, each stage's share);
+when one is short, `output` is `kind` none with `why_codes` `["disk"]`. The run decides again on the real manifest.
 
 `--patch-from` is strict: the named base gets a patch or a refusal,
 never a full bundle the caller did not ask for (`--patch-from X (V):
@@ -105,7 +107,8 @@ without its sha256 or size), `in_place` and `stub_abi` (Windows),
 `game_files` (built from other game files), `game_deletes` (the patch
 would remove game files), `same_version`, `share` (the patch would be
 half the full bundle or more), `unreadable`, `hud_guard`, `hud_keep`
-and `no_base`. A front end shows the message for a code it does not
+`no_base` and `disk` (a volume has less free space than the run's
+stages need; `--ignore-disk-space` overrides it). A front end shows the message for a code it does not
 know.
 
 The base is, in order:

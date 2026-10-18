@@ -373,3 +373,34 @@ func TestPlanXbe(t *testing.T) {
 		t.Error("data or no plan asks")
 	}
 }
+
+// resources: absent from an older CLI (nil), null values stay unknown.
+func TestDoctorResources(t *testing.T) {
+	b, err := os.ReadFile("testdata/doctor.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := ParseDoctor(b)
+	if err != nil || d.Resources != nil {
+		t.Fatalf("no resources: %+v %v", d.Resources, err)
+	}
+	b, err = os.ReadFile("testdata/doctor-lowmem.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err = ParseDoctor(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := d.Resources
+	if r == nil || r.Cores == nil || *r.Cores != 8 || r.MemAvailable == nil || *r.MemAvailable != 2<<30 ||
+		r.Jobs != 1 || r.DiskNeed == nil || len(r.Warnings) != 2 || *r.GenJobSource != "game" {
+		t.Fatalf("%+v", r)
+	}
+	d, err = ParseDoctor([]byte(`{"blockers": {}, "resources": {"cores": null, "mem_total": null,
+		"mem_available": null, "disk_free": null, "disk_need": null, "jobs": 4, "gen_jobs": 4,
+		"gen_job_bytes": 536870912, "gen_job_source": "estimate", "warnings": []}}`))
+	if err != nil || d.Resources.Cores != nil || d.Resources.MemAvailable != nil || d.Resources.Jobs != 4 {
+		t.Fatalf("nulls: %+v %v", d.Resources, err)
+	}
+}

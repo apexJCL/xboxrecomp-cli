@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"wizard/internal/gamecfg"
@@ -41,6 +42,8 @@ var (
 	toolKeys   = []string{"uv", "cmake", "ninja", "tools py", "toolkit", "llvm-mingw", "makensis"}
 	sourceKeys = []string{"cli", "lock"}
 	toolNames  = map[string]string{"tools py": "Python for the tools"}
+	// The computer row's keys; the doctor's resource warnings join them.
+	computerKeys = []string{"memory", "cores", "disk", "build jobs"}
 )
 
 // doctorLine is one `key: value` report line with its continuation lines
@@ -176,6 +179,18 @@ func checkRows(cfg *gamecfg.Config, env *Env, d *runner.Doctor, prepErr error, b
 	// chooses and checks the player's copy.
 	byKey("game files")
 
+	// This computer: an older CLI has no resources, and then no row.
+	var computer *checkRow
+	if d.Resources != nil {
+		computer = computerRow(d.Resources, byKey(computerKeys...))
+		for i, l := range lines {
+			if l.Key == "warning" && !used[i] && slices.Contains(d.Resources.Warnings, l.Value) {
+				used[i] = true
+				computer.Raw = append(computer.Raw, l.Raw...)
+			}
+		}
+	}
+
 	var notes []string
 	for i, l := range lines {
 		if l.Key == "warning" && !used[i] {
@@ -197,10 +212,55 @@ func checkRows(cfg *gamecfg.Config, env *Env, d *runner.Doctor, prepErr error, b
 		}
 		rows = append(rows, r)
 	}
+	if computer != nil {
+		rows = append(rows, *computer)
+	}
 	if len(notes) > 0 {
 		rows = append(rows, checkRow{Name: rowNotes, Status: statusNotes, State: stateWarn, Raw: notes})
 	}
 	return rows
+}
+
+// computerRow is the memory, cores and disk the build sizes itself to
+// (D5). A warning tells the player what to close or free, and never
+// blocks: the build adapts to low memory and refuses short disk itself.
+func computerRow(r *runner.Resources, lines []doctorLine) *checkRow {
+	row := &checkRow{Name: rowComputer, Status: statusEnough, State: stateOK}
+	for _, l := range lines {
+		row.Raw = append(row.Raw, l.Raw...)
+	}
+	size := func(n *int64) string {
+		if n == nil {
+			return statusUnknown
+		}
+		return sizeText(*n)
+	}
+	cores := statusUnknown
+	if r.Cores != nil {
+		cores = fmt.Sprint(*r.Cores)
+	}
+	says := fmt.Sprintf(computerOne, size(r.MemTotal), size(r.MemAvailable), cores, size(r.DiskFree))
+	if r.Jobs > 1 {
+		says = fmt.Sprintf(computerSays, size(r.MemTotal), size(r.MemAvailable), cores, size(r.DiskFree), r.Jobs)
+	}
+	paras := []string{says}
+	for _, w := range r.Warnings {
+		switch {
+		case strings.HasPrefix(w, "memory is low"):
+			paras = append(paras, computerLowMem)
+		case strings.HasPrefix(w, "disk:"):
+			paras = append(paras, fmt.Sprintf(computerLowDisk, size(r.DiskFree), size(r.DiskNeed)))
+		case strings.Contains(w, " needs about "):
+			paras = append(paras, computerTool)
+		default:
+			paras = append(paras, w)
+		}
+	}
+	if len(r.Warnings) > 0 {
+		row.State, row.Status = stateWarn, statusLowRes
+	}
+	row.Detail = strings.Join(paras, "\n\n")
+	return row
 }
 
 func targetName(t string) string {

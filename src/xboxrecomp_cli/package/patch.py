@@ -148,6 +148,8 @@ UNREADABLE = "unreadable"
 HUD_GUARD = "hud_guard"
 HUD_KEEP = "hud_keep"
 NO_BASE = "no_base"
+# Too little free disk for the run's stages (resources.check_disk).
+DISK = "disk"
 # The flag that lets a patch remove game files (D10: a rollback does not
 # bring them back).
 ALLOW_DELETES = "--allow-game-file-deletes"

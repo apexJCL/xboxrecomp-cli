@@ -448,7 +448,7 @@ func (w *Wizard) askChanges() {
 		return
 	}
 	r := w.env.Runner
-	args := w.st.PlanArgs("")
+	args := w.st.PlanArgs("", w.out)
 	w.async(func() {
 		p, err := w.planAsk(r, args)
 		fyne.Do(func() {
@@ -505,7 +505,6 @@ func (w *Wizard) fillChanges() {
 		items = append(items, para(fmt.Sprintf(changesNow, now)))
 	}
 	has := w.st.BaseHas["hud_pack"]
-	var boxes []*widget.Check
 	for _, o := range w.opt.Cfg.Options {
 		t, ok := model.Tweaks[o.Flag]
 		tt, words := tweakTexts[t.Plan]
@@ -536,7 +535,6 @@ func (w *Wizard) fillChanges() {
 			c.Disable()
 		}
 		show()
-		boxes = append(boxes, c)
 		items = append(items, c, under(hint))
 	}
 	if has {
@@ -672,9 +670,17 @@ func (w *Wizard) tweakChanges() (keeps, changes string) {
 	return keeps, changes
 }
 
-// cannotUpdate says the last Summary plan refused this update.
+// cannotUpdate says the last Summary plan refused this update. Short
+// disk space is not a refusal of the update: the page says so, and the
+// build's own refusal offers Retry once space is free.
 func (w *Wizard) cannotUpdate() bool {
-	return w.st.Update() && w.plan != nil && w.plan.Output != nil && w.plan.Output.Kind == "none"
+	return w.st.Update() && w.plan != nil && w.plan.Output != nil && w.plan.Output.Kind == "none" &&
+		!diskShort(w.plan)
+}
+
+// diskShort says the plan found too little free space (D9).
+func diskShort(p *runner.Plan) bool {
+	return p != nil && p.Output != nil && slices.Contains(p.Output.WhyCodes, runner.WhyDisk)
 }
 
 var refusedLine = regexp.MustCompile(`: refused: ([a-z_]+)$`)
@@ -683,12 +689,18 @@ var refusedLine = regexp.MustCompile(`: refused: ([a-z_]+)$`)
 // update (D7): its "refused: CODE" line, whatever the message says. The
 // plan's estimate was wrong, and Fresh is the way on.
 func refusedUpdate(tail []string) bool {
+	c := refusedCode(tail)
+	return c != "" && c != runner.WhyDisk
+}
+
+// refusedCode is the code of a failed run's "refused: CODE" line, or "".
+func refusedCode(tail []string) string {
 	for _, l := range tail {
-		if refusedLine.MatchString(strings.TrimRight(l, "\r")) {
-			return true
+		if m := refusedLine.FindStringSubmatch(strings.TrimRight(l, "\r")); m != nil {
+			return m[1]
 		}
 	}
-	return false
+	return ""
 }
 
 // native says the target is this computer's own platform.

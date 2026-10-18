@@ -4,8 +4,9 @@ import os
 import platform
 import shutil
 import subprocess
+from types import SimpleNamespace
 
-from . import cli_dir, env, fetch, fingerprint, host, toolkit
+from . import cli_dir, env, fetch, fingerprint, host, resources, toolkit
 from .host import CliError
 
 
@@ -160,6 +161,8 @@ PROBLEMS = []
 # toolkit.features() of the last report, or None before setup: report_json
 # reads it rather than probing the checkout again.
 FEATURES = [None]
+# The last report's resources object (D5), for report_json.
+RESOURCES = [None]
 
 
 def doctor_report():
@@ -245,6 +248,8 @@ def doctor_report():
     except CliError as e:
         lines.append("llvm-mingw: %s" % e)
         problems.append("no llvm-mingw (%s setup)" % slug)
+    rl, RESOURCES[0] = resources_report(os_name)
+    lines += rl
     gen_ok = os.path.isfile(os.path.join(g.gen, "recomp_funcs.h"))
     verdict = fingerprint.current()
     sha = verdict and verdict.sha
@@ -309,6 +314,84 @@ def doctor_report():
     return lines, targets, blocked
 
 
+SOURCES = {"game.toml": "game", "estimated from gen/": "estimate"}
+
+
+def resources_report(os_name):
+    """(lines, json) for memory, cores, disk and the job count of a package
+    of this computer's target (D5). Low memory or disk is a warning, never
+    one of the problems: doctor builds nothing, and package sizes itself
+    (or refuses, D9) when it runs."""
+    from . import package
+
+    g = host.g()
+    target = "macos" if os_name == "macos" else "windows"
+    total, avail, ncores = resources.mem_total(), resources.mem_available(), resources.cores()
+    s = resources.plan(target)
+    root = resources.existing(g.root)
+    free = resources.disk_free(root)
+    need = None
+    try:
+        stages = {"build", "package"}
+        if not os.path.isfile(os.path.join(g.gen, "recomp_funcs.h")):
+            stages.add("generate")
+        if not os.path.isdir(g.game_files):
+            # A first run imports the dump: game.toml's game_files_mib.
+            stages.add("import")
+        a = SimpleNamespace(target=target if os_name == "macos" else "steamos", out=g.dist)
+        need = sum(n.n for n in package.disk_needs(a, stages)) + resources.SLACK
+    except Exception:
+        need = None
+    warnings = list(s.warnings)
+    w = resources.tool_warning(avail, total)
+    if w:
+        warnings.append(w)
+    if need is not None and free is not None and free < need:
+        warnings.append(
+            "disk: %s free, a build needs about %s: package will refuse to start"
+            % (resources.gb(free), resources.gb(need))
+        )
+    gb = resources.gb
+    lines = [
+        "memory:     "
+        + (
+            "%s, %s available now" % (gb(total), gb(avail))
+            if total and avail is not None
+            else "unknown"
+        ),
+        "cores:      %s" % (ncores or "unknown"),
+        "disk:       "
+        + (
+            "%s free in %s%s"
+            % (gb(free), root, " (a build needs about %s)" % gb(need) if need else "")
+            if free is not None
+            else "unknown"
+        ),
+        "build jobs: %d (%s)"
+        % (
+            s.jobs,
+            "generated code %d at a time, about %s each: %s"
+            % (s.gen_jobs, gb(s.gen_job), s.gen_source)
+            if avail is not None
+            else "available memory unknown",
+        ),
+    ]
+    lines += ["warning:    " + w for w in warnings]
+    src = s.gen_source or ""
+    return lines, {
+        "cores": ncores,
+        "mem_total": total,
+        "mem_available": avail,
+        "disk_free": free,
+        "disk_need": need,
+        "jobs": s.jobs,
+        "gen_jobs": s.gen_jobs,
+        "gen_job_bytes": s.gen_job,
+        "gen_job_source": "measured" if src.startswith("measured") else SOURCES.get(src),
+        "warnings": warnings,
+    }
+
+
 def features_line(feats):
     """What the toolkit has of the fork's parts, and what it lacks: on
     upstream xboxrecomp a build still works, with the CPU rasteriser, no
@@ -366,6 +449,8 @@ def report_json(lines, targets, blocked):
             "next": nxt[-1].split(":", 1)[1].strip() if nxt else "",
             # {feature: bool} of the toolkit checkout; null before setup.
             "toolkit_features": FEATURES[0],
+            # D5: memory, cores, disk and the job count; null when unknown.
+            "resources": RESOURCES[0],
         },
         indent=2,
     )

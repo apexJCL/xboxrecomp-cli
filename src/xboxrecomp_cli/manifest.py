@@ -98,6 +98,21 @@ SPEC = {
         "nonstock_vars": (STRS, []),
         "icon_var": (STR, ""),
     },
+    "build.resources": {
+        # The peak of one gen/ compile job, in MiB (0: estimated from the
+        # largest gen/ file); the largest single tool process and its step.
+        "gen_job_mib": (INT, 0),
+        "tool_mib": (INT, 0),
+        "tool_step": (STR, ""),
+        # Disk estimates for the generate stage and each build tree.
+        "generate_mib": (INT, 1024),
+        "tree_mib": (INT, 512),
+        # What the imported game files take, for doctor before the first
+        # import (0: unknown).
+        "game_files_mib": (INT, 0),
+        # The CMake targets whose compiles share the sized pool.
+        "gen_targets": (STRS, DERIVED),
+    },
     "data": {
         "game_files": (STR, "game_files"),
         "game_files_exclude": (STRS, ["default_analysis.json", "UDATA", "TDATA"]),
@@ -397,6 +412,7 @@ def _has_table(doc, tname):
 
 def _derive(m):
     g, x, d = m["game"], m["xbe"], m["data"]
+    m["build"]["resources"].setdefault("gen_targets", [m["build"]["exe"]])
     x.setdefault("path", d["game_files"] + "/default.xbe")
     app = m.get("package", {}).get("app") or g["slug"]
     d.setdefault("dir_env", re.sub(r"[^A-Z0-9_]", "_", app.upper()) + "_DATA_DIR")
@@ -662,6 +678,11 @@ def _check_values(m):
     for t in m["build"]["targets"]:
         if t not in BUILD_TARGETS:
             errors.append("build.targets: %r is not one of %s" % (t, ", ".join(BUILD_TARGETS)))
+    for k, v in m["build"]["resources"].items():
+        if isinstance(v, int) and not isinstance(v, bool) and v < 0:
+            errors.append("build.resources.%s: must not be negative" % k)
+    if not m["build"]["resources"]["gen_targets"]:
+        errors.append("build.resources.gen_targets: name at least one target")
     if "package" in m:
         for t in m["package"]["targets"]:
             if t not in TARGETS:

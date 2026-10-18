@@ -258,7 +258,7 @@ func TestChangesDisc(t *testing.T) {
 		t.Fatalf("page %d disc %v", w.cur, w.st.NeedDisc)
 	}
 	last := strings.Join((*asks)[len(*asks)-1], " ")
-	if strings.Contains(last, "--dump") || !strings.Contains(last, "--keep-hud-pack --patch-from aaaaaaaaaaaa --plan --json") {
+	if strings.Contains(last, "--dump") || !strings.Contains(last, "--keep-hud-pack --out "+w.out+" --patch-from aaaaaaaaaaaa --plan --json") {
 		t.Fatalf("ask %q", last)
 	}
 	if txt := shown(w.pages[pChanges].obj); !strings.Contains(txt, "Sharper HUD (4x, 9 entries)") || !strings.Contains(txt, changesStatic) {
@@ -267,7 +267,7 @@ func TestChangesDisc(t *testing.T) {
 	need = false
 	checkOf(t, w.pages[pChanges].obj, changesClear).SetChecked(true)
 	last = strings.Join((*asks)[len(*asks)-1], " ")
-	if !w.st.Clear || w.st.NeedDisc || !strings.Contains(last, "--clear-hud-pack --patch-from") || strings.Contains(last, "keep") {
+	if !w.st.Clear || w.st.NeedDisc || !strings.Contains(last, "--clear-hud-pack --out "+w.out+" --patch-from") || strings.Contains(last, "keep") {
 		t.Fatalf("clear: %v %v %q", w.st.Clear, w.st.NeedDisc, last)
 	}
 	if !strings.Contains(shown(w.pages[pChanges].obj), changesNoDisc) {
@@ -308,7 +308,7 @@ func TestFileBaseTweaks(t *testing.T) {
 	if a := strings.Join((*asks)[n], " "); strings.Contains(a, "keep") {
 		t.Errorf("first ask %q", a)
 	}
-	if a := strings.Join((*asks)[n+1], " "); !strings.Contains(a, "--keep-hud-pack --patch-from /x/manifest.json") {
+	if a := strings.Join((*asks)[n+1], " "); !strings.Contains(a, "--keep-hud-pack --out "+w.out+" --patch-from /x/manifest.json") {
 		t.Errorf("second ask %q", a)
 	}
 }

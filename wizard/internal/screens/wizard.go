@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -297,6 +298,7 @@ func New(a fyne.App, opt Options) *Wizard {
 	case w.settings.Path == model.PathFresh || w.settings.Path == model.PathUpdate:
 		w.st.Path = w.settings.Path
 	}
+	w.st.Jobs = max(0, w.settings.Jobs)
 	w.latest = func() (*update.Release, string) {
 		if opt.Cfg.Private {
 			return nil, "none (a private game has no public releases)"
@@ -1098,7 +1100,7 @@ func (w *Wizard) checkDump() error {
 	if err != nil {
 		return playerError(fmt.Sprintf(dumpNothing, p))
 	}
-	need := uint64(hostinfo.NeedBytes)
+	need := w.needBytes()
 	var dumpBytes uint64
 	if st.IsDir() {
 		if _, err := os.Stat(filepath.Join(p, "default.xbe")); err != nil {
@@ -1496,6 +1498,7 @@ func (w *Wizard) fillSummary() {
 			container.New(layout.NewCustomPaddedLayout(0, 0, 2*theme.Padding(), 0), container.NewVBox(changed...)))
 	}
 	items = append(items, para(fmt.Sprintf(summaryData, c.Data[w.st.Target])))
+	items = append(items, w.jobsSelect(), under(hintText(jobsHint)))
 	rebuild := widget.NewCheck(summaryRebuild, nil)
 	rebuild.SetChecked(w.st.Clean)
 	rebuild.OnChanged = func(on bool) {
@@ -1903,7 +1906,10 @@ func (w *Wizard) fillDone() {
 			row = append([]fyne.CanvasObject{widget.NewButton(openLogFolder, func() { w.openPath(logDir) })}, retry...)
 		}
 		items = append(items, container.NewHBox(row...), para(doneRetry))
-		if w.st.Update() && refusedUpdate(f.Tail) {
+		if refusedCode(f.Tail) == runner.WhyDisk {
+			// Not a verdict on the build: Retry once space is free.
+			items = append(items, para(doneDisk))
+		} else if w.st.Update() && refusedUpdate(f.Tail) {
 			// package refused the update the plan expected (D7).
 			items = append(items, para(failedFresh), container.NewHBox(freshButton(w)))
 		}
@@ -1992,4 +1998,53 @@ func (w *Wizard) installNow(bundle string) {
 	if err != nil {
 		w.errorBox(err)
 	}
+}
+
+// needBytes is the free space the build folder needs: the Welcome page's
+// figure, or the CLI's own estimate once doctor has run and it is larger.
+func (w *Wizard) needBytes() uint64 {
+	need := uint64(hostinfo.NeedBytes)
+	if w.doctor != nil && w.doctor.Resources != nil && w.doctor.Resources.DiskNeed != nil {
+		need = max(need, uint64(max(0, *w.doctor.Resources.DiskNeed)))
+	}
+	return need
+}
+
+// jobsChoices are the Summary's build jobs: Automatic (with the count
+// doctor sized, when known), then 1 to the core count.
+func jobsChoices(auto, cores int) []string {
+	first := jobsAuto
+	if auto > 0 {
+		first = fmt.Sprintf(jobsAutoN, auto)
+	}
+	out := []string{first}
+	for n := 1; n <= max(cores, 1); n++ {
+		out = append(out, fmt.Sprint(n))
+	}
+	return out
+}
+
+// jobsSelect sets --jobs for package; the choice is kept in the settings.
+func (w *Wizard) jobsSelect() fyne.CanvasObject {
+	auto, cores := 0, runtime.NumCPU()
+	if w.doctor != nil && w.doctor.Resources != nil {
+		auto = w.doctor.Resources.Jobs
+		if c := w.doctor.Resources.Cores; c != nil && *c > 0 {
+			cores = *c
+		}
+	}
+	vals := jobsChoices(auto, cores)
+	sel := widget.NewSelect(vals, nil)
+	if w.st.Jobs >= len(vals) {
+		// Saved on a computer with more cores: back to Automatic, so the
+		// select shows what package gets.
+		w.st.Jobs = 0
+	}
+	sel.SetSelected(vals[max(0, w.st.Jobs)])
+	sel.OnChanged = func(v string) {
+		w.st.Jobs = max(0, slices.Index(vals, v))
+		w.settings.Jobs = w.st.Jobs
+		w.saveSettings()
+	}
+	return container.NewVBox(widget.NewLabel(summaryJobs), sel)
 }

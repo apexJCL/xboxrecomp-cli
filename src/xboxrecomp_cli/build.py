@@ -7,7 +7,7 @@ import re
 import shutil
 import sys
 
-from . import fetch, host, pipeline, toolkit
+from . import fetch, host, pipeline, resources, toolkit
 from .host import CliError
 
 
@@ -159,6 +159,85 @@ def start_afresh(bdir):
     shutil.rmtree(os.path.join(bdir, "CMakeFiles"), ignore_errors=True)
 
 
+CACHE_LINE = r"^%s:[A-Z]+=(.*)$"
+JOBS_INCLUDE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cmake", "xbr-jobs.cmake")
+POOL_VARS = ("CMAKE_PROJECT_TOP_LEVEL_INCLUDES", "XBR_GEN_JOBS", "XBR_GEN_TARGETS")
+
+
+def cached(bdir, var):
+    """A CMakeCache.txt value, or None."""
+    try:
+        with open(os.path.join(bdir, "CMakeCache.txt"), encoding="utf-8", errors="replace") as f:
+            m = re.search(CACHE_LINE % re.escape(var), f.read(), re.M)
+    except OSError:
+        return None
+    return m.group(1).strip() if m else None
+
+
+def cmake_version(cmake, run=None):
+    """(major, minor) of a cmake, or None."""
+    import subprocess
+
+    try:
+        out = (run or subprocess.check_output)([cmake, "--version"], stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"version (\d+)\.(\d+)", out.decode() if isinstance(out, bytes) else out)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def pool_ok(bdir, cmake, ninja, version=None):
+    """Whether this tree takes the gen/ pool: the Ninja generator (an
+    existing tree keeps the one it was configured with) and CMake 3.24 or
+    later (CMAKE_PROJECT_TOP_LEVEL_INCLUDES)."""
+    gen = cached(bdir, "CMAKE_GENERATOR")
+    if gen is None:
+        gen = "Ninja" if ninja else ""
+    if not gen.startswith("Ninja"):
+        return False
+    v = version if version is not None else cmake_version(cmake)
+    return v is not None and v >= (3, 24)
+
+
+def jobs_include(bdir):
+    """The pool's include, copied into the tree: the cache keeps its path,
+    and the CLI's own folder moves with each pin. Written only when it
+    differs, since CMake reconfigures when an include changes."""
+    dst = os.path.join(bdir, "xbr", "xbr-jobs.cmake")
+    with open(JOBS_INCLUDE, "rb") as f:
+        want = f.read()
+    try:
+        with open(dst, "rb") as f:
+            same = f.read() == want
+    except OSError:
+        same = False
+    if not same:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(dst, "wb") as f:
+            f.write(want)
+    return dst
+
+
+def pool_args(bdir, gen_jobs):
+    """The three -D values of the gen/ pool. They stay out of the compile
+    key and the manifest: a pool orders Ninja's commands and changes none."""
+    targets = host.g().m["build"]["resources"]["gen_targets"]
+    return [
+        "-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=" + jobs_include(bdir),
+        "-DXBR_GEN_JOBS=%d" % gen_jobs,
+        "-DXBR_GEN_TARGETS=" + ";".join(targets),
+    ]
+
+
+def pool_moved(bdir, args):
+    """Whether a configured tree's cached pool differs from args."""
+    for a in args:
+        var, _, val = a[2:].partition("=")
+        if cached(bdir, var) != val:
+            return True
+    return False
+
+
 def build(
     target,
     cmake_args=(),
@@ -167,13 +246,15 @@ def build(
     stock=False,
     reconfigure=False,
     stale_ok=False,
+    jobs=0,
 ):
     """Configure once (the generator is fixed by the first configure; an
     existing tree keeps its own), then build incrementally. stock (package's
     own tree): configure on every run with the stock args; reconfigure
     starts that tree's cache afresh. A gen/ stale against its key is refused
     unless stale_ok: it compiles, then fails at link or misbehaves (a
-    wrapped function's gen/ from before the wrap links twice)."""
+    wrapped function's gen/ from before the wrap links twice). jobs: --jobs
+    N, else 0 for as many as the free memory holds (resources.size)."""
     g = host.g()
     check_build_target(target)
     host.require(os.path.join(g.gen, "recomp_funcs.h"), "recomp")
@@ -195,7 +276,14 @@ def build(
         start_afresh(bdir)
     if stock:
         cmake_args = list(stock_cmake_args()) + list(cmake_args)
-    if stock or not os.path.isfile(os.path.join(bdir, "CMakeCache.txt")):
+    pool = pool_ok(bdir, cmake, ninja)
+    sizing = resources.plan(target, jobs, pool)
+    host.say("build: " + sizing.line())
+    for w in sizing.warnings:
+        host.say("WARNING: " + w)
+    extra = pool_args(bdir, sizing.gen_jobs) if pool else []
+    configured = os.path.isfile(os.path.join(bdir, "CMakeCache.txt"))
+    if stock or not configured:
         cfg = [
             cmake,
             "-S",
@@ -212,12 +300,15 @@ def build(
                 "-DCMAKE_TOOLCHAIN_FILE=" + toolchain_file(),
                 "-DLLVM_MINGW_ROOT=" + fetch.mingw_root(),
             ]
-        host.run(cfg + list(cmake_args), env=env)
-    elif cmake_args:
-        host.run([cmake, "-B", bdir] + list(cmake_args), env=env)
-    host.run(
-        [cmake, "--build", bdir, "--config", "Release", "-j", str(os.cpu_count() or 4)], env=env
-    )
+        host.run(cfg + list(cmake_args) + extra, env=env)
+    elif cmake_args or (extra and pool_moved(bdir, extra)):
+        # A new pool depth regenerates build.ninja only: no compile command
+        # changes, so Ninja rebuilds nothing.
+        host.run([cmake, "-B", bdir] + list(cmake_args) + extra, env=env)
+    host.run([cmake, "--build", bdir, "--config", "Release", "-j", str(sizing.jobs)], env=env)
+    if host.LAST_PEAK:
+        resources.record("compile:" + target, host.LAST_PEAK, sizing.gen_jobs)
+        host.say("build: largest compile job %s" % resources.gb(host.LAST_PEAK))
     exe = g.exe(bdir, target)
     if not os.path.isfile(exe):
         raise CliError("the build finished but %s is missing" % exe)

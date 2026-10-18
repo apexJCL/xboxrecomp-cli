@@ -23,6 +23,7 @@ from .. import (
     host,
     manifest,
     pipeline,
+    resources,
     setup,
     toolkit,
 )
@@ -470,6 +471,7 @@ def compile_stage(btarget, bdir, icon_args, icon_key, a, lib):
         reconfigure=a.reconfigure,
         # Its plan has regenerated a stale gen/ already, or refused.
         stale_ok=True,
+        jobs=getattr(a, "jobs", 0),
     )
     st.record(cstage, key, inputs, incr.compile_outputs(btarget, bdir), upstream=up)
 
@@ -788,6 +790,85 @@ def package_plan(a, imp=None):
     return plan
 
 
+def disk_needs(a, stages, imp=None, setup_needs=(), hud=False, patch_bytes=None):
+    """What the stages this run will run write (D9), as resources.Need:
+    the import, what setup fetches, the analysis and gen/, the build tree,
+    a HUD pack made again, and the bundle. A stage that is current is not
+    in stages and counts nothing. "stage" fills the staging tree (the
+    program, plus the game files when the output folder is on another
+    volume, where they cannot be cloned or linked); "wrap" writes the
+    bundle: the game files for a full one, patch_bytes for a patch.
+    "package" stands for both."""
+    from .. import dump
+
+    G = g()
+    R = resources
+    out = []
+    gf = None
+    if "import" in stages:
+        if imp is not None and imp.writes:
+            n = imp.total
+            # A folder on the game's own volume is cloned on APFS (dump.check_space).
+            if (
+                imp.src.kind == "folder"
+                and host.host_os() == "macos"
+                and dump.same_volume(imp.src.real, G.root)
+            ):
+                n = 0
+            out.append(R.Need("import", G.game_files, n, "game files from the dump"))
+            gf = imp.total
+        elif imp is None and not os.path.isdir(G.game_files):
+            # Before the first import (doctor): the game's own figure.
+            gf = game_files_estimate()
+            out.append(R.Need("import", G.root, gf, "game files from the dump"))
+    if "setup" in stages:
+        out += R.setup_need(setup_needs, G.root, toolkit.toolkit_dir())
+    if "generate" in stages:
+        out.append(R.generate_need())
+    if "build" in stages:
+        out.append(R.build_need(build_mod.pkg_build_dir(build_target(a.target))))
+    if hud:
+        out.append(R.hud_need(os.path.join(G.dist, "enhance", "hud")))
+    staging = "stage" in stages or "package" in stages
+    wrapping = "wrap" in stages or "package" in stages
+    if staging or wrapping:
+        if gf is None:
+            gf = R.tree_size(G.game_files) if os.path.isdir(G.game_files) else 0
+            gf = gf or game_files_estimate()
+        n = 0
+        if staging:
+            n += 512 * R.MiB
+            if R.volume(a.out) != R.volume(G.game_files):
+                n += gf
+        if wrapping:
+            n += gf if patch_bytes is None else patch_bytes
+        out.append(R.Need("package", a.out, n, "the bundle"))
+    return out
+
+
+def run_disk_needs(a, lib, imp, enhance, seed, plan, hud):
+    """The real run's disk needs: the same stages and output as --plan
+    counts (a current stage and a patch's unchanged files write nothing),
+    or, when the plan cannot be made, every stage package_plan names."""
+    from . import plan as plan_mod
+
+    into = {}
+    try:
+        plan_mod.make_plan(a, lib, imp, enhance, seed, into)
+    except Exception:
+        # An estimate never stops a build: the larger count stands in.
+        pass
+    if "needs" in into:
+        return into["needs"]
+    names = [n for n, _ in plan]
+    return disk_needs(a, names, imp, dict(plan).get("setup", "").split(", "), hud=hud)
+
+
+def game_files_estimate():
+    """[build.resources] game_files_mib in bytes (0: unknown)."""
+    return g().m["build"]["resources"]["game_files_mib"] * resources.MiB
+
+
 def plan_line(plan):
     return "plan: " + ", ".join("%s (%s)" % (n, w) if w else n for n, w in plan)
 
@@ -809,6 +890,7 @@ def run_plan_prefix(a, plan):
         why = pipeline.gen_stale_reasons()
         if why:
             host.say("generate: %s" % ", ".join(why))
+            resources.warn_tools()
             pipeline.reset_stage_extras()
             pipeline.stage_parse()
             pipeline.stage_disasm()
@@ -1148,6 +1230,13 @@ def package(a):
         raise
     host.VIEW.plan = [n for n, _ in plan]
     host.say(plan_line(plan))
+    try:
+        needs = run_disk_needs(a, lib, imp, enhance, seed, plan, bool(remake))
+        resources.check_disk(needs, getattr(a, "ignore_disk_space", False))
+    except BaseException:
+        if imp is not None:
+            imp.src.close()
+        raise
     if imp is not None:
         host.mark("import")
         # stage_payload warns about an unknown dump; once is enough.
@@ -1160,7 +1249,7 @@ def package(a):
     incr.record_import(st, lib)
     incr.record_generate(st)
     if remake:
-        hud_pack = tweaks.remake(st, base)
+        hud_pack = tweaks.remake(st, base, getattr(a, "jobs", 0))
     os.makedirs(a.out, exist_ok=True)
     stage, payload, version, overrides, exe = stage_payload(a.target, a, lib, seed, hud_pack)
     # The build's own cache has the last word: a layer the configure left

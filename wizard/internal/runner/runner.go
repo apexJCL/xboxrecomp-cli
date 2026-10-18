@@ -167,6 +167,24 @@ type Doctor struct {
 	Blockers map[string][]string `json:"blockers"`
 	Problems []string            `json:"problems"`
 	Next     string              `json:"next"`
+	// Resources is what a build on this computer gets (memory, cores,
+	// disk, the job count); nil from a CLI before it.
+	Resources *Resources `json:"resources"`
+}
+
+// Resources is doctor's resources object. A nil pointer is a value the
+// CLI could not find out (null in the JSON), never zero.
+type Resources struct {
+	Cores        *int     `json:"cores"`
+	MemTotal     *int64   `json:"mem_total"`
+	MemAvailable *int64   `json:"mem_available"`
+	DiskFree     *int64   `json:"disk_free"`
+	DiskNeed     *int64   `json:"disk_need"`
+	Jobs         int      `json:"jobs"`
+	GenJobs      int      `json:"gen_jobs"`
+	GenJobBytes  *int64   `json:"gen_job_bytes"`
+	GenJobSource *string  `json:"gen_job_source"`
+	Warnings     []string `json:"warnings"`
 }
 
 func ParseDoctor(b []byte) (*Doctor, error) {
@@ -475,6 +493,9 @@ const (
 	WhyHudGuard    = "hud_guard"
 	WhyHudKeep     = "hud_keep"
 	WhyNoBase      = "no_base"
+	// WhyDisk: a volume has less free space than the run needs. Not a
+	// verdict on the update: freeing space and retrying makes it.
+	WhyDisk = "disk"
 )
 
 // PlanTweaks are a base's tweaks; nil is none.

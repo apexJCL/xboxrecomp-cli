@@ -27,7 +27,7 @@ import os
 import struct
 import time
 
-from .. import host
+from .. import host, resources
 from ..host import CliError
 from . import atlas, bc3, dds, font, ipk, pack, scaler, texhash, xpr
 
@@ -77,9 +77,11 @@ def configure(p):
         help="a TrueType file (.ttf, .ttc) or an installed font's full name for the "
         "Latin atlas (default: game.toml's [enhance.hud] font, if installed)",
     )
-    p.add_argument(
-        "--jobs", type=int, default=0, help="processes for the upscale (default: the CPUs)"
+    resources.add_jobs(
+        p,
+        "processes for the upscale (default: as many as the free memory and the cores allow)",
     )
+    resources.add_flag(p)
     p.add_argument(
         "--only",
         action="append",
@@ -281,19 +283,32 @@ def _scale_task(args):
     return scaler.scale(w, h, rgba, s)
 
 
+def _pool_task(args):
+    """A worker's result and its own peak so far, for the sizing of the
+    next run (resources.hud_jobs)."""
+    return _scale_task(args), resources.self_peak()
+
+
 def upscale_all(items, s, jobs):
     """Each item's rgba at its scale (s: one for all, or one per item), in
-    item order whatever the job count."""
+    item order whatever the job count. jobs 0: as many workers as the free
+    memory holds (resources.hud_jobs)."""
     scales = s if isinstance(s, (list, tuple)) else [s] * len(items)
     work = []
     for it, si in zip(items, scales):
         w, h, rgba = dds.decode(it.dds)
         it.rgba = (w, h, rgba)
         work.append((w, h, rgba, si))
+    if not jobs and len(work) > 1:
+        jobs = resources.hud_jobs(len(work))
     if jobs == 1 or len(work) <= 1:
         return [_scale_task(a) for a in work]
-    with concurrent.futures.ProcessPoolExecutor(max_workers=jobs or None) as ex:
-        return list(ex.map(_scale_task, work, chunksize=1))
+    with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as ex:
+        got = list(ex.map(_pool_task, work, chunksize=1))
+    peaks = [p for _r, p in got if p]
+    if peaks:
+        resources.record("hud:worker", max(peaks), jobs)
+    return [r for r, _p in got]
 
 
 def render_font(it, up, cfg, font_path, face, s):
@@ -351,6 +366,7 @@ def run(a):
                 % G.rel(os.path.join(out_dir, "hud.pack"))
             )
             return 0
+        resources.check_disk([resources.hud_need(out_dir)], getattr(a, "ignore_disk_space", False))
         st.begin("hud")
     items = load_items(select(G.game_files, cfg, a.only, langs), cfg["max_texels"])
     assign_kinds(items, cfg)

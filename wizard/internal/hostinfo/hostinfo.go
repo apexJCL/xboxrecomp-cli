@@ -125,6 +125,9 @@ type Settings struct {
 	Out           string `json:"out,omitempty"`
 	NoUpdateCheck bool   `json:"no_update_check,omitempty"`
 	Path          string `json:"path,omitempty"`
+	// Jobs is the Summary page's build jobs: 0 is Automatic (the CLI
+	// sizes the compile to the free memory), else package's --jobs N.
+	Jobs int `json:"jobs,omitempty"`
 }
 
 // SettingsDir is <user config dir>/<slug>-wizard: %APPDATA% on Windows,

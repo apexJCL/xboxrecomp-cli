@@ -42,12 +42,21 @@ func TestModel(t *testing.T) {
 			{"enhance", "hud"},
 			{"package", "macos", "--dump", "/d/b2.iso", "--hud-pack", "--seed-config", "S", "--out", "/o", "--full", "--plain"},
 		}},
+		{"hud pack at 2 jobs", map[string]string{"hud_pack": "true", "jobs": "2"}, "", [][]string{
+			{"import", "/d/b2.iso"},
+			{"enhance", "hud", "--jobs", "2"},
+			{"package", "macos", "--dump", "/d/b2.iso", "--hud-pack", "--seed-config", "S", "--out", "/o", "--full", "--jobs", "2", "--plain"},
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := New(sample(t), "macos")
 			s.Dump = "/d/b2.iso"
 			for k, v := range tc.set {
+				if k == "jobs" {
+					s.Jobs = int(v[0] - '0')
+					continue
+				}
 				if err := s.Set(k, v); err != nil {
 					t.Fatal(err)
 				}
@@ -96,8 +105,21 @@ func TestPaths(t *testing.T) {
 	if got := strings.Join(s.PackageArgs("/s.toml", "/o"), " "); got != "package steamos --out /o --clean --patch-from abc123def456 --plain" {
 		t.Fatal(got)
 	}
+	// The Summary's build jobs reach package and nothing else asks for them.
+	s.Jobs = 2
+	if got := strings.Join(s.PackageArgs("/s.toml", "/o"), " "); got != "package steamos --out /o --clean --patch-from abc123def456 --jobs 2 --plain" {
+		t.Fatal(got)
+	}
+	if got := strings.Join(s.PlanArgs("/s.toml", "/o"), " "); strings.Contains(got, "--jobs") {
+		t.Fatal(got)
+	}
+	s.Jobs = 0
 	s.NeedDisc = true
-	if got := strings.Join(s.PlanArgs("/s.toml"), " "); got != "package steamos --dump D --clean --patch-from abc123def456 --plan --json" {
+	if got := strings.Join(s.PlanArgs("/s.toml", ""), " "); got != "package steamos --dump D --clean --patch-from abc123def456 --plan --json" {
+		t.Fatal(got)
+	}
+	// The plan judges the disk the bundle goes to: the run's --out.
+	if got := strings.Join(s.PlanArgs("/s.toml", "/o"), " "); got != "package steamos --dump D --out /o --clean --patch-from abc123def456 --plan --json" {
 		t.Fatal(got)
 	}
 	if got := strings.Join(s.BasesArgs(), " "); got != "package steamos --full --plan --json" {

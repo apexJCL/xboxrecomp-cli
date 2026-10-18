@@ -19,7 +19,7 @@ import sys
 
 from . import build as build_mod
 from . import doctor as doctor_mod
-from . import fingerprint, helptext, host, manifest, pins, pipeline, scaffold, setup
+from . import fingerprint, helptext, host, manifest, pins, pipeline, resources, scaffold, setup
 from .host import CliError
 
 COMMANDS = []  # (name, help, configure(parser), func(args)), in --help order
@@ -57,6 +57,8 @@ def _cfg_build(p):
         action="store_true",
         help="build even when gen/ is stale against its key (analyze and recomp to fix)",
     )
+    resources.add_jobs(p)
+    resources.add_flag(p)
     p.set_defaults(passthrough="extra CMake arguments")
 
 
@@ -71,9 +73,13 @@ def _help_build():
 def cmd_build(a):
     target = a.target or build_mod.default_build_target()
     args = [x for x in a.extra if x != "--"]
+    resources.check_disk([resources.build_need(build_mod.build_dir(target))], a.ignore_disk_space)
     host.step("build %s" % target)
     fingerprint.warn(fingerprint.current())
-    host.say("built %s" % build_mod.build(target, args, a.system_tools, stale_ok=a.stale_gen_ok))
+    host.say(
+        "built %s"
+        % build_mod.build(target, args, a.system_tools, stale_ok=a.stale_gen_ok, jobs=a.jobs)
+    )
 
 
 def _stage_cmd(fn):
@@ -93,18 +99,27 @@ def _cfg_all(p):
         action="store_true",
         help="all: use the host's cmake and ninja instead of the venv's",
     )
+    resources.add_jobs(p)
+    resources.add_flag(p)
 
 
-def cmd_analyze(a):
+def _cfg_analyze(p):
+    resources.add_flag(p)
+
+
+def cmd_analyze(a, more=()):
     fingerprint.warn(fingerprint.current())
+    resources.check_disk([resources.generate_need()] + list(more), a.ignore_disk_space)
+    resources.warn_tools()
     pipeline.analyze()
 
 
 def cmd_all(a):
-    cmd_analyze(a)
+    target = build_mod.default_build_target()
+    cmd_analyze(a, [resources.build_need(build_mod.build_dir(target))])
     pipeline.stage_recomp()
     host.step("build")
-    build_mod.build(build_mod.default_build_target(), (), a.system_tools)
+    build_mod.build(target, (), a.system_tools, jobs=a.jobs)
 
 
 def _cfg_setup(p):
@@ -302,6 +317,8 @@ def _cfg_package(p):
         action="store_true",
         help="use the host's cmake and ninja instead of the venv's",
     )
+    resources.add_jobs(p)
+    resources.add_flag(p)
 
 
 def cmd_package(a):
@@ -447,9 +464,9 @@ def register():
     command("build", _help_build(), _cfg_build)(cmd_build)
     for name, fn, help_ in pipeline.stages():
         command(name, help_, _cfg_stage)(_stage_cmd(fn))
-    command("analyze", "parse, disasm, funcid, abi, then names if a Ghidra export exists")(
-        cmd_analyze
-    )
+    command(
+        "analyze", "parse, disasm, funcid, abi, then names if a Ghidra export exists", _cfg_analyze
+    )(cmd_analyze)
     command("all", "analyze, recomp, then build for this host's default target", _cfg_all)(cmd_all)
     command(
         "setup",

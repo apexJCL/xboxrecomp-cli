@@ -105,6 +105,15 @@ targets = ["windows", "macos"]
 # No enhancements layer: the stock build is the plain one.
 stock_cmake = []
 
+# How much memory one generated-code compile job takes sets how many run
+# at once. Unset, it is estimated (140 MiB per MB of the largest gen/
+# file); after a build, `@SLUG@ doctor` shows the measured peak on its
+# `build jobs` line, and that figure goes here.
+# [build.resources]
+# gen_job_mib = 1200
+# tool_mib = 1700        # the largest single pipeline tool (disasm)
+# tool_step = "disasm"
+
 [data]
 game_files = "game_files"
 

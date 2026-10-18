@@ -185,12 +185,12 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | `mygame PATH` | Imports a dump and packages it for this computer |
 | `mygame import PATH` | Puts a disc image or dump folder in `game_files/` |
 | `mygame setup` | Fetches the pinned toolchain and toolkit |
-| `mygame doctor` | Says what this host has, what it can package and what to do next |
+| `mygame doctor` | Says what this host has, what it can package, the memory, cores and disk a build gets, and what to do next |
 | `mygame fingerprint [PATH]` | Says whether a dump's XBE is known, differs only in its header, or has modded data or code |
 | `mygame clean` | Frees space: lists the bundles and build trees it would delete, deletes with `--yes` |
 | `mygame all` | Runs analyze, recomp and build |
 | `mygame analyze`, `recomp` | Runs the pipeline's stages |
-| `mygame build [windows\|macos]` | Configures once, then compiles incrementally |
+| `mygame build [windows\|macos]` | Configures once, then compiles incrementally, as many jobs as the free memory holds (`--jobs N` to choose) |
 | `mygame package <target>` | Makes a private bundle for `windows`, `steamos` or `macos` |
 | `mygame wizard <config\|build\|check>` | Builds the player's build wizard for a release |
 | `mygame golden <subcommand>` | Records and checks golden frames; `golden run` on the Mac |

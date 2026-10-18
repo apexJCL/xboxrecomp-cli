@@ -63,7 +63,10 @@ type State struct {
 	Clear     bool
 	NeedDisc  bool
 	// Clean rebuilds everything (package --clean, never --clean=all).
-	Clean  bool
+	Clean bool
+	// Jobs is --jobs N for package and its enhance hud step; 0 leaves
+	// the count to the CLI, which sizes it to the free memory.
+	Jobs   int
 	values map[string]string
 }
 
@@ -186,13 +189,26 @@ func (s *State) PackageArgs(seedPath, out string) []string {
 		args = append(args, "--out", out)
 	}
 	args = append(args, s.choiceArgs()...)
+	args = append(args, s.jobsArgs()...)
 	return append(args, "--plain")
 }
 
+func (s *State) jobsArgs() []string {
+	if s.Jobs > 0 {
+		return []string{"--jobs", fmt.Sprint(s.Jobs)}
+	}
+	return nil
+}
+
 // PlanArgs is `package --plan --json` for the same build: what the
-// Changes and Summary pages show before anything runs.
-func (s *State) PlanArgs(seedPath string) []string {
-	args := append(s.common(seedPath), s.choiceArgs()...)
+// Changes and Summary pages show before anything runs. The output folder
+// is the run's, so the disk check (D9) judges the volume the bundle goes to.
+func (s *State) PlanArgs(seedPath, out string) []string {
+	args := s.common(seedPath)
+	if out != "" {
+		args = append(args, "--out", out)
+	}
+	args = append(args, s.choiceArgs()...)
 	return append(args, "--plan", "--json")
 }
 
@@ -251,6 +267,9 @@ func (s *State) Steps(seedPath, out string) [][]string {
 				if a == "DUMP" {
 					step[i] = s.Dump
 				}
+			}
+			if slices.Equal(p, []string{"enhance", "hud"}) {
+				step = append(step, s.jobsArgs()...)
 			}
 			steps = append(steps, step)
 		}

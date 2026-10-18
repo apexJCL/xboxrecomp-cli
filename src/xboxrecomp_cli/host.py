@@ -25,6 +25,10 @@ class Refusal(CliError):
         self.code = code
 
 
+# The peak memory of the largest process of the last run(), in bytes, or
+# None when it could not be measured (resources.wait).
+LAST_PEAK = None
+
 # The progress view (package/progress.py) while `package` runs, else None:
 # say, step and run go through it, and child output goes to build-logs/.
 VIEW = None
@@ -122,10 +126,21 @@ def run(cmd, cwd=None, env=None, check=True, parser=None):
     """Argument lists only, never a shell string: paths with spaces stay
     one argument on every host. Under the progress view the output goes to
     the step's log and the parser (by default chosen from the command)."""
+    global LAST_PEAK
+    LAST_PEAK = None
     if VIEW:
         rc = progress_lib().run_step(VIEW, cmd, cwd, env, parser, VIEW.verbose)
     else:
-        rc = subprocess.run([str(c) for c in cmd], cwd=cwd, env=env).returncode
+        from . import resources
+
+        p = subprocess.Popen([str(c) for c in cmd], cwd=cwd, env=env)
+        job = resources.watch(p)
+        try:
+            rc, LAST_PEAK = resources.wait(p, job)
+        except BaseException:
+            p.kill()
+            p.wait()
+            raise
     if check and rc != 0:
         raise CliError("%s failed (exit %d)" % (os.path.basename(str(cmd[0])), rc))
     return rc

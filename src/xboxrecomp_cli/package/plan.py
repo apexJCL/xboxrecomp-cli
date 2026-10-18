@@ -20,7 +20,7 @@ import os
 import types
 
 from .. import build as build_mod
-from .. import buildstate, cli_dir, fingerprint, host, pipeline, setup, toolkit
+from .. import buildstate, cli_dir, fingerprint, host, pipeline, resources, setup, toolkit
 from ..host import CliError
 from . import incr, tweaks
 from .progress import load_timings
@@ -63,8 +63,9 @@ class Plan:
         self.rows.append({"stage": name, "action": action, "why": list(why), "estimate_s": est})
 
 
-def make_plan(a, lib, imp=None, enhance=True, seed=None):
-    """The plan as a dict (the --json document)."""
+def make_plan(a, lib, imp=None, enhance=True, seed=None, into=None):
+    """The plan as a dict (the --json document). into: a dict that gets
+    the disk needs (D9) as "needs", for the real run's check."""
     from . import build_target, config_layer, exe_icon_args, fixed_fields
 
     G = g()
@@ -80,6 +81,7 @@ def make_plan(a, lib, imp=None, enhance=True, seed=None):
     timings = load_timings(G.logs)
     p = Plan(timings)
     p.base, p.base_error = chosen_base(a, st, target)
+    p.imp = imp
     p.hud = {"choice": tweaks.hud_choice(a), "refusal": "", "code": "", "pack": None}
     version = None
 
@@ -107,6 +109,7 @@ def make_plan(a, lib, imp=None, enhance=True, seed=None):
             imp_key = buildstate.stage_key(incr.import_inputs(lib))
             p.add("import", [])
     needs = [] if getattr(a, "no_setup", False) else setup.setup_needs(target, a.system_tools)
+    p.setup_needs = needs
     if needs:
         p.add("setup", needs, [k for k in timings if k.startswith("setup: ")])
     cstage = incr.compile_stage(btarget)
@@ -116,7 +119,7 @@ def make_plan(a, lib, imp=None, enhance=True, seed=None):
     later = (["hud"] if hud_on or keeping else []) + [cstage, sname, wname]
     if "no toolkit" in needs:
         rest("checked after setup", ["generate", "icon"] + later)
-        return finish(p, st, target, version, a)
+        return finish(p, st, target, version, a, into)
 
     # generate: its own key decides, as in the run (gen_stale_reasons).
     gen_key = None
@@ -228,7 +231,7 @@ def make_plan(a, lib, imp=None, enhance=True, seed=None):
             if not why:
                 why = st.output_problems(rec)
         p.add(wname, why, wsteps)
-    return finish(p, st, target, version, a)
+    return finish(p, st, target, version, a, into)
 
 
 def build_step(btarget, bdir):
@@ -333,7 +336,7 @@ def plan_xbe(path):
         return None
 
 
-def finish(p, st, target, version, a=None):
+def finish(p, st, target, version, a=None, into=None):
     run = [r for r in p.rows if r["action"] in ("run", "keep")]
     known = [r["estimate_s"] for r in run if r["estimate_s"] is not None]
     bases, newest = plan_bases(st, target)
@@ -341,6 +344,15 @@ def finish(p, st, target, version, a=None):
     for b in bases:
         b.update(judged(b.pop("base"), proxy, newest, target, version, p))
     out = plan_output(a, p, target, version, newest, proxy)
+    disk = plan_disk(a, p, target, out, into)
+    if resources.short(disk) and not getattr(a, "ignore_disk_space", False):
+        bad = resources.short(disk)[0]
+        out.update(
+            kind="none",
+            why="disk: this build needs %s in %s and %s is free"
+            % (resources.gb(bad["need"]), bad["path"], resources.gb(bad["free"])),
+            why_codes=[patch_mod().DISK],
+        )
     build_pack = None
     choice = p.hud["choice"]
     if choice == "make" or (choice == "keep" and p.hud["pack"]):
@@ -366,7 +378,48 @@ def finish(p, st, target, version, a=None):
         # The XBE the run builds from, judged (fingerprint.py): the wizard
         # asks before building modded code. None without a dump.
         "xbe": getattr(p, "xbe", None),
+        "disk": resources.disk_json(disk),
     }
+
+
+def plan_disk(a, p, target, out=None, into=None):
+    """D9's volumes for the stages the plan runs: [] without a run's args.
+    A patch output writes its payload, not the game files. into gets the
+    needs themselves."""
+    from . import build_target, disk_needs
+
+    if a is None:
+        return []
+    btarget = build_target(target)
+    stages = set()
+    for r in p.rows:
+        if r["action"] != "run":
+            continue
+        n = r["stage"]
+        if n == incr.compile_stage(btarget):
+            stages.add("build")
+        elif n == incr.stage_name(target):
+            stages.add("stage")
+        elif n == incr.wrap_name(target):
+            stages.add("wrap")
+        elif n in ("import", "setup", "generate"):
+            stages.add(n)
+    hud = any(r["stage"] == "hud" and r["action"] == "run" for r in p.rows)
+    patch_bytes = None
+    if out is not None and out.get("kind") == "patch":
+        # Unknown before the build when the base is the newest record:
+        # the patch is then only what this run changes.
+        patch_bytes = out.get("patch_size") or 0
+    try:
+        needs = disk_needs(
+            a, stages, getattr(p, "imp", None), getattr(p, "setup_needs", ()), hud, patch_bytes
+        )
+        vols = resources.by_volume(needs)
+    except (OSError, CliError):
+        return []
+    if into is not None:
+        into["needs"] = needs
+    return vols
 
 
 def plan_bases(st, target):

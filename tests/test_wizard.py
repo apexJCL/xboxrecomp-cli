@@ -1107,8 +1107,24 @@ def test_doctor_json(wgame):
         "problems",
         "next",
         "toolkit_features",
+        "resources",
     }
     assert set(out["host"]) == {"os", "arch", "python"}
+    r = out["resources"]
+    assert set(r) == {
+        "cores",
+        "mem_total",
+        "mem_available",
+        "disk_free",
+        "disk_need",
+        "jobs",
+        "gen_jobs",
+        "gen_job_bytes",
+        "gen_job_source",
+        "warnings",
+    }
+    assert r["jobs"] >= r["gen_jobs"] >= 1 and isinstance(r["warnings"], list)
+    assert any(x.startswith("build jobs: ") for x in lines)
     assert out["lines"] == lines and out["targets"] == targets
     assert set(out["blockers"]) == {"windows", "steamos", "macos"}
     # Importing a dump is the wizard's own step: never a blocker.

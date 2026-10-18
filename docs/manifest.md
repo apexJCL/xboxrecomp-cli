@@ -121,6 +121,22 @@ and the wizard leaves out the config options (see
 | `nonstock_vars` | `[]` | Cache variables `package` refuses without `--allow-nonstock`. |
 | `icon_var` | `""` | The CMake variable that compiles the icon into the exe. |
 
+### [build.resources]
+
+What a build of this game needs, for the job count and the disk check
+(commands.md, Build jobs and disk space). All optional; measured figures
+raise them, never lower.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `gen_job_mib` | `0` | The peak memory of one compile of a generated file, in MiB. 0 estimates it from the largest `gen/` file (140 MiB per MB, at least 512). |
+| `tool_mib` | `0` | The peak memory of the largest analyze tool, in MiB, for the warning before it runs. 0: no warning until one is measured. |
+| `tool_step` | `""` | That tool's name in the warning (`disasm`). |
+| `generate_mib` | `1024` | What the analysis and `gen/` take on disk, in MiB. |
+| `tree_mib` | `512` | What a build tree takes on disk, in MiB. |
+| `game_files_mib` | `0` | What the imported game files take on disk, in MiB. Doctor and the disk check count it before the first import, when there are no game files to measure. 0: unknown. |
+| `gen_targets` | `[build.exe]` | The CMake targets whose objects go in the generated-code job pool. |
+
 ## [data]
 
 | Key | Default | Meaning |

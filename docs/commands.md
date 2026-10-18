@@ -76,6 +76,8 @@ A private bundle for one target in `dist/`. Needs `[package]` in `game.toml`.
 | `--plan [--json]` | only say which stages would be reused and which would run, and why, with estimates from `build-logs/timings.json`, and list the bundle records as `bases`; runs and records nothing |
 | `--clean[=all]` | rebuild everything: drop the build state, `build-pkg-*/` and the staging trees first; `gen/` stays when its key is current. `--clean=all` also drops `gen/` and the analysis cache, which then rerun |
 | `--keep-bundles N` | bundles of the target kept in the output folder (default 2) |
+| `--jobs N` | compile N jobs at once, and N HUD workers (default: as many as the free memory and the cores allow; see Build jobs below) |
+| `--ignore-disk-space` | build even when a volume looks too small: a warning instead of the `disk` refusal (for a filesystem that compresses or deduplicates) |
 
 `package` builds in its own tree (`build-pkg-win/`, `build-pkg-macos/`) with
 the stock options from `build.stock_cmake`, so the developer's `build/`
@@ -127,11 +129,50 @@ same as a `note:` after the `bundle:` line, before the PRIVATE notice. A
 game that ships `"spin"` or omits the key gets neither; a defaults file
 that is not valid TOML gets one `WARNING:` line and no note.
 
+### Build jobs and disk space
+
+`build`, `all` and `package` size the compile to the memory free when they
+start. A generated `gen/` file can take more than a gigabyte to compile,
+so the CLI keeps a reserve (10% of the RAM, 1 to 2 GiB) and fits as many
+`gen/` jobs in the rest as it can, at least one and at most the cores.
+With Ninja and CMake 3.24 or later the `gen/` objects go in a Ninja pool
+of that depth and the small runtime files fill the remaining memory
+(256 MiB each); otherwise the whole build runs at the `gen/` depth. When
+the free memory is unknown it runs 4 jobs (or fewer cores). On Linux a
+cgroup limit counts too. The per-job figure is the larger of
+`build.resources.gen_job_mib` (else an estimate from the largest `gen/`
+file) and the largest compile this folder has measured, which is kept in
+`.git/xbr/resources.json`. `--jobs N` sets the count and warns when it is
+more than the memory holds. The job count never changes the output: the
+pool's values are not in the compile key, the version or the manifest.
+
+The package log says the decision as the compile starts
+(`build: 7 jobs, generated code 6 at a time (9.7 GB available, about 1.3
+GB per job)`) and the largest compile after it. The analyze tools warn
+before they run when the largest one (`build.resources.tool_mib`) does
+not fit in the free memory. Nothing caps memory; low memory only lowers
+the job count.
+
+Before anything runs, `build`, `analyze`, `all`, `package` and `enhance
+hud` add up what their stages will write, per volume: the import, what
+`setup` fetches, the analysis and `gen/` (`build.resources.generate_mib`),
+the build tree (`tree_mib`), a HUD pack, the bundle (the game files for a
+full one, the payload for a patch), and 1 GiB of slack per volume. A
+stage that is current counts nothing: `package` counts the stages its
+`--plan` would run. Before the first import, doctor counts the game files
+as `build.resources.game_files_mib`. When a volume has
+less free space, the command stops with a `disk:` message that lists each
+stage's share and how to free space, and `refused: disk`.
+`--ignore-disk-space` builds anyway. `import` keeps its own check.
+
 ### `mygame doctor`
 
 What this host has (uv, the venv, llvm-mingw, makensis, the toolkit and CLI
 pins, the dump, `gen/`), which targets it can package, and `next:` the first
-thing to do. `features:` names what the toolkit checkout has of the fork's
+thing to do. `memory:`, `cores:`, `disk:` and `build jobs:` say what a
+package on this host would run with (Build jobs above), with a warning
+when memory or disk is low (never a problem: doctor builds nothing).
+`features:` names what the toolkit checkout has of the fork's
 parts and what it lacks: the env table, the enhancements layer (which
 reads `config.toml`), the D3D11 and Metal renderers and recomp's
 `--spin-waits`. Upstream xboxrecomp has none of them, so a build on its
@@ -142,8 +183,11 @@ one.
 `--json` prints the same as data for the build wizard: `host`, `lines`,
 `targets`, `blocked`, `problems`, `next`, `blockers`, for each package
 target what a run that imports a dump cannot fetch itself (each with its
-fix), and `toolkit_features` (`{feature: true|false}`, null before
-`setup`).
+fix), `toolkit_features` (`{feature: true|false}`, null before
+`setup`), and `resources`: `cores`, `mem_total`, `mem_available`,
+`disk_free`, `disk_need` (bytes), `jobs`, `gen_jobs`, `gen_job_bytes`,
+`gen_job_source` (`game`, `measured` or `estimate`) and `warnings`, with
+`null` for what is unknown.
 
 ### `mygame fingerprint [PATH]`
 
@@ -185,7 +229,8 @@ Needs `[enhance.hud]` in `game.toml`.
 | `--scale {2,4}` | upscale factor (default: `game.toml`'s) |
 | `--out OUT` | output directory (default `dist/enhance/hud/`) |
 | `--font FONT` | a TrueType file (`.ttf`, `.ttc`) or an installed font's full name for the Latin atlas (default: `game.toml`'s `font`, if installed) |
-| `--jobs JOBS` | processes for the upscale (default: the CPUs) |
+| `--jobs N` | processes for the upscale (default: as many as the free memory and the CPUs allow) |
+| `--ignore-disk-space` | write the pack even when the disk looks too small |
 | `--only PATTERN` | narrow the set to matching entries (repeatable) |
 | `--language LANG` | a language of `[enhance.hud] languages` to build the text of (repeatable; default: the first listed) |
 | `--list` | print the set and its hashes, write nothing |
@@ -231,7 +276,7 @@ pin. Ends with `doctor`.
 |---|---|
 | `mygame analyze` | `parse`, `disasm`, `funcid`, `abi`, then `names` when a Ghidra export exists |
 | `mygame recomp` | lift x86 to C into `pipeline.gen` |
-| `mygame all [--system-tools]` | `analyze`, `recomp`, then `build` for the host's default target |
+| `mygame all [--system-tools] [--jobs N]` | `analyze`, `recomp`, then `build` for the host's default target |
 | `mygame parse\|disasm\|funcid\|abi\|ghidra\|names [-- ARGS]` | one stage; extra arguments go to the stage's tool |
 
 `src/recomp/gen.key.json` records what `gen/` was generated from (the XBE,
@@ -250,6 +295,8 @@ on a macOS host, windows elsewhere.
 |---|---|
 | `--system-tools` | use the host's cmake and ninja instead of the venv's |
 | `--stale-gen-ok` | build even when `gen/` is stale against its key |
+| `--jobs N` | compile N jobs at once (default: sized to the free memory) |
+| `--ignore-disk-space` | build even when the disk looks too small |
 | `-- ARGS` | extra CMake arguments |
 
 ### `mygame pins refresh`
