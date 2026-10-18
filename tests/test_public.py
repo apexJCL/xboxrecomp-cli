@@ -632,6 +632,36 @@ def test_the_rewrite_file_is_named_and_required(pub, capsys):
     assert rc == 2 and "does not exist" in out.err, out.err
 
 
+def test_a_checkout_without_a_rewrite_file_refuses(pub, capsys, monkeypatch):
+    """A main checkout run without XBR_PUBLIC_DIR finds the patterns in
+    .git/info but no rewrite file: it must not export or pass an audit with
+    no rewrites and no !fail checks."""
+    root = pub["root"]
+    with open(os.path.join(pub["pd"], "rewrite"), "a") as f:
+        f.write("!fail \\bsession session\\b\n")
+    assert xbr(root, "public", "init", capsys=capsys)[0] == 0
+    assert xbr(root, "public", "export", capsys=capsys)[0] == 0
+    info = os.path.join(root, ".git", "info")
+    write(os.path.join(info, "audit-private"), read(os.path.join(pub["pd"], "audit-private")))
+    monkeypatch.delenv("XBR_PUBLIC_DIR")
+    commit_file(root, "docs/more.md", "More.\n")
+    for args in (("export",), ("audit", "--all"), ("audit",)):
+        rc, out = xbr(root, "public", *args, capsys=capsys)
+        assert rc == 2 and "XBR_PUBLIC_DIR" in out.err, (args, out.err)
+    # The checkout's own rewrite file serves as well.
+    write(os.path.join(info, "xbr-public", "rewrite"), read(os.path.join(pub["pd"], "rewrite")))
+    assert xbr(root, "public", "audit", "--all", capsys=capsys)[0] == 0
+    # The range audit runs the rewrite file's checks over what is pushed.
+    tip = git(root, "rev-parse", "refs/public/main").stdout.strip()
+    blob = git(root, "hash-object", "-w", "--stdin", input="the game session session\n")
+    entries = git(root, "ls-tree", tip).stdout + "100644 blob %s\textra.md\n" % blob.stdout.strip()
+    tree = git(root, "mktree", input=entries).stdout.strip()
+    bad = git(root, "commit-tree", tree, "-p", tip, "-m", "x", env=as_author(AUTHOR))
+    git(root, "update-ref", "refs/public/main", bad.stdout.strip())
+    rc, out = xbr(root, "public", "audit", capsys=capsys)
+    assert rc == 1 and "(a !fail check)" in out.out + out.err, out.out + out.err
+
+
 def test_history_mode_checks_a_merge(pub, capsys):
     """A merge whose tree adds a line neither parent has: only its diff
     against the first parent shows it."""
@@ -697,3 +727,134 @@ def test_a_signing_config_does_not_sign(pub, capsys):
     assert xbr(root, "public", "init", capsys=capsys)[0] == 0
     rc, out = xbr(root, "public", "export", capsys=capsys)
     assert rc == 0, out.out + out.err
+
+
+# The cases of Burnout 3's own audit script, which `public audit` replaces
+# there: each must still be caught.
+
+
+def commit_bytes(root, rel, data):
+    path = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+    git(root, "add", "-f", "--", rel)
+    git(root, "commit", "-qm", "add file")
+
+
+def png(*chunks):
+    body = b"".join(len(d).to_bytes(4, "big") + t + d + b"\0\0\0\0" for t, d in chunks)
+    return layout.PNG_SIG + body + (0).to_bytes(4, "big") + b"IEND" + b"\0\0\0\0"
+
+
+@pytest.mark.parametrize(
+    "rel,data",
+    [
+        ("a.py", "p = '/Us" + "ers/someone/x'\n"),
+        ("a.py", "p = '/ho" + "me/someone/x'\n"),
+        ("a.py", "p = '/var/ho" + "me/someone'\n"),
+        ("a.md", "see C:\\Us" + "ers\\someone\\x\n"),
+        ("a.md", "see https://clau" + "de.ai/chat/x\n"),
+        # The rewrite rule keeps its case; the pattern matches without.
+        ("a.md", "the %s host\n" % HOSTNAME.upper()),
+        ("docs/FRAME.BMP", b"BM"),
+        ("data/track.Rws", b"x"),
+        ("docs/fr\u00e1me.bmp", b"BM"),
+        ("docs/shots/x.png", png()),
+        ("docs/images/b.png", png((b"eXIf", b"MM\0*"))),
+        ("docs/images/c.png", b"not a png"),
+        ("docs/images/clip.gif", b"GIF89a\0\1"),
+        ("blob.bin", b"\0\1\2\0" * 64),
+    ],
+)
+def test_export_refuses_what_the_fork_audit_did(pub, capsys, rel, data):
+    root = pub["root"]
+    assert xbr(root, "public", "init", capsys=capsys)[0] == 0
+    if isinstance(data, str):
+        commit_file(root, rel, data)
+    else:
+        commit_bytes(root, rel, data)
+    rc, out = xbr(root, "public", "export", capsys=capsys)
+    assert rc == 1 and rel in out.out, out.out + out.err
+    assert git(root, "rev-parse", "-q", "--verify", "refs/public/main", check=False).returncode
+
+
+def fork_with_screenshot(root):
+    """An upstream commit with docs/screenshots/race.png, merged, and
+    [public] upstream and upstream_files set for it."""
+    up_env = as_author("Up Stream <up@example.invalid>")
+    blob = git(root, "hash-object", "-w", "--stdin", input="\x89PNG\0up").stdout.strip()
+    sub = git(root, "mktree", input="100644 blob %s\trace.png\n" % blob).stdout.strip()
+    docs = git(root, "mktree", input="040000 tree %s\tscreenshots\n" % sub).stdout.strip()
+    tree = git(root, "mktree", input="040000 tree %s\tdocs\n" % docs).stdout.strip()
+    u1 = git(root, "commit-tree", tree, "-m", "upstream", env=up_env).stdout.strip()
+    git(root, "update-ref", "refs/remotes/origin/main", u1)
+    toml = read(os.path.join(root, "game.toml")).replace(
+        'author = "%s"' % AUTHOR,
+        'author = "%s"\nupstream = "origin/main"\nupstream_files = ["docs/screenshots/*"]' % AUTHOR,
+    )
+    write(os.path.join(root, "game.toml"), toml)
+    git(root, "commit", "-qam", "fork")
+    git(root, "merge", "-q", "--allow-unrelated-histories", "-m", "merge upstream", u1)
+    return u1
+
+
+def test_upstream_files_only_while_equal(pub, capsys):
+    root = pub["root"]
+    fork_with_screenshot(root)
+    assert xbr(root, "public", "init", capsys=capsys)[0] == 0
+    rc, out = xbr(root, "public", "audit", "--all", capsys=capsys)
+    assert rc == 0, out.out + out.err
+    commit_bytes(root, "docs/screenshots/race.png", b"\x89PNG\0ours")
+    rc, out = xbr(root, "public", "audit", "--all", capsys=capsys)
+    assert rc == 1 and "docs/screenshots/race.png" in out.out, out.out
+    git(root, "checkout", "-q", "origin/main", "--", "docs/screenshots/race.png")
+    git(root, "commit", "-qm", "upstream's again")
+    commit_bytes(root, "docs/screenshots/new.png", b"\x89PNG\0new")
+    rc, out = xbr(root, "public", "audit", "--all", capsys=capsys)
+    assert rc == 1 and "docs/screenshots/new.png" in out.out, out.out
+    assert "race.png" not in out.out
+
+
+def test_history_mode_skips_upstream_and_reads_the_whole_range(pub, capsys):
+    """Upstream's commits keep their own identity; a name that is not the
+    author's is a hit even with its address; a screenshot changed and put
+    back inside the range was still pushed."""
+    root = pub["root"]
+    fork_with_screenshot(root)
+    history_mode(root)
+    # Make the private history public as it stands, so the range starts here.
+    bare = pub["bare"]
+    git(root, "push", "-q", bare, "HEAD:refs/heads/main")
+    git(root, "fetch", "-q", bare, "main:refs/remotes/public/main")
+    env = as_author(AUTHOR)
+    # Upstream moves on and is merged: its commit is new to the range.
+    u1 = git(root, "rev-parse", "origin/main").stdout.strip()
+    tree = git(root, "rev-parse", u1 + "^{tree}").stdout.strip()
+    up_env = as_author("Up Stream <up@example.invalid>")
+    u2 = git(root, "commit-tree", tree, "-p", u1, "-m", "upstream two", env=up_env).stdout.strip()
+    git(root, "update-ref", "refs/remotes/origin/main", u2)
+    git(root, "merge", "-q", "-m", "merge upstream two", u2, env=env)
+    assert "up@example.invalid" in git(root, "log", "--format=%ae", "public/main..").stdout
+    rc, out = xbr(root, "public", "audit", capsys=capsys)
+    assert rc == 0, out.out + out.err
+    name, email = AUTHOR[:-1].split(" <")
+    other = as_author("Someone Else <%s>" % email)
+    write(os.path.join(root, "a.txt"), "ok\n")
+    git(root, "add", "a.txt")
+    git(root, "commit", "-qm", "c", env=other)
+    rc, out = xbr(root, "public", "audit", capsys=capsys)
+    assert rc == 1 and "Someone Else" in out.out, out.out
+    git(root, "reset", "-q", "--hard", "HEAD~1")
+    path = os.path.join(root, "docs", "screenshots", "race.png")
+    with open(path, "wb") as f:
+        f.write(b"\x89PNG\0ours")
+    git(root, "commit", "-qam", "ours", env=env)
+    git(root, "checkout", "-q", "origin/main", "--", "docs/screenshots/race.png")
+    git(root, "commit", "-qm", "upstream's again", env=env)
+    write(os.path.join(root, "b.txt"), "ok\n")
+    git(root, "add", "b.txt")
+    git(root, "commit", "-qm", "from /Us" + "ers/me", env=env)
+    rc, out = xbr(root, "public", "audit", capsys=capsys)
+    assert rc == 1, out.out + out.err
+    assert "docs/screenshots/race.png" in out.out and "message " in out.out, out.out

@@ -19,7 +19,7 @@ The private inputs never sit in the repo: the patterns (audit-private, one
 extended regex per line, matched without case) come from
 $XBR_PUBLIC_DIR/audit-private, then $XBR_AUDIT_PRIVATE, then
 <git dir>/info/audit-private; the rewrite rules from $XBR_PUBLIC_DIR/rewrite,
-else <git dir>/info/xbr-public/rewrite."""
+else <git dir>/info/xbr-public/rewrite (required in export mode)."""
 
 import datetime
 import os
@@ -307,8 +307,9 @@ def expand(m, rep):
 
 
 def load_rules(git):
-    """The rewrite file. Under a set XBR_PUBLIC_DIR it must exist: a
-    directory that lost it would export the names it hides unrewritten."""
+    """The rewrite file, which must exist: a checkout without it (a main
+    checkout run without XBR_PUBLIC_DIR, or a directory that lost it)
+    would export the names it hides unrewritten and skip its !fail checks."""
     pd = public_dir(git.root)
     path = os.path.join(pd or rewrite_dir(git), "rewrite")
     try:
@@ -319,7 +320,10 @@ def load_rules(git):
             raise Cannot(
                 "XBR_PUBLIC_DIR is set but %s does not exist (an empty file means no rules)" % path
             ) from None
-        return Rules()
+        raise Cannot(
+            "no rewrite file: set XBR_PUBLIC_DIR to the folder that holds rewrite and"
+            " audit-private, or create %s (an empty file means no rules)" % path
+        ) from None
     except UnicodeDecodeError as e:
         raise Cannot("%s is not UTF-8: %s" % (path, e)) from e
 
@@ -387,7 +391,7 @@ def refusal(ctx, mode, sha, path, data, upstream_blob):
     if bad and layout.exempt(ctx.game, path, (sha, data or b""), upstream_blob):
         return ""
     if bad and layout.README_IMAGE.match(path):
-        return "a README image that " + layout.png_problem(data or b"")
+        return "a README image: " + layout.png_problem(data or b"")
     return bad
 
 
@@ -620,12 +624,7 @@ def export(ctx, a):
     for f in dropped:
         host.say("    " + f)
     host.say(
-        "  rewrite: %s"
-        % (
-            "%s (%d rules, %d checks)" % (rules.path, len(rules.rules), len(rules.fails))
-            if rules.path
-            else "none"
-        )
+        "  rewrite: %s (%d rules, %d checks)" % (rules.path, len(rules.rules), len(rules.fails))
     )
     host.say("  rewritten %d:" % len(rewritten))
     for f in rewritten:
@@ -734,8 +733,9 @@ def changed(git, base, tip):
     return out
 
 
-def content_hits(ctx, base, tip):
-    """The diff base..tip: added lines, and the added or changed paths."""
+def content_hits(ctx, base, tip, fails=()):
+    """The diff base..tip: added lines (against the patterns and FAILS, the
+    rewrite file's checks), and the added or changed paths."""
     g = ctx.git
     pats = ctx.builtin + ctx.patterns
     hits = []
@@ -749,6 +749,11 @@ def content_hits(ctx, base, tip):
             for src, rx in pats:
                 if rx.search(line):
                     hits.append("%s:%d: /%s/: %s" % (path, n, src, line.strip()[:160]))
+            for src, rx in fails:
+                if rx.search(line):
+                    hits.append(
+                        "%s:%d: /%s/: %s (a !fail check)" % (path, n, src, line.strip()[:160])
+                    )
     upstream_blob = ctx.upstream_blob()
     blobs = Blobs(g.root)
     try:
@@ -973,7 +978,10 @@ def audit(ctx, a):
         unchecked = layout_source_problem(ctx, tip_sha)
         up = p["upstream"]
         revs = [tip_sha] + (["^" + base_sha] if base_sha else []) + (["^" + up] if up else [])
-        hits = content_hits(ctx, base_sha or EMPTY_TREE, tip_sha)
+        # Export mode pushes rewritten trees: its checks hold for what is
+        # pushed, and a checkout without the rewrite file refuses here too.
+        fails = load_rules(g).fails if p["mode"] == "export" else ()
+        hits = content_hits(ctx, base_sha or EMPTY_TREE, tip_sha, fails)
         hits += log_hits(ctx, revs)
         if p["mode"] == "history":
             hits += history_hits(ctx, revs)

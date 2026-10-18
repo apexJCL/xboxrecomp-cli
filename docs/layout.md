@@ -191,7 +191,7 @@ makes git skip it: init says so and exits 1.
 7. audits the result, and only then moves `refs/public/<branch>` (and the
    tag), appends `<public sha> <REF sha> <date>` to the map file
    `<slug>.map`, and prints what it excluded and rewrote, the rules it
-   read (`rewrite: <path> (N rules, M checks)`, or `rewrite: none`) and the
+   read (`rewrite: <path> (N rules, M checks)`) and the
    push. The CLI never pushes.
 
 `public audit [BASE..TIP]` checks what a push would publish. The default
@@ -200,7 +200,8 @@ range is `<remote>/<branch>..refs/public/<branch>` (history mode:
 - the content diff against the base (the empty tree when there is none),
   and in history mode each commit, merges included, against its first
   parent: added lines for home-directory paths, links into Claude's web
-  app and the private patterns; the added and changed paths for the
+  app and the private patterns (in export mode also the rewrite file's
+  `!fail` checks); the added and changed paths for the
   refusal list and the private patterns. The diff reads binaries as text,
   ignores every attributes file (a `-diff` or `binary` attribute hides
   nothing) and decodes quoted path names; an added line under a header it
@@ -243,9 +244,10 @@ work tree. One directory can serve several games and the CLI's own repo.
   keep to what both accept: no `\d`, `\w` or `\s` (use `[0-9]` and
   bracket classes) and no lookarounds.
 - **`rewrite`**: `$XBR_PUBLIC_DIR/rewrite`, else
-  `<git dir>/info/xbr-public/rewrite`. Optional without `XBR_PUBLIC_DIR`;
-  with it set, a missing `rewrite` there refuses the export (exit 2), so a
-  wrong folder does not publish an unrewritten tree.
+  `<git dir>/info/xbr-public/rewrite`. Required in export mode: without
+  it, `export` and `audit` refuse to run (exit 2), so a checkout run
+  without `XBR_PUBLIC_DIR`, or a wrong folder, does not publish an
+  unrewritten tree. An empty file means no rules.
 - **`<slug>.map`**: written by `export`, in the same folder as `rewrite`.
 
 ### The rewrite format

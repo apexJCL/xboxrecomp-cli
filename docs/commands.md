@@ -356,8 +356,8 @@ inputs). The CLI never pushes; `export` prints the push.
 | `--all` | `audit`: in export mode a dry-run export of HEAD, in history mode every tracked file and the whole history |
 
 Exit 1 on a hit (no ref moves), 2 when a check cannot run: no private
-patterns, no network, an `XBR_PUBLIC_DIR` inside the work tree or without
-`rewrite`, or a layout block that could not be checked.
+patterns, no network, an `XBR_PUBLIC_DIR` inside the work tree, no
+`rewrite` file in export mode, or a layout block that could not be checked.
 
 ### `xbr new DIR`
 
