@@ -536,6 +536,7 @@ def test_command_table():
         "fingerprint",
         "enhance",
         "wizard",
+        "public",
     ], names
 
 

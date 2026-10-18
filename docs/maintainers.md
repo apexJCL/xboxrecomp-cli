@@ -68,16 +68,26 @@ scripts/audit-public.sh --all      # every tracked file at HEAD, and the whole h
 
 It checks what the push would publish for private paths, private host names
 and addresses, binaries, game data, and any commit identity other than the
-noreply one. The private patterns are not in the repository: they live in
-the clone's `.git/info/audit-private`, one extended regex per line (`#`
-starts a comment), and the script refuses to run without them. Write them
-once per clone:
+noreply one. The private patterns are not in the repository: one extended
+regex per line (`#` starts a comment), matched without case, and the script
+refuses to run without them. It reads the first of these files that holds
+a pattern (a file of comments counts as missing):
+
+1. `$XBR_PUBLIC_DIR/audit-private`: the folder the games' `public audit`
+   and `public export` read too ([layout.md](layout.md#private-inputs)), so
+   one file serves the CLI and every game;
+2. `$XBR_AUDIT_PRIVATE`;
+3. the clone's `.git/info/audit-private`.
+
+To keep them per clone instead:
 
 ```sh
 printf '%s\n' 'hostname' 'name@example[.]com' > "$(git rev-parse --git-path info/audit-private)"
 ```
 
-`XBR_AUDIT_PRIVATE=<file>` points the script at another file.
+The same folder holds the games' `rewrite` rules (the format is in
+[layout.md](layout.md#the-rewrite-format)); this script reads only the
+patterns, since the CLI's commits are pushed as they are.
 
 `scripts/audit-public-allowed-messages` lists the commits already on the
 public `main` whose messages match a pattern added after they were pushed.

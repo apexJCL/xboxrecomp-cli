@@ -9,8 +9,9 @@ reads and validates it on every command:
   The error names the key.
 - Paths are relative to the game root, written with `/`, and must stay
   inside it.
-- Tables other than `[package]`, `[enhance]` and `[wizard]` are always
-  present in effect: a table you leave out takes its defaults.
+- Tables other than `[package]`, `[enhance]`, `[wizard]`, `[public]` and
+  `[layout]` are always present in effect: a table you leave out takes its
+  defaults.
 
 The CLI never writes this file, except once: `xbr new DIR` writes a starter
 one (every required key filled in, the defaults written out with their
@@ -318,6 +319,39 @@ two entries share a url.
 | `license` | required | An SPDX licence expression (`MIT`, `OFL-1.1`, `MIT OR Apache-2.0`). |
 | `url` | required | Its page, `https://` with no spaces or control characters: the GitHub page when there is one. |
 | `own` | `false` | `true` for the game's own repository: listed with my repos, first. |
+
+
+## [public]
+
+This table is optional. With it, the game has a public repository, and
+`public init`, `public export` and `public audit` publish to it
+([layout.md](layout.md#publishing)); doctor then also requires
+`checks.yml` and `openspec/`. The table is published with the tree, so
+nothing private goes in it: the patterns and rewrite rules live in
+`$XBR_PUBLIC_DIR` ([layout.md](layout.md#private-inputs)).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `url` | required | The public repository, the ssh form `git@github.com:<owner>/<repo>.git`. `[wizard] repo` must name the same repo. |
+| `remote` | `"public"` | The remote `public init` keeps for it. |
+| `branch` | `"main"` | The public branch. |
+| `mode` | `"export"` | `export`: one fresh commit per round, built from the private tree; `history`: the private branch itself is pushed, so every commit must be clean and carry `author`. |
+| `author` | required | `"Name <email>"`: the export's author, committer and tagger, and the one identity the audit accepts. |
+| `exclude` | `[]` | Globs on tracked paths never exported, beyond the private set (which they cannot shrink). |
+| `allow` | `[]` | Globs for images and binaries allowed besides `docs/images/*.png`. |
+| `upstream` | `""` | A fork's upstream ref (`origin/main`): its commits are public already, so the audit skips them, and the export adds the newest one REF contains as a second parent. |
+| `upstream_files` | `[]` | Globs allowed while each file equals the upstream's blob (a fork's screenshots). |
+| `message` | `""` | The export commit's message; empty is `<name> static recompilation: <YYYY-MM-DD> round`. |
+
+## [layout]
+
+This table is optional: where the repo differs from the standard layout
+([layout.md](layout.md)).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `main` | `"src/main.c"` | The main C source. |
+| `extra` | `[]` | Top-level tracked names beyond the standard ones (a fork's upstream files, such as `regen.sh` or `tools`); doctor notes any other. |
 
 ## [enhance.hud]
 

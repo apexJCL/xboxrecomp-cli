@@ -23,7 +23,9 @@
 # Private patterns (the bench host's name, the personal email, anything
 # else that must not appear) are not in this repository, since naming them
 # here would publish them: one extended regex per line, matched without
-# case, in the file $XBR_AUDIT_PRIVATE or else <git dir>/info/audit-private.
+# case, in $XBR_PUBLIC_DIR/audit-private (the file every game's
+# `public audit` reads too), else $XBR_AUDIT_PRIVATE, else
+# <git dir>/info/audit-private.
 # Without one the audit refuses to pass.
 #
 # The regexes below bracket a letter (/[U]sers/) so this file does not
@@ -71,17 +73,33 @@ if [ $all = 0 ] && ! git rev-parse -q --verify "${range%%..*}^{commit}" >/dev/nu
     exit 2
 fi
 
-private=${XBR_AUDIT_PRIVATE:-$(git rev-parse --git-path info/audit-private)}
-if [ ! -s "$private" ]; then
-    echo "audit-public: no private patterns in $private, so it cannot check for them." >&2
+# The first file with a pattern wins; one with only comments and blanks
+# counts as missing, as in `<game> public audit`.
+has_patterns() { [ -f "$1" ] && grep -qvE '^[[:space:]]*(#|$)' "$1"; }
+private=""
+looked=""
+for f in "${XBR_PUBLIC_DIR:+$XBR_PUBLIC_DIR/audit-private}" "${XBR_AUDIT_PRIVATE:-}" \
+    "$(git rev-parse --git-path info/audit-private)"; do
+    [ -n "$f" ] || continue
+    looked="$looked $f"
+    if has_patterns "$f"; then
+        private=$f
+        break
+    fi
+done
+if [ -z "$private" ]; then
+    echo "audit-public: no private patterns (looked in$looked), so it cannot check for them." >&2
     echo "Write one extended regex per line (the bench host's name, the personal email)," >&2
     echo "once per clone:" >&2
     echo "    printf '%s\n' 'hostname' 'name@example[.]com' > \"\$(git rev-parse --git-path info/audit-private)\"" >&2
-    echo "or set XBR_AUDIT_PRIVATE to a file that has them. See docs/maintainers.md, Before a public push." >&2
+    echo "or set XBR_PUBLIC_DIR to a directory with an audit-private file (or XBR_AUDIT_PRIVATE" >&2
+    echo "to the file). See docs/maintainers.md, Before a public push." >&2
     exit 2
 fi
 patterns=("${PUBLIC_PATTERNS[@]}")
 while IFS= read -r p || [ -n "$p" ]; do
+    p="${p#"${p%%[![:space:]]*}"}"
+    p="${p%"${p##*[![:space:]]}"}"
     [ -n "$p" ] && [ "${p:0:1}" != "#" ] && patterns+=("$p")
 done <"$private"
 

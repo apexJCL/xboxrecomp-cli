@@ -193,6 +193,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | `mygame build [windows\|macos]` | Configures once, then compiles incrementally, as many jobs as the free memory holds (`--jobs N` to choose) |
 | `mygame package <target>` | Makes a private bundle for `windows`, `steamos` or `macos` |
 | `mygame wizard <config\|build\|check>` | Builds the player's build wizard for a release |
+| `mygame public <init\|export\|audit>` | Publishes a round to the game's public repo: one audited commit, the push guard |
 | `mygame golden <subcommand>` | Records and checks golden frames; `golden run` on the Mac |
 | `mygame bench <command>` | Builds and runs on a Proton host over ssh: runs, goldens, pacing |
 | `mygame enhance hud` | Makes a HUD texture pack from your own dump |
@@ -205,6 +206,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | [docs/porting.md](docs/porting.md) | The porting loop, the keys a port meets first, the D3D fence, macOS |
 | [docs/commands.md](docs/commands.md) | Every command, option and tool |
 | [docs/manifest.md](docs/manifest.md) | `game.toml`, key by key |
+| [docs/layout.md](docs/layout.md) | A game repo's layout, its ignores and gates, and publishing it |
 | [docs/bundle.md](docs/bundle.md) | What `package` writes: `manifest.json`, patches, each target's layout and applier |
 | [docs/wizard.md](docs/wizard.md) | The build wizard: the player's guide, the config, the build, the release workflow |
 | [docs/bootstrap.md](docs/bootstrap.md) | How a game finds the CLI, the pins, what the host needs |

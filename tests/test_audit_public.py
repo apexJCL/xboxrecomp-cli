@@ -54,6 +54,7 @@ def repo(d):
 def audit(r, *args, env=None):
     e = dict(os.environ)
     e.pop("XBR_AUDIT_PRIVATE", None)
+    e.pop("XBR_PUBLIC_DIR", None)
     e.update(env or {})
     return subprocess.run(["bash", SCRIPT, *args], cwd=r, capture_output=True, text=True, env=e)
 
@@ -165,6 +166,25 @@ def test_refuses_without_private_patterns(d):
     with open(other, "w") as f:
         f.write(HOSTNAME + "\n")
     assert audit(r, env={"XBR_AUDIT_PRIVATE": other}).returncode == 0
+    # $XBR_PUBLIC_DIR/audit-private, the games' file, comes first.
+    pd = os.path.join(d, "public")
+    os.makedirs(pd)
+    with open(os.path.join(pd, "audit-private"), "w") as f:
+        f.write("ok\n")
+    commit(r, "x.txt", "ok\n")
+    p = audit(r, env={"XBR_AUDIT_PRIVATE": other, "XBR_PUBLIC_DIR": pd})
+    assert p.returncode == 1 and "/ok/" in p.stdout, p.stdout
+    # A file with only comments and blanks counts as missing, as in the
+    # games' `public audit`: the next one is read.
+    with open(os.path.join(pd, "audit-private"), "w") as f:
+        f.write("# none yet\n\n")
+    p = audit(r, env={"XBR_AUDIT_PRIVATE": other, "XBR_PUBLIC_DIR": pd})
+    assert p.returncode == 0, p.stdout + p.stderr
+    with open(other, "w") as f:
+        f.write("  # indented comment\n")
+    p = audit(r, env={"XBR_AUDIT_PRIVATE": other, "XBR_PUBLIC_DIR": pd})
+    # Neither has a pattern now (info/audit-private was removed above).
+    assert p.returncode == 2 and "no private patterns" in p.stderr, p.stderr
 
 
 def test_no_upstream_needs_all(d):

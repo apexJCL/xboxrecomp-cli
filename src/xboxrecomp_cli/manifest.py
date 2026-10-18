@@ -230,10 +230,48 @@ SPEC = {
         "option": (TABLES, []),
         "credit": (TABLES, []),
     },
+    # The public repo and how a round reaches it (public.py; docs/layout.md).
+    # Published with the tree, so nothing private goes here: the patterns
+    # and rewrite rules live in $XBR_PUBLIC_DIR.
+    "public": {
+        # The ssh form, git@github.com:<owner>/<repo>.git.
+        "url": (STR, REQUIRED),
+        "remote": (STR, "public"),
+        "branch": (STR, "main"),
+        # "export": one commit per round built from the private tree;
+        # "history": the private branch itself is pushed.
+        "mode": (STR, "export"),
+        # "Name <email>": the export's author, committer and tagger, and
+        # the one identity the audit accepts.
+        "author": (STR, REQUIRED),
+        # Globs on tracked paths, beyond the CLI's private set (layout.PRIVATE).
+        "exclude": (STRS, []),
+        # Images and binaries allowed besides docs/images/*.png.
+        "allow": (STRS, []),
+        # A fork's upstream ref (b3: origin/main): its commits are public
+        # already.
+        "upstream": (STR, ""),
+        # Paths allowed only while they equal the upstream's blob.
+        "upstream_files": (STRS, []),
+        # The export commit's message; "" is "<name> static recompilation:
+        # <date> round".
+        "message": (STR, ""),
+    },
+    # Where the layout differs from the standard one (docs/layout.md).
+    "layout": {
+        "main": (STR, "src/main.c"),
+        # Top-level tracked names beyond the standard ones (a fork's
+        # upstream files): any other is a doctor note.
+        "extra": (STRS, []),
+    },
 }
 # Optional tables: a game without them still sets up, generates, builds and
-# benches (package says the manifest has no [package]).
-OPTIONAL = {"package", "enhance", "wizard"}
+# benches (package says the manifest has no [package]). A game without
+# [public] is not published; one without [layout] has the standard one.
+OPTIONAL = {"package", "enhance", "wizard", "public", "layout"}
+PUBLIC_MODES = ("export", "history")
+# "Name <email>", as git writes an identity.
+IDENTITY_RE = re.compile(r"^([^<>\n]*[^<>\s])\s+<([^<>\s]+@[^<>\s]+)>$")
 # [[wizard.fetch]] and [[wizard.option]] keys: (type, default).
 WIZARD_FETCH = {
     "name": (STR, REQUIRED),
@@ -438,6 +476,46 @@ def _entry(e, spec):
         if k not in out and default is not REQUIRED and default is not OPTIONAL_ENTRY:
             out[k] = list(default) if isinstance(default, list) else default
     return out
+
+
+def repo_id(url):
+    """<owner>/<repo> of a repo URL, lower case, whatever the form:
+    git@host:o/r.git, ssh://git@host/o/r, https://host/o/r(.git)(/), so
+    the ssh [public] url and the https [wizard] repo compare. "" when the
+    URL names no owner and repo."""
+    u = url.strip().rstrip("/")
+    if u.endswith(".git"):
+        u = u[:-4]
+    m = re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://(?:[^@/]*@)?[^/]+/(.+)$", u)
+    if not m:
+        m = re.match(r"^(?:[^@/:]+@)?[^/:]+:(?!//)(.+)$", u)
+    if not m:
+        return ""
+    parts = [p for p in m.group(1).split("/") if p]
+    if len(parts) < 2:
+        return ""
+    return "/".join(parts[-2:]).lower()
+
+
+def _check_public(m):
+    p = m.get("public")
+    if not p:
+        return []
+    errors = []
+    if not re.match(r"^[^@\s:/]+@[^\s:/]+:[^\s]+$", p["url"]) or not repo_id(p["url"]):
+        errors.append("public.url: the ssh form, git@<host>:<owner>/<repo>.git")
+    if p["mode"] not in PUBLIC_MODES:
+        errors.append("public.mode: %r is not one of %s" % (p["mode"], ", ".join(PUBLIC_MODES)))
+    if not IDENTITY_RE.match(p["author"]):
+        errors.append('public.author: "Name <email>"')
+    for k in ("remote", "branch"):
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$", p[k]) or ".." in p[k]:
+            errors.append("public.%s: %r is not a plain git name" % (k, p[k]))
+    if p["upstream"].startswith("-"):
+        errors.append("public.upstream: %r starts with '-'" % p["upstream"])
+    # A [wizard] repo naming another repo is doctor's layout problem, not
+    # a load error: the game still builds while it moves.
+    return errors
 
 
 def _check_wizard(m):
@@ -749,6 +827,7 @@ def _check_values(m):
     if m["pipeline"]["split"] <= 0:
         errors.append("pipeline.split: must be positive")
     errors += _check_wizard(m)
+    errors += _check_public(m)
     for s in m["xbe"]["sha256"]:
         if not re.match(r"^[0-9a-f]{64}$", s):
             errors.append("xbe.sha256: %r is not a sha256" % s)
@@ -800,6 +879,8 @@ def _paths(m):
                 out.append(("package." + k, m["package"][k]))
     if "wizard" in m and m["wizard"]["icon"]:
         out.append(("wizard.icon", m["wizard"]["icon"]))
+    if "layout" in m:
+        out.append(("layout.main", m["layout"]["main"]))
     return out
 
 

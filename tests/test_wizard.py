@@ -1108,6 +1108,7 @@ def test_doctor_json(wgame):
         "next",
         "toolkit_features",
         "resources",
+        "layout",
     }
     assert set(out["host"]) == {"os", "arch", "python"}
     r = out["resources"]

@@ -159,6 +159,13 @@ def cmd_doctor(a):
     host.say("can package: %s" % (", ".join(targets) or "nothing yet"))
     for t, why in blocked.items():
         host.say("  %s: %s" % (t, why))
+    # The layout block reports; it never changes the status (a player's
+    # clone of a game with layout drift still packages).
+    from . import layout
+
+    host.say()
+    for line in layout.text_lines(layout.report(host.g())):
+        host.say(line)
     return doctor_status(targets)
 
 
@@ -510,6 +517,23 @@ def register():
         "maintainers: the player's build wizard (config, build, check; docs/wizard.md)",
         _cfg_wizard,
     )(cmd_wizard)
+    command(
+        "public",
+        "maintainers: the public repo (init, export, audit; docs/layout.md)",
+        _cfg_public,
+    )(cmd_public)
+
+
+def _cfg_public(p):
+    from . import public
+
+    public.configure(p)
+
+
+def cmd_public(a):
+    from . import public
+
+    return public.run(a)
 
 
 def _cfg_wizard(p):
@@ -628,10 +652,14 @@ def tool_argv(name, argv):
         from . import wrapper
 
         return wrapper.main(argv, G)
+    if name == "workflow":
+        from . import workflow
+
+        return workflow.main(argv, G)
     raise AssertionError(name)
 
 
-TOOLS = ("golden", "pacing-stats", "benchlog-retention", "audio-check", "wrapper")
+TOOLS = ("golden", "pacing-stats", "benchlog-retention", "audio-check", "wrapper", "workflow")
 
 
 def clean_environ():

@@ -275,3 +275,36 @@ def test_blinx2_constants():
     assert g.analysis_json == os.path.join(GAME, "game_files", "default_analysis.json")
     assert g.regen_marker == os.path.join(GAME, "src", "recomp", ".gen-regenerating")
     assert g.gen_key == os.path.join(GAME, "src", "recomp", "gen.key.json")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "git@github.example:Owner/Repo.git",
+        "ssh://git@github.example/owner/repo",
+        "https://github.example/owner/repo.git/",
+        "https://github.example/owner/repo",
+    ],
+)
+def test_repo_id_normalises(url):
+    assert manifest.repo_id(url) == "owner/repo"
+
+
+def test_public_table():
+    pub = '\n[public]\nurl = "git@github.example:o/r.git"\nauthor = "A B <a@example.invalid>"\n'
+    m = manifest.parse_text(MINIMAL + pub)
+    p = m["public"]
+    assert (p["remote"], p["branch"], p["mode"], p["exclude"]) == ("public", "main", "export", [])
+    for bad, why in (
+        (pub.replace("git@github.example:o/r.git", "https://github.example/o/r"), "ssh form"),
+        (pub + 'mode = "mirror"\n', "public.mode"),
+        (pub.replace("A B <a@example.invalid>", "nobody"), "public.author"),
+        (pub + 'branch = "../x"\n', "public.branch"),
+    ):
+        with pytest.raises(manifest.ManifestError, match=why):
+            manifest.parse_text(MINIMAL + bad)
+
+
+def test_layout_table():
+    m = manifest.parse_text(MINIMAL + '\n[layout]\nmain = "src/host/main.c"\nextra = ["tools"]\n')
+    assert m["layout"] == {"main": "src/host/main.c", "extra": ["tools"]}

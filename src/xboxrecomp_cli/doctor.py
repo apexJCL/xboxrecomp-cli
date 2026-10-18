@@ -429,7 +429,7 @@ def report_json(lines, targets, blocked):
     the wizard enables a target when it has none)."""
     import json
 
-    from . import setup
+    from . import layout, setup
 
     g = host.g()
     wanted = g.m["package"]["targets"] if "package" in g.m else []
@@ -451,6 +451,9 @@ def report_json(lines, targets, blocked):
             "toolkit_features": FEATURES[0],
             # D5: memory, cores, disk and the job count; null when unknown.
             "resources": RESOURCES[0],
+            # The layout block (docs/layout.md): problems and notes. A
+            # maintainer's matter, so it never blocks a target.
+            "layout": layout.report(g),
         },
         indent=2,
     )

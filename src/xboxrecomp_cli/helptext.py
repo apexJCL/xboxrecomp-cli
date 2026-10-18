@@ -44,6 +44,10 @@ Developer commands:
   @slug@ pins refresh                   maintainers: re-pin the downloads
   @slug@ wizard build [--tag TAG]       the player's build wizard for a release
                                         (dist/wizard/; config, check)
+  @slug@ public init|export|audit       maintainers: the public repo (one commit
+                                        per round; docs/layout.md)
+  @slug@ workflow --check               the CI workflows against the CLI's
+                                        templates
   @slug@ new DIR                        start another game: a manifest, bootstrap
                                         and template in DIR (xbr new --help)
   @slug@ bench <command>                drive the Proton bench host (@slug@ bench --help)

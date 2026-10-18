@@ -867,3 +867,24 @@ def test_fence_past_64k_and_in_a_dump_folder(d, tk, game):
     assert "xbox_Nv2aMirrorFence(0x002F1FB8, 0x2C, 0x30);" in read(
         os.path.join(d, "g2", "src", "main.c")
     )
+
+
+def test_license_and_openspec_are_choices(d, tk, game):
+    root = os.path.join(d, "g")
+    assert (
+        new(root, "--offline", "--cli-commit", CLI, "--toolkit-commit", TK, "--no-openspec")[0] == 0
+    )
+    assert not os.path.exists(os.path.join(root, "LICENSE"))
+    assert not os.path.exists(os.path.join(root, "openspec"))
+    root2 = os.path.join(d, "g2")
+    assert (
+        new(root2, "--offline", "--cli-commit", CLI, "--toolkit-commit", TK, "--license", "mit")[0]
+        == 0
+    )
+    lic = read(os.path.join(root2, "LICENSE"))
+    assert lic.startswith("MIT License") and "g2 static recompilation contributors" in lic
+    spec = read(os.path.join(root2, "openspec", "config.yaml"))
+    assert spec.startswith("schema: spec-driven") and "@" not in spec
+    ign = read(os.path.join(root2, ".gitignore")).split("\n")
+    for want in ("/wt/", "_local/", "runs/", "*.bak", "*.bak-*", "*.pack", "CACHE/"):
+        assert want in ign, want

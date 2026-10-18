@@ -141,6 +141,63 @@ def template(target, name, content=False):
     return os.path.join(DEFAULTS, target, name)
 
 
+# The files each target reads from the game's tree, with no fallback in
+# this CLI: package uses these, and layout.required_files() lists them, so
+# doctor's layout block names what a package run would miss.
+def launch_env_path(target, G=None):
+    G = G or g()
+    return os.path.join(
+        G.content, "launch.env.default." + ("macos" if target == "macos" else "windows")
+    )
+
+
+def config_default_path(G=None):
+    return os.path.join((G or g()).content, "config.default.toml")
+
+
+def readme_part_path(target, G=None):
+    """<content>/<target>/README.part; steamos falls back on the CLI's."""
+    G = G or g()
+    if target == "steamos":
+        return template("steamos", "README.part", content=True)
+    return os.path.join(G.content, target, "README.part")
+
+
+def macos_template(name, G=None):
+    """<package.templates>/macos/<name> (the macos target has no CLI copy)."""
+    G = G or g()
+    if not G.templates:
+        raise CliError("game.toml sets no package.templates (the macos target needs them)")
+    return os.path.join(G.templates, "macos", name)
+
+
+def required_files(G):
+    """[(path, why)] of the game's own packaging files a package run of
+    each [package] target reads (absolute paths)."""
+    pkg = G.m["package"]
+    out = []
+    for t in pkg["targets"]:
+        why = "packaging the %s target" % t
+        out.append((launch_env_path(t, G), why))
+        if t != "steamos":
+            out.append((readme_part_path(t, G), why))
+        if t == "macos":
+            if not G.templates:
+                out.append(
+                    (G.path("<package.templates>", "macos"), why + " (set package.templates)")
+                )
+            else:
+                out += [(macos_template(n, G), why) for n in (pkg["app"] + ".in", "Info.plist.in")]
+    if manifest.builds_enhance(G.m):
+        out.append((config_default_path(G), "the enhancements layer's defaults"))
+    seen, uniq = set(), []
+    for p, why in out:
+        if p not in seen:
+            seen.add(p)
+            uniq.append((p, why))
+    return uniq
+
+
 def data_paths(target):
     d = g().m["data"]
     return {
@@ -312,14 +369,12 @@ def readme(target, version, lib, dst, enhance=True):
     with open(dst, "w", newline="\n") as f:
         f.write(text)
     part_values = {"VERSION": version}
+    # steamos: the CLI's own install section, unless the game has its own.
+    part_path = readme_part_path(target, G)
     if target == "steamos":
-        # The CLI's own install section, unless the game has its own.
         from . import steamos
 
-        part_path = template("steamos", "README.part", content=True)
         part_values.update(steamos.steamos_values(lib))
-    else:
-        part_path = os.path.join(G.content, target, "README.part")
     part = read_template(part_path, caps)
     for k, v in part_values.items():
         part = part.replace("@%s@" % k, v)
@@ -668,19 +723,12 @@ def write_common(
     reads no config file, so config.default.toml is not staged (package()
     has refused a seed and a hud pack already)."""
     G = g()
-    fam = "macos" if target == "macos" else "windows"
-    copy_lf(
-        os.path.join(G.content, "launch.env.default." + fam),
-        os.path.join(payload, "launch.env.default"),
-    )
+    copy_lf(launch_env_path(target, G), os.path.join(payload, "launch.env.default"))
     stamp_launch_env(os.path.join(payload, "launch.env.default"))
     # Read by the game beside its executable (Contents/Resources on macOS,
     # where the payload goes), never copied to the player's config/.
     if enhance:
-        copy_lf(
-            os.path.join(G.content, "config.default.toml"),
-            os.path.join(payload, "config.default.toml"),
-        )
+        copy_lf(config_default_path(G), os.path.join(payload, "config.default.toml"))
     if seed is not None:
         with open(os.path.join(payload, SEED_NAME), "w", newline="\n") as f:
             f.write(seed)

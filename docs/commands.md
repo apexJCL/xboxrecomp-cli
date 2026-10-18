@@ -180,6 +180,12 @@ pin runs on the CPU rasteriser with stock settings. Exit 1 when the game's
 steamos target is blocked, or when anything is missing for a game without
 one.
 
+`layout:` is the repo's drift from the standard layout
+([layout.md](layout.md#doctors-layout-block)): missing entries, ignore
+gaps, tracked data, a nested worktree, workflows off their templates, the
+push guard. It is for maintainers: it never changes `next:` or the exit
+status (`public audit` fails on it instead).
+
 `--json` prints the same as data for the build wizard: `host`, `lines`,
 `targets`, `blocked`, `problems`, `next`, `blockers`, for each package
 target what a run that imports a dump cannot fetch itself (each with its
@@ -187,7 +193,7 @@ fix), `toolkit_features` (`{feature: true|false}`, null before
 `setup`), and `resources`: `cores`, `mem_total`, `mem_available`,
 `disk_free`, `disk_need` (bytes), `jobs`, `gen_jobs`, `gen_job_bytes`,
 `gen_job_source` (`game`, `measured` or `estimate`) and `warnings`, with
-`null` for what is unknown.
+`null` for what is unknown, and `layout`: `problems` and `notes`.
 
 ### `mygame fingerprint [PATH]`
 
@@ -330,6 +336,29 @@ Needs `[wizard]` in `game.toml` and a CLI checkout (the bootstrap's).
 | `--no-build` | `check`: the gates only |
 | `--name NAME` | `font`: look for this full name instead (to try the missing case) |
 
+### `mygame public <init|export|audit>`
+
+Maintainers: the game's public repository, from `[public]`
+([layout.md](layout.md#publishing) has the modes, the guard and the private
+inputs). The CLI never pushes; `export` prints the push.
+
+| Action | Effect |
+|---|---|
+| `init` | one remote for the public repo (`[public] remote`), its URL and push URL `[public] url`, no tags fetched; in export mode also the push refspec `refs/public/<branch>:refs/heads/<branch>` and the pre-push guard, which lets only the export and its tags reach the public repo |
+| `export [REF]` | REF's tree (HEAD, the default and the only REF accepted) without the private set, rewritten and checked, as one commit on the public tip with `[public] author`; audited, then put in `refs/public/<branch>`, recorded in `<slug>.map`, and the push printed |
+| `audit [BASE..TIP]` | what the push would publish (default `<remote>/<branch>..refs/public/<branch>`): added lines, paths, messages, identities, new tags, the tree, the layout block and the `[cli]` and `[toolkit]` tags |
+
+| Option | Effect |
+|---|---|
+| `--tag TAG` | `export`: also the annotated tag `refs/public-tags/TAG`, its message the tag's `CHANGELOG.md` section |
+| `--message MSG` | `export`: the commit message (default `[public] message`, else `<name> static recompilation: <date> round`) |
+| `--allow-dirty` | `export`: export HEAD although the working tree has changes |
+| `--all` | `audit`: in export mode a dry-run export of HEAD, in history mode every tracked file and the whole history |
+
+Exit 1 on a hit (no ref moves), 2 when a check cannot run: no private
+patterns, no network, an `XBR_PUBLIC_DIR` inside the work tree or without
+`rewrite`, or a layout block that could not be checked.
+
 ### `xbr new DIR`
 
 Start another game: `game.toml`, the bootstrap and its wrappers, the tools
@@ -352,6 +381,8 @@ way is a clone and `uv run xbr new ../mygame`.
 | `--cli-tag TAG`, `--cli-commit SHA` | the CLI pin (default: the release this CLI runs at, else its commit) |
 | `--llvm-mingw TAG` | the llvm-mingw release |
 | `--offline` | write the files only: no clone, no pins, no lock |
+| `--license mit` | also a `LICENSE`: MIT, this year, "`<name>` static recompilation contributors" (default: none, the choice is the owner's; `doctor` reports it missing) |
+| `--no-openspec` | skip `openspec/` (`config.yaml`, `specs/`, `changes/`), for a game that will have no `[public]` |
 
 ### `mygame bench <command>`
 
@@ -430,6 +461,7 @@ arguments; `mygame <tool> --help` prints them.
 | `mygame benchlog-retention` | retention for the `bench-logs/` store; a dry run unless `--apply` |
 | `mygame audio-check WAV` | checks on an audio dump or an xemu reference capture; runs in the game's `.venv` (needs numpy) |
 | `mygame wrapper --check` / `--print` | compare the game's bootstrap with this CLI's template, or print the template |
+| `mygame workflow --check` / `--print` | compare `release-wizard.yml` (with `[wizard]`) and `checks.yml` (with `[public]`) with this CLI's templates, or print them |
 
 `golden check` fails a run whose `[ENHANCE]` line shows a non-stock value
 for a toolkit key or one of the game's (`golden.enhance_stock`); `golden
