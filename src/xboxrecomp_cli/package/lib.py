@@ -104,18 +104,211 @@ def sha256_file(path, bufsize=1 << 20):
     return h.hexdigest()
 
 
+class GitError(subprocess.CalledProcessError, ValueError):
+    """A git command that failed, with git's stderr in its message: the
+    callers that fall back catch CalledProcessError as before, and package
+    turns the ValueError into a CliError."""
+
+    def __str__(self):
+        err = (self.stderr or b"").decode(errors="replace").strip()
+        cmd = " ".join(self.cmd[3:]) if len(self.cmd) > 3 else " ".join(self.cmd)
+        return "git %s in %s failed: %s" % (cmd, self.cmd[2], err or "exit %d" % self.returncode)
+
+
 def git(tree, *args):
-    return subprocess.run(
-        ["git", "-C", tree] + list(args), check=True, stdout=subprocess.PIPE
-    ).stdout
+    # git's stderr stays with the error: a caller that falls back (no
+    # repo, no commits yet) must not leave "fatal: ..." on the terminal,
+    # and one that does not shows it in the message.
+    cmd = ["git", "-C", tree] + list(args)
+    r = subprocess.run(cmd, capture_output=True)
+    if r.returncode != 0:
+        raise GitError(r.returncode, cmd, r.stdout, r.stderr)
+    return r.stdout
 
 
 # ── version ──────────────────────────────────────────────────────────────
 
+# A tree with no commit to name: outside git ("nogit"), or a repo before
+# its first commit ("nocommit"). Its version names a digest of its files
+# instead, after this word: c<word><6 hex>.
+NOGIT, NOCOMMIT = "nogit", "nocommit"
+MODE_NOTES = {NOGIT: "no git repository", NOCOMMIT: "no commits yet"}
+# realpath -> skip(rel, is_dir) for the walk of a tree outside git: the
+# game's, from layout.py (package registers it). Any other tree skips .git
+# and __pycache__ anywhere, and at the top setup's clones, the venvs,
+# .xbr/, dist/, node_modules and the build trees.
+CONTENT_SKIP = {}
+# (realpath, mode) -> content_state: one walk and hash per tree per run
+# (package asks for each tree's state several times).
+CONTENT_MEMO = {}
+_TOP_SKIP = {"external", "third_party", "dist", "node_modules", ".xbr"}
+
+
+def git_mode(tree):
+    """NOGIT, NOCOMMIT, or "" for the root of a repo with a HEAD commit.
+    A tree inside another repo is NOGIT: that repo's commit does not name
+    it. A git that fails for another reason (dubious ownership, a corrupt
+    repo) raises GitError with its message."""
+    cmd = ["git", "-C", tree, "rev-parse", "--show-toplevel"]
+    try:
+        r = subprocess.run(cmd, capture_output=True)
+    except OSError:
+        return NOGIT  # no git on this machine
+    if r.returncode != 0:
+        if b"not a git repository" in r.stderr.lower():
+            return NOGIT
+        raise GitError(r.returncode, cmd, r.stdout, r.stderr)
+    top = r.stdout.decode(errors="replace").strip()
+    if os.path.normcase(os.path.realpath(top)) != os.path.normcase(os.path.realpath(tree)):
+        return NOGIT
+    cmd = ["git", "-C", tree, "rev-parse", "--verify", "HEAD^{commit}"]
+    r = subprocess.run(cmd, capture_output=True)
+    if r.returncode == 0:
+        return ""
+    # No commit: HEAD names a branch that does not exist yet. A branch
+    # whose commit is missing, or a detached HEAD that names none, is a
+    # broken repo, and show-ref says so.
+    ref = subprocess.run(["git", "-C", tree, "symbolic-ref", "-q", "HEAD"], capture_output=True)
+    name = ref.stdout.decode(errors="replace").strip()
+    if ref.returncode == 0 and name:
+        show = ["git", "-C", tree, "show-ref", "--verify", "-q", name]
+        s = subprocess.run(show, capture_output=True)
+        if s.returncode == 1 and not s.stderr.strip():
+            return NOCOMMIT
+        if s.stderr.strip():
+            raise GitError(s.returncode, show, s.stdout, s.stderr)
+    raise GitError(r.returncode, cmd, r.stdout, r.stderr)
+
+
+def _default_skip(rel, is_dir):
+    name = rel.rsplit("/", 1)[-1]
+    if name in (".git", "__pycache__"):
+        return True
+    if "/" in rel:
+        return False
+    if name in _TOP_SKIP or name.startswith(".venv"):
+        return True
+    return is_dir and name.startswith("build")
+
+
+def _skip_for(tree):
+    return CONTENT_SKIP.get(os.path.realpath(tree)) or _default_skip
+
+
+def _kept(rel, skip):
+    """rel and none of its folders skipped."""
+    segs = rel.split("/")
+    for i in range(1, len(segs)):
+        if skip("/".join(segs[:i]), True):
+            return False
+    return not skip(rel, False)
+
+
+def walk_files(tree, skip=None):
+    """The files of a tree outside git, as sorted rel paths: the walk
+    leaves out what skip names (folders whole) and, when the tree has a
+    .gitignore and git runs, what that .gitignore ignores, so the digest
+    holds what a first commit would. A symlink to a folder is an entry of
+    its own, as git records it, and the walk does not follow it."""
+    from .. import layout
+
+    skip = skip or _skip_for(tree)
+    rels = []
+    for dirpath, dirnames, filenames in os.walk(tree):
+        base = os.path.relpath(dirpath, tree).replace(os.sep, "/")
+        base = "" if base == "." else base + "/"
+        keep = []
+        for d in sorted(dirnames):
+            if skip(base + d, True):
+                continue
+            if os.path.islink(os.path.join(dirpath, d)):
+                rels.append(base + d)
+            else:
+                keep.append(d)
+        dirnames[:] = keep
+        rels += [base + f for f in filenames if not skip(base + f, False)]
+    try:
+        with open(os.path.join(tree, ".gitignore"), encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        text = None
+    if text is not None and rels:
+        try:
+            gone = layout.ignored(text, rels)
+        except (OSError, RuntimeError, subprocess.CalledProcessError):
+            gone = set()
+        rels = [r for r in rels if r not in gone]
+    return sorted(rels, key=lambda r: r.encode())
+
+
+def _hash_file(path):
+    try:
+        return sha256_file(path)
+    except OSError as e:
+        raise ValueError("cannot read %s: %s" % (path, e.strerror or e)) from e
+
+
+def content_state(tree, mode):
+    """tree_state for a tree with no commit: commit and branch "none",
+    dirty, and a digest of its non-ignored files (names, sha256s and
+    symlink targets) as both the content and the dirt. A file it cannot
+    read raises ValueError naming it."""
+    key = (os.path.realpath(tree), mode)
+    if key in CONTENT_MEMO:
+        return dict(CONTENT_MEMO[key])
+    if mode == NOCOMMIT:
+        out = git(tree, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+        skip = _skip_for(tree)
+        names = {n for n in out.decode().split("\0") if n and _kept(n, skip)}
+        names = sorted(names, key=lambda n: n.encode())
+    else:
+        names = walk_files(tree)
+    h = hashlib.sha256()
+    for name in names:
+        h.update(b"\0" + name.encode() + b"\0")
+        p = os.path.join(tree, name)
+        if os.path.islink(p):
+            h.update(b"link:" + os.fsencode(os.readlink(p)))
+        elif os.path.isfile(p):
+            h.update(_hash_file(p).encode())
+    digest = h.hexdigest()
+    state = {
+        "commit": "none",
+        "branch": "none",
+        "dirty": True,
+        "dirty_paths": len(names),
+        "_dirt": digest,
+        "content": digest,
+        "mode": mode,
+    }
+    CONTENT_MEMO[key] = dict(state)
+    return state
+
+
+def commit_label(state, n=7):
+    """The commit's first n hex, or for a tree with no commit the mode
+    and 6 hex of its content (nogit3fa2c1, nocommit3fa2c1)."""
+    if state.get("mode"):
+        return state["mode"] + state["content"][:6]
+    return state["commit"][:n]
+
+
+def source_label(state):
+    """The README's name for a tree: the version's label, and for a tree
+    with no commit what it is."""
+    label = commit_label(state)
+    if state.get("mode"):
+        label += " (%s)" % MODE_NOTES[state["mode"]]
+    return label
+
 
 def tree_state(tree):
     """commit, branch, the dirty-path count and a digest of the dirt
-    (tracked diff plus untracked, non-ignored files with their contents)."""
+    (tracked diff plus untracked, non-ignored files with their contents).
+    A tree outside git or before its first commit gets content_state."""
+    mode = git_mode(tree)
+    if mode:
+        return content_state(tree, mode)
     commit = git(tree, "rev-parse", "HEAD").decode().strip()
     branch = git(tree, "rev-parse", "--abbrev-ref", "HEAD").decode().strip()
     porcelain = [line for line in git(tree, "status", "--porcelain").decode().splitlines() if line]
@@ -127,7 +320,7 @@ def tree_state(tree):
             h.update(b"\0" + name.encode() + b"\0")
             p = os.path.join(tree, name)
             if os.path.isfile(p) and not os.path.islink(p):
-                h.update(sha256_file(p).encode())
+                h.update(_hash_file(p).encode())
     return {
         "commit": commit,
         "branch": branch,
@@ -194,11 +387,13 @@ def format_version(built_utc, cat, toolkit, gen_sha, cli=None, options=""):
     for a build that is not stock (options_digest), then -dirty<hash> when
     the game, the toolkit or the CLI tree has uncommitted changes. The
     CLI's sha is not in it (a third sha would change every version for no
-    reader); its dirt is, since its code shapes the bundle."""
+    reader); its dirt is, since its code shapes the bundle. A tree with
+    no commit puts commit_label's c<mode><6 hex> in place of its sha
+    (cnogit3fa2c1) and is always -dirty."""
     v = "%s-c%s-t%s-g%s" % (
         built_utc.strftime("%Y%m%d.%H%M"),
-        cat["commit"][:7],
-        toolkit["commit"][:7],
+        commit_label(cat),
+        commit_label(toolkit),
         gen_sha[:8],
     )
     if options:
@@ -572,7 +767,8 @@ def build_manifest(
         "built": (built or datetime.datetime.now(datetime.UTC)).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "volatile": list(VOLATILE),
         "sources": {
-            k: {x: v[x] for x in ("commit", "branch", "dirty", "dirty_paths")}
+            # "content" only for a tree with no commit (content_state).
+            k: {x: v[x] for x in ("commit", "branch", "dirty", "dirty_paths", "content") if x in v}
             for k, v in ((SOURCE_NAME, cat), ("toolkit", toolkit), ("cli", cli))
             if v is not None
         },

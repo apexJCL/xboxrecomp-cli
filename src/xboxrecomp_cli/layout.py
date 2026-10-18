@@ -506,6 +506,38 @@ def tracked_problems(game, root):
 WALK_SKIP = {".git", "external", "third_party", "node_modules", "dist", "__pycache__"}
 
 
+# The walk that digests a game folder outside git skips these names at
+# any depth, and these at the top only: main tracks src/external/ and the
+# like, and the baseline anchors its lines (/external, /dist/).
+CONTENT_SKIP_ANY = {".git", "__pycache__"}
+CONTENT_SKIP_TOP = {".xbr", "node_modules"}
+
+
+def content_skip(game):
+    """skip(rel, is_dir) for the walk that digests a game folder outside
+    git (package.lib.walk_files): .git and __pycache__ anywhere, .xbr/
+    (buildstate's records) and node_modules at the top, the pipeline's out
+    and the build folders, the refusal list (setup's clones and venvs, the
+    dump, generated code, the build trees, dist/, runs, saves) and the
+    data extensions, as the baseline ignores them. The folder's .gitignore
+    then drops the rest."""
+    m = game.m
+    tops = {m["pipeline"]["out"], m["build"]["windows_dir"], m["build"]["macos_dir"]}
+    tops = {t[2:] if t.startswith("./") else t for t in tops}
+
+    def skip(rel, is_dir):
+        name = rel.rsplit("/", 1)[-1]
+        if name in CONTENT_SKIP_ANY or ("/" not in rel and name in CONTENT_SKIP_TOP):
+            return True
+        if is_dir:
+            return rel in tops or bool(refused_path(game, rel + "/x"))
+        if refused_path(game, rel):
+            return True
+        return bool(data_ext(rel)) and not README_IMAGE.match(rel)
+
+    return skip
+
+
 def nested_repos(game, root):
     """Every worktree or repository under the root but the root's own."""
     found = set()
@@ -642,10 +674,16 @@ def _report(game, strict=False):
     top = toplevel(root)
     if top != os.path.realpath(root):
         notes.append(
-            "not a git repository%s: the tracked-file and push-guard checks need one"
+            "not a git repository%s: the tracked-file and push-guard checks need one;"
+            " package names the folder by its files (version cnogit<hex>)"
             % (" (inside %s)" % top if top else "")
         )
         return {"problems": problems, "notes": notes}
+    if git(root, "rev-parse", "-q", "--verify", "HEAD^{commit}")[0]:
+        notes.append(
+            "no commits yet: package names the tree by its files (version cnocommit<hex>)"
+            " until the first commit"
+        )
     problems += tracked_problems(game, root)
     for n in nested_repos(game, root):
         problems.append(

@@ -334,6 +334,7 @@ def test_gitignore_and_attributes(d, tk, game):
         "/.venv*",
         "/.xbr-pin",
         "bench-logs",
+        "/.xbr/",
         "*.xbe",
         "*.iso",
         "*.png",

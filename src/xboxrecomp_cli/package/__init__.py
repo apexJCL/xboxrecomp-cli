@@ -21,6 +21,7 @@ from .. import (
     fingerprint,
     gitpin,
     host,
+    layout,
     manifest,
     pipeline,
     resources,
@@ -115,6 +116,9 @@ def plib():
         G.m["build"]["nonstock_vars"],
         G.m["build"]["stock_cmake"],
     )
+    # A game folder outside git is digested by a walk that skips its
+    # dump, generated code, builds and toolchain (layout.content_skip).
+    lib_mod.CONTENT_SKIP[os.path.realpath(G.root)] = layout.content_skip(G)
     return lib_mod
 
 
@@ -349,7 +353,7 @@ def readme(target, version, lib, dst, enhance=True):
         "VERSION": version,
         "TARGET": TARGET_NAMES[target],
         "SOURCES": "%s %s, toolkit %s"
-        % (G.m["pipeline"]["game_name"], cat["commit"][:7], tk["commit"][:7]),
+        % (G.m["pipeline"]["game_name"], lib.source_label(cat), lib.source_label(tk)),
         "DATA_PATHS": data_paths(target),
         "LOG_KEEP": "10",
         "OPTION_NOTES": PACING_README if pacing else "",
@@ -480,7 +484,7 @@ def stage_payload(target, a, lib, seed=None, hud_pack=None):
     options = lib.options_digest(vals, seed, hud_sha)
     try:
         version = lib.compute_version(
-            G.root, toolkit.toolkit_dir(), G.gen, exe, cli_dir.cli_dir(), options
+            G.root, toolkit.toolkit_dir(), G.gen, exe, cli_dir.source_dir(), options
         )
     except ValueError as e:
         raise CliError(str(e)) from e
@@ -769,7 +773,7 @@ def stamp_launch_env(path):
 def write_manifest(root, target, version, overrides, lib, extra=None, hasher=None):
     G = g()
     cat, tk = lib.tree_state(G.root), lib.tree_state(toolkit.toolkit_dir())
-    cli = lib.tree_state(cli_dir.cli_dir())
+    cli = lib.tree_state(cli_dir.source_dir())
     gsha, gn = lib.gen_digest(G.gen)
     btarget = build_target(target)
     cache = lib.read_cache(os.path.join(build_mod.pkg_build_dir(btarget), "CMakeCache.txt"))

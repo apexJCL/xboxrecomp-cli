@@ -21,11 +21,11 @@ same files as `<sha256>  <path>` lines.
 |---|---|
 | `schema` | `2`. Readers take 1 and 2; 2 only adds `source` and `volatile`. A schema 1 manifest is still a usable patch base. |
 | `product`, `name` | The game's product id and display name. A base of another product is refused. |
-| `version` | `<yyyymmdd.hhmm>-c<game7>-t<toolkit7>-g<gen8>`, then `-o<6>` for a non-stock build and `-dirty<hash>` for uncommitted trees. |
+| `version` | `<yyyymmdd.hhmm>-c<game7>-t<toolkit7>-g<gen8>`, then `-o<6>` for a non-stock build and `-dirty<hash>` for uncommitted trees. A tree with no commit to name has `nogit<6>` (not a git repository) or `nocommit<6>` (a repo before its first commit) in place of its sha, 6 hex of its files' digest, and is always `-dirty`: `20261018.2310-cnogit3fa2c1-tfe52446-g209e11c4-dirty1a2b3c4d`. |
 | `target` | `windows-x86_64`, `steamos-x86_64-proton` or `macos-arm64`. |
 | `built` | UTC build time. |
 | `volatile` | Fields two builds of the same inputs may differ in (`built`, `sources.*.branch`). Everything else is equal between them. |
-| `sources` | `commit`, `branch`, `dirty`, `dirty_paths` for the game, the toolkit and the CLI. |
+| `sources` | `commit`, `branch`, `dirty`, `dirty_paths` for the game, the toolkit and the CLI. A tree with no commit has `commit` and `branch` `none`, `dirty_paths` its file count, and `content`: the sha256 of its non-ignored files' names and sha256s, a symlink's target in place of a sha256 (`git ls-files --cached --others --exclude-standard` before the first commit; outside git a walk that skips the dump, generated code, builds, the top-level toolchain clones and `.xbr/`, then applies the folder's `.gitignore`). A game folder inside another repo counts as outside git. |
 | `source` | Where the game tree came from (below). |
 | `gen` | `sha256` and `files` of the generated code's listing. |
 | `build` | `type`, `enhance`, `gen_opt`, `compiler`, `overrides`. |

@@ -189,7 +189,7 @@ def make_plan(a, lib, imp=None, enhance=True, seed=None, into=None):
         options = lib.options_digest(lib.read_cache(cache), seed, hud_sha or None)
         try:
             version = lib.compute_version(
-                G.root, toolkit.toolkit_dir(), G.gen, exe, cli_dir.cli_dir(), options
+                G.root, toolkit.toolkit_dir(), G.gen, exe, cli_dir.source_dir(), options
             )
         except (ValueError, OSError) as e:
             raise CliError(str(e)) from e

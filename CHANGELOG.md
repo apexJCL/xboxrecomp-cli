@@ -44,6 +44,24 @@ a release by its tag in `game.toml`'s `[cli]` table.
   The guard needs git 2.31 or newer and refuses every push to the public
   repo on an older one.
 
+### Fixed
+- `package` works on a game folder that is not a git repository, or a
+  repo with no commits yet, and on a toolkit or CLI tree like that: the
+  version names a digest of the tree's files (`cnogit<6>` or
+  `cnocommit<6>` in place of the sha, always `-dirty`), the manifest's
+  `sources` record it as `content`, and the README says which. It used to
+  stop with a traceback after git's `fatal:` lines. A game folder inside
+  another repo is named by its files, not that repo's commit. A real git
+  error (dubious ownership, a corrupt repo) or an unreadable file stops
+  package with git's message or the file's name. A normal repo's version
+  is unchanged.
+- `doctor` says "no commits yet" for a repo before its first commit, and
+  for both modes how package names the tree.
+- The `xbr new` `.gitignore` ignores `.xbr/`, the stage records of a
+  folder outside git.
+- The HUD pack's stage key names the CLI's source folder, so an installed
+  CLI keys it too.
+
 ## [0.9.0] - 2026-10-18
 
 ### Added

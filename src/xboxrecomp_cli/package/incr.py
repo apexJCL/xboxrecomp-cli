@@ -70,15 +70,20 @@ def _sha(path):
 def tree_input(tree, lib):
     """A checkout as a build input: its HEAD tree (a rebase that keeps the
     files keeps the key) and a digest of its uncommitted and untracked
-    changes."""
+    changes. A tree with no commit (outside git, or before the first
+    commit) has no tree to name: its files' digest is the dirt. A git
+    error or a file it cannot read stops the run (a CliError naming it):
+    a key with no dirt would reuse a stale build."""
     try:
+        ts = lib.tree_state(tree)
+        if ts.get("mode"):
+            return {"tree": "none", "dirt": ts["_dirt"]}
         t = lib.git(tree, "rev-parse", "HEAD^{tree}").decode().strip()
-        dirt = lib.tree_state(tree).get("_dirt", "")
-    except (OSError, subprocess.CalledProcessError):
-        # Outside git: no tree to name, so the stage reruns on its other
-        # inputs only (a plain folder is a developer's, never the wizard's).
+    except ValueError as e:
+        raise host.CliError(str(e)) from e
+    except OSError:
         return {"tree": "none", "dirt": ""}
-    return {"tree": t, "dirt": dirt}
+    return {"tree": t, "dirt": ts.get("_dirt", "")}
 
 
 def content_digest(root, skip=None):
@@ -286,7 +291,7 @@ def stage_inputs(target, version, enhance, seed, hud_sha, lib, exe_sha):
         "templates": content_digest(G.templates),
         "license": {n: _sha(os.path.join(G.root, n)) for n in ("LICENSE", "NOTICE")},
         # The templates and wrappers are the CLI's.
-        "cli": tree_input(cli_dir.cli_dir(), lib),
+        "cli": tree_input(cli_dir.source_dir(), lib),
         # launch.env.default ends with it (stamp_launch_env): a new
         # stamp_env or verdict must restage.
         "xbe_stamp": fingerprint.stamp_line(),
@@ -446,7 +451,7 @@ def wrap_inputs(target, manifest_sha, lib, kind="full", base="", exe=None, archi
         "kind": kind,
         "base": base,
         "tools": wrap_tools(target),
-        "cli": tree_input(cli_dir.cli_dir(), lib),
+        "cli": tree_input(cli_dir.source_dir(), lib),
     }
     if target == "macos":
         # The app's Frameworks/ and its exe are outside the manifest, which
@@ -469,11 +474,13 @@ def wrap_basis(stage_key, version, lib, inputs):
     for name, tree in (
         ("game", G.root),
         ("toolkit", toolkit.toolkit_dir()),
-        ("cli", cli_dir.cli_dir()),
+        ("cli", cli_dir.source_dir()),
     ):
         try:
             ts = lib.tree_state(tree)
             trees[name] = [ts.get("commit"), ts.get("branch"), ts.get("_dirt")]
+        except ValueError as e:
+            raise host.CliError(str(e)) from e
         except (OSError, subprocess.CalledProcessError):
             trees[name] = "none"
     try:

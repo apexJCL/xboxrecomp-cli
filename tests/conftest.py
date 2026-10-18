@@ -39,3 +39,14 @@ def pin_stub():
     mp.setattr(toolkit, "pin_has_enhance", lambda pin: True)
     yield mp
     mp.undo()
+
+
+@pytest.fixture(autouse=True)
+def content_memo():
+    """A fresh per-run memo of the no-commit trees' digests for each test
+    (a CLI run is one process; the tests edit trees between calls)."""
+    from xboxrecomp_cli.package import lib
+
+    lib.CONTENT_MEMO.clear()
+    yield
+    lib.CONTENT_MEMO.clear()

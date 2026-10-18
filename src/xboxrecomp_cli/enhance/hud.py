@@ -523,7 +523,7 @@ def hud_record(a, cfg, scale, langs, out_dir, st=None, imp=None):
         "font": incr._sha(font_arg) if font_arg and os.path.isfile(font_arg) else font_arg,
         "xbe": incr._sha(G.xbe),
         "out": st._store_path(out_dir),
-        "cli": incr.tree_input(incr.cli_dir.cli_dir(), lib),
+        "cli": incr.tree_input(incr.cli_dir.source_dir(), lib),
     }
     if imp is None:
         imp = incr.record_import(st, lib)

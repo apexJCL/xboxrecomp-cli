@@ -12,6 +12,16 @@ def cli_dir():
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def source_dir():
+    """The tree a package names as the CLI's source: the checkout, or
+    outside a source tree (an installed wheel, whose cli_dir() is the
+    interpreter's lib folder) the package folder alone."""
+    d = cli_dir()
+    if os.path.isfile(os.path.join(d, "pyproject.toml")):
+        return d
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def toplevel(d):
     """The root of the repository d is in, or ''."""
     r = subprocess.run(

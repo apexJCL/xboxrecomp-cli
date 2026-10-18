@@ -260,6 +260,9 @@ GITIGNORE = """\
 /third_party
 /external
 /.xbr-pin
+# `@SLUG@ package`'s stage records in a folder outside git (in a repo
+# they live in the git directory).
+/.xbr/
 
 # `@SLUG@ package`: private bundles holding the game. Never commit them.
 /dist/

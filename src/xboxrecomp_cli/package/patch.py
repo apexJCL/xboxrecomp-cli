@@ -331,8 +331,9 @@ def write_doc(dst, doc):
 
 def short(version):
     """The c<game>-g<gen> part of a version: the patch's file name says
-    what it applies to without the base's whole version."""
-    c = re.search(r"(?:^|-)(c[0-9a-f]+)(?:-|$)", version)
+    what it applies to without the base's whole version (c<mode><hex>
+    for a game tree with no commit, lib.commit_label)."""
+    c = re.search(r"(?:^|-)(c(?:nogit|nocommit)?[0-9a-f]+)(?:-|$)", version)
     gm = re.search(r"(?:^|-)(g[0-9a-f]+)(?:-|$)", version)
     if c and gm:
         return "%s-%s" % (c.group(1), gm.group(1))
