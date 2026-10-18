@@ -7,7 +7,26 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-18
+
 ### Added
+- The standard game repo layout: `[public]` and `[layout]` in `game.toml`
+  describe a game repo. `public init` installs a pre-push guard, `public
+  export` builds the scrubbed public history as one commit on the public
+  tip, and `public audit` checks it; refs move only after the audit
+  passes. `doctor` reports the layout, and `xbr new` scaffolds a game repo
+  with `checks.yml` and the `.gitignore` baseline.
+- The build wizard asks for a Fresh build or an Update of an installed
+  one; an update is planned against the install's manifest, so the HUD
+  pack can be added, kept or cleared without rebuilding from the disc.
+- `package --hud-pack`, `--keep-hud-pack` and `--clear-hud-pack`, a pack
+  store for kept packs, and a strict `--patch-from`. Each manifest records
+  the game tree it was built from.
+- Compile jobs are sized from free memory and cores (`--jobs` overrides);
+  `package`, `build` and the import refuse before starting when the disk
+  is short. `doctor` reports memory, cores, disk and jobs; the wizard
+  shows a "This computer" check, a Build jobs choice and Retry after a
+  disk refusal.
 - `fingerprint [PATH]`: the XBE's verdict from its sections' hashes
   (`[xbe.sections]`): known, header only, modded data or modded code.
   `--toml` prints the table for `game.toml`.
@@ -19,6 +38,13 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - `doctor` prints an `assets:` line against `[data] reference_files`.
 
 ### Changed
+- A patch built from other game files, or one that would delete game
+  files, is refused: `game_files/` is shared across versions, so a
+  rollback could not bring them back.
+- In export mode, `public export` and `public audit` exit 2 when the
+  rewrite file is missing, instead of running with no rewrite rules; the
+  range audit also runs the rewrite file's `!fail` checks over added
+  lines.
 - A modded or unknown dump only warns, in `import`, `analyze`, `build`,
   `all`, `package` and `doctor`. `manifest.json`'s `xbe` was the string
   `"unknown"` for an unlisted dump and absent otherwise.
@@ -359,7 +385,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.7...v0.8.0
 [0.7.7]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.5...v0.7.6
