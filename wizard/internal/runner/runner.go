@@ -374,3 +374,100 @@ func (r Runner) Font(ctx context.Context, log io.Writer) (*Font, error) {
 	}
 	return ParseFont(out)
 }
+
+// Plan is `package --plan --json` (D13): the stages, and what the run is
+// expected to make. A CLI pinned before the output fields leaves them
+// empty; the wizard then leaves the choice to the build.
+type Plan struct {
+	Schema    int         `json:"schema"`
+	Target    string      `json:"target"`
+	Version   string      `json:"version"`
+	Stages    []PlanStage `json:"stages"`
+	EstimateS float64     `json:"estimate_s"`
+	Unknown   []string    `json:"unknown"`
+	// Bases are the bundles this folder made for the target, newest first.
+	Bases    []PlanBase  `json:"bases"`
+	FullSize int64       `json:"full_size"`
+	Output   *PlanOutput `json:"output"`
+}
+
+// PlanStage is one stage of the plan: "reuse" or "run", and why.
+type PlanStage struct {
+	Stage  string `json:"stage"`
+	Action string `json:"action"`
+	Why    string `json:"why"`
+}
+
+// PlanBase is a bundle this folder made: what an update can start from.
+type PlanBase struct {
+	Version   string `json:"version"`
+	Made      string `json:"made"`
+	Sha256    string `json:"sha256"`
+	Size      int64  `json:"size"`
+	PatchSize int64  `json:"patch_size"`
+}
+
+// PlanOutput is the full installer or the update the run would make.
+type PlanOutput struct {
+	Kind      string         `json:"kind"` // "full" or "patch"
+	Why       string         `json:"why"`
+	Base      *PlanVersion   `json:"base"`
+	PatchSize int64          `json:"patch_size"`
+	Installed *PlanInstalled `json:"installed"`
+}
+
+// PlanVersion names an installed or made version.
+type PlanVersion struct {
+	Version string `json:"version"`
+	Sha256  string `json:"sha256"`
+}
+
+// PlanInstalled is the version installed on this computer, and whether
+// an update can start from it.
+type PlanInstalled struct {
+	PlanVersion
+	Usable    bool     `json:"usable"`
+	Why       []string `json:"why"`
+	PatchSize int64    `json:"patch_size"`
+}
+
+func ParsePlan(b []byte) (*Plan, error) {
+	var p Plan
+	if err := json.NewDecoder(bytes.NewReader(jsonPart(b))).Decode(&p); err != nil {
+		return nil, fmt.Errorf("package --plan --json: %w", err)
+	}
+	if p.Schema != 1 {
+		return nil, fmt.Errorf("package --plan --json: schema %d, not 1", p.Schema)
+	}
+	return &p, nil
+}
+
+// Plan runs args (model.State.PlanArgs) for the plan.
+func (r Runner) Plan(ctx context.Context, log io.Writer, args []string) (*Plan, error) {
+	out, err := r.Output(ctx, log, args...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePlan(out)
+}
+
+// Clean is `clean --bundles --build --yes --json`: the build folder's
+// bundles and build trees go, the import and the generated code stay
+// (D11). It returns the bytes freed.
+func (r Runner) Clean(ctx context.Context, log io.Writer) (int64, error) {
+	out, err := r.Output(ctx, log, "clean", "--bundles", "--build", "--yes", "--json")
+	if err != nil {
+		return 0, err
+	}
+	var c struct {
+		Total   int64 `json:"total"`
+		Deleted bool  `json:"deleted"`
+	}
+	if err := json.NewDecoder(bytes.NewReader(jsonPart(out))).Decode(&c); err != nil {
+		return 0, fmt.Errorf("clean --json: %w", err)
+	}
+	if !c.Deleted {
+		return 0, errors.New("clean --json: nothing was deleted")
+	}
+	return c.Total, nil
+}

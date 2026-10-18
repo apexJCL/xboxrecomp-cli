@@ -1,5 +1,6 @@
-// Package repo clones the game repo at the release tag and checks that
-// the clone is the commit the wizard was built for.
+// Package repo keeps the game's clone in the build folder at the commit
+// this run builds (ensure.go): the release tag's, checked against the
+// commit the wizard was built for, or a developer's local source.
 package repo
 
 import (
@@ -7,9 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
@@ -49,41 +48,6 @@ func (g Git) Head(ctx context.Context, dir string) string {
 // CloneArgs is the clone command: the release tag only, shallow.
 func CloneArgs(url, tag, dest string) []string {
 	return []string{"clone", "--branch", tag, "--depth", "1", "--", url, dest}
-}
-
-// Clone puts the repo at tag into dest, made aside and moved in place
-// once HEAD is the commit. A dest already at the commit is reused; a dest
-// at another commit is refused with both named (the player's folder is
-// never overwritten).
-func (g Git) Clone(ctx context.Context, url, tag, commit, dest string) error {
-	if _, err := os.Stat(filepath.Join(dest, ".git")); err == nil {
-		h := g.Head(ctx, dest)
-		if h == commit {
-			return nil
-		}
-		return fmt.Errorf("%s holds a clone at %s, not this wizard's release %s (%s): "+
-			"move it away or pick another install folder", dest, short(h), tag, short(commit))
-	} else if _, err := os.Stat(dest); err == nil {
-		if ents, _ := os.ReadDir(dest); len(ents) > 0 {
-			return fmt.Errorf("%s exists and is not a clone: move it away or pick another install folder", dest)
-		}
-		os.Remove(dest)
-	}
-	part := dest + ".partial"
-	os.RemoveAll(part)
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return err
-	}
-	if _, err := g.run(ctx, filepath.Dir(dest), CloneArgs(url, tag, part)...); err != nil {
-		os.RemoveAll(part)
-		return err
-	}
-	if h := g.Head(ctx, part); h != commit {
-		os.RemoveAll(part)
-		return fmt.Errorf("the tag %s of %s is %s, but this wizard was built for %s: "+
-			"the tag moved; download the wizard again from the release page", tag, url, short(h), short(commit))
-	}
-	return os.Rename(part, dest)
 }
 
 func short(c string) string {

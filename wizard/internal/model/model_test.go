@@ -3,6 +3,7 @@ package model
 import (
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"wizard/internal/gamecfg"
@@ -78,5 +79,23 @@ func TestNoSeedFile(t *testing.T) {
 	want := []string{"package", "steamos", "--dump", "/d", "--plain"}
 	if got := s.PackageArgs("", ""); !reflect.DeepEqual(got, want) {
 		t.Fatalf("%q", got)
+	}
+}
+
+func TestOutputChoice(t *testing.T) {
+	s := New(&gamecfg.Config{Targets: []string{"steamos"}}, "steamos")
+	s.Dump = "D"
+	got := strings.Join(s.PackageArgs("", "/o"), " ")
+	if got != "package steamos --dump D --out /o --plain" {
+		t.Fatal(got)
+	}
+	s.PatchFrom, s.Clean = "abc123def456", true
+	if got := strings.Join(s.PackageArgs("", "/o"), " "); got != "package steamos --dump D --out /o --clean --patch-from abc123def456 --plain" {
+		t.Fatal(got)
+	}
+	// --full and --patch-from are exclusive in the CLI: Full wins.
+	s.Full = true
+	if got := strings.Join(s.PlanArgs("/s.toml"), " "); got != "package steamos --dump D --seed-config /s.toml --clean --full --plan --json" {
+		t.Fatal(got)
 	}
 }

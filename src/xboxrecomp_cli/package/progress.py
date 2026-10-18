@@ -478,3 +478,27 @@ def prune_logs(logs, keep=KEEP_RUNS):
             os.remove(p)
             gone.append(n)
     return gone
+
+
+def load_timings(logs):
+    """build-logs/timings.json: each step's last duration, {} when none."""
+    try:
+        with open(os.path.join(logs, "timings.json")) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def save_timing(logs, label, secs):
+    """One step's duration, for a command outside the view (enhance hud)."""
+    d = load_timings(logs)
+    d[label] = round(secs, 1)
+    try:
+        os.makedirs(logs, exist_ok=True)
+        p = os.path.join(logs, "timings.json")
+        with open(p + ".tmp", "w") as f:
+            json.dump(d, f, indent=1, sort_keys=True)
+        os.replace(p + ".tmp", p)
+    except OSError:
+        pass

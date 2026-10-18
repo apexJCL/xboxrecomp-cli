@@ -705,6 +705,63 @@ def test_config_without_table(d):
         wizard.resolve(manifest.load(root), dev=True)
 
 
+# ── [wizard] private (a game with no public repo) ───────────────────────
+
+REPO_LINE = 'repo = "https://github.com/someone/blinx2-recomp.git"\n'
+
+
+def test_manifest_wizard_private():
+    """The four cases: public with a repo, public without one (an error,
+    so a public game cannot lose its repo by accident), private without
+    one, private with one (allowed; publishing is refused either way)."""
+    text = base_text() + WIZARD
+    w = manifest.parse_text(text)["wizard"]
+    assert w["repo"].startswith("https://") and w["private"] is False
+    with pytest.raises(manifest.ManifestError, match="wizard.repo: required"):
+        manifest.parse_text(text.replace(REPO_LINE, ""))
+    w = manifest.parse_text(text.replace(REPO_LINE, "private = true\n"))["wizard"]
+    assert w["repo"] == "" and w["private"] is True
+    w = manifest.parse_text(text.replace(REPO_LINE, REPO_LINE + "private = true\n"))["wizard"]
+    assert w["repo"] and w["private"] is True
+    # A repo that is set is still an https URL, private or not.
+    bad = text.replace(REPO_LINE, 'repo = "git@github.com:a/b.git"\nprivate = true\n')
+    with pytest.raises(manifest.ManifestError, match="wizard.repo: an https"):
+        manifest.parse_text(bad)
+
+
+def _private(wgame, keep_repo):
+    toml = os.path.join(wgame.root, "game.toml")
+    with open(toml) as f:
+        text = f.read()
+    new = (REPO_LINE if keep_repo else "") + "private = true\n"
+    write(toml, text.replace(REPO_LINE, new))
+    git(wgame.root, "commit", "-qam", "private")
+    git(wgame.root, "tag", "-f", "v1.0.0")
+    G = manifest.load(wgame.root)
+    manifest.use(G)
+    return G
+
+
+@pytest.mark.parametrize("keep_repo", [False, True])
+def test_private_config_and_publish(wgame, keep_repo, monkeypatch):
+    G = _private(wgame, keep_repo)
+    cfg, _ = wizard.resolve(G)
+    # No repo and so no update check: the config names neither.
+    assert cfg["private"] is True and "repo" not in cfg["release"]
+    assert cfg["release"]["tag"] == "v1.0.0"
+    assert "file:" not in wizard.config_json(cfg)
+    # The release builder of wizard binaries refuses before any work.
+    monkeypatch.setattr(wizard_build, "module_dir", lambda: pytest.fail("built a private wizard"))
+    with pytest.raises(CliError, match="private = true"):
+        wizard_build.build(G, out=os.path.join(G.root, "dist", "w"))
+
+
+def test_public_config_keeps_the_repo(wgame):
+    cfg, _ = wizard.resolve(wgame)
+    assert "private" not in cfg and cfg["release"]["repo"].startswith("https://")
+    wizard_build.refuse_private(wgame)  # no refusal
+
+
 # ── wizard build: the pieces ─────────────────────────────────────────────
 
 
@@ -1097,9 +1154,11 @@ def test_nsis_copies_the_seed_once(d):
     text = render_installer(os.path.join(d, "installer.nsi"))
     main = text[text.index('Section "BLiNX 2" SecMain') : text.index("SectionEnd")]
     uninst = text[text.index('Section "Uninstall"') :]
+    # The in-place layout's seed goes; the new one is read from the
+    # version being installed (versions\<v>.partial).
     drop = 'Delete "$INSTDIR\\config.seed.toml"'
-    copy = 'CopyFiles /SILENT "$INSTDIR\\config.seed.toml"'
-    seeded = 'IfFileExists "$INSTDIR\\config.seed.toml" 0 seed_done'
+    copy = 'CopyFiles /SILENT "${PART}\\config.seed.toml"'
+    seeded = 'IfFileExists "${PART}\\config.seed.toml" 0 seed_done'
     guard = '\\config\\config.toml" seed_done 0'
     # An earlier version's enhance.toml is the player's file too: the game
     # renames it only while config.toml is missing.
@@ -1199,8 +1258,9 @@ def test_check_second_build_is_fresh(d, monkeypatch):
     monkeypatch.setattr(wizard_build, "ensure_go", lambda pins, mod: d)
     monkeypatch.setattr(wizard_build, "_run", lambda *a, **k: None)
 
-    def fake_build(G, tag, dev, only, out, keep_work=False, gocache=""):
+    def fake_build(G, tag, dev, only, out, keep_work=False, gocache="", private_ok=False):
         calls.append(gocache)
+        assert private_ok  # the check publishes nothing
         return {"a.zip": "0" * 64}
 
     monkeypatch.setattr(wizard_build, "build", fake_build)

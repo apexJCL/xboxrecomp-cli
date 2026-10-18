@@ -22,9 +22,12 @@ const (
 	footerText = "Build wizard %s"
 	footerDev  = "Build wizard %s (developer build)"
 	devRelease = "developer build of the working tree"
-	techPins   = "Wizard %s; release %s (%s); xboxrecomp-cli %s; toolkit %s"
-	nextText   = "Next"
-	backText   = "Back"
+	// The local-source banner (D14), on every screen and in --dry.
+	localBanner      = "Local source: %s, not a release; nothing is published"
+	localBannerDirty = "uncommitted changes in %s are not built"
+	techPins         = "Wizard %s; release %s (%s); xboxrecomp-cli %s; toolkit %s"
+	nextText         = "Next"
+	backText         = "Back"
 )
 
 // Welcome.
@@ -143,6 +146,7 @@ const (
 	statusFetched   = "Fetched when the build starts"
 	statusNotPinned = "Not at the release's version"
 	statusDevMode   = "Not at the release's version (developer mode)"
+	statusLocal     = "A local source, not a release"
 	statusBuildable = "Can be built on this computer"
 	statusNeeds     = "Needs something first"
 	statusNotes     = "Worth knowing"
@@ -152,6 +156,7 @@ const (
 	toolsAllHere = "Every build tool is in place."
 	sourceAt     = "%s %s in %s"
 	sourceDev    = "%s, as it is (developer mode)"
+	sourceLocal  = "%s at %s, cloned into %s (local source)"
 
 	installCLT      = "Install Apple's Command Line Tools"
 	installHomebrew = "Install Homebrew"
@@ -243,6 +248,7 @@ const (
 	techSteps        = "The build runs, in the game's folder:"
 	techSeed         = "config.toml for a first install:"
 	techNoSeed       = "Every option at its default: no config.toml is written."
+	techPlan         = "The plan, from package --plan --json:"
 )
 
 // Building.
@@ -320,4 +326,60 @@ var installText = map[string]string{
 		"Installing copies the game files again, so the PC needs about as much free space as the bundle takes.",
 	"macos":   "Open the .dmg and drag the app to Applications. The first time, right-click the app and choose Open (it is not signed).",
 	"steamos": "Copy the .tar to the Steam Deck or Linux PC, unpack it and run ./install.sh --steam in a terminal: it installs the game and adds it to Steam.",
+}
+
+// The build folder's line on Welcome, the output choice on the Summary
+// and the disk line on Done (D13). A player never reads "patch", "base"
+// or a version's commits here: an update is for a version, which shows
+// as its date and time.
+const (
+	folderFoundRelease = "Build folder found: %s %s (%s). This release will reuse it."
+	folderFoundDev     = "Build folder found: %s, a developer build at %s. This release will reuse it."
+	folderFoundLocal   = "Build folder found: %s at %s. The local source %s will reuse it."
+	summaryOutput      = "Makes:"
+	outputAsking       = "Checking what this build makes…"
+	outputUnknown      = "The build chooses between an update and the full installer."
+	outputUpdate       = "Update%s for the installed %s"
+	outputUpdateOn     = "Update%s for %s on %s"
+	outputFull         = "Full installer%s: %s"
+	outputChosen       = "you chose it"
+	outputRefused      = "that version cannot take an update"
+	outputSame         = "the installed %s is this build already"
+	outputCannot       = "the installed %s cannot take an update"
+	outputNoInstall    = "no install found"
+	outputPick         = "for an update, choose what %s has under Change…"
+	outputFirst        = "the first build for %s made here"
+	choiceTitle        = "What to make"
+	choiceUpdate       = "An update for the installed %s"
+	choiceUpdateOn     = "An update"
+	choiceFull         = "The full installer"
+	choiceHas          = "%s has:"
+	choiceHasEntry     = "%s, made %s%s"
+	choiceRebuild      = "Rebuild everything"
+	choiceRebuildHint  = "Slower. Only for when a build misbehaves: your game files and the translated code stay."
+	choiceOK           = "OK"
+	choiceCancel       = "Cancel"
+	diskMeasuring      = "Build folder: measuring…"
+	diskLine           = "Build folder: %s"
+	diskFreeing        = "Build folder: freeing space…"
+	diskFreed          = "Freed %s. Build folder: %s"
+	diskFreeFailed     = "Build folder: the space could not be freed; the wizard's log says why."
+	freeSpaceText      = "Free space"
+	freeTitle          = "Free space?"
+	freeText           = "This deletes the compiled program and the bundles kept in the build folder. " +
+		"Your game files and the translated code stay, and the output folder is not touched. The next build compiles again."
+)
+
+// targetDevice is the computer a target installs on, inside a sentence.
+var targetDevice = map[string]string{
+	"windows": "the Windows PC",
+	"macos":   "the Mac",
+	"steamos": "the Steam Deck or Linux PC",
+}
+
+// applyPatchText is the apply step of an update (docs/bundle.md).
+var applyPatchText = map[string]string{
+	"windows": "Copy the folder to the Windows PC and double-click apply.exe in it: it updates the installed version.",
+	"macos":   "Open the .dmg and double-click apply.command: it updates the app in Applications.",
+	"steamos": "Copy the .tar to the Steam Deck or Linux PC, unpack it and run ./install.sh in a terminal: it updates the installed version.",
 }

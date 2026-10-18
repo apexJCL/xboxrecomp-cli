@@ -6,7 +6,11 @@ Run through install.sh from the bundle directory:
 
   ./install.sh [install] [--root DIR] [--keep N] [--steam] [--import-saves DIR]
                [--fetch-umu] [--umu-dir DIR] [--no-proton]
+  ./install.sh patch [the same options] [--yes]   (a patch folder: has patch.json)
   ./install.sh rollback [VERSION] | status | list | uninstall   [--root DIR]
+
+A patch holds only what changed since the version it is for, which must be
+the current one; install on a patch folder runs patch.
 
 Layout under the root (default @DEFAULT_ROOT@):
 
@@ -34,7 +38,9 @@ sha256 checked) and the launcher uses it, so no launch downloads a Proton.
 """
 
 import argparse
+import ctypes
 import datetime
+import errno
 import hashlib
 import json
 import os
@@ -43,6 +49,11 @@ import re
 import shutil
 import subprocess
 import sys
+
+try:
+    import fcntl
+except ImportError:  # the tests import this on any host; the Deck has it
+    fcntl = None
 
 PRODUCT = "@PRODUCT@"
 NAME = "@NAME@"
@@ -111,14 +122,14 @@ def read_sums(path):
     return sums
 
 
-def seed_config(bundle, root):
+def seed_config(src_dir, root):
     """The options chosen in the build wizard (package --seed-config, the
     bundle's config.seed.toml) become config/config.toml only when there
     is none yet: the player's own file is never replaced, so a later
     install leaves it. An earlier version's config/enhance.toml is the
     player's file too: the game renames it to config.toml only while
     config.toml is missing, so a seed there would hide it."""
-    seed = os.path.join(bundle.path, "config.seed.toml")
+    seed = os.path.join(src_dir, "config.seed.toml")
     dst = root.p("config", "config.toml")
     if os.path.isfile(seed) and not os.path.exists(dst):
         old = root.p("config", "enhance.toml")
@@ -635,6 +646,106 @@ def copy_atomic(src, dst):
     os.replace(tmp, dst)
 
 
+# A test stands in here to stop the run at a named step, as a power loss or
+# a kill would (the steps are in cmd_install and cmd_patch).
+STEP_HOOK = None
+
+
+def step(name):
+    if STEP_HOOK is not None:
+        STEP_HOOK(name)
+
+
+def fsync_file(path):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def fsync_dir(path):
+    """A rename or a new name reaches the disk only with its directory."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass  # a filesystem that cannot sync a directory (some FUSE mounts)
+    finally:
+        os.close(fd)
+
+
+def fsync_tree(path):
+    """Every file and directory under path, the deepest first."""
+    for dirpath, _dirnames, filenames in os.walk(path, topdown=False):
+        for f in filenames:
+            p = os.path.join(dirpath, f)
+            if not os.path.islink(p):
+                fsync_file(p)
+        fsync_dir(dirpath)
+
+
+AT_FDCWD = -100
+RENAME_EXCHANGE = 2
+
+
+def exchange(a, b):
+    """Swap two paths in one step, renameat2(RENAME_EXCHANGE) (Linux 3.15
+    and later): neither name is ever missing. False where the call or the
+    filesystem lacks it; the caller then renames twice."""
+    if platform.system() != "Linux":
+        return False
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        f = libc.renameat2
+    except (OSError, AttributeError):
+        return False
+    f.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    if f(AT_FDCWD, os.fsencode(a), AT_FDCWD, os.fsencode(b), RENAME_EXCHANGE) == 0:
+        return True
+    e = ctypes.get_errno()
+    if e in (errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP):
+        return False
+    raise OSError(e, os.strerror(e), a)
+
+
+def take_launch_lock(root):
+    """state/launch.lock, which the launcher holds while the game runs:
+    install and patch hold it for their whole run, so neither changes a
+    running game's files and no launch starts mid-install. Returns the open
+    file (the lock lasts as long as it is open), or None without flock."""
+    if fcntl is None:
+        return None
+    os.makedirs(root.p("state"), exist_ok=True)
+    f = open(root.p("state", "launch.lock"), "a")
+    try:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        raise InstallError(
+            "the game is running (state/launch.lock is held); quit it first"
+        ) from None
+    return f
+
+
+def repair(root):
+    """An install stopped between the two renames of the reinstall path
+    (no RENAME_EXCHANGE) left current naming a missing versions/<v> and the
+    old tree at versions/<v>.old: it goes back first."""
+    cur = root.current()
+    if not cur:
+        return
+    final = root.p("versions", cur)
+    old = final + ".old"
+    if not os.path.lexists(final) and os.path.isdir(old):
+        os.rename(old, final)
+        fsync_dir(root.p("versions"))
+        say("repaired: versions/%s (an install stopped mid-rename)" % cur)
+
+
 def complete(final, bundle, name):
     """Whether an installed version has this program file at its size.
     A matching SHA256SUMS alone would take a version dir that lost a
@@ -681,19 +792,37 @@ def install_program(bundle, root):
             p = os.path.join(part, exe)
             if os.path.exists(p):
                 os.chmod(p, 0o755)
+        fsync_tree(part)
     except BaseException:
         shutil.rmtree(part, ignore_errors=True)
         raise
-    # Reinstalling the current version: the old dir is renamed aside, not
-    # removed first, so current never points at a missing dir for longer
-    # than the two renames.
-    old = final + ".old"
-    shutil.rmtree(old, ignore_errors=True)
-    if os.path.lexists(final):
-        os.rename(final, old)
-    os.rename(part, final)
-    shutil.rmtree(old, ignore_errors=True)
+    put_in_place(part, final, root)
     return True
+
+
+def put_in_place(part, final, root):
+    """versions/<v>.partial becomes versions/<v>. Reinstalling the current
+    version swaps the two in one step where the kernel can, so current never
+    names a missing tree; elsewhere the old tree is renamed aside first and
+    repair() finishes a run stopped between the two renames."""
+    vdir = root.p("versions")
+    if os.path.lexists(final):
+        step("reinstall-swap")
+        if exchange(part, final):
+            fsync_dir(vdir)
+            shutil.rmtree(part, ignore_errors=True)
+            return
+        old = final + ".old"
+        shutil.rmtree(old, ignore_errors=True)
+        os.rename(final, old)
+        fsync_dir(vdir)
+        step("reinstall-between")
+        os.rename(part, final)
+        fsync_dir(vdir)
+        shutil.rmtree(old, ignore_errors=True)
+        return
+    os.rename(part, final)
+    fsync_dir(vdir)
 
 
 def sync_game_files(bundle, root):
@@ -732,10 +861,15 @@ def switch(root, version, what):
     if os.path.lexists(tmp):
         os.remove(tmp)
     os.symlink(os.path.join("versions", version), tmp)
+    fsync_dir(root.path)
     os.replace(tmp, root.p("current"))
+    fsync_dir(root.path)
+    step("switched")
     os.makedirs(root.p("state"), exist_ok=True)
     with open(root.p("state", "history"), "a") as f:
         f.write("%s %s %s -> %s\n" % (utcnow(), what, old, version))
+        f.flush()
+        os.fsync(f.fileno())
     return old
 
 
@@ -918,8 +1052,268 @@ def human(n):
 # ── commands ─────────────────────────────────────────────────────────────
 
 
-def cmd_install(
-    bundle,
+# ── patch (D6, D7) ───────────────────────────────────────────────────────
+
+PATCH_JSON = "patch.json"
+GAME_PREFIX = "game_files/"
+GAME_DATA_WARNING = "this update also changes game data; rolling back will not undo that"
+# Only in the patch folder: never part of an installed version.
+PATCH_ONLY = (PATCH_JSON,)
+
+
+def is_patch(path):
+    return os.path.isfile(os.path.join(path, PATCH_JSON))
+
+
+def patch_path_ok(rel):
+    """A relative path that stays under its folder (apply_plan.c's
+    plan_path_ok): a patch's lists name what is written and removed."""
+    if not isinstance(rel, str) or not rel or rel.startswith("/") or "\\" in rel:
+        return False
+    if any(ord(c) < 0x20 for c in rel):
+        return False
+    return all(part not in ("", ".", "..") for part in rel.split("/"))
+
+
+def patch_version_ok(v):
+    """A version folder name (apply_plan.c's plan_version_ok)."""
+    if not isinstance(v, str) or not v or any(c in v for c in "/\\:") or v.startswith("."):
+        return False
+    return not v.endswith((".partial", ".old"))
+
+
+class Patch:
+    """A patch folder: the changed and new files of the version it makes,
+    its full manifest.json and SHA256SUMS, and patch.json (what is changed,
+    new, deleted and kept against base_version)."""
+
+    def __init__(self, path):
+        self.path = os.path.abspath(path)
+        try:
+            with open(os.path.join(self.path, "manifest.json")) as f:
+                self.manifest = json.load(f)
+            with open(os.path.join(self.path, PATCH_JSON)) as f:
+                self.doc = json.load(f)
+        except (OSError, ValueError) as e:
+            raise InstallError("%s is not a %s patch (%s)" % (self.path, APP, e)) from None
+        if self.manifest.get("product") != PRODUCT:
+            raise InstallError("%s: manifest names another product" % self.path)
+        if self.doc.get("schema") != 1:
+            raise InstallError(
+                "%s: patch.json schema %r is not 1" % (self.path, self.doc.get("schema"))
+            )
+        self.version = self.manifest["version"]
+        if self.doc.get("version") != self.version:
+            raise InstallError("%s: patch.json and manifest.json name other versions" % self.path)
+        self.base_version = self.doc["base_version"]
+        self.sums = read_sums(os.path.join(self.path, "SHA256SUMS"))
+        self.shipped = self.doc["changed"] + self.doc["new"]
+        self.kept = self.doc["kept"]
+        self.deleted = self.doc["deleted"]
+        self.entries = {e["path"]: e for e in self.manifest.get("files", [])}
+        self._check_names()
+
+    def _check_names(self):
+        """Every name the patch writes or removes, before any write: a
+        deleted "game_files/../../x" would remove a file outside the install."""
+        for v in (self.version, self.base_version):
+            if not patch_version_ok(v):
+                raise InstallError("%s: bad version %r (a damaged patch?)" % (self.path, v))
+        lists = self.shipped + self.kept + self.deleted + self.manifest.get("files", [])
+        for e in lists:
+            rel = e.get("path") if isinstance(e, dict) else None
+            if not patch_path_ok(rel):
+                raise InstallError("%s: unsafe path %r (a damaged patch?)" % (self.path, rel))
+        for rel in self.sums:
+            if not patch_path_ok(rel):
+                raise InstallError("%s: unsafe path %r (a damaged patch?)" % (self.path, rel))
+
+    def verify(self):
+        """The shipped files against SHA256SUMS and patch.json; the lists
+        against the new manifest, so a kept file is one the version has."""
+        for e in self.shipped:
+            rel = e["path"]
+            p = os.path.join(self.path, rel)
+            if not os.path.isfile(p) or os.path.islink(p):
+                raise InstallError("patch file missing: %s" % rel)
+            got = sha256_file(p)
+            if got != self.sums.get(rel) or got != e["sha256"]:
+                raise InstallError("patch file damaged (checksum mismatch): %s" % rel)
+        listed = {e["path"] for e in self.shipped + self.kept}
+        if listed != set(self.entries) or listed != set(self.sums):
+            raise InstallError("patch.json does not cover the new manifest; use the full installer")
+
+    def program(self, entries):
+        return [e for e in entries if not e["path"].startswith(GAME_PREFIX)]
+
+    def game(self, entries):
+        return [e for e in entries if e["path"].startswith(GAME_PREFIX)]
+
+    def changes_game_data(self):
+        return bool(self.game(self.shipped + self.deleted))
+
+    def size(self, entries):
+        return sum(int(e["size"]) for e in entries)
+
+
+def mismatch(patch, found):
+    return InstallError(
+        "This update is for %s; this install is %s. Use the full installer for %s."
+        % (patch.base_version, found or "not installed", patch.version)
+    )
+
+
+def file_matches(path, entry):
+    """By size first: a mismatch is found without hashing gigabytes."""
+    try:
+        if os.path.islink(path) or os.path.getsize(path) != int(entry["size"]):
+            return False
+    except OSError:
+        return False
+    return sha256_file(path) == entry["sha256"]
+
+
+def check_kept_game(patch, root):
+    """Every kept game file under the root's game_files/, before anything
+    is written: a patch never builds on game data it does not know."""
+    for e in patch.game(patch.kept):
+        if not file_matches(root.p(e["path"]), e):
+            raise InstallError(
+                "This update is for %s, but %s does not match it. Use the full installer for %s."
+                % (patch.base_version, e["path"], patch.version)
+            )
+
+
+def check_base(patch, root):
+    """current must be base_version, its manifest.json the one the patch
+    was made against, and every kept program file as that manifest says.
+    A version merely kept under versions/ is no base: the switch would also
+    move the program past what the player has."""
+    cur = root.current()
+    if cur != patch.base_version:
+        raise mismatch(patch, cur)
+    base_dir = root.p("versions", cur)
+    try:
+        got = sha256_file(os.path.join(base_dir, "manifest.json"))
+    except OSError:
+        got = None
+    if got != patch.doc["base_manifest_sha256"]:
+        raise mismatch(patch, "%s with another manifest" % cur)
+    for e in patch.program(patch.kept):
+        if not file_matches(os.path.join(base_dir, e["path"]), e):
+            raise InstallError(
+                "This update is for %s, but versions/%s/%s does not match it. "
+                "Use the full installer for %s." % (cur, cur, e["path"], patch.version)
+            )
+    check_kept_game(patch, root)
+
+
+def version_complete(final, sums_src, entries):
+    """versions/<v> has this SHA256SUMS and every program file at its size
+    (install_program's check, against the manifest's sizes)."""
+    return (
+        os.path.isdir(final)
+        and same_file(os.path.join(final, "SHA256SUMS"), sums_src)
+        and all(
+            os.path.isfile(os.path.join(final, e["path"]))
+            and not os.path.islink(os.path.join(final, e["path"]))
+            and os.path.getsize(os.path.join(final, e["path"])) == int(e["size"])
+            for e in entries
+        )
+    )
+
+
+def patch_program(patch, root):
+    """versions/<new>: kept files hard-linked from the base, the changed and
+    new ones copied from the patch, verified, flushed, renamed into place.
+    <new> is never current here, so a stale incomplete versions/<new> is
+    removed rather than swapped. Returns False when a complete one exists
+    (the rerun after a stop between the rename and the switch)."""
+    v = patch.version
+    final = root.p("versions", v)
+    prog = patch.program(patch.shipped + patch.kept)
+    if version_complete(final, os.path.join(patch.path, "SHA256SUMS"), prog):
+        return False
+    base_dir = root.p("versions", patch.base_version)
+    part = final + ".partial"
+    shutil.rmtree(part, ignore_errors=True)
+    os.makedirs(part)
+    shipped = {e["path"] for e in patch.shipped}
+    try:
+        for e in sorted(prog, key=lambda e: e["path"]):
+            rel = e["path"]
+            dst = os.path.join(part, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if rel in shipped:
+                shutil.copy2(os.path.join(patch.path, rel), dst)
+            else:
+                os.link(os.path.join(base_dir, rel), dst)
+        for name in ("manifest.json", "SHA256SUMS"):
+            shutil.copy2(os.path.join(patch.path, name), os.path.join(part, name))
+        for e in prog:
+            if not file_matches(os.path.join(part, e["path"]), e):
+                raise InstallError("copy damaged (checksum mismatch): %s" % e["path"])
+        for exe in ("launch.sh", "install.sh"):
+            p = os.path.join(part, exe)
+            if os.path.exists(p):
+                os.chmod(p, 0o755)
+        fsync_tree(part)
+    except BaseException:
+        shutil.rmtree(part, ignore_errors=True)
+        raise
+    step("patch-before-rename")
+    if os.path.lexists(final):
+        shutil.rmtree(final)
+    os.rename(part, final)
+    fsync_dir(root.p("versions"))
+    return True
+
+
+def patch_game_files(patch, root):
+    """The patch-aware sync (D6): the full install's sync takes its want
+    set from the files present, so on a patch it would delete every kept
+    game file. Here want comes from the new manifest; only the new and
+    changed files are written (<name>.partial, flushed, renamed over); only
+    deleted paths are removed; anything else found is reported, never
+    removed. A file already at its new sha256 is skipped, so a rerun after
+    a stop here completes. Returns (written, removed, strays)."""
+    want = {e["path"] for e in patch.game(patch.shipped + patch.kept)}
+    written = removed = 0
+    for e in sorted(patch.game(patch.shipped), key=lambda e: e["path"]):
+        d = root.p(e["path"])
+        if file_matches(d, e):
+            continue
+        os.makedirs(os.path.dirname(d), exist_ok=True)
+        if os.path.isdir(d) and not os.path.islink(d):
+            shutil.rmtree(d)
+        tmp = d + ".partial"
+        shutil.copy2(os.path.join(patch.path, e["path"]), tmp)
+        fsync_file(tmp)
+        step("game-file")
+        os.replace(tmp, d)
+        fsync_dir(os.path.dirname(d))
+        written += 1
+    for e in patch.game(patch.deleted):
+        d = root.p(e["path"])
+        if e["path"] in want:
+            continue
+        if os.path.isfile(d) or os.path.islink(d):
+            os.remove(d)
+            fsync_dir(os.path.dirname(d))
+            removed += 1
+    gone = {e["path"] for e in patch.game(patch.deleted)}
+    strays = []
+    base = root.p("game_files")
+    for dirpath, _dirnames, filenames in os.walk(base):
+        for f in filenames:
+            rel = GAME_PREFIX + os.path.relpath(os.path.join(dirpath, f), base).replace(os.sep, "/")
+            if rel not in want and rel not in gone and not f.endswith(".partial"):
+                strays.append(rel)
+    return written, removed, sorted(strays)
+
+
+def cmd_patch(
+    patch,
     root,
     keep,
     steam,
@@ -930,25 +1324,79 @@ def cmd_install(
     umu_dir=None,
     umu=None,
     proton=True,
+    yes=False,
 ):
-    """umu: ensure_umu's stand-in for the tests (None runs the real one).
-    proton: False skips the pinned Proton (--no-proton), or ensure_proton's
-    stand-in for the tests."""
+    """cmd_install with the program and game-file steps swapped for the
+    patch's (D7), in cmd_install's order, so a patched install ends in the
+    state a full install of the same version leaves."""
+    prog_new = patch.program(patch.shipped)
+    need = 2 * patch.size(prog_new) + patch.size(patch.game(patch.shipped))
+    lock = pre_steps(root, need, host_check, bench)
+    try:
+        cur = root.current()
+        # A rerun after the switch: the version is in place, the rest of
+        # the run is idempotent.
+        finishing = cur == patch.version
+        if finishing:
+            check_kept_game(patch, root)
+        else:
+            check_base(patch, root)
+        say("verifying the patch (%s -> %s) ..." % (patch.base_version, patch.version))
+        patch.verify()
+        if patch.changes_game_data() and not finishing:
+            say("WARNING: " + GAME_DATA_WARNING)
+            if not yes:
+                if not sys.stdin.isatty():
+                    raise InstallError("%s; run again with --yes to apply it" % GAME_DATA_WARNING)
+                if not ask_yes("apply it?"):
+                    raise InstallError("not applied")
+        seed_dir = patch.path
+        if not os.path.isfile(os.path.join(seed_dir, "config.seed.toml")):
+            seed_dir = root.p("versions", cur)
+        runtime_steps(root, seed_dir, fetch_umu_now, umu_dir, umu, proton)
+        made = patch_program(patch, root)
+        say(
+            "program: %s"
+            % (
+                "installed versions/%s (%d files from the patch, %d kept)"
+                % (patch.version, len(prog_new), len(patch.program(patch.kept)))
+                if made
+                else "versions/%s already installed" % patch.version
+            )
+        )
+        step("program")
+        gw, gr, strays = patch_game_files(patch, root)
+        say("game files: %d written, %d removed, %d kept" % (gw, gr, len(patch.game(patch.kept))))
+        for s in strays:
+            say("left alone: %s (not in this version)" % s)
+        step("game-files")
+        post_steps(root, patch.version, patch.manifest["name"], "patch", keep, steam, saves_from)
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+def pre_steps(root, need, host_check, bench):
+    """What every install and patch checks before it changes anything.
+    Returns the launch lock, held until the run ends."""
     if host_check:
         check_host()
     check_not_dev_tree(root.path, bench)
     check_ours(root, installing=True)
     check_layout(root)
-    prog = bundle.program_files()
-    need = 2 * bundle.size(prog)
-    if not os.path.isfile(root.p("game_files", "default.xbe")):
-        need += bundle.size(bundle.game_files(), "game_files")
     if free_bytes(root.path) < need:
         raise InstallError("not enough space at %s: need %s" % (root.path, human(need)))
-    say("verifying the bundle (%s) ..." % bundle.version)
-    bundle.verify()
-    # Only now: umu-launcher may be a download, which a damaged bundle or a
-    # full disk would waste.
+    # Only a root that is already ours can have a game running from it (a
+    # fresh root gets no state/ before the bundle is verified).
+    lock = take_launch_lock(root) if os.path.isfile(root.p("state", "layout")) else None
+    repair(root)
+    return lock
+
+
+def runtime_steps(root, seed_dir, fetch_umu_now, umu_dir, umu, proton):
+    """umu-launcher, Proton, the layout mark and config/, after the verify:
+    umu-launcher may be a download, which a damaged bundle or a full disk
+    would waste."""
     umu_run = (umu or ensure_umu)(fetch_umu_now, umu_dir)
     if proton:
         (ensure_proton if proton is True else proton)()
@@ -967,26 +1415,18 @@ def cmd_install(
     if not os.path.isdir(root.p("config")):
         os.makedirs(root.p("config"))
         say("config: created %s" % root.p("config"))
-    seed_config(bundle, root)
-    copied = install_program(bundle, root)
-    say(
-        "program: %s"
-        % (
-            "installed versions/%s" % bundle.version
-            if copied
-            else "versions/%s already installed" % bundle.version
-        )
-    )
-    gc, gr = sync_game_files(bundle, root)
-    say("game files: %d copied, %d removed, %d unchanged" % (gc, gr, len(bundle.game_files()) - gc))
+    seed_config(seed_dir, root)
+
+
+def post_steps(root, version, name, what, keep, steam, saves_from):
     cur = root.current()
-    if cur != bundle.version:
-        old = switch(root, bundle.version, "install")
-        say("current: %s -> %s" % (old, bundle.version))
+    if cur != version:
+        old = switch(root, version, what)
+        say("current: %s -> %s" % (old, version))
     else:
         say("current: %s (unchanged)" % cur)
     write_stable_launcher(root)
-    write_desktop(root, bundle.manifest["name"])
+    write_desktop(root, name)
     removed, foreign = prune(root, keep)
     say("kept: %s" % ", ".join(root.versions()))
     if removed:
@@ -997,12 +1437,61 @@ def cmd_install(
         say("imported saves: %s" % ", ".join(import_saves(root, saves_from)))
     if steam:
         add_to_steam(root)
-    if "-dirty" in bundle.version:
-        say("WARNING: %s was built from uncommitted changes" % bundle.version)
+    if "-dirty" in version:
+        say("WARNING: %s was built from uncommitted changes" % version)
     say("saves: %s (never touched by install, update, rollback or uninstall)" % root.p("hdd"))
     say("launch: %s" % root.p(APP))
     say()
     say(NOTICE)
+
+
+def cmd_install(
+    bundle,
+    root,
+    keep,
+    steam,
+    saves_from,
+    host_check=True,
+    bench=None,
+    fetch_umu_now=False,
+    umu_dir=None,
+    umu=None,
+    proton=True,
+):
+    """umu: ensure_umu's stand-in for the tests (None runs the real one).
+    proton: False skips the pinned Proton (--no-proton), or ensure_proton's
+    stand-in for the tests."""
+    prog = bundle.program_files()
+    need = 2 * bundle.size(prog)
+    if not os.path.isfile(root.p("game_files", "default.xbe")):
+        need += bundle.size(bundle.game_files(), "game_files")
+    lock = pre_steps(root, need, host_check, bench)
+    try:
+        say("verifying the bundle (%s) ..." % bundle.version)
+        bundle.verify()
+        runtime_steps(root, bundle.path, fetch_umu_now, umu_dir, umu, proton)
+        copied = install_program(bundle, root)
+        say(
+            "program: %s"
+            % (
+                "installed versions/%s" % bundle.version
+                if copied
+                else "versions/%s already installed" % bundle.version
+            )
+        )
+        step("program")
+        gc, gr = sync_game_files(bundle, root)
+        say(
+            "game files: %d copied, %d removed, %d unchanged"
+            % (gc, gr, len(bundle.game_files()) - gc)
+        )
+        step("game-files")
+        post_steps(
+            root, bundle.version, bundle.manifest["name"], "install", keep, steam, saves_from
+        )
+    finally:
+        if lock is not None:
+            lock.close()
 
 
 def cmd_rollback(root, version=None):
@@ -1133,7 +1622,7 @@ def main(argv=None, host_check=True, bench=None, umu=None, proton=True):
         "command",
         nargs="?",
         default="install",
-        choices=("install", "rollback", "status", "list", "uninstall"),
+        choices=("install", "patch", "rollback", "status", "list", "uninstall"),
     )
     ap.add_argument("version", nargs="?", help="rollback: the version to switch to")
     ap.add_argument("--root", default=os.environ.get(ROOT_ENV, DEFAULT_ROOT))
@@ -1161,6 +1650,11 @@ def main(argv=None, host_check=True, bench=None, umu=None, proton=True):
         help="skip the pinned %s (you set PROTONPATH in config/launch.env)" % PROTON_VERSION,
     )
     ap.add_argument(
+        "--yes",
+        action="store_true",
+        help="patch: apply a patch that changes game data without asking",
+    )
+    ap.add_argument(
         "--bundle", default=os.path.dirname(os.path.abspath(__file__)), help=argparse.SUPPRESS
     )
     a = ap.parse_args(argv)
@@ -1168,11 +1662,33 @@ def main(argv=None, host_check=True, bench=None, umu=None, proton=True):
         ap.error("a version is only taken by rollback")
     if a.keep < 1:
         ap.error("--keep must be at least 1")
-    if (a.fetch_umu or a.umu_dir or a.no_proton) and a.command != "install":
-        ap.error("--fetch-umu, --umu-dir and --no-proton are taken by install")
+    # A patch folder installs as a patch, whichever of the two was asked.
+    if a.command == "install" and is_patch(a.bundle):
+        a.command = "patch"
+    if (a.fetch_umu or a.umu_dir or a.no_proton) and a.command not in ("install", "patch"):
+        ap.error("--fetch-umu, --umu-dir and --no-proton are taken by install and patch")
+    if a.yes and a.command != "patch":
+        ap.error("--yes is taken by patch")
     root = Root(a.root)
     try:
-        if a.command == "install":
+        if a.command == "patch":
+            if not is_patch(a.bundle):
+                raise InstallError("%s is a full bundle, not a patch: run install" % a.bundle)
+            cmd_patch(
+                Patch(a.bundle),
+                root,
+                a.keep,
+                a.steam,
+                a.import_saves,
+                host_check,
+                bench,
+                a.fetch_umu,
+                a.umu_dir,
+                umu,
+                False if a.no_proton else proton,
+                a.yes,
+            )
+        elif a.command == "install":
             cmd_install(
                 Bundle(a.bundle),
                 root,

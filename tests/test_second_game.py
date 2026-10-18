@@ -12,7 +12,7 @@ import os
 import shutil
 import subprocess
 
-from xboxrecomp_cli import build, host, main, manifest, pipeline
+from xboxrecomp_cli import build, host, main, manifest, pipeline, wizard
 from xboxrecomp_cli import package as pkg
 from xboxrecomp_cli.bench import sync
 from xboxrecomp_cli.package import lib as pl
@@ -246,6 +246,7 @@ def test_upstream_pin_refuses_config_flags(d, monkeypatch):
     (the build) runs, naming the pin."""
     with game2_tree(d) as (G, _):
         host.g().m["package"] = dict(PKG2)
+        G.m["build"]["stock_cmake"] = ["-DXBOXRECOMP_ENHANCE=ON"]
         G.content = G.path("packaging")
         monkeypatch.setattr(pkg.setup, "host_blockers", lambda t, importing=False: [])
         monkeypatch.setattr(pkg.toolkit, "exclude_pin_mark", lambda t: None)
@@ -278,6 +279,7 @@ def test_reads_config_source(d, monkeypatch):
     from its working tree, offline, since it is what gets built; a clone
     setup marked, or no toolkit yet, is asked at game.toml's pin."""
     with game2_tree(d) as (G, tk):
+        G.m["build"]["stock_cmake"] = ["-DXBOXRECOMP_ENHANCE=ON"]
         asked = []
 
         def has(pin):
@@ -299,6 +301,80 @@ def test_reads_config_source(d, monkeypatch):
         missing = os.path.join(d, "no-toolkit")
         monkeypatch.setattr(pkg.toolkit, "toolkit_dir", lambda env=None: missing)
         assert pkg.reads_config() == "pin" and len(asked) == 3
+
+
+def test_fork_pin_without_the_layer(d, monkeypatch):
+    """A game pinned to the fork (src/enhance there) whose stock build
+    leaves the layer off (stock_cmake = [], as game2, SSX 3 and Spartan)
+    and that has no config.default.toml: reads_config says no without
+    asking the pin, check_content and write_common need no defaults file,
+    the note names game.toml rather than the toolkit, and --hud-pack is
+    refused naming stock_cmake. With the layer turned on, the missing
+    defaults file is refused before the build."""
+    with game2_tree(d) as (G, tk):
+        host.g().m["package"] = dict(PKG2)
+        G.content = G.path("packaging")
+        assert G.m["build"]["stock_cmake"] == []
+        write(os.path.join(tk, "src", "enhance", "CMakeLists.txt"), "#\n")
+        monkeypatch.setattr(pkg.toolkit, "toolkit_dir", lambda env=None: tk)
+        asked = []
+        monkeypatch.setattr(pkg.toolkit, "pin_has_enhance", lambda pin: asked.append(pin) or True)
+        assert pkg.reads_config() is False and asked == []
+        for marked in (False, True):
+            if marked:
+                write(os.path.join(tk, pkg.toolkit.PIN_MARK), "v1\n")
+            assert pkg.reads_config() is False and asked == []
+        pkg.check_content(enhance=False)
+        assert pkg.no_config_note() == pkg.NO_LAYER_NOTE
+        write(os.path.join(G.content, "launch.env.default.windows"), "LOG_KEEP=10\n")
+        write(G.path("LICENSE"), "MIT\n")
+        monkeypatch.setattr(pkg, "readme", lambda *a: None)
+        monkeypatch.setattr(pl, "stage_game_files", lambda src, dst: 0)
+        payload = os.path.join(d, "payload")
+        os.makedirs(payload)
+        pkg.write_common(payload, "windows", "v", pl, enhance=pkg.reads_config())
+        assert sorted(os.listdir(payload)) == ["LICENSE", "launch.env.default"]
+        try:
+            pkg.refuse_no_config({"path": "x"}, None)
+        except host.CliError as e:
+            assert "stock_cmake" in str(e) and str(e).startswith("--hud-pack:")
+        else:
+            raise AssertionError("not refused")
+        # The wizard's answer is the same, and asks no pin either.
+        assert wizard.reads_config(G.m, [{"config": "a.b"}]) is False and asked == []
+        # The layer on but no defaults file: a clear refusal, not a crash
+        # in the copy.
+        G.m["build"]["stock_cmake"] = ["-DXBOXRECOMP_ENHANCE=ON"]
+        try:
+            pkg.check_content(enhance=True)
+        except host.CliError as e:
+            assert "config.default.toml is missing" in str(e)
+        else:
+            raise AssertionError("not refused")
+        G.m["build"]["stock_cmake"] = ["-DXBOXRECOMP_ENHANCE=ON", "-DXBOXRECOMP_ENHANCE=OFF"]
+        assert pkg.reads_config() is False
+
+
+def test_reads_config_follows_the_build_cache(d, monkeypatch):
+    """SSX 3's shape: the toolkit has the layer, and once built the
+    packaging cache says XBOXRECOMP_ENHANCE=OFF: reads_config(cache) is
+    false and the note names game.toml; a cache with it ON (and the
+    toolkit's layer) is true; a cache without the variable falls back to
+    stock_cmake."""
+    with game2_tree(d) as (G, tk):
+        host.g().m["package"] = dict(PKG2)
+        write(os.path.join(tk, "src", "enhance", "CMakeLists.txt"), "#\n")
+        monkeypatch.setattr(pkg.toolkit, "toolkit_dir", lambda env=None: tk)
+        G.m["build"]["stock_cmake"] = ["-DXBOXRECOMP_ENHANCE=ON"]
+        plib()
+        assert pkg.reads_config({"XBOXRECOMP_ENHANCE": "OFF"}) is False
+        assert pkg.no_config_note({"XBOXRECOMP_ENHANCE": "OFF"}) == pkg.NO_LAYER_NOTE
+        assert pkg.reads_config({"XBOXRECOMP_ENHANCE": "ON"}) is True
+        assert pkg.reads_config({}) is True
+        G.m["build"]["stock_cmake"] = []
+        plib()
+        assert pkg.reads_config({}) is False
+        assert pkg.reads_config({"XBOXRECOMP_ENHANCE": "ON"}) is True
 
 
 # The package table the two tests below need (game2 has none).
@@ -660,12 +736,21 @@ def test_package_pacing_note(d, monkeypatch, capsys):
         monkeypatch.setattr(pkg, "run_plan_prefix", lambda a, plan: None)
         monkeypatch.setattr(pkg, "reads_config", lambda: True)
         monkeypatch.setattr(pkg, "check_staged", lambda root, lib: None)
-        monkeypatch.setattr(pkg, "write_manifest", lambda *a, **k: None)
-        monkeypatch.setattr(pkg, "stage_payload", lambda t, a, lib: (stage, payload, "v1", [], exe))
+        monkeypatch.setattr(
+            pkg,
+            "write_manifest",
+            lambda root, *a, **k: write(os.path.join(root, "manifest.json"), "{}"),
+        )
+        monkeypatch.setattr(
+            pkg, "stage_payload", lambda t, a, lib, *o: (stage, payload, "v1", [], exe)
+        )
         monkeypatch.setattr(pl, "stage_game_files", lambda src, dst: 0)
         monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
         monkeypatch.setattr(windows, "build_launcher_exe", lambda *a: None)
         monkeypatch.setattr(windows, "wrap_windows", lambda *a: os.path.join(d, "setup.exe"))
+        monkeypatch.setattr(windows, "build_root_tools", lambda *a: None)
+        monkeypatch.setattr(windows, "root_tools_ready", lambda work: True)
+        monkeypatch.setattr(windows, "root_block", lambda work: {})
 
         class View:  # package()'s progress view, plain lines
             plan = []
@@ -723,7 +808,7 @@ def test_package_pacing_note(d, monkeypatch, capsys):
         capsys.readouterr()
         pkg.package(a)
         out = capsys.readouterr().out
-        note = pkg.NO_CONFIG_NOTE % pkg.gitpin.describe(G.m["toolkit"])
+        note = pkg.no_config_note()
         assert out.count(note) == 1, out
         assert out.index(note) < out.index("bundle: ")
         assert "note: frame pacing" not in out

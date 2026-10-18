@@ -47,6 +47,49 @@ type Options struct {
 	DevGame       string // --game DIR: build in DIR as it is, no clone
 	NoDialog      bool
 	NoUpdateCheck bool
+	// Source is --source (D14); nil for a release build.
+	Source *Source
+	// Update is the release the newer-wizard check compares, when it is
+	// not Cfg's: in local mode, the one this binary was built for.
+	Update *gamecfg.Release
+	// PatchFrom is the hidden --patch-from, passed to package.
+	PatchFrom string
+}
+
+// Source is a developer's local source and what the banner says of it.
+type Source struct {
+	Local  *repo.Local
+	Commit string
+	Dirty  bool
+}
+
+// SourceBanner is the line every screen shows in local mode, so a
+// screenshot cannot pass for a release.
+func SourceBanner(commit string, dirty bool, path string) string {
+	b := fmt.Sprintf(localBanner, short7(commit))
+	if dirty {
+		b += "; " + fmt.Sprintf(localBannerDirty, path)
+	}
+	return b
+}
+
+func short7(c string) string {
+	if len(c) > 7 {
+		return c[:7]
+	}
+	return c
+}
+
+// updateRelease is the release the newer-wizard check compares.
+func (w *Wizard) updateRelease() gamecfg.Release {
+	if w.opt.Update != nil {
+		return *w.opt.Update
+	}
+	if w.opt.Source != nil {
+		// A local source with no embedded release: nothing to compare.
+		return gamecfg.Release{Dev: true}
+	}
+	return w.opt.Cfg.Release
 }
 
 type page struct {
@@ -102,6 +145,8 @@ type Wizard struct {
 	outLabel  *widget.Label
 	// outNote says why the output folder cannot be used (outClash).
 	outNote *widget.Label
+	// foundLabel names the clone the build folder already holds (D13).
+	foundLabel *widget.Label
 
 	// checks
 	env        *Env
@@ -137,6 +182,15 @@ type Wizard struct {
 	summaryBox  *fyne.Container
 	summaryTech *widget.Label
 	summaryAcc  *widget.Accordion
+	// the output choice (D13): plan is the CLI's last answer, planRun
+	// counts asks so a late one is dropped, planAsk asks (the tests
+	// replace it); techBase is the technical details before the plan.
+	outputLine   *widget.Label
+	outputChange *widget.Button
+	plan         *runner.Plan
+	planRun      int
+	planAsk      func(runner.Runner, []string) (*runner.Plan, error)
+	techBase     string
 
 	// build and done
 	buildLog *logPane
@@ -165,6 +219,13 @@ type Wizard struct {
 	prog      *runner.Progress
 	buildErr  error
 	doneBox   *fyne.Container
+	// the disk line: diskRun counts measurements; treeSize and cleanRun
+	// are hostinfo's and the CLI's (the tests replace them).
+	diskLabel *widget.Label
+	freeBtn   *widget.Button
+	diskRun   int
+	treeSize  func(string) uint64
+	cleanRun  func(runner.Runner) (int64, error)
 }
 
 const (
@@ -198,6 +259,9 @@ func New(a fyne.App, opt Options) *Wizard {
 	w.openLink = w.openURL
 	w.async = func(f func()) { go f() }
 	w.fontCheck = w.askFont
+	w.planAsk = w.planOf
+	w.treeSize = hostinfo.TreeSize
+	w.cleanRun = w.clean
 	w.partsAfter = uiAfter
 	var why string
 	w.out, why = hostinfo.ResolveOut(w.settings.Out, w.root)
@@ -206,8 +270,14 @@ func New(a fyne.App, opt Options) *Wizard {
 		w.Logf("output folder: %s; using %s", why, w.out)
 	}
 	w.st = model.New(opt.Cfg, hostinfo.NativeTarget())
+	w.st.PatchFrom = opt.PatchFrom
 	w.latest = func() (*update.Release, string) {
-		return update.Latest(context.Background(), &http.Client{}, opt.Cfg.Release.Repo, opt.Cfg.Release.Tag)
+		if opt.Cfg.Private {
+			return nil, "none (a private game has no public releases)"
+		}
+		// The game's repo, which a local source does not replace: only
+		// the clone URL is (D14).
+		return update.Latest(context.Background(), &http.Client{}, opt.Cfg.Release.Repo, w.updateRelease().Tag)
 	}
 	w.win = a.NewWindow(opt.Cfg.Game.Name + " build wizard")
 	w.body = container.NewStack()
@@ -237,7 +307,11 @@ func (w *Wizard) header() fyne.CanvasObject {
 	w.info.Importance = widget.LowImportance
 	line := container.NewBorder(nil, nil, w.title,
 		container.NewHBox(container.NewVBox(layout.NewSpacer(), w.step), w.info))
-	return container.NewPadded(container.NewVBox(line, w.stepBar))
+	rows := []fyne.CanvasObject{line, w.stepBar}
+	if s := w.opt.Source; s != nil {
+		rows = append(rows, blockedLine(SourceBanner(s.Commit, s.Dirty, s.Local.Path)))
+	}
+	return container.NewPadded(container.NewVBox(rows...))
 }
 
 // bottom is Back and Next, then the version: small, low contrast, at the
@@ -260,11 +334,21 @@ func (w *Wizard) bottom() fyne.CanvasObject {
 // pinsText names the exact sources of this wizard, for a bug report.
 func (w *Wizard) pinsText() string {
 	c := w.opt.Cfg
-	rel := c.Release.Tag
+	rel, commit := c.Release.Tag, c.Release.Commit
 	if c.Release.Dev {
 		rel = devRelease
 	}
-	return fmt.Sprintf(techPins, w.opt.Version, rel, short(c.Release.Commit), c.CLI.Tag, c.Toolkit.Tag)
+	if s := w.opt.Source; s != nil {
+		rel, commit = "local source "+s.Local.Via(), s.Commit
+	}
+	return fmt.Sprintf(techPins, w.opt.Version, rel, short(commit), c.CLI.Tag, c.Toolkit.Tag)
+}
+
+func (w *Wizard) local() *repo.Local {
+	if w.opt.Source == nil {
+		return nil
+	}
+	return w.opt.Source.Local
 }
 
 // Show runs the window. The release check waits for leaveWelcome.
@@ -274,7 +358,7 @@ func (w *Wizard) Show() { w.win.ShowAndRun() }
 // leaves the Welcome page with its box ticked: nothing goes out before the
 // player has seen the box (the user's 2026-10-15 decision).
 func (w *Wizard) leaveWelcome() {
-	if w.updateAsked || w.opt.NoUpdateCheck || w.settings.NoUpdateCheck || w.opt.Cfg.Release.Dev {
+	if w.updateAsked || w.opt.NoUpdateCheck || w.settings.NoUpdateCheck || w.updateRelease().Dev {
 		return
 	}
 	w.updateAsked = true
@@ -484,6 +568,8 @@ func (w *Wizard) welcomePage() *page {
 	w.outNote = para("")
 	w.outNote.Importance = widget.DangerImportance
 	w.outNote.Hide()
+	w.foundLabel = para("")
+	w.foundLabel.Hide()
 	changeOut := widget.NewButton(changeText, w.pickOut)
 	outIs := newQuiet("", fyne.TextAlignLeading, fyne.TextStyle{})
 	outIs.Wrapping = fyne.TextWrapWord
@@ -503,6 +589,7 @@ func (w *Wizard) welcomePage() *page {
 		statement(sendsLead, sendsText),
 		container.NewBorder(nil, nil, bold(buildFolder), nil, folderIs),
 		container.NewBorder(nil, nil, nil, change, w.rootLabel),
+		w.foundLabel,
 		container.NewBorder(nil, nil, bold(outputFolder), nil, outIs),
 		container.NewBorder(nil, nil, nil, changeOut, w.outLabel),
 		w.outNote,
@@ -512,6 +599,7 @@ func (w *Wizard) welcomePage() *page {
 		items = append(items, para(unsignedText))
 	}
 	w.showOutClash()
+	w.showFolderFound()
 	return &page{title: titleWelcome, obj: container.NewVScroll(container.NewVBox(items...)), enter: w.showOutClash,
 		ready: func() bool { return w.root != "" && w.out != "" && w.outClash() == "" }}
 }
@@ -564,6 +652,7 @@ func (w *Wizard) setRoot(p string) {
 		w.outLabel.SetText(w.out)
 	}
 	w.showOutClash()
+	w.showFolderFound()
 	w.env, w.doctor = nil, nil
 	w.refreshNav()
 }
@@ -654,7 +743,7 @@ func (w *Wizard) runChecks() {
 		step := func(done, total int) {
 			fyne.Do(func() { w.checksBar.SetValue(float64(done) / float64(total+1)) })
 		}
-		env, err := Prepare(context.Background(), w.opt.Cfg, w.opt.Pins, w.root, w.opt.DevGame, log, step)
+		env, err := Prepare(context.Background(), w.opt.Cfg, w.opt.Pins, w.root, w.opt.DevGame, w.local(), log, step)
 		if err == nil {
 			log("doctor: " + runner.Display(w.opt.Cfg.Game.Slug, []string{"doctor", "--json"}))
 			d, err = env.Runner.Doctor(context.Background(), LogWriter(func(s string) { log("  " + s) }))
@@ -1300,6 +1389,13 @@ func (w *Wizard) summaryPage() *page {
 	w.summaryBox = container.NewVBox()
 	w.summaryTech = mono("")
 	w.summaryAcc = widget.NewAccordion(widget.NewAccordionItem(technicalDetails, w.summaryTech))
+	w.outputLine = para("")
+	w.outputChange = widget.NewButton(changeText, func() {
+		if w.plan != nil && w.plan.Output != nil {
+			d, _, _ := w.outputDialog()
+			d.Show()
+		}
+	})
 	return &page{title: titleSummary, obj: container.NewVScroll(container.NewVBox(w.summaryBox, w.summaryAcc)),
 		next: summaryNext, enter: w.fillSummary}
 }
@@ -1332,6 +1428,7 @@ func (w *Wizard) fillSummary() {
 		para(fmt.Sprintf(summaryFolder, w.root)),
 		para(fmt.Sprintf(summaryOut, w.out)),
 		para(fmt.Sprintf(summaryPlatform, model.TargetLabels[w.st.Target])),
+		container.NewBorder(nil, nil, bold(summaryOutput), container.NewVBox(w.outputChange), w.outputLine),
 	}
 	var changed []fyne.CanvasObject
 	for _, o := range c.Options {
@@ -1361,7 +1458,9 @@ func (w *Wizard) fillSummary() {
 	} else {
 		b.WriteString("\n" + techNoSeed + "\n")
 	}
-	w.summaryTech.SetText(strings.TrimRight(b.String(), "\n"))
+	w.techBase = strings.TrimRight(b.String(), "\n")
+	w.summaryTech.SetText(w.techBase)
+	w.askPlan()
 }
 
 // --- build
@@ -1677,6 +1776,8 @@ func (w *Wizard) logBuildEnd(err error) {
 func (w *Wizard) donePage() *page {
 	w.doneBox = container.NewVBox()
 	w.doneParts = newPartsView(w.partLines)
+	w.diskLabel = para("")
+	w.freeBtn = widget.NewButton(freeSpaceText, w.freeSpace)
 	return &page{title: titleDone, obj: container.NewVScroll(w.doneBox), next: doneNext}
 }
 
@@ -1689,12 +1790,14 @@ func (w *Wizard) fillDone() {
 	case w.buildErr == nil && w.prog.Bundle != "":
 		bundle := w.prog.Bundle
 		w.pages[pDone].title = titleDone
-		items = append(items, bold(doneReady), mono(bundle), para(installText[w.st.Target]))
+		items = append(items, bold(doneReady), mono(bundle), para(applyText(w.st.Target, bundle)))
 		row := []fyne.CanvasObject{widget.NewButton(openBundleFolder, func() { w.openPath(filepath.Dir(bundle)) })}
 		if w.st.Target == hostinfo.NativeTarget() {
 			row = append(row, widget.NewButton(installNowText, func() { w.installNow(bundle) }))
 		}
-		items = append(items, container.NewHBox(row...), para(fmt.Sprintf(doneData, c.Data[w.st.Target])))
+		items = append(items, container.NewHBox(row...), para(fmt.Sprintf(doneData, c.Data[w.st.Target])),
+			container.NewBorder(nil, nil, nil, w.freeBtn, w.diskLabel))
+		w.showDisk()
 	case errors.Is(w.buildErr, errCanceled):
 		w.pages[pDone].title = titleStopped
 		items = append(items, bold(doneCanceled))
@@ -1786,9 +1889,13 @@ func (w *Wizard) installNow(bundle string) {
 	var err error
 	switch w.st.Target {
 	case "windows":
-		var setup string
-		if setup, err = setupIn(bundle); err == nil {
-			err = exec.Command(setup).Start()
+		// A patch folder's applier, else the full bundle's setup program.
+		prog := filepath.Join(bundle, "apply.exe")
+		if !isPatch(bundle) {
+			prog, err = setupIn(bundle)
+		}
+		if err == nil {
+			err = exec.Command(prog).Start()
 		}
 	case "macos":
 		err = OpenPath(bundle)
@@ -1797,10 +1904,16 @@ func (w *Wizard) installNow(bundle string) {
 		err = fetch.Unpack(bundle, dir)
 		if err == nil {
 			script := fetch.Find(dir, "install.sh")
+			// install.sh on a patch folder runs patch; the Steam
+			// shortcut is the full install's, already made.
+			line := `cd "$1" && ./install.sh --steam`
+			if isPatch(bundle) {
+				line = `cd "$1" && ./install.sh`
+			}
 			if script == "" {
 				err = errors.New("the bundle has no install.sh")
 			} else {
-				err = termlaunch.Open(`cd "$1" && ./install.sh --steam`, filepath.Dir(script))
+				err = termlaunch.Open(line, filepath.Dir(script))
 			}
 		}
 	}

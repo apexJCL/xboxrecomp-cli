@@ -194,7 +194,12 @@ SPEC = {
     # before the CLI's own; credits.py). A game without the table has no
     # wizard.
     "wizard": {
-        "repo": (STR, REQUIRED),
+        # Optional only with private = true (_check_wizard): a public game
+        # cannot lose its repo by accident.
+        "repo": (STR, ""),
+        # A game with no public repo yet (SSX 3, Spartan): built through the
+        # wizard's --source only, never published as a wizard release.
+        "private": (BOOL, False),
         "icon": (STR, ""),
         "targets": (STRS, DERIVED),
         "fetch": (TABLES, []),
@@ -417,7 +422,10 @@ def _check_wizard(m):
     if not w:
         return []
     errors = []
-    if not re.match(r"^https://[^\s/]+/\S+$", w["repo"]):
+    if not w["repo"]:
+        if not w["private"]:
+            errors.append("wizard.repo: required (or private = true: a game with no public repo)")
+    elif not re.match(r"^https://[^\s/]+/\S+$", w["repo"]):
         errors.append("wizard.repo: an https:// URL")
     if "package" not in m:
         errors.append("wizard: needs a [package] table (the wizard runs package)")
@@ -556,6 +564,25 @@ def _hint_link_errors(name, link):
     if not https_ok(link.get("url", "")):
         errors.append("%s.hint_link.url: an https address" % name)
     return errors
+
+
+def builds_enhance(m):
+    """Whether the stock build turns the toolkit's enhancements layer on,
+    before any build exists: the toolkit's option defaults OFF, so a game
+    whose build.stock_cmake does not set -DXBOXRECOMP_ENHANCE=ON (SSX 3's
+    and Spartan's empty list) builds without it even on a toolkit that has
+    src/enhance. CMake's truth, the last -D or -U winning, as
+    package/lib.py enhance_on reads a cache."""
+    on = False
+    for d in m["build"]["stock_cmake"]:
+        k, _, v = d.partition("=")
+        if k.split(":")[0] == "-DXBOXRECOMP_ENHANCE":
+            v = v.strip().upper()
+            on = v not in ("OFF", "0", "FALSE", "NO", "N", "IGNORE", "NOTFOUND", "")
+            on = on and not v.endswith("-NOTFOUND")
+        elif k == "-UXBOXRECOMP_ENHANCE":
+            on = False
+    return on
 
 
 def range_values(o):

@@ -21,13 +21,18 @@ import (
 // Env is what the checks set up: the tools and the game checkout the
 // build runs in.
 type Env struct {
-	Root   string
-	Game   string
-	UV     string
-	Git    string
-	Dirs   []string // the tools folders, first on the children's PATH
-	Dev    bool     // --game: the developer's tree as it is, not the release
-	Runner runner.Runner
+	Root string
+	Game string
+	UV   string
+	Git  string
+	Dirs []string // the tools folders, first on the children's PATH
+	Dev  bool     // --game: the developer's tree as it is, not the release
+	// Local is --source: the clone is of the developer's commit (D14).
+	Local *repo.Local
+	// Commit is the clone's commit after Prepare, Before the one it had
+	// ("" for a new clone): the build folder line.
+	Commit, Before string
+	Runner         runner.Runner
 }
 
 // NeedError stops the checks on something the player has to do first;
@@ -109,8 +114,8 @@ func prepareTotal(cfg *gamecfg.Config, host string) int {
 // the release (or takes the developer's checkout) and unpacks the
 // config's fetch entries. Each step logs one line and, when step is not
 // nil, reports how many of prepareTotal steps are done.
-func Prepare(ctx context.Context, cfg *gamecfg.Config, pins *fetch.Pins, root, devGame string, log func(string),
-	step func(done, total int)) (*Env, error) {
+func Prepare(ctx context.Context, cfg *gamecfg.Config, pins *fetch.Pins, root, devGame string, local *repo.Local,
+	log func(string), step func(done, total int)) (*Env, error) {
 	client := fetch.Client()
 	e := &Env{Root: root}
 	total, done := prepareTotal(cfg, hostinfo.OS()), 0
@@ -199,16 +204,34 @@ func Prepare(ctx context.Context, cfg *gamecfg.Config, pins *fetch.Pins, root, d
 			return nil, &SpaceError{Free: free, Need: hostinfo.NeedBytes}
 		}
 		r := cfg.Release
-		if r.Tag == "" {
+		if local == nil && cfg.Private {
+			return nil, errors.New("this game has no public repo to clone: run the wizard with --game DIR on your checkout")
+		}
+		if local == nil && r.Tag == "" {
 			return nil, errors.New("this developer build names no release tag to clone: run it with --game DIR")
 		}
 		// A short fixed name: Windows paths stop at 260 characters unless
 		// long paths are on, and the clone's deepest paths are long already.
 		e.Game = filepath.Join(root, "src")
-		log(fmt.Sprintf("game: %s %s into %s", r.Repo, r.Tag, e.Game))
+		src := repo.Source{Repo: r.Repo, Tag: r.Tag, Commit: r.Commit, Local: local}
+		if local != nil {
+			log(fmt.Sprintf("game: %s %s into %s (local source)", local.Path, local.Ref, e.Game))
+		} else {
+			log(fmt.Sprintf("game: %s %s into %s", r.Repo, r.Tag, e.Game))
+		}
 		g := repo.Git{Path: e.Git, Env: env, Out: out}
-		if err := g.Clone(ctx, r.Repo, r.Tag, r.Commit, e.Game); err != nil {
+		res, err := g.Ensure(ctx, src, e.Game)
+		if err != nil {
 			return nil, err
+		}
+		e.Local, e.Commit, e.Before = local, res.Commit, res.Before
+		switch {
+		case res.Before == "":
+			log("game: cloned at " + res.Commit[:7])
+		case res.Before != res.Commit:
+			log("game: moved from " + res.Before[:7] + " to " + res.Commit[:7] + "; the build folder is kept")
+		default:
+			log("game: already at " + res.Commit[:7])
 		}
 		tick()
 		for _, f := range fetch.ForHost(cfg.Fetch, hostinfo.OS()) {

@@ -10,7 +10,9 @@
  *   The user-data root is %LOCALAPPDATA%\<data dir>, or @DATA_DIR_ENV@ when set.
  *   <exe dir>\launch.env.default, then <data>\config\launch.env
  *       KEY=value lines, '#' comments, later wins
- *   RECOMP_GAME_FILES      <exe dir>\game_files
+ *   RECOMP_GAME_FILES      <root>\game_files in the versioned layout (this
+ *                          exe in <root>\versions\<v>\, beside the
+ *                          root's current.txt), else <exe dir>\game_files
  *   RECOMP_HDD_DIR         <data>\hdd      (saves; never touched by install
  *                                          or uninstall)
  *   RECOMP_CONFIG          <data>\config\config.toml, the keys the user
@@ -22,7 +24,9 @@
  *                          LOG_KEEP (10) kept
  *
  * The game starts with logs\ as its working directory (xbox_kernel.log goes
- * there), and the launcher returns its exit code.
+ * there), and the launcher returns its exit code. While it runs the
+ * launcher holds the mutex Local\@APP@-running: apply.exe refuses to
+ * switch or patch under a running game.
  *
  * Rendered by `<game> package windows` (the placeholders are C-escaped) and
  * built with: x86_64-w64-mingw32-clang -municode -mwindows -O2
@@ -87,6 +91,23 @@ static int file_exists(const wchar_t *p)
     return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+/* The game files: unversioned at the install root when this launcher is a
+ * version's (<root>\versions\<v>\), so a patch or rollback switches the
+ * program alone (D8); beside the exe in a portable or older layout. */
+static void game_files_dir(wchar_t *out)
+{
+    wchar_t p[PATH_CHARS], root[PATH_CHARS];
+    swprintf(p, PATH_CHARS, L"%ls\\..\\..", g_exe_dir);
+    if (GetFullPathNameW(p, PATH_CHARS, root, NULL)) {
+        swprintf(p, PATH_CHARS, L"%ls\\current.txt", root);
+        if (file_exists(p)) {
+            swprintf(out, PATH_CHARS, L"%ls\\game_files", root);
+            return;
+        }
+    }
+    swprintf(out, PATH_CHARS, L"%ls\\game_files", g_exe_dir);
+}
+
 /* Keep the newest `keep` game-*.log files (names sort by time). */
 static void rotate_logs(const wchar_t *logs, int keep)
 {
@@ -135,7 +156,7 @@ static void data_dir(void)
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show)
 {
     wchar_t p[PATH_CHARS], logs[PATH_CHARS], log[PATH_CHARS];
-    wchar_t exe[PATH_CHARS], *cmd, *slash, keep_s[32];
+    wchar_t exe[PATH_CHARS], *cmd, *slash, keep_s[32], games[PATH_CHARS];
     STARTUPINFOW si = { 0 };
     PROCESS_INFORMATION pi;
     SYSTEMTIME t;
@@ -151,7 +172,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show)
     if (slash) *slash = 0;
     data_dir();
 
-    swprintf(p, PATH_CHARS, L"%ls\\game_files\\default.xbe", g_exe_dir);
+    /* Held to exit, so the handle is never closed here: Windows drops it
+     * with the process. */
+    CreateMutexW(NULL, FALSE, L"Local\\@APP@-running");
+    game_files_dir(games);
+    swprintf(p, PATH_CHARS, L"%ls\\default.xbe", games);
     if (!file_exists(p))
         fail(L"The game files are missing (game_files\\default.xbe beside @APP@.exe). "
              L"Run the setup program again from its folder.");
@@ -167,8 +192,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show)
     SHCreateDirectoryExW(NULL, logs, NULL);
     swprintf(p, PATH_CHARS, L"%ls\\hdd", g_data);
     SetEnvironmentVariableW(L"RECOMP_HDD_DIR", p);
-    swprintf(p, PATH_CHARS, L"%ls\\game_files", g_exe_dir);
-    SetEnvironmentVariableW(L"RECOMP_GAME_FILES", p);
+    SetEnvironmentVariableW(L"RECOMP_GAME_FILES", games);
 
     /* An earlier version kept a reference copy of the defaults in config;
      * the game reads them beside its exe now, so the copy would only

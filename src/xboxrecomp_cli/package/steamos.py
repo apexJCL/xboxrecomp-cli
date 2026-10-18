@@ -7,6 +7,7 @@ README's install section are this CLI's own, game-agnostic templates
 that needs its own copy of one puts it in <package.templates>/steamos/ (or
 README.part in <package.content>/steamos/), and that file wins."""
 
+import io
 import json
 import os
 import shutil
@@ -86,17 +87,51 @@ def stage_steamos(payload, lib, icon_dir):
     shutil.copy2(os.path.join(icon_dir, "icon.png"), os.path.join(payload, "icon.png"))
 
 
-def wrap_steamos(payload, version, exe, out):
+def bundle_path(out, version):
+    return os.path.join(out, "%s-%s-steamos.tar" % (app(), version))
+
+
+# What a patch tar holds besides the changed and new files: the applier and
+# what install.sh status runs, so the patch is applied by its own code (a
+# base installed by an older install.sh is patched by this one).
+PATCH_TOOLS = ("install.sh", "install_lib.py", "running_game.py")
+
+
+def patch_path(out, version, base_version):
+    from . import patch
+
+    return os.path.join(
+        out, "%s-%s-steamos-patch-from-%s.tar" % (app(), version, patch.short(base_version))
+    )
+
+
+def wrap_steamos(payload, version, exe, out, top=None, choice=None):
     """One tar, written by tarfile with explicit modes, uid/gid 0 and no
     owner names (no account name leaks), the exe's mtime on every member and
-    no symlinks: the same file from any build host, NTFS included."""
-    dst = os.path.join(out, "%s-%s-steamos.tar" % (app(), version))
+    no symlinks: the same file from any build host, NTFS included. top: the
+    tar's one folder, <App>-<version>-steamos (the staged payload keeps a
+    fixed name, so the next run finds it). choice: a patch (patch.Choice):
+    the tar holds only the changed and new files, the applier, the full
+    manifest and SHA256SUMS, and patch.json; it is as deterministic as the
+    full tar."""
+    from . import patch
+
+    if choice is not None and choice.kind == "patch":
+        dst = patch_path(out, version, choice.base.version)
+        doc = patch.patch_doc(choice.base, _manifest(payload), choice.diff)
+        only = {e["path"] for e in patch.shipped(choice.diff)}
+        only |= set(PATCH_TOOLS) | {"manifest.json", "SHA256SUMS"}
+        extra = {patch.PATCH_JSON: (json.dumps(doc, indent=1) + "\n").encode()}
+        top = os.path.basename(dst)[: -len(".tar")]
+    else:
+        dst = bundle_path(out, version)
+        only, extra = None, {}
+        top = top or "%s-%s-steamos" % (app(), version)
     part = dst + ".part"
     mtime = int(os.path.getmtime(exe))
-    top = os.path.basename(payload)
     execs = {"install.sh", "launch.sh"}
 
-    def info(arc, path, isdir):
+    def info(arc, path, isdir, size=None):
         ti = tarfile.TarInfo(arc)
         ti.uid = ti.gid = 0
         ti.uname = ti.gname = ""
@@ -104,9 +139,15 @@ def wrap_steamos(payload, version, exe, out):
         if isdir:
             ti.type, ti.mode = tarfile.DIRTYPE, 0o755
         else:
-            ti.size = os.path.getsize(path)
+            ti.size = os.path.getsize(path) if size is None else size
             ti.mode = 0o755 if os.path.basename(arc) in execs and arc.count("/") == 1 else 0o644
         return ti
+
+    def wanted_dir(rel):
+        # A patch names a folder only when it ships something below it.
+        if only is None:
+            return True
+        return any(p.startswith(rel + "/") for p in only)
 
     with tarfile.open(part, "w", format=tarfile.PAX_FORMAT) as t:
         t.addfile(info(top, payload, True))
@@ -117,12 +158,25 @@ def wrap_steamos(payload, version, exe, out):
                 p = os.path.join(dirpath, d)
                 if os.path.islink(p):
                     raise CliError("symlink in the payload: %s" % p)
-                t.addfile(info("/".join(x for x in (top, rel, d) if x != "."), p, True))
+                drel = "/".join(x for x in (rel, d) if x != ".")
+                if wanted_dir(drel):
+                    t.addfile(info(top + "/" + drel, p, True))
             for fn in sorted(filenames):
                 p = os.path.join(dirpath, fn)
                 if os.path.islink(p):
                     raise CliError("symlink in the payload: %s" % p)
+                frel = "/".join(x for x in (rel, fn) if x != ".")
+                if only is not None and frel not in only:
+                    continue
                 with open(p, "rb") as f:
-                    t.addfile(info("/".join(x for x in (top, rel, fn) if x != "."), p, False), f)
+                    t.addfile(info(top + "/" + frel, p, False), f)
+        for name in sorted(extra):
+            data = extra[name]
+            t.addfile(info(top + "/" + name, None, False, len(data)), io.BytesIO(data))
     os.replace(part, dst)
     return dst
+
+
+def _manifest(payload):
+    with open(os.path.join(payload, "manifest.json"), encoding="utf-8") as f:
+        return json.load(f)

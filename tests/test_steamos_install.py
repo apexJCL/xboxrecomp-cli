@@ -40,6 +40,10 @@ def render(name, dst, mode=0o644):
 
 @pytest.fixture(scope="module")
 def il(tmp_path_factory):
+    return load_il(tmp_path_factory)
+
+
+def load_il(tmp_path_factory):
     """install_lib.py as the bundle carries it, imported."""
     p = render("install_lib.py", str(tmp_path_factory.mktemp("il") / "install_lib.py"))
     spec = importlib.util.spec_from_file_location("install_lib_rendered", p)

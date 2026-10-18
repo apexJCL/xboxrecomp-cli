@@ -12,6 +12,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -62,6 +63,29 @@ def test_dirty_suffix():
     a2 = pl.format_version(T1, state(c, "d1"), state(t), g)
     b = pl.format_version(T1, state(c, "d2"), state(t), g)
     assert a1 == a2 and a1 != b and "-dirty" in a1 and len(a1.split("-dirty")[1]) == 8
+
+
+def test_options_digest():
+    """D12: -o<6 hex> for a build that is not stock, from the option set,
+    the HUD pack and the CMake -D values; "" (today's format) for stock."""
+    stock = {"CMAKE_BUILD_TYPE": "Release"}
+    assert pl.options_digest(stock) == ""
+    c, t, g = "a" * 40, "b" * 40, "c" * 64
+    assert pl.format_version(T1, state(c), state(t), g, options="") == pl.format_version(
+        T1, state(c), state(t), g
+    )
+    x1 = pl.options_digest(stock, seed="[render]\nscale = 1\n")
+    x2 = pl.options_digest(stock, seed="[render]\nscale = 2\n")
+    dbg = pl.options_digest({"CMAKE_BUILD_TYPE": "Debug"})
+    hud = pl.options_digest(stock, hud_sha="d" * 64)
+    assert len({x1, x2, dbg, hud}) == 4
+    assert all(len(x) == 6 and int(x, 16) >= 0 for x in (x1, x2, dbg, hud))
+    assert pl.options_digest(stock, seed="[render]\nscale = 2\n") == x2
+    v = pl.format_version(T1, state(c, "d1"), state(t), g, options=x2)
+    assert re.search(r"-g[0-9a-f]{8}-o%s-dirty[0-9a-f]{8}$" % x2, v), v
+    v1 = pl.format_version(T1, state(c), state(t), g, options=x1)
+    v2 = pl.format_version(T1, state(c), state(t), g, options=x2)
+    assert v1 != v2
 
 
 def test_tree_state_dirt(d):
@@ -164,6 +188,8 @@ def test_manifest_and_sums(d):
         "version",
         "target",
         "built",
+        "volatile",
+        "source",
         "sources",
         "gen",
         "build",
@@ -174,6 +200,8 @@ def test_manifest_and_sums(d):
         "ghidra_names",
     ):
         assert k in m, k
+    assert m["schema"] == 2 and m["volatile"] == ["built", "sources.*.branch"]
+    assert m["source"] == {"kind": "dev", "commit": "a" * 40}  # no source given
     text = json.dumps(m, indent=2)
     assert pl.private_leaks(text, home="/Us" + "ers/someone", host="somehost") == []
     assert root not in text
@@ -182,6 +210,58 @@ def test_manifest_and_sums(d):
     for line in sums.splitlines():
         h, rel = line.split("  ", 1)
         assert h == pl.sha256_file(os.path.join(root, rel))
+
+
+def _git(root, *args):
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c",
+         "commit.gpgsign=false", "-C", root, *args],
+        check=True,
+        capture_output=True,
+        env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
+    )  # fmt: skip
+
+
+def test_manifest_source(d):
+    """D14's provenance from the wizard's mark: tag, local or dev, and
+    never the developer's path or the clone's file:// origin."""
+    root = os.path.join(d, "src")
+    os.makedirs(root)
+    _git(root, "init", "-q")
+    with open(os.path.join(root, "a"), "w") as f:
+        f.write("a")
+    _git(root, "add", "a")
+    _git(root, "commit", "-qm", "a")
+    st = pl.tree_state(root)
+    head = st["commit"]
+    repo = "https://example.invalid/g.git"
+    assert pl.read_mark(root) is None
+    assert pl.source_record(st, None, repo) == {"kind": "dev", "commit": head}
+    # The local-mode clone: its origin is the developer's folder.
+    src = "file://" + d + "/checkout"
+    _git(root, "remote", "add", "origin", src)
+    os.makedirs(os.path.join(root, ".git", "xbr"))
+    mark = {"origin": "local", "via": "bundle", "ref": "wip", "commit": head, "url": src}
+    with open(os.path.join(root, ".git", "xbr", "wizard.json"), "w") as f:
+        json.dump(mark, f)
+    assert pl.read_mark(root) == mark
+    rec = pl.source_record(st, pl.read_mark(root), repo)
+    assert rec == {"kind": "local", "via": "bundle", "commit": head, "ref": "wip"}
+    text = json.dumps(rec)
+    assert d not in text and "file:" not in text
+    assert pl.private_leaks(text, home=d, host="zz") == []
+    # A release clone at its marked tag; moved off it or edited, it is dev.
+    tag = dict(mark, origin="repo", ref="v1.0.0")
+    assert pl.source_record(st, tag, repo) == {
+        "kind": "tag", "repo": repo, "tag": "v1.0.0", "commit": head
+    }  # fmt: skip
+    assert pl.source_record(st, tag, "")["kind"] == "dev"  # a private game
+    assert pl.source_record(st, dict(tag, commit="f" * 40), repo)["kind"] == "dev"
+    assert pl.source_record(dict(st, dirty=True), tag, repo)["kind"] == "dev"
+    # The leak check refuses a file:// origin anywhere in the text.
+    assert pl.private_leaks('{"o": "%s"}' % src, home="/nope", host="zz")[-1] == "file:// URL"
+    assert pl.private_leaks('{"o": "file:/x"}', home="/nope", host="zz") == ["file:// URL"]
+    assert pl.private_leaks('{"profile": "x"}', home="/nope", host="zz") == []
 
 
 def test_private_leaks():

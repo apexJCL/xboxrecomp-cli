@@ -116,7 +116,7 @@ and the wizard leaves out the config options (see
 | `targets` | `["windows"]` | The build targets this game supports: `windows`, `macos`. `build` with no target builds this host's own (`macos` on a Mac, else `windows`) when it is listed, else the first listed. |
 | `windows_dir`, `macos_dir` | `"build-win"`, `"build"` | The developer build dirs. |
 | `toolchain_file` | `""` | The CMake toolchain file for the windows target. Empty uses the CLI's own `src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake`, locally and on the bench host. |
-| `stock_cmake` | `["-DXBOXRECOMP_ENHANCE=ON"]` | Passed on every packaging configure, so that a cache cannot keep a non-stock value. It is also the stock rule: `package` refuses a cache whose `VAR` differs from a `-DVAR=VALUE` here (booleans by CMake's truth), without `--allow-nonstock`. |
+| `stock_cmake` | `["-DXBOXRECOMP_ENHANCE=ON"]` | Passed on every packaging configure, so that a cache cannot keep a non-stock value. It is also the stock rule: `package` refuses a cache whose `VAR` differs from a `-DVAR=VALUE` here (booleans by CMake's truth), without `--allow-nonstock`. Without `-DXBOXRECOMP_ENHANCE=ON` here the game is built without the enhancements layer even on a toolkit that has it: `package` then stages no `config.default.toml` (none is needed) and the wizard offers no config options. |
 | `nonstock_vars` | `[]` | Cache variables `package` refuses without `--allow-nonstock`. |
 | `icon_var` | `""` | The CMake variable that compiles the icon into the exe. |
 
@@ -247,7 +247,8 @@ release.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `repo` | required | The game's public repository, `https://`: the wizard clones it at the release tag and asks its releases for a newer one. |
+| `repo` | required unless `private` | The game's public repository, `https://`: the wizard clones it at the release tag and asks its releases for a newer one. |
+| `private` | `false` | `true` for a game with no public repository yet. `repo` may then be left out; `wizard config` names no repo, the wizard skips its update check and builds a checkout the developer names ([wizard.md](wizard.md#for-developers)), and `wizard build` refuses the game, so no wizard of it is published. With `private = false` a missing `repo` is an error, so a public game cannot lose it by accident. |
 | `icon` | `""` | Optional; a PNG (512x512 or larger) or an SVG in the game's tree: the wizard's icon on every platform. The wizard's own gamepad icon otherwise. |
 | `targets` | `package.targets` | The targets the wizard offers, each one of `package.targets`. |
 

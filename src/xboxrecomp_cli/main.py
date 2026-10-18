@@ -209,7 +209,53 @@ def _cfg_package(p):
         "folder's config/config.toml when that file does not exist yet",
     )
     p.add_argument("--out", default=host.g().dist, help="output directory (default dist/)")
+    # The stage is always kept now (dist/.stage-<target>/, reused in place);
+    # the flag stays so older scripts keep working.
     p.add_argument("--keep-stage", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument(
+        "--verify",
+        action="store_true",
+        help="hash every recorded output and game file instead of trusting size and "
+        "mtime (slower; for a folder copied or restored from elsewhere)",
+    )
+    p.add_argument(
+        "--plan",
+        action="store_true",
+        help="only say which stages would be reused and which would run, and why, "
+        "with estimates from build-logs/timings.json; runs and records nothing",
+    )
+    p.add_argument("--json", action="store_true", help="with --plan: the plan as JSON")
+    p.add_argument(
+        "--clean",
+        nargs="?",
+        const="build",
+        choices=("build", "all"),
+        default=None,
+        metavar="all",
+        help="rebuild everything: drop the build state, build-pkg-*/ and the staging "
+        "trees first (gen/ stays when its key is current); --clean=all also drops "
+        "gen/ and the analysis, which then rerun",
+    )
+    out = p.add_mutually_exclusive_group()
+    out.add_argument(
+        "--patch-from",
+        metavar="BASE",
+        help="make a patch against BASE: a manifest.json, an installed version folder or "
+        "app, a bundle tar, or a bundle record's sha256 (package --plan --json lists them)",
+    )
+    out.add_argument(
+        "--full",
+        action="store_true",
+        help="the full bundle, even when this host has an install a patch could update",
+    )
+    p.add_argument(
+        "--keep-bundles",
+        type=_positive,
+        default=None,
+        metavar="N",
+        help="bundles of the target kept in the output folder (default 2; older ones "
+        "are deleted, their manifest records stay)",
+    )
     p.add_argument(
         "--plain",
         action="store_true",
@@ -239,7 +285,45 @@ def _cfg_package(p):
 def cmd_package(a):
     from . import package
 
+    if a.json and not a.plan:
+        raise host.CliError("--json goes with --plan")
     package.cmd_package(a)
+
+
+def _positive(v):
+    try:
+        n = int(v)
+    except ValueError:
+        n = 0
+    if n < 1:
+        raise argparse.ArgumentTypeError("%s: want a whole number of 1 or more" % v)
+    return n
+
+
+def _cfg_clean(p):
+    p.add_argument(
+        "--bundles", action="store_true", help="the bundles in dist/ (their records stay)"
+    )
+    p.add_argument(
+        "--build",
+        action="store_true",
+        help="build-pkg-*/, the staging trees and the build state (the program is "
+        "rebuilt next time, in minutes)",
+    )
+    p.add_argument(
+        "--all",
+        action="store_true",
+        help="both, gen/ and the analysis, and the state directory except the "
+        "wizard's mark (your imported game files and the venv stay)",
+    )
+    p.add_argument("--yes", action="store_true", help="delete; without it, only list")
+    p.add_argument("--json", action="store_true", help="the sizes as JSON")
+
+
+def cmd_clean(a):
+    from . import clean
+
+    clean.cmd_clean(a)
 
 
 def _gf():
@@ -318,6 +402,12 @@ def register():
         "generation and the build first when they are needed",
         _cfg_package,
     )(cmd_package)
+    command(
+        "clean",
+        "free space in this folder: the bundles, the build trees, or all that "
+        "package can make again (lists first; deletes with --yes)",
+        _cfg_clean,
+    )(cmd_clean)
     command(
         "import",
         "put your dump in %s/ from your disc image or a folder: checks the "

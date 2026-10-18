@@ -213,7 +213,10 @@ def reads_config(m, options):
     enhancements layer is the reader, and upstream xboxrecomp has none. The
     toolkit is read at the pin, not a checkout's working tree, since the
     binary builds at that pin; only when the answer shows (a config option,
-    or a data dir the wizard names config.toml under)."""
+    or a data dir the wizard names config.toml under). A game whose stock
+    build leaves the layer off reads none whatever the toolkit has."""
+    if not manifest.builds_enhance(m):
+        return False
     if not any(o["config"] for o in options) and not any(
         m["data"][t] for t in ("windows", "steamos", "macos")
     ):
@@ -221,14 +224,17 @@ def reads_config(m, options):
     return toolkit.pin_has_enhance(m["toolkit"])
 
 
-def without_enhance(options, reads, pin):
+def without_enhance(options, reads, pin, layer_off=False):
     """(options kept, options left out with why): a build that reads no
     config.toml (reads false) would do nothing with an option that sets a
     config key. Flag options stay."""
     if reads:
         return options, []
     why = (
-        "the toolkit at %s has no enhancements layer (src/enhance/), which reads config.toml"
+        "game.toml's build.stock_cmake does not turn the enhancements layer on, "
+        "which reads config.toml"
+        if layer_off
+        else "the toolkit at %s has no enhancements layer (src/enhance/), which reads config.toml"
         % gitpin.describe(pin)
     )
     kept = [o for o in options if not o["config"]]
@@ -254,7 +260,9 @@ def resolve(G, tag="", dev=False):
     if errors:
         raise CliError("game.toml [wizard]:\n  " + "\n  ".join(errors))
     reads = reads_config(m, options)
-    options, omitted = without_enhance(options, reads, m["toolkit"])
+    options, omitted = without_enhance(
+        options, reads, m["toolkit"], layer_off=not manifest.builds_enhance(m)
+    )
     w, pkg = m["wizard"], m["package"]
     cfg = {
         "schema": CONFIG_SCHEMA,
@@ -264,7 +272,9 @@ def resolve(G, tag="", dev=False):
             "app": pkg["app"],
             "product": pkg["product"],
         },
-        "release": {"repo": w["repo"], **rel},
+        # A private game names no repo and gets no update check: the
+        # wizard builds it from --source only.
+        "release": dict(rel) if w["private"] else {"repo": w["repo"], **rel},
         "cli": {k: m["cli"][k] for k in ("tag", "commit", "url")},
         "toolkit": {k: m["toolkit"][k] for k in ("tag", "commit")},
         "targets": list(w["targets"]),
@@ -276,6 +286,8 @@ def resolve(G, tag="", dev=False):
         "reads_config": reads,
         "credits": credits.merged(w["credit"]),
     }
+    if w["private"]:
+        cfg["private"] = True
     if omitted:
         # The [[wizard.option]] entries the binary does not offer, and why.
         cfg["omitted"] = omitted

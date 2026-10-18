@@ -72,6 +72,10 @@ A private bundle for one target in `dist/`. Needs `[package]` in `game.toml`.
 | `--no-setup` | never run `setup`, even when something is missing |
 | `--reconfigure` | configure the packaging build tree afresh |
 | `--system-tools` | use the host's cmake and ninja instead of the venv's |
+| `--verify` | hash every recorded output and game file instead of trusting size and mtime (for a folder copied or restored from elsewhere) |
+| `--plan [--json]` | only say which stages would be reused and which would run, and why, with estimates from `build-logs/timings.json`, and list the bundle records as `bases`; runs and records nothing |
+| `--clean[=all]` | rebuild everything: drop the build state, `build-pkg-*/` and the staging trees first; `gen/` stays when its key is current. `--clean=all` also drops `gen/` and the analysis cache, which then rerun |
+| `--keep-bundles N` | bundles of the target kept in the output folder (default 2) |
 
 `package` builds in its own tree (`build-pkg-win/`, `build-pkg-macos/`) with
 the stock options from `build.stock_cmake`, so the developer's `build/`
@@ -80,6 +84,41 @@ an empty `gen/` (and, with `--no-build`, one being regenerated), and a Debug
 or non-stock build without the override; a stale `gen/` is regenerated
 first. A dump whose `default.xbe` is not in `xbe.sha256` packages with a
 warning and `"xbe": "unknown"` in the manifest.
+
+A second run reuses what is current. Each stage (import, generate, icon,
+build, stage, wrap) records the key it ran with in
+`$(git rev-parse --git-dir)/xbr/build-state.json` (`<game>/.xbr/` outside
+git), never in the tree, so `git status` stays clean. A stage is skipped
+when its key matches and its outputs are unchanged (size and mtime; sha256
+when they differ or with `--verify`), and prints `current`; otherwise it
+says why it runs. A toolchain change configures the build tree afresh. The
+staged payload stays in `dist/.stage-<target>/` and is updated in place,
+game files by clonefile or hard links. `manifest.json` is always written
+again, and the bundle is remade only when it changed: a new commit with
+the same files still gets a bundle that names it. The version and the
+manifest's `built` take their time from `SOURCE_DATE_EPOCH`, else the
+newest commit of the game and the toolkit, so two builds of the same
+inputs agree. A build that is not stock (`--seed-config`, `--hud-pack`,
+`--allow-debug` or `--allow-nonstock` on a tree that needs them) adds
+`-o<6 hex>` to the version, a digest of those options and the CMake
+values, so two builds of one commit with different options never share
+a version; a stock build keeps the plain format.
+
+Each wrap also copies its `manifest.json` to
+`.git/xbr/bundles/<target>/<sha256>.json` (about 100 KB): the base a
+patch is made against. The newest 2 bundles of the target stay in `dist/`
+and older ones are deleted (`--keep-bundles N`; only when the output
+folder is inside the game folder); their records stay.
+
+`--plan --json` prints one document: `stages` (each with `stage`,
+`action` `reuse` or `run`, `why` and `estimate_s`, the step's last
+duration on this machine, `null` when it has none yet; `enhance hud`
+defaults to 6 s), the total `estimate_s`, `unknown` (stages that run
+with no timing yet), `version` and `bases` (`version`, `made`, `sha256`,
+`size`, `on_disk`, newest first). A stage that runs makes every stage
+chained on it run; the wrap of an unchanged stage is judged by what its
+manifest names (commits, built time), and the run decides by the
+manifest's sha256.
 
 When the game's `config.default.toml` sets `[present] pacing = "sleep"`,
 the bundle's README.txt gets a paragraph saying that `"spin"` is the
@@ -123,6 +162,23 @@ Needs `[enhance.hud]` in `game.toml`.
 
 A pack is made from game data and is never published; `package --hud-pack`
 puts it in the owner's private bundle.
+
+### `mygame clean [--bundles] [--build] [--all] [--yes]`
+
+Free space in the game folder. It lists each path with its size and
+deletes only with `--yes`; with no category it prints the sizes of each.
+
+| Option | Effect |
+|---|---|
+| `--bundles` | the bundles in `dist/` (their manifest records stay, so a patch against them can still be made) |
+| `--build` | `build-pkg-*/`, `dist/.stage-*` and the build state: the next `package` rebuilds the program, in minutes |
+| `--all` | both, plus `gen/`, its key and the analysis cache (`disasm/`, `func_id/`, `abi/`), and the rest of `.git/xbr/` except the wizard's mark `wizard.json` |
+| `--yes` | delete; without it, only list |
+| `--json` | `{"sizes": {category: bytes}, "total", "deleted"}` |
+
+It never deletes the imported game files, the venv, setup's downloads or
+a Ghidra export, and refuses any path outside the game folder (a `dist/`
+that links elsewhere, for example).
 
 ### `mygame setup`
 

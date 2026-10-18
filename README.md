@@ -186,6 +186,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | `mygame import PATH` | Puts a disc image or dump folder in `game_files/` |
 | `mygame setup` | Fetches the pinned toolchain and toolkit |
 | `mygame doctor` | Says what this host has, what it can package and what to do next |
+| `mygame clean` | Frees space: lists the bundles and build trees it would delete, deletes with `--yes` |
 | `mygame all` | Runs analyze, recomp and build |
 | `mygame analyze`, `recomp` | Runs the pipeline's stages |
 | `mygame build [windows\|macos]` | Configures once, then compiles incrementally |
@@ -203,6 +204,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | [docs/porting.md](docs/porting.md) | The porting loop, the keys a port meets first, the D3D fence, macOS |
 | [docs/commands.md](docs/commands.md) | Every command, option and tool |
 | [docs/manifest.md](docs/manifest.md) | `game.toml`, key by key |
+| [docs/bundle.md](docs/bundle.md) | What `package` writes: `manifest.json`, patches, each target's layout and applier |
 | [docs/wizard.md](docs/wizard.md) | The build wizard: the player's guide, the config, the build, the release workflow |
 | [docs/bootstrap.md](docs/bootstrap.md) | How a game finds the CLI, the pins, what the host needs |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | The messages and their fixes |

@@ -689,13 +689,15 @@ class Import:
         try:
             if self.verdict == "link":
                 self._link()
-                return
-            if self.verdict == "adopt":
+            elif self.verdict == "adopt":
                 self._adopt()
             elif self.verdict == "fresh":
                 self._place()
         finally:
             self.src.close()
+        record_import()
+        if self.verdict == "link":
+            return
         if warn_unknown:
             sha, known = doctor.dump_state()
             if sha and not known:
@@ -947,6 +949,15 @@ def check(path):
         % ("%d differences" % len(diffs) if diffs else "every file matches (name, size, sha256)")
     )
     return len(diffs)
+
+
+def record_import():
+    """The import's build-state entry (buildstate, D1): what package and
+    enhance hud chain on. A run that changed nothing keeps the old key."""
+    from . import buildstate
+    from .package import incr, plib
+
+    incr.record_import(buildstate.State(g().root), plib())
 
 
 def run_import(path, replace=False, link=False, check_only=False):

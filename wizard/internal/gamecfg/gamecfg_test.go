@@ -137,6 +137,11 @@ func TestRefusals(t *testing.T) {
 		{"schema", "schema", func(m map[string]any) { m["schema"] = 2 }},
 		{"target", "not one of", func(m map[string]any) { m["targets"] = []any{"windows", "ps2"} }},
 		{"no targets", "targets is empty", func(m map[string]any) { m["targets"] = []any{} }},
+		{"no repo", "only a private game", func(m map[string]any) { delete(m["release"].(map[string]any), "repo") }},
+		{"http repo", "not an https URL", func(m map[string]any) {
+			m["release"].(map[string]any)["repo"] = "http://example.org/g"
+			m["private"] = true
+		}},
 		{"untagged", "no tag", func(m map[string]any) { m["release"].(map[string]any)["tag"] = "" }},
 		{"neither", "exactly one", func(m map[string]any) {
 			o := m["options"].([]any)[1].(map[string]any)
@@ -230,6 +235,20 @@ func TestRefusals(t *testing.T) {
 				t.Fatalf("got %v, want an error with %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// A private game's config carries no repo: it parses, and says so.
+func TestPrivate(t *testing.T) {
+	m := sample(t)
+	delete(m["release"].(map[string]any), "repo")
+	m["private"] = true
+	c, err := parse(t, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Private || c.Release.Repo != "" {
+		t.Fatalf("decoded %+v", c)
 	}
 }
 

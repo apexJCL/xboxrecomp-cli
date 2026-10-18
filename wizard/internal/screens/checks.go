@@ -147,6 +147,9 @@ func checkRows(cfg *gamecfg.Config, env *Env, d *runner.Doctor, prepErr error, b
 	if env != nil && env.Dev {
 		source.Detail = fmt.Sprintf(sourceDev, env.Game)
 		source.State, source.Status = stateWarn, statusDevMode
+	} else if env != nil && env.Local != nil {
+		source.Detail = fmt.Sprintf(sourceLocal, env.Local.Path, short(env.Commit), env.Game)
+		source.State, source.Status = stateWarn, statusLocal
 	} else if env != nil {
 		source.Detail = fmt.Sprintf(sourceAt, cfg.Release.Repo, cfg.Release.Tag, env.Game)
 	}

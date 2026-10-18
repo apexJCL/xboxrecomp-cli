@@ -655,11 +655,25 @@ def dry_runs(built, pins, src, name, tag, epoch, image):
     return notes
 
 
-def build(G, tag="", dev=False, only=ASSETS, out="", keep_work=False, gocache=""):
+def refuse_private(G):
+    """A published wizard clones its game from [wizard] repo: a private
+    game (private = true, with or without a repo) has no release to clone,
+    so its wizard binaries are never built for a release."""
+    if G.m.get("wizard", {}).get("private"):
+        raise CliError(
+            "game.toml's [wizard] private = true: this game's wizard is never built for "
+            "publishing (developers build it with xbr-wizard --source; docs/wizard.md)"
+        )
+
+
+def build(G, tag="", dev=False, only=ASSETS, out="", keep_work=False, gocache="", private_ok=False):
     """The assets and SHA256SUMS into out (default dist/wizard/). Returns
     {name: sha256} of the archives and of the binaries inside them. With
     gocache, a fresh build: Go compiles into that empty cache and Docker
-    rebuilds the asset layers, so nothing is reused from an earlier build."""
+    rebuilds the asset layers, so nothing is reused from an earlier build.
+    private_ok: wizard check's double build, which publishes nothing."""
+    if not private_ok:
+        refuse_private(G)
     mod = module_dir()
     pins = load_pins(mod)
     cfg, icon_bytes = wizard_mod.resolve(G, tag, dev)
@@ -675,7 +689,7 @@ def build(G, tag="", dev=False, only=ASSETS, out="", keep_work=False, gocache=""
     epoch = commit_epoch(G.root, rel["commit"])
     names = asset_names(slug, tag_v)
     host.step("wizard build %s %s (%s)" % (slug, tag_v or "dev", ", ".join(only)))
-    host.say("release: %s @ %s" % (rel["repo"], rel["commit"][:12] or "?"))
+    host.say("release: %s @ %s" % (rel.get("repo", "private"), rel["commit"][:12] or "?"))
     built, image, done = {}, None, []
     # Go on the host for every asset: the icons come from the module's own
     # renderer before anything is built.
@@ -707,7 +721,7 @@ def build(G, tag="", dev=False, only=ASSETS, out="", keep_work=False, gocache=""
                 name,
                 tag_v,
                 icon,
-                app_id(rel["repo"], slug),
+                app_id(rel.get("repo", ""), slug),
                 pins["fyne_tool"],
                 epoch,
                 os.path.join(out, names["macos"]),
@@ -777,12 +791,14 @@ def check(G, tag="", dev=False, no_build=False):
     host.step("wizard check: two builds, equal sha256s")
     runs = []
     with tempfile.TemporaryDirectory(prefix="wizard-check-") as tmp:
-        runs.append(build(G, tag, dev, ASSETS, os.path.join(tmp, "1")))
+        runs.append(build(G, tag, dev, ASSETS, os.path.join(tmp, "1"), private_ok=True))
         # The second build shares no compiled output with the first (an
         # empty GOCACHE, docker --no-cache), so equal sha256s mean the
         # build reproduces, not that it was served from a cache.
         fresh = os.path.join(tmp, "gocache")
-        runs.append(build(G, tag, dev, ASSETS, os.path.join(tmp, "2"), gocache=fresh))
+        runs.append(
+            build(G, tag, dev, ASSETS, os.path.join(tmp, "2"), gocache=fresh, private_ok=True)
+        )
     diff = sorted(k for k in set(runs[0]) | set(runs[1]) if runs[0].get(k) != runs[1].get(k))
     for k in sorted(runs[0]):
         host.say("%s %s %s" % ("same" if k not in diff else "DIFF", runs[0][k][:16], k))

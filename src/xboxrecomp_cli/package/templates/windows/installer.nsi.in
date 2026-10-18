@@ -3,14 +3,22 @@
 ;
 ; Per user, no elevation. The program files are embedded; game_files\ is
 ; copied from the folder setup.exe runs in (NSIS caps an installer at 2 GB,
-; and the dump alone is larger). Saves and settings live in
+; and the dump alone is larger).
+;
+; The versioned layout (D8): the program files go to versions\<version>\,
+; the game files stay unversioned in game_files\, and current.txt names
+; the version the root stub runs. NSIS cannot hard-link, flush or replace
+; a file in one write-through move, so it extracts apply.exe first and
+; calls it: "migrate" moves an older in-place install into versions\,
+; "switch" makes the extracted versions\<version>.partial current. Saves and settings live in
 ; the data folder (game.toml's data.windows), which neither the installer nor the uninstaller
 ; ever changes: installing on top or uninstalling keeps them. The one write
 ; there is a bundle's config.seed.toml (package --seed-config), copied to
 ; config\config.toml when that file does not exist yet.
 ;
 ; Placeholders (each written between @ signs): NAME LINK_NAME APP DATA_DIR
-; VERSION OUTFILE ICON INSTALL_FILES UNINSTALL_FILES GAME_FILES_KB. Never
+; VERSION OUTFILE ICON INSTALL_FILES UNINSTALL_FILES GAME_FILES_KB APPLY
+; STUB. Never
 ; write one in a comment: it is replaced there too.
 
 Unicode true
@@ -20,6 +28,7 @@ ManifestDPIAware true
 
 !define APP "@APP@"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\@APP@"
+!define PART "$INSTDIR\versions\@VERSION@.partial"
 
 Name "@NAME@"
 OutFile "@OUTFILE@"
@@ -81,26 +90,37 @@ Section "@NAME@" SecMain
   ; packed, so NSIS cannot see them: count them in "Space required".
   AddSize @GAME_FILES_KB@
   SetOutPath "$INSTDIR"
-  ; A pack from an earlier --hud-pack install goes first: this payload
-  ; puts its own back, and one without a pack must not leave a stale file
-  ; that uninstall's list does not name (its RMDir would then fail).
+  ; The stub lands as .stub: apply.exe puts it in place once current.txt
+  ; names a version it can run.
+  File "/oname=apply.exe" "@APPLY@"
+  File "/oname=@APP@.exe.stub" "@STUB@"
+  DetailPrint "apply.exe migrate"
+  nsExec::ExecToLog '"$INSTDIR\apply.exe" migrate --root "$INSTDIR"'
+  Pop $0
+  ${If} $0 != 0
+    MessageBox MB_ICONSTOP "Preparing $INSTDIR failed (apply.exe migrate: $0); see the details. Nothing of this version was installed." /SD IDOK
+    Abort
+  ${EndIf}
+  ; An in-place install's files that no SHA256SUMS named (older versions'
+  ; extras): the migration leaves them, so they go here.
   Delete "$INSTDIR\enhance\hud.pack"
-  ; Likewise the options file of an earlier --seed-config install.
+  RMDir "$INSTDIR\enhance"
   Delete "$INSTDIR\config.seed.toml"
+  RMDir /r "${PART}"
 @INSTALL_FILES@
   ; The options chosen in the build wizard (package --seed-config) become
   ; the data folder's config\config.toml only when there is none yet: the
   ; player's own file is never replaced, and a later install leaves it. An
   ; earlier version's config\enhance.toml counts as the player's file too:
   ; the game renames it to config.toml only while config.toml is missing.
-  IfFileExists "$INSTDIR\config.seed.toml" 0 seed_done
+  IfFileExists "${PART}\config.seed.toml" 0 seed_done
   IfFileExists "$LOCALAPPDATA\@DATA_DIR@\config\config.toml" seed_done 0
   IfFileExists "$LOCALAPPDATA\@DATA_DIR@\config\enhance.toml" 0 seed_copy
     DetailPrint "Kept your existing settings: $LOCALAPPDATA\@DATA_DIR@\config\enhance.toml"
     Goto seed_done
   seed_copy:
     CreateDirectory "$LOCALAPPDATA\@DATA_DIR@\config"
-    CopyFiles /SILENT "$INSTDIR\config.seed.toml" "$LOCALAPPDATA\@DATA_DIR@\config\config.toml"
+    CopyFiles /SILENT "${PART}\config.seed.toml" "$LOCALAPPDATA\@DATA_DIR@\config\config.toml"
     DetailPrint "Your options: $LOCALAPPDATA\@DATA_DIR@\config\config.toml"
   seed_done:
   ; Versions before config.default.toml shipped enhance.toml.default; an
@@ -113,6 +133,14 @@ Section "@NAME@" SecMain
   IfFileExists "$INSTDIR\game_files\default.xbe" +3
     MessageBox MB_ICONSTOP "Copying the game files failed (disk full?)." /SD IDOK
     Abort
+  ; Checked against its SHA256SUMS, flushed, then current.txt in one move.
+  DetailPrint "apply.exe switch @VERSION@"
+  nsExec::ExecToLog '"$INSTDIR\apply.exe" switch "@VERSION@" --root "$INSTDIR"'
+  Pop $0
+  ${If} $0 != 0
+    MessageBox MB_ICONSTOP "Installing version @VERSION@ failed (apply.exe switch: $0); see the details. The version installed before stays current." /SD IDOK
+    Abort
+  ${EndIf}
   WriteUninstaller "$INSTDIR\uninstall.exe"
   WriteRegStr HKCU "Software\@APP@" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "@NAME@"
@@ -133,8 +161,27 @@ Section /o "Desktop shortcut" SecDesktop
 SectionEnd
 
 Section "Uninstall"
-  ; Only what the installer wrote, by name. The data folder (saves,
-  ; settings, logs) is never touched.
+  ; Only what the installer wrote. The data folder (saves, settings, logs)
+  ; is never touched. A migrated version's game_files is a junction to
+  ; the root's: a plain RMDir removes the link itself, and goes first so
+  ; that the recursive delete of versions\ never walks through one.
+  FindFirst $0 $1 "$INSTDIR\versions\*"
+  ${DoWhile} $1 != ""
+    ${If} $1 != "."
+    ${AndIf} $1 != ".."
+      RMDir "$INSTDIR\versions\$1\game_files"
+    ${EndIf}
+    FindNext $0 $1
+  ${Loop}
+  FindClose $0
+  RMDir /r "$INSTDIR\versions"
+  Delete "$INSTDIR\current.txt"
+  Delete "$INSTDIR\current.txt.tmp"
+  Delete "$INSTDIR\@APP@.exe.stub"
+  Delete "$INSTDIR\apply.exe"
+  Delete "$INSTDIR\apply.exe.tmp"
+  RMDir /r "$INSTDIR\state"
+  ; An in-place install's files, by name (an interrupted migration).
 @UNINSTALL_FILES@
   Delete "$INSTDIR\enhance.toml.default"
   Delete "$INSTDIR\config.seed.toml"

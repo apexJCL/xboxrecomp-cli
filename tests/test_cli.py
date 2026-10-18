@@ -531,6 +531,7 @@ def test_command_table():
         "doctor",
         "pins",
         "package",
+        "clean",
         "import",
         "enhance",
         "wizard",

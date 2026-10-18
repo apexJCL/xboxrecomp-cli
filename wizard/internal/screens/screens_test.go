@@ -61,6 +61,15 @@ func sampleOptions(t *testing.T) Options {
 	return Options{Cfg: cfg, Pins: pins, Version: "test", Root: t.TempDir(), NoDialog: true, NoUpdateCheck: true}
 }
 
+// inline runs the wizard's background jobs at once and stubs the plan
+// and the folder measure: the test app runs fyne.Do inline, so a real
+// goroutine would race the test's own widget calls.
+func inline(w *Wizard) {
+	w.async = func(f func()) { f() }
+	w.treeSize = func(string) uint64 { return 0 }
+	w.planAsk = func(runner.Runner, []string) (*runner.Plan, error) { return nil, errors.New("no plan in tests") }
+}
+
 func isolate(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -86,6 +95,7 @@ func TestPages(t *testing.T) {
 	a := test.NewApp()
 	defer a.Quit()
 	w := New(a, sampleOptions(t))
+	inline(w)
 	w.doctor = loadDoctor(t, "doctor.json")
 	w.env = &Env{Root: w.root, Game: w.root}
 	w.showChecks(nil)
@@ -120,6 +130,7 @@ func TestFrame(t *testing.T) {
 	defer a.Quit()
 	opt := sampleOptions(t)
 	w := New(a, opt)
+	inline(w)
 	w.render(pChecks)
 	if w.step.Text() != "Step 2 of 8" {
 		t.Fatalf("step %q", w.step.Text())
@@ -560,8 +571,8 @@ func TestCopy(t *testing.T) {
 			t.Errorf("does not name the game: %q", s)
 		}
 	}
-	// The CLI's words, which a player never needs.
-	banned := regexp.MustCompile(`(?i)\b(uv|venv|xbr|cmake|ninja|llvm-mingw|toolkit|clone|repo)\b`)
+	// The CLI's words, which a player never needs (D13: nor base or patch).
+	banned := regexp.MustCompile(`(?i)\b(uv|venv|xbr|cmake|ninja|llvm-mingw|toolkit|clone|repo|base|patch)\b`)
 	strs := copyStrings(t)
 	if len(strs) < 50 {
 		t.Fatalf("only %d strings in copy.go", len(strs))
@@ -721,6 +732,7 @@ func TestScreenshots(t *testing.T) {
 	// (and nothing the public audit flags) lands in the source.
 	opt.Root = filepath.Join("~", "Library", "Application Support", opt.Cfg.Game.Slug+"-recomp")
 	w := New(a, opt)
+	inline(w)
 	// The window's own test canvas has no painter: draw its content on a
 	// software canvas of the window's size, padded as a real window is.
 	c := software.NewCanvas()
@@ -1227,6 +1239,7 @@ func TestDoneFailure(t *testing.T) {
 	a := test.NewApp()
 	defer a.Quit()
 	w := New(a, sampleOptions(t))
+	inline(w)
 	w.env = &Env{Root: w.root, Game: w.root}
 	w.prog = &runner.Progress{Stage: "generate", Label: "recomp", Log: filepath.Join("/r", "build-logs", "x.log")}
 	var err error = errors.New("exit status 1")
@@ -1285,6 +1298,7 @@ func TestDoneCanceled(t *testing.T) {
 	a := test.NewApp()
 	defer a.Quit()
 	w := New(a, sampleOptions(t))
+	inline(w)
 	w.prog = &runner.Progress{Stage: "generate", Log: "/r/build-logs/x.log"}
 	w.buildErr = errCanceled
 	w.fillDone()
@@ -1399,6 +1413,7 @@ func TestSummaryOut(t *testing.T) {
 	a := test.NewApp()
 	defer a.Quit()
 	w := New(a, sampleOptions(t))
+	inline(w)
 	w.out = filepath.Join(t.TempDir(), "my out")
 	w.st.Dump = "/d/b2.iso"
 	w.fillSummary()

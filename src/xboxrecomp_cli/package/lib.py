@@ -48,8 +48,16 @@ NONSTOCK_VARS = ()
 # build.stock_cmake: the -DVAR=VALUE options a stock build is configured
 # with (manifest.py's default until configure() gives the game's).
 STOCK_CMAKE = ("-DXBOXRECOMP_ENHANCE=ON",)
-SCHEMA = 1
+# 2: "source" (where the game tree came from) and "volatile". The readers
+# (install_lib, the patch bases) take 1 and 2: 2 only adds fields.
+SCHEMA = 2
 DATA_LAYOUT = 1
+# The manifest fields two builds of the same inputs may still differ in:
+# the build time and the branch names (a tag clone is detached, a
+# developer's is on a branch). Every other field is equal between them.
+VOLATILE = ("built", "sources.*.branch")
+# The wizard's mark on its clone (D4): $(git rev-parse --git-dir)/xbr/.
+MARK_NAME = "wizard.json"
 
 # game_files/ entries that are not the dump: the pipeline's XBE analysis and
 # any save tree a dev run left there (data.game_files_exclude), Finder's, and
@@ -129,6 +137,43 @@ def tree_state(tree):
     }
 
 
+def read_mark(tree):
+    """The wizard's mark on the game clone, or None: no git, no mark, or
+    one this CLI cannot read (the provenance is then "dev")."""
+    try:
+        gd = git(tree, "rev-parse", "--absolute-git-dir").decode().strip()
+        with open(os.path.join(gd, "xbr", MARK_NAME), encoding="utf-8") as f:
+            mark = json.load(f)
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return None
+    return mark if isinstance(mark, dict) else None
+
+
+def source_record(state, mark, repo):
+    """The manifest's "source": how the game tree was obtained (D14).
+
+    - tag: the wizard's release clone, at the commit it marked;
+    - local: the wizard's clone of a developer's checkout or bundle;
+    - dev: anything else (a developer's own checkout, a marked clone
+      someone moved off its commit or edited).
+
+    Never a path or the clone's file:// origin: a local source records
+    only how it came (via) and the ref named."""
+    commit = state["commit"]
+    ok = mark is not None and mark.get("commit") == commit and not state["dirty"]
+    if ok and mark.get("origin") == "local":
+        via = mark.get("via") if mark.get("via") in ("checkout", "bundle") else "checkout"
+        return {
+            "kind": "local",
+            "via": via,
+            "commit": commit,
+            "ref": str(mark.get("ref") or "HEAD"),
+        }
+    if ok and mark.get("origin") == "repo" and repo and mark.get("ref"):
+        return {"kind": "tag", "repo": repo, "tag": str(mark["ref"]), "commit": commit}
+    return {"kind": "dev", "commit": commit}
+
+
 def gen_digest(gen_dir):
     """The digest blinx2 bench compares with the host's (gen_digest_local): sha256 of the
     `shasum -a 256 -- *` listing, sorted by name. Dotfiles are not in *."""
@@ -144,10 +189,11 @@ def gen_digest(gen_dir):
     return hashlib.sha256(listing.encode()).hexdigest(), len(names)
 
 
-def format_version(built_utc, cat, toolkit, gen_sha, cli=None):
-    """<time>-c<game sha7>-t<toolkit sha7>-g<gen 8>, -dirty<hash> when the
-    game, the toolkit or the CLI tree has uncommitted changes. The CLI's
-    sha is not in it (a third sha would change every version for no
+def format_version(built_utc, cat, toolkit, gen_sha, cli=None, options=""):
+    """<time>-c<game sha7>-t<toolkit sha7>-g<gen 8>, then -o<options 6>
+    for a build that is not stock (options_digest), then -dirty<hash> when
+    the game, the toolkit or the CLI tree has uncommitted changes. The
+    CLI's sha is not in it (a third sha would change every version for no
     reader); its dirt is, since its code shapes the bundle."""
     v = "%s-c%s-t%s-g%s" % (
         built_utc.strftime("%Y%m%d.%H%M"),
@@ -155,6 +201,8 @@ def format_version(built_utc, cat, toolkit, gen_sha, cli=None):
         toolkit["commit"][:7],
         gen_sha[:8],
     )
+    if options:
+        v += "-o" + options
     cli_dirty = bool(cli and cli["dirty"])
     if cat["dirty"] or toolkit["dirty"] or cli_dirty:
         text = cat["_dirt"] + ":" + toolkit["_dirt"]
@@ -171,11 +219,66 @@ def exe_time(exe):
     return datetime.datetime.fromtimestamp(int(os.stat(exe).st_mtime), datetime.UTC)
 
 
-def compute_version(cat_dir, tk_dir, gen_dir, exe, cli_dir=None):
+def commit_time(tree):
+    """HEAD's committer time, or None outside git."""
+    try:
+        t = git(tree, "log", "-1", "--format=%ct", "HEAD").decode().strip()
+        return int(t) if t else None
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return None
+
+
+def build_time(trees, exe=None, env=None):
+    """The time a bundle says it was built, reproducibly (D12):
+    SOURCE_DATE_EPOCH when set, else the newest commit time of the trees
+    (the game and the toolkit). Never now(), and never the exe's mtime
+    (a rebuild would move it): two builds of the same inputs agree. The
+    exe's mtime only for a tree outside git."""
+    env = os.environ if env is None else env
+    sde = env.get("SOURCE_DATE_EPOCH", "").strip()
+    if sde:
+        try:
+            return datetime.datetime.fromtimestamp(int(sde), datetime.UTC)
+        except (ValueError, OverflowError, OSError) as e:
+            raise ValueError("SOURCE_DATE_EPOCH=%s: not a time in seconds (%s)" % (sde, e)) from e
+    times = [t for t in (commit_time(x) for x in trees) if t is not None]
+    if times:
+        return datetime.datetime.fromtimestamp(max(times), datetime.UTC)
+    if exe:
+        return exe_time(exe)
+    return datetime.datetime.fromtimestamp(0, datetime.UTC)
+
+
+def compute_version(cat_dir, tk_dir, gen_dir, exe, cli_dir=None, options=""):
     cat, tk = tree_state(cat_dir), tree_state(tk_dir)
     cli = tree_state(cli_dir) if cli_dir else None
     gsha, _ = gen_digest(gen_dir)
-    return format_version(exe_time(exe), cat, tk, gsha, cli)
+    return format_version(build_time((cat_dir, tk_dir), exe), cat, tk, gsha, cli, options)
+
+
+def options_digest(cache_vals, seed=None, hud_sha=None):
+    """The version's -o part: 6 hex of the option set (the --seed-config
+    text: render scale and the like), the HUD pack's sha256 and the CMake
+    -D values a package checks (the build type, build.nonstock_vars, the
+    build.stock_cmake defines), or "" for a stock build. The build time and
+    the commits no longer tell two builds of one commit apart, so without
+    it a 2x and a 1x build would share a version, and a bundle record and
+    an install's versions/<v>."""
+    debug, nonstock = cache_problems(cache_vals)
+    if not (debug or nonstock or seed is not None or hud_sha):
+        return ""
+    cmake = {"CMAKE_BUILD_TYPE": cache_vals.get("CMAKE_BUILD_TYPE", "")}
+    for var in NONSTOCK_VARS:
+        cmake[var] = cache_vals.get(var, "")
+    for var, want in stock_defines():
+        cmake[var] = cache_vals.get(var, want)
+    doc = {
+        "cmake": cmake,
+        "seed": hashlib.sha256(seed.encode()).hexdigest() if seed is not None else None,
+        "hud_pack": hud_sha or None,
+    }
+    text = json.dumps(doc, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest()[:6]
 
 
 # ── CMake cache: a packaged build is the stock Release configuration ─────
@@ -448,13 +551,18 @@ def build_manifest(
     under=None,
     built=None,
     cli=None,
+    source=None,
+    hasher=None,
 ):
+    """hasher(rel, path): the sha256 of a file, from a cache that knows it
+    (buildstate.HashCache for game_files/); sha256_file otherwise."""
     files = []
     for rel in list_files(root, under):
         if rel in ("manifest.json", "SHA256SUMS"):
             continue
         p = os.path.join(root, rel)
-        files.append({"path": rel, "sha256": sha256_file(p), "size": os.path.getsize(p)})
+        sha = hasher(rel, p) if hasher else None
+        files.append({"path": rel, "sha256": sha or sha256_file(p), "size": os.path.getsize(p)})
     m = {
         "schema": SCHEMA,
         "product": PRODUCT,
@@ -462,11 +570,13 @@ def build_manifest(
         "version": version,
         "target": target,
         "built": (built or datetime.datetime.now(datetime.UTC)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "volatile": list(VOLATILE),
         "sources": {
             k: {x: v[x] for x in ("commit", "branch", "dirty", "dirty_paths")}
             for k, v in ((SOURCE_NAME, cat), ("toolkit", toolkit), ("cli", cli))
             if v is not None
         },
+        "source": source or {"kind": "dev", "commit": (cat or {}).get("commit", "")},
         "gen": {"sha256": gen_sha, "files": gen_files},
         "build": {
             "type": cache.get("CMAKE_BUILD_TYPE", ""),
@@ -518,6 +628,9 @@ def private_leaks(text, home=None, host=None):
         leaks.append("host name")
     if PATH_RE.search(text):
         leaks.append("absolute path")
+    # A --source clone's origin (D14): it names the developer's folder.
+    if re.search(r"\bfile:/", text, re.I):
+        leaks.append("file:// URL")
     return leaks
 
 
@@ -578,23 +691,28 @@ def dylib_plan(exe, companions=(), run=otool_runner, realpath=os.path.realpath):
 # ── NSIS ─────────────────────────────────────────────────────────────────
 
 
-def nsis_lists(root):
+def nsis_lists(root, under=""):
     """The program files (everything but game_files/) as NSIS File and
-    Delete lines, so the uninstaller removes exactly what was installed."""
+    Delete lines, so the uninstaller removes exactly what was installed.
+    under: the folder below $INSTDIR the File lines extract into (the
+    versioned layout's versions/<v>.partial); the Delete lines stay
+    $INSTDIR's, an in-place install's files."""
     names = [r for r in list_files(root) if not r.startswith("game_files/")]
     # File puts a file in the current SetOutPath, so each subdirectory
     # (enhance/ when --hud-pack stages a pack) gets its own; the template
     # set $INSTDIR before this block and expects it again after.
     install, cur = [], ""
+    if under:
+        install.append('  SetOutPath "%s"\n' % win_dir(under))
     for n in sorted(names, key=lambda n: (os.path.dirname(n), n)):
         d = os.path.dirname(n)
         if d != cur:
-            install.append('  SetOutPath "%s"\n' % win_dir(d))
+            install.append('  SetOutPath "%s"\n' % win_dir("/".join(x for x in (under, d) if x)))
             cur = d
         # Native separators: Windows makensis finds no "enhance/hud.pack".
         src = os.path.join(root, *n.split("/"))
         install.append('  File "%s"\n' % src.replace("$", "$$"))
-    if cur:
+    if cur or under:
         install.append('  SetOutPath "$INSTDIR"\n')
     uninstall = ['  Delete "$INSTDIR\\%s"\n' % n.replace("/", "\\") for n in names]
     # Plain RMDir, deepest first: a directory the player put files in stays.

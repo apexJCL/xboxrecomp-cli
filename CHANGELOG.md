@@ -7,6 +7,37 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Added
+- Incremental `package`: each stage (import, generate, icon, compile, HUD
+  pack, stage, wrap) records its inputs in `.git/xbr/`, and a run redoes
+  only the stages whose inputs changed. `--verify` hashes every input.
+  `--clean` drops the build trees and the stage, and `--clean=all` drops
+  gen/ too.
+- `package --plan [--json]` says what a run will do, each stage's reason,
+  the time it will take, the bases it can patch from, and the output it
+  predicts. `clean` frees the build folder (`--bundles`, `--build`,
+  `--all`).
+- Patches: `package` makes an update from the installed version (or from
+  `--patch-from`) when it is under half the full bundle. SteamOS gets
+  `install.sh patch`, Windows a versioned layout with `apply.exe` and
+  rollback, and macOS a patch DMG with `apply.command`. Every applier
+  checks the base first and changes nothing on a mismatch. See
+  docs/bundle.md.
+- Reproducible builds: the version and build times come from the commits
+  (or `SOURCE_DATE_EPOCH`), and a non-stock build carries a `-o` options
+  digest in its version.
+- `[wizard] private`, and manifest schema 2 with the game tree's `source`
+  and the `volatile` fields.
+- The wizard keeps and updates its clone between releases, says what the
+  build will make (an update or the full installer, with Change… and
+  Rebuild everything), gives each update's apply step, and shows the
+  build folder's size with Free space. Developers get `--source
+  PATH[#REF]` and `--patch-from`.
+
+### Changed
+- A game whose stock build leaves the enhancements layer off reads no
+  config file. Once a build exists, its CMake cache decides.
+
 ## [0.7.7] - 2026-10-17
 
 ### Changed

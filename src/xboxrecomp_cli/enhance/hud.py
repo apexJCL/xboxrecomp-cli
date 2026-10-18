@@ -31,6 +31,9 @@ from .. import host
 from ..host import CliError
 from . import atlas, bc3, dds, font, ipk, pack, scaler, texhash, xpr
 
+# Its duration in build-logs/timings.json, for package's plan estimate.
+TIMING_LABEL = "enhance hud"
+
 # Baked text: 2x is sharp at the native 640x480 layout's sizes up to 4K
 # and a quarter of 4x's bytes; BC3 quarters it again.
 TEXT_SCALE = 2
@@ -335,6 +338,17 @@ def run(a):
     for lang, arcs in cfg.get("languages", {}).items():
         if lang not in langs:
             host.say("language %s (%s): not picked, its text is left out" % (lang, ", ".join(arcs)))
+    st = rec = None
+    if not a.list:
+        st, rec = hud_record(a, cfg, s, langs, out_dir)
+        why = st.check("hud", *rec)
+        if not why:
+            host.say(
+                "%s is current (same game files, settings and CLI): kept"
+                % G.rel(os.path.join(out_dir, "hud.pack"))
+            )
+            return 0
+        st.begin("hud")
     items = load_items(select(G.game_files, cfg, a.only, langs), cfg["max_texels"])
     assign_kinds(items, cfg)
     usable = [it for it in items if it.dds]
@@ -448,4 +462,37 @@ def run(a):
         )
     )
     host.say("the pack is made from your game files: keep it private (see hud-pack.toml beside it)")
+    st.record(
+        "hud", rec[0], rec[1], [path, os.path.join(out_dir, "hud-pack.toml")], upstream=rec[2]
+    )
+    host.progress_lib().save_timing(G.logs, TIMING_LABEL, time.time() - t0)
     return 0
+
+
+def hud_record(a, cfg, scale, langs, out_dir, st=None, imp=None):
+    """(state, (key, inputs, upstream)) of the pack this run would make: the
+    set and its settings, the font, the XBE, the CLI's code, and
+    game_files/ by its import key (a new dump, or an edited archive,
+    remakes the pack). st and imp: package's plan passes its read-only
+    state and the import key it computed, so nothing is recorded."""
+    from .. import buildstate
+    from ..package import incr, plib
+
+    G = host.g()
+    lib = plib()
+    st = st or buildstate.State(G.root)
+    font_arg = a.font or cfg.get("font", "")
+    inputs = {
+        "config": buildstate.digest(cfg),
+        "scale": scale,
+        "languages": list(langs),
+        "only": list(a.only or ()),
+        "font": incr._sha(font_arg) if font_arg and os.path.isfile(font_arg) else font_arg,
+        "xbe": incr._sha(G.xbe),
+        "out": st._store_path(out_dir),
+        "cli": incr.tree_input(incr.cli_dir.cli_dir(), lib),
+    }
+    if imp is None:
+        imp = incr.record_import(st, lib)
+    up = {"import": imp}
+    return st, (buildstate.stage_key(inputs, up), inputs, up)

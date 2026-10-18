@@ -15,8 +15,9 @@ import shutil
 import tomllib
 
 from .. import build as build_mod
-from .. import cli_dir, doctor, gitpin, host, pipeline, setup, toolkit
+from .. import buildstate, cli_dir, doctor, gitpin, host, manifest, pipeline, setup, toolkit
 from ..host import CliError
+from . import incr
 from . import lib as lib_mod
 
 NOTICE_TEXT = (
@@ -165,14 +166,21 @@ def pacing_sleeps(defaults):
     return isinstance(present, dict) and present.get("pacing") == "sleep"
 
 
-def reads_config():
+def reads_config(cache=None):
     """Whether the bundle's game reads config.default.toml and config.toml:
     the toolkit it builds on has the enhancements layer, the reader
     (upstream xboxrecomp has none). A developer's own checkout (no pin
     mark: theirs, or an XBOXRECOMP_DIR) is what gets built, so its working
     tree answers, offline. A clone setup made at the pin, or none yet (the
     plan's setup makes one), is the pin's: the wizard's own check, which
-    reads the clone's history and fetches only a commit it lacks."""
+    reads the clone's history and fetches only a commit it lacks. A game
+    whose stock build leaves the layer off (manifest.builds_enhance) reads
+    no config file whatever the toolkit has: cache, the packaging build's
+    CMakeCache values once it is built (lib.enhance_on, which falls back to
+    stock_cmake), else stock_cmake itself (the configure passes it)."""
+    on = plib().enhance_on(cache) if cache is not None else manifest.builds_enhance(g().m)
+    if not on:
+        return False
     tk = toolkit.toolkit_dir()
     marked = any(
         os.path.isfile(os.path.join(tk, m)) for m in (toolkit.PIN_MARK, toolkit.legacy_pin_mark())
@@ -302,8 +310,28 @@ def build_target(target):
     return "macos" if target == "macos" else "windows"
 
 
-def stage_payload(target, a, lib):
-    """Build, check, and stage the payload common to every target.
+def exe_icon_args(btarget, icon_dir):
+    """The taskbar shows the icon of the window's process: the game's exe."""
+    icon_var = g().m["build"]["icon_var"]
+    if btarget == "windows" and icon_var:
+        return ["-D%s=%s" % (icon_var, os.path.join(icon_dir, app() + ".ico"))]
+    return []
+
+
+def config_layer(enhance, lib, target):
+    """reads_config()'s answer, corrected by the build's own cache once one
+    exists: a layer the configure left off reads no config file. Returns
+    (enhance, cache)."""
+    cache_path = os.path.join(build_mod.pkg_build_dir(build_target(target)), "CMakeCache.txt")
+    cache = lib.read_cache(cache_path) if os.path.isfile(cache_path) else None
+    if enhance and cache is not None and not lib.enhance_on(cache):
+        return False, cache
+    return enhance, cache
+
+
+def stage_payload(target, a, lib, seed=None, hud_pack=None):
+    """Build, check, and stage the payload common to every target. seed
+    and hud_pack, when given, put the -o options digest in the version.
     Returns (stage dir, payload dir, version, overrides, exe)."""
     G = g()
     host.mark("build")
@@ -328,14 +356,11 @@ def stage_payload(target, a, lib):
         host.say("WARNING: %s; packaging it anyway" % doctor.unknown_dump_note(sha))
     btarget = build_target(target)
     bdir = build_mod.pkg_build_dir(btarget)
+    st = a.state
     a.icon_dir = make_icon(bdir)
-    # The taskbar shows the icon of the window's process: the game's exe.
-    icon_var = G.m["build"]["icon_var"]
-    icon_args = (
-        ["-D%s=%s" % (icon_var, os.path.join(a.icon_dir, app() + ".ico"))]
-        if btarget == "windows" and icon_var
-        else []
-    )
+    icon_key = incr.record_icon(st, a.icon_dir)
+    icon_args = exe_icon_args(btarget, a.icon_dir)
+    cstage = incr.compile_stage(btarget)
     if a.no_build:
         host.refuse_while_regenerating()
         exe = G.exe(bdir, btarget)
@@ -344,36 +369,74 @@ def stage_payload(target, a, lib):
                 "--no-build: no %s yet; run '%s package %s' without it first"
                 % (os.path.relpath(exe, G.root), host.cli_name(), target)
             )
+        # The exe as it is is the compile's output: the stages below chain
+        # on its bytes.
+        inputs = {"no_build": st.output_record(exe)["sha256"]}
+        st.record(cstage, buildstate.stage_key(inputs), inputs, [exe])
     else:
-        host.step("build %s (%s)" % (btarget, os.path.basename(bdir)))
-        exe = build_mod.build(
-            btarget,
-            icon_args,
-            a.system_tools,
-            bdir=bdir,
-            stock=True,
-            reconfigure=a.reconfigure,
-            # Its plan has regenerated a stale gen/ already, or refused.
-            stale_ok=True,
-        )
+        compile_stage(btarget, bdir, icon_args, icon_key, a, lib)
+        exe = G.exe(bdir, btarget)
     if not os.listdir(G.gen):
         raise CliError("%s/ is empty: run '%s recomp'" % (G.rel(G.gen), host.prog()))
     cache = os.path.join(bdir, "CMakeCache.txt")
-    debug, nonstock = lib.cache_problems(lib.read_cache(cache))
+    vals = lib.read_cache(cache)
+    debug, nonstock = lib.cache_problems(vals)
     bad = ([] if a.allow_debug else debug) + ([] if a.allow_nonstock else nonstock)
     if bad:
         raise CliError(stock_refusal(target, bdir, bad))
     overrides = (debug if a.allow_debug else []) + (nonstock if a.allow_nonstock else [])
-    version = lib.compute_version(G.root, toolkit.toolkit_dir(), G.gen, exe, cli_dir.cli_dir())
+    hud_sha = host.sha256_path(hud_pack["path"]) if hud_pack else None
+    options = lib.options_digest(vals, seed, hud_sha)
+    try:
+        version = lib.compute_version(
+            G.root, toolkit.toolkit_dir(), G.gen, exe, cli_dir.cli_dir(), options
+        )
+    except ValueError as e:
+        raise CliError(str(e)) from e
     host.mark("package")
     host.step("stage the files")
     host.say("version: %s" % version)
+    # One staging tree per target, kept between runs and updated in place
+    # (D11): its game files are clones or hard links, and a run that
+    # changed nothing reuses it whole.
     stage = os.path.join(a.out, ".stage-%s" % target)
-    shutil.rmtree(stage, ignore_errors=True)
-    os.makedirs(stage)
-    payload = os.path.join(stage, "%s-%s-%s" % (app(), version, target))
-    os.makedirs(payload)
+    payload = os.path.join(stage, incr.PAYLOAD)
+    os.makedirs(payload, exist_ok=True)
     return stage, payload, version, overrides, exe
+
+
+def compile_stage(btarget, bdir, icon_args, icon_key, a, lib):
+    """The build, skipped when its key (the game and toolkit trees, the
+    toolchain, the build env and -D list, gen/ and the icon) is the one the
+    exe was built with and the exe is unchanged. A toolchain that moved
+    starts the CMake cache afresh: a cache keeps the old compiler's paths."""
+    G = g()
+    st = a.state
+    cstage = incr.compile_stage(btarget)
+    inputs = incr.compile_inputs(btarget, a, lib, icon_args, bdir)
+    up = {"generate": st.key_of("generate"), "icon": icon_key}
+    key = buildstate.stage_key(inputs, up)
+    if incr.toolchain_moved(st, cstage, inputs):
+        host.say("build: the toolchain changed, configuring afresh")
+        build_mod.start_afresh(bdir)
+    why = ["--reconfigure"] if a.reconfigure else st.check(cstage, key, inputs, up)
+    if not why and os.path.isfile(G.exe(bdir, btarget)):
+        host.say("build: %s is current" % G.rel(G.exe(bdir, btarget)))
+        return
+    host.step("build %s (%s)" % (btarget, os.path.basename(bdir)))
+    host.say("build: %s" % ", ".join(why))
+    st.begin(cstage)
+    build_mod.build(
+        btarget,
+        icon_args,
+        a.system_tools,
+        bdir=bdir,
+        stock=True,
+        reconfigure=a.reconfigure,
+        # Its plan has regenerated a stale gen/ already, or refused.
+        stale_ok=True,
+    )
+    st.record(cstage, key, inputs, incr.compile_outputs(btarget, bdir), upstream=up)
 
 
 def hud_pack_path(arg):
@@ -397,6 +460,9 @@ def hud_pack_path(arg):
 # The pack of this package run (hud_pack_path's result plus its sha256),
 # recorded in the manifest; None without --hud-pack.
 HUD_PACK = None
+# write_manifest's sha256 source for game_files/ (buildstate.HashCache),
+# set by package() for its run.
+HASHER = None
 
 
 def has_textures_table(path):
@@ -424,6 +490,12 @@ def check_content(hud_pack=None, enhance=True):
         raise CliError(
             "%s: the defaults file is config.default.toml now; rename it "
             "(git mv %s %s)" % (G.rel(old), G.rel(old), G.rel(new))
+        )
+    if not os.path.isfile(new):
+        raise CliError(
+            "%s is missing: the game's build has the enhancements layer, which reads "
+            "its defaults from it (or leave -DXBOXRECOMP_ENHANCE=ON out of "
+            "build.stock_cmake for a game without the layer)" % G.rel(new)
         )
     if hud_pack and os.path.isfile(new) and has_textures_table(new):
         raise CliError(
@@ -468,13 +540,33 @@ NO_CONFIG_NOTE = (
     "config file: no config.default.toml staged, and README.txt says nothing of "
     "config.toml"
 )
+NO_LAYER_NOTE = (
+    "config: game.toml's build.stock_cmake does not turn the enhancements layer on "
+    "(-DXBOXRECOMP_ENHANCE=ON), so the game reads no config file: no "
+    "config.default.toml staged, and README.txt says nothing of config.toml"
+)
 
 
-def refuse_no_config(hud_pack, seed_path):
+def no_config_note(cache=None):
+    """Why the game reads no config file: the game's build leaves the layer
+    off, or the toolkit has none."""
+    on = plib().enhance_on(cache) if cache is not None else manifest.builds_enhance(g().m)
+    if not on:
+        return NO_LAYER_NOTE
+    return NO_CONFIG_NOTE % gitpin.describe(g().m["toolkit"])
+
+
+def refuse_no_config(hud_pack, seed_path, layer_off=False):
     """--hud-pack and --seed-config, refused before anything is built when
     the game reads no config file: both only reach the game through one
     (the pack's key in config.default.toml, the seed as config.toml)."""
     flags = [f for f, on in (("--hud-pack", hud_pack), ("--seed-config", seed_path)) if on]
+    if flags and (layer_off or not manifest.builds_enhance(g().m)):
+        raise CliError(
+            "%s: game.toml's build.stock_cmake does not turn the enhancements layer on "
+            "(-DXBOXRECOMP_ENHANCE=ON), which reads config.toml; the game would never read %s"
+            % (" and ".join(flags), "them" if len(flags) > 1 else "it")
+        )
     if flags:
         raise CliError(
             "%s: the toolkit at %s has no enhancements layer (src/enhance/), which reads "
@@ -525,7 +617,9 @@ def check_seed(path):
     return raw.decode("utf-8").replace("\r\n", "\n")
 
 
-def write_common(payload, target, version, lib, hud_pack=None, seed=None, enhance=True):
+def write_common(
+    payload, target, version, lib, hud_pack=None, seed=None, enhance=True, game_files=True
+):
     """The files every target shares. Returns readme()'s answer: whether
     the README has the frame pacing paragraph. seed: --seed-config's text,
     staged as config.seed.toml beside config.default.toml; each installer
@@ -556,12 +650,15 @@ def write_common(payload, target, version, lib, hud_pack=None, seed=None, enhanc
         if n == "LICENSE" or os.path.isfile(os.path.join(G.root, n)):
             copy_lf(os.path.join(G.root, n), os.path.join(payload, n))
     pacing = readme(target, version, lib, os.path.join(payload, "README.txt"), enhance)
-    n = lib.stage_game_files(G.game_files, os.path.join(payload, "game_files"))
-    host.say("game files: %d entries staged" % n)
+    if game_files:
+        n = lib.stage_game_files(G.game_files, os.path.join(payload, "game_files"))
+        host.say("game files: %d entries staged" % n)
     return pacing
 
 
-def write_manifest(root, target, version, overrides, lib, extra=None, dump_unknown=False):
+def write_manifest(
+    root, target, version, overrides, lib, extra=None, dump_unknown=False, hasher=None
+):
     G = g()
     cat, tk = lib.tree_state(G.root), lib.tree_state(toolkit.toolkit_dir())
     cli = lib.tree_state(cli_dir.cli_dir())
@@ -591,6 +688,9 @@ def write_manifest(root, target, version, overrides, lib, extra=None, dump_unkno
         overrides,
         ex,
         cli=cli,
+        source=lib.source_record(cat, lib.read_mark(G.root), G.m.get("wizard", {}).get("repo", "")),
+        built=lib.build_time((G.root, toolkit.toolkit_dir())),
+        hasher=hasher if hasher is not None else HASHER,
     )
     text = json.dumps(man, indent=2) + "\n"
     leaks = lib.private_leaks(text)
@@ -658,7 +758,252 @@ def run_plan_prefix(a, plan):
             host.say("gen/ is current")
 
 
+def stage_files(a, stage, payload, version, exe, lib, hud_pack, seed, enhance):
+    """The payload, in place: skipped whole when its key (the exe, the
+    icon, the HUD pack, the game files, the content and the CLI's
+    templates) is the one it was staged with and nothing in it moved;
+    otherwise the program files are made in stage/.next and synced in
+    (equal bytes left as they are), and game_files/ synced by size and
+    mtime. Returns write_common's answer (the pacing paragraph)."""
+    from . import steamos, windows
+
+    global HUD_PACK
+    G = g()
+    st = a.state
+    target = a.target
+    sname = incr.stage_name(target)
+    cstage = incr.compile_stage(build_target(target))
+    exe_sha = incr.output_sha(st, cstage, exe) or buildstate.sha256_file(exe)
+    hud_sha = host.sha256_path(hud_pack["path"]) if hud_pack else ""
+    inputs = incr.stage_inputs(target, version, enhance, seed, hud_sha, lib, exe_sha)
+    up = {"compile": st.key_of(cstage), "icon": st.key_of("icon"), "import": st.key_of("import")}
+    key = buildstate.stage_key(inputs, up)
+    why = st.check(sname, key, inputs, up)
+    meta = (st.get(sname) or {}).get("meta")
+    if not why and isinstance(meta, dict):
+        host.say("stage: current, kept")
+        HUD_PACK = meta.get("hud_pack")
+        return meta.get("pacing")
+    host.say("stage: %s" % ", ".join(why))
+    st.begin(sname)
+    # Anything else in the stage is an older layout's (a versioned payload
+    # folder) or the last run's work files.
+    for n in os.listdir(stage):
+        if n != incr.PAYLOAD:
+            p = os.path.join(stage, n)
+            if os.path.isdir(p) and not os.path.islink(p):
+                shutil.rmtree(p)
+            else:
+                os.remove(p)
+    nxt = os.path.join(stage, ".next")
+    os.makedirs(nxt)
+    pacing = write_common(nxt, target, version, lib, hud_pack, seed, enhance, game_files=False)
+    if target != "macos":
+        shutil.copy2(exe, os.path.join(nxt, G.exe_name + ".exe"))
+        pdb = os.path.join(os.path.dirname(exe), G.exe_name + ".pdb")
+        if os.path.isfile(pdb):
+            shutil.copy2(pdb, os.path.join(nxt, G.exe_name + ".pdb"))
+        if target == "steamos":
+            steamos.stage_steamos(nxt, lib, a.icon_dir)
+        else:
+            windows.build_launcher_exe(
+                os.path.join(nxt, app() + ".exe"),
+                os.path.join(a.icon_dir, app() + ".ico"),
+                stage,
+                lib.PRODUCT_NAME,
+            )
+            windows.build_root_tools(
+                stage, os.path.join(a.icon_dir, app() + ".ico"), lib.PRODUCT_NAME
+            )
+    incr.sync_tree(nxt, payload)
+    shutil.rmtree(nxt)
+    n = incr.sync_game_files(G.game_files, os.path.join(payload, "game_files"), lib)
+    host.say("game files: %d entries staged" % n)
+    check_staged(payload, lib)
+    st.record(
+        sname,
+        key,
+        inputs,
+        [payload],
+        meta={"pacing": bool(pacing), "hud_pack": HUD_PACK},
+        skip=incr.MANIFEST_FILES,
+        upstream=up,
+    )
+    return pacing
+
+
+def wrap(a, stage, payload, version, exe, overrides, lib, unknown):
+    """The bundle beside the stage. The manifest is always written again
+    (a rebase that keeps the files still names new commits); the wrap is
+    skipped when its key (that manifest's sha256 and the wrapper's tools)
+    is the bundle's on disk. Returns the bundle's path."""
+    from . import macos, steamos, windows
+
+    st = a.state
+    target = a.target
+    wname = incr.wrap_name(target)
+    archive = bool(getattr(a, "archive", False)) and target == "windows"
+
+    basis = {}
+
+    def choose(man_path):
+        from ..clean import human
+        from . import patch
+
+        with open(man_path, encoding="utf-8") as f:
+            man = json.load(f)
+        c = patch.choose(a, man, target, app(), g().m, incr.bundles_dir(st, target))
+        if c.kind == "patch":
+            host.say(
+                "patch: %s (%s of %s; --full for the full bundle)"
+                % (
+                    c.why,
+                    human(patch.payload_size(c.diff)),
+                    human(patch.full_size(man)),
+                )
+            )
+            if patch.changes_game_data(c.diff) and target != "macos":
+                host.say("patch: " + patch.GAME_DATA_WARNING)
+        else:
+            host.say("bundle: full (%s)" % c.why)
+        return c
+
+    def current(man_path, result, choice=None):
+        patching = choice is not None and choice.kind == "patch"
+        inputs = incr.wrap_inputs(
+            target,
+            incr._sha(man_path),
+            lib,
+            kind="patch" if patching else "full",
+            base=choice.base.sha256 if patching else "",
+            exe=exe,
+            archive=archive,
+        )
+        basis.update(incr.wrap_basis(st.key_of(incr.stage_name(target)), version, lib, inputs))
+        # No upstream key: the manifest lists every staged file with its
+        # sha256, so a stage that reran into the same bytes (a touched game
+        # file) keeps the bundle.
+        key = buildstate.stage_key(inputs)
+        why = st.check(wname, key, inputs)
+        if not why and os.path.exists(result):
+            host.say("bundle: current, kept")
+            # The plan's view of it follows this run's stage key.
+            st.data["stages"][wname].setdefault("meta", {})["basis"] = dict(basis)
+            st.save()
+            return True, key, inputs
+        host.say("bundle: %s" % ", ".join(why or ["%s is gone" % os.path.basename(result)]))
+        st.begin(wname)
+        return False, key, inputs
+
+    def done(ok, key, inputs, outs, man_path):
+        if not ok:
+            st.record(wname, key, inputs, outs, meta={"basis": dict(basis)})
+        incr.record_bundle(st, target, man_path, outs[0], made=not ok)
+        prune_bundles(a, target, outs[0])
+
+    if target == "macos":
+        host.step("app and dmg")
+        seen = {}
+
+        def reuse(man_path, dmg, choice=None):
+            ok, seen["key"], seen["inputs"] = current(man_path, dmg, choice)
+            seen["ok"], seen["man"] = ok, man_path
+            return ok
+
+        result = macos.wrap_macos(
+            stage,
+            payload,
+            version,
+            exe,
+            a.out,
+            overrides,
+            lib,
+            os.path.join(a.icon_dir, app() + ".icns"),
+            dump_unknown=unknown,
+            reuse=reuse,
+            choose=choose,
+        )
+        done(seen["ok"], seen["key"], seen["inputs"], [result], seen["man"])
+        return result
+    extra = None
+    if target == "windows":
+        if not windows.root_tools_ready(stage):
+            windows.build_root_tools(
+                stage, os.path.join(a.icon_dir, app() + ".ico"), lib.PRODUCT_NAME
+            )
+        extra = {"root": windows.root_block(stage)}
+    write_manifest(payload, target, version, overrides, lib, extra=extra, dump_unknown=unknown)
+    man_path = os.path.join(payload, "manifest.json")
+    if target == "steamos":
+        choice = choose(man_path)
+        if choice.kind == "patch":
+            result = steamos.patch_path(a.out, version, choice.base.version)
+        else:
+            result = steamos.bundle_path(a.out, version)
+        ok, key, inputs = current(man_path, result, choice)
+        if not ok:
+            host.step("tar")
+            top = "%s-%s-%s" % (app(), version, target)
+            result = steamos.wrap_steamos(payload, version, exe, a.out, top, choice)
+        done(ok, key, inputs, [result], man_path)
+        return result
+    choice = choose(man_path)
+    patching = choice.kind == "patch"
+    if patching:
+        result = windows.patch_path(a.out, version, choice.base.version)
+    else:
+        result = windows.bundle_path(a.out, version)
+    ok, key, inputs = current(man_path, result, choice)
+    outs = [result]
+    if not ok:
+        if patching:
+            host.step("patch")
+            result = windows.wrap_windows_patch(stage, payload, version, a.out, choice)
+        else:
+            host.step("installer")
+            result = windows.wrap_windows(stage, payload, version, a.out, lib, a.icon_dir)
+        outs = [result]
+        if archive:
+            result_zip = windows.archive(result)
+            host.say("archive: %s" % result_zip)
+            outs.append(result_zip)
+    done(ok, key, inputs, outs, man_path)
+    return result
+
+
+def prune_bundles(a, target, current):
+    """The newest --keep-bundles (2) bundles of the target, and as many of
+    its patches, stay in the output folder, the one just made always among
+    them; the older ones go
+    (their manifest records stay, so a patch against them can still be
+    made). Only in a folder inside the game folder: an --out elsewhere is
+    the player's own, and nothing there is deleted."""
+    from .. import clean
+
+    keep = getattr(a, "keep_bundles", None) or incr.KEEP_BUNDLES
+    G = g()
+    if not clean._inside(os.path.realpath(a.out), os.path.realpath(G.root)):
+        return
+    cur = os.path.abspath(current)
+    c = clean.collect(())
+    # Full bundles and patches each keep their newest.
+    for patches in (False, True):
+        found = incr.bundles_on_disk(a.out, target, app(), patches)
+        found.sort(key=lambda x: os.path.abspath(x[0]) != cur)
+        for p, extra in found[keep:]:
+            for q in [p] + extra:
+                c.add("bundles", q)
+    for _cat, p, n in c.items:
+        host.say(
+            "bundles: removed %s (%s; keeping the newest %d)" % (G.rel(p), clean.human(n), keep)
+        )
+    c.delete()
+
+
 def cmd_package(a):
+    if getattr(a, "plan", False):
+        package(a)
+        return
     prog = host.progress_lib()
     host.VIEW = prog.View(prog.choose_mode(a.plain or a.verbose), logs=g().logs)
     host.VIEW.verbose = a.verbose
@@ -673,7 +1018,6 @@ def cmd_package(a):
 
 def package(a):
     from .. import dump
-    from . import macos, steamos, windows
 
     G = g()
     if a.target not in G.package["targets"]:
@@ -695,15 +1039,28 @@ def package(a):
             host.say(note)
     toolkit.exclude_pin_mark(toolkit.toolkit_dir())
     # The pack is checked before the plan runs: a missing one must not
-    # cost a build.
-    hud_pack = hud_pack_path(a.hud_pack) if getattr(a, "hud_pack", None) is not None else None
+    # cost a build. --plan only names it: the wizard makes it after.
+    planning = getattr(a, "plan", False)
+    want_hud = getattr(a, "hud_pack", None) is not None
+    hud_pack = hud_pack_path(a.hud_pack) if want_hud and not planning else None
     seed_path = getattr(a, "seed_config", None)
     try:
         enhance = reads_config()
         if not enhance:
-            refuse_no_config(hud_pack, seed_path)
+            refuse_no_config(hud_pack or want_hud, seed_path)
         seed = check_seed(seed_path) if seed_path else None
-        check_content(hud_pack, enhance)
+        check_content(hud_pack or want_hud, enhance)
+        if planning:
+            from . import plan as plan_mod
+
+            plan_mod.show(plan_mod.make_plan(a, lib, imp, enhance, seed), getattr(a, "json", False))
+            if imp is not None:
+                imp.src.close()
+            return
+        if getattr(a, "clean", None):
+            from .. import clean
+
+            clean.package_clean(a.clean, a.out)
         plan = package_plan(a, imp)
     except BaseException:
         if imp is not None:
@@ -716,58 +1073,40 @@ def package(a):
         # stage_payload warns about an unknown dump; once is enough.
         imp.run(warn_unknown=False)
     run_plan_prefix(a, plan)
+    # Loaded after the import and the generate, which write their own
+    # entries (they also run alone, from the wizard).
+    st = a.state = buildstate.State(G.root)
+    st.verify = getattr(a, "verify", False)
+    incr.record_import(st, lib)
+    incr.record_generate(st)
     os.makedirs(a.out, exist_ok=True)
-    stage, payload, version, overrides, exe = stage_payload(a.target, a, lib)
+    stage, payload, version, overrides, exe = stage_payload(a.target, a, lib, seed, hud_pack)
+    # The build's own cache has the last word: a layer the configure left
+    # off (stock_cmake without -DXBOXRECOMP_ENHANCE=ON) reads no config
+    # file, whatever the toolkit tree has.
+    layer, cache = config_layer(enhance, lib, a.target)
+    if enhance and not layer:
+        if hud_pack or seed is not None:
+            refuse_no_config(hud_pack, seed_path, layer_off=True)
+        enhance = False
     if not enhance:
-        host.say(NO_CONFIG_NOTE % gitpin.describe(G.m["toolkit"]))
-    pacing_note = write_common(payload, a.target, version, lib, hud_pack, seed, enhance)
+        host.say(no_config_note(cache))
+    pacing_note = stage_files(a, stage, payload, version, exe, lib, hud_pack, seed, enhance)
     if seed is not None:
         host.say("seed config: %s (copied to config/config.toml on a first install)" % SEED_NAME)
     if hud_pack:
         host.say("hud pack: %d entries at %dx" % (hud_pack["entries"], hud_pack["scale"]))
     unknown = getattr(a, "dump_unknown", False)
-    if a.target == "macos":
-        check_staged(payload, lib)
-        host.step("app and dmg")
-        result = macos.wrap_macos(
-            stage,
-            payload,
-            version,
-            exe,
-            a.out,
-            overrides,
-            lib,
-            os.path.join(a.icon_dir, app() + ".icns"),
-            dump_unknown=unknown,
-        )
-    else:
-        exe_name = G.exe_name + ".exe"
-        shutil.copy2(exe, os.path.join(payload, exe_name))
-        pdb = os.path.join(os.path.dirname(exe), G.exe_name + ".pdb")
-        if os.path.isfile(pdb):
-            shutil.copy2(pdb, os.path.join(payload, G.exe_name + ".pdb"))
-        if a.target == "steamos":
-            steamos.stage_steamos(payload, lib, a.icon_dir)
-        else:
-            windows.build_launcher_exe(
-                os.path.join(payload, app() + ".exe"),
-                os.path.join(a.icon_dir, app() + ".ico"),
-                stage,
-                lib.PRODUCT_NAME,
-            )
-        check_staged(payload, lib)
-        write_manifest(payload, a.target, version, overrides, lib, dump_unknown=unknown)
-        if a.target == "steamos":
-            host.step("tar")
-            result = steamos.wrap_steamos(payload, version, exe, a.out)
-        else:
-            host.step("installer")
-            result = windows.wrap_windows(stage, payload, version, a.out, lib, a.icon_dir)
-            if a.archive:
-                result_zip = windows.archive(result)
-                host.say("archive: %s" % result_zip)
-    if not a.keep_stage:
-        shutil.rmtree(stage, ignore_errors=True)
+    global HASHER
+    hc = buildstate.HashCache(st.dir)
+    hc.verify = st.verify
+    # Only game_files/: the CLI's own small files are hashed afresh.
+    HASHER = lambda rel, p: hc.sha256(rel, p) if rel.startswith("game_files/") else None  # noqa: E731
+    try:
+        result = wrap(a, stage, payload, version, exe, overrides, lib, unknown)
+    finally:
+        HASHER = None
+        hc.save()
     host.VIEW.end(True)
     if "-dirty" in version:
         host.say("WARNING: built from uncommitted changes (%s)" % version)

@@ -30,7 +30,14 @@ type State struct {
 	Cfg    *gamecfg.Config
 	Target string
 	Dump   string
-	values map[string]string
+	// The output choice (D13): Full makes the full installer even when an
+	// update could be made; PatchFrom names the update's base (a path, or
+	// a bundle record's sha256 prefix from the plan's bases); Clean
+	// rebuilds everything (package --clean, never --clean=all).
+	Full      bool
+	PatchFrom string
+	Clean     bool
+	values    map[string]string
 }
 
 // New is the state with every option at its default and the target the
@@ -125,7 +132,7 @@ func (s *State) Seed() string {
 
 // PackageArgs is the package command (after `xbr`): the target, the dump,
 // the flags, the seed file when there is one, the output folder when one
-// is set, and --plain for the log pane.
+// is set, the output choice, and --plain for the log pane.
 func (s *State) PackageArgs(seedPath, out string) []string {
 	args := []string{"package", s.Target, "--dump", s.Dump}
 	args = append(args, s.Flags()...)
@@ -135,7 +142,34 @@ func (s *State) PackageArgs(seedPath, out string) []string {
 	if out != "" {
 		args = append(args, "--out", out)
 	}
+	args = append(args, s.choiceArgs()...)
 	return append(args, "--plain")
+}
+
+// PlanArgs is `package --plan --json` for the same build: what the
+// output choice and the plan screen show before anything runs.
+func (s *State) PlanArgs(seedPath string) []string {
+	args := []string{"package", s.Target, "--dump", s.Dump}
+	args = append(args, s.Flags()...)
+	if seedPath != "" {
+		args = append(args, "--seed-config", seedPath)
+	}
+	args = append(args, s.choiceArgs()...)
+	return append(args, "--plan", "--json")
+}
+
+func (s *State) choiceArgs() []string {
+	var args []string
+	if s.Clean {
+		args = append(args, "--clean")
+	}
+	switch {
+	case s.Full:
+		args = append(args, "--full")
+	case s.PatchFrom != "":
+		args = append(args, "--patch-from", s.PatchFrom)
+	}
+	return args
 }
 
 // Steps are the CLI commands of the build in order: each set flag's

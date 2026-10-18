@@ -24,7 +24,11 @@ Players: see [For players](#for-players).
    out only when the player leaves this page with the box ticked, so
    nothing is sent before they have seen it; a newer release shows as a
    note then. Right under the intro, "Made with these open-source
-   projects" lists the credits (see Credits below).
+   projects" lists the credits (see Credits below). A build folder
+   that already holds the wizard's clone gets a line under it, from the
+   clone's mark alone ("Build folder found: BLiNX 2 v1 (1a2b3c4). This
+   release will reuse it."); whether the clone is clean is checked at
+   Checks.
 2. **Checks**: uv (downloaded by sha256 when missing or older than 0.5.31),
    git (MinGit on Windows; the Command Line Tools on macOS, with Homebrew's
    installer offered for the libraries; the distribution's package hint on
@@ -66,9 +70,18 @@ Players: see [For players](#for-players).
    data folder plus `config/config.toml`) for the settings the page
    leaves out; when the config has `reads_config` false (a toolkit that
    reads no `config.toml`), it says the game has no settings file instead.
-6. **Summary**: the game, the two folders, target and changed options; under
-   "Technical details", the wizard, release, CLI and toolkit versions and
-   every command the build will run.
+6. **Summary**: the game, the two folders, target and changed options,
+   and "Makes:", what the build will make, from `package --plan --json`:
+   an update (its size, and the version it updates) or the full
+   installer with why ("the installed v1 is this build already", "no
+   install found"). Change… picks between them: on the host's own target
+   "An update for the installed v1" when that install can take one; for
+   another platform "An update" with "<Device> has:", the bundles this
+   folder made for it (version, date, update size), since the wizard
+   cannot see that computer. "Rebuild everything" there passes `--clean`.
+   Each change asks the plan again. Under "Technical details", the
+   wizard, release, CLI and toolkit versions, every command the build
+   will run, and the plan's stages.
 7. **Build**: a checklist of the build's parts, in order. The wizard
    knows its own commands (each prerequisite, such as `import` and
    `enhance hud`, then `package`); `package`'s row reads "Build the
@@ -96,7 +109,14 @@ Players: see [For players](#for-players).
    recomp starts over.
 8. **Done**: the bundle, "Open the folder", and the target's install step
    ("Install now" on the host's own target: the Windows setup program,
-   the `.dmg`, or `install.sh` in a terminal). When the build fails: the
+   the `.dmg`, or `install.sh` in a terminal). An update (a bundle named
+   `-patch-from-`) gets its own step: `apply.exe` in the folder on
+   Windows, `apply.command` in the `.dmg` on a Mac, `./install.sh` in the
+   unpacked folder on SteamOS ([bundle.md](bundle.md)). Under it, the
+   build folder's size and "Free space", which asks first and then runs
+   `clean --bundles --build`: the compiled program and the kept bundles
+   go, the game files, the translated code and the output folder stay,
+   and the next build compiles again. When the build fails: the
    part that stopped, the checklist as it ended with the failed row open
    on what it said (its last lines, from the Python traceback when there
    is one, in a box that can be selected and copied), the exit status,
@@ -237,6 +257,15 @@ data folder are elsewhere):
 | `tools/uv-cache/`, `tools/python/` | uv's cache and the Python it installs (`UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR` for every child) |
 | `src/` | the clone at the tag, with its own `external/`, `.venv/`, build folders and `build-logs/` |
 
+The clone is kept between releases, so a new release rebuilds only what
+changed. The wizard marks it (`src/.git/xbr/wizard.json`: `origin`
+`repo` or `local`, `ref`, `commit`, and `via` for a local source) and on
+the next run fetches the new tag, checks it against the release's commit
+and checks it out. A clone from before the mark (clean, origin the
+game's repo, shallow, at a tag) is marked and kept. A clone with local
+changes, or one that is not the wizard's, is refused with what to do,
+never reset. A failed fetch leaves the old checkout as it was.
+
 The default is `<slug>-recomp` under `%LOCALAPPDATA%`, `~/Library/Application
 Support` or `$XDG_DATA_HOME` (`~/.local/share`). The wizard refuses a
 folder that is, holds or sits inside the game's data folder for the host.
@@ -299,6 +328,55 @@ game on the fork too.
 With no `--tag`, the release is the one tag on HEAD of a clean checkout.
 `--dev` reads the working tree with no tag; the binary then has no clone
 step and takes `--game DIR`.
+
+The toolkit layer is not enough on its own: a game whose
+`build.stock_cmake` leaves `XBOXRECOMP_ENHANCE` off reads no
+`config.toml` either, even on the fork, so its config options are omitted
+the same way and `package` adds no `config.default.toml` to its bundles.
+
+A game with `[wizard] private = true` gets `"private": true` and a
+release with no `repo` (see For developers).
+
+## For developers
+
+Players never see this section's flags: they are not in the wizard's
+window or its settings, only on the command line.
+
+- `--game DIR` builds a checkout as it is (developer mode), with a config
+  from `wizard config --json --dev`. A private game's wizard (`[wizard]
+  private = true`) builds this way only: it has no repo to clone and no
+  update check. `wizard build`, and with it the release workflow, refuses
+  a private game, so its wizard binaries come from `go build` in
+  `wizard/` with the game's config, never from a release.
+- Provenance: every bundle's `manifest.json` (schema 2) records under
+  `source` how the game tree came: `{"kind": "tag", "repo", "tag",
+  "commit"}` for the wizard's release clone at its tag, `{"kind":
+  "local", "via": "checkout"|"bundle", "commit", "ref"}` for the wizard's
+  clone of a developer's checkout or git bundle, and `{"kind": "dev",
+  "commit"}` for anything else (a developer's own checkout, or a clone
+  moved off its marked commit or edited). The CLI fills it from the
+  wizard's mark on its clone (`.git/xbr/wizard.json`); it never holds a
+  path or a `file://` URL, and `package` refuses a manifest that would.
+  `volatile` lists the fields two builds of the same inputs may differ
+  in (`built`, the branch names).
+- `--source PATH[#REF]` builds a developer's checkout or git bundle at
+  REF (default HEAD of a checkout, a bundle's only head) through the
+  player's path: the build folder's clone, Checks, the screens and
+  package as a player gets them. The clone's origin is the checkout's
+  `file://` URL (a bundle's plain path) and its mark says `local`; the
+  config comes from `wizard config --json --dev` in a throwaway clone at
+  that commit. Only commits are built: a checkout with uncommitted
+  changes to tracked files gets a warning. Every screen, and `--dry`,
+  shows "Local source: COMMIT, not a release; nothing is published",
+  and with uncommitted changes "; uncommitted changes in PATH are not
+  built". The newer-release check compares the release the binary
+  embeds, so a game with a `repo` still gets it. The next run without
+  `--source` sets origin back to the repo and checks out the release.
+  `--source` and `--game` exclude each other.
+- `--patch-from X` is passed to `package` as the patch's base (a
+  `manifest.json`, an installed version folder, an `.app`, a bundle tar,
+  or a bundle record's sha256 prefix; [bundle.md](bundle.md)).
+- Neither flag is saved in the settings, and `--help` leaves both out.
 
 ## The build
 

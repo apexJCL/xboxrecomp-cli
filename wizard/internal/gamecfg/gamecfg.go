@@ -38,7 +38,8 @@ type Game struct {
 }
 
 type Release struct {
-	Repo   string `json:"repo"`
+	// Repo is absent for a private game (Config.Private).
+	Repo   string `json:"repo,omitempty"`
 	Tag    string `json:"tag"`
 	Commit string `json:"commit"`
 	Dev    bool   `json:"dev"`
@@ -171,6 +172,10 @@ type Config struct {
 	Reads *bool `json:"reads_config,omitempty"`
 	// Credits is absent from a CLI older than the key: CreditList.
 	Credits []Credit `json:"credits,omitempty"`
+	// Private is [wizard] private = true: a game with no public repo. Its
+	// wizard has no release to clone or check for updates; it builds a
+	// checkout the developer names (--game).
+	Private bool `json:"private,omitempty"`
 }
 
 // CreditList is what the wizard credits: the config's list, or
@@ -276,7 +281,9 @@ func (c *Config) Validate() error {
 	if c.Game.Name == "" {
 		bad("game.name is empty")
 	}
-	if !strings.HasPrefix(c.Release.Repo, "https://") {
+	if c.Release.Repo == "" && !c.Private {
+		bad("release.repo is empty (only a private game may omit it)")
+	} else if c.Release.Repo != "" && !strings.HasPrefix(c.Release.Repo, "https://") {
 		bad("release.repo %q is not an https URL", c.Release.Repo)
 	}
 	if !c.Release.Dev && (c.Release.Tag == "" || c.Release.Commit == "") {

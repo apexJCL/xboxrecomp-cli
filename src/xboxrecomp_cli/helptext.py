@@ -31,6 +31,8 @@ Commands:
   @slug@ enhance hud [--font FONT]      your HUD texture pack from your own dump
                                         (dist/enhance/hud/; package --hud-pack
                                         puts it in your bundle; never share it)
+  @slug@ clean --bundles|--build|--all  free space: lists what it would delete
+                                        (deletes with --yes)
   @slug@ setup [--dev] [--no-toolkit]   fetch the pinned toolchain into this tree
 
 Developer commands:
