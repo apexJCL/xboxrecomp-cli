@@ -7,6 +7,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-17
+
 ### Added
 - Incremental `package`: each stage (import, generate, icon, compile, HUD
   pack, stage, wrap) records its inputs in `.git/xbr/`, and a run redoes
@@ -341,7 +343,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.7...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.7...v0.8.0
 [0.7.7]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.4...v0.7.5
