@@ -65,12 +65,18 @@ The scaffold's `.gitignore` is the baseline, filled with the game's own
 - the dump and its `.partial` and `.old` siblings; gen and its `gen.*`
   key files; the pipeline's `out`; the build trees, `build-*/` and
   `build-logs/`;
-- `.venv/`, `third_party/`, `external/`, `dist/`, `bench-logs/`;
+- `.venv*`, `third_party`, `external`, `dist/`, `bench-logs`;
 - `/wt/`, `_local/`, `runs/`, `saves/`, `*.bak`, `*.bak-*`;
 - `hud-pack.toml`, `CACHE/` and the data extensions: `xbe iso xiso bmp png
   wav sav pack xpr xwb adx sfd ipk xsv xmv rws awd ppm raw dmg exe pdb nsi
   tar ico icns`;
 - `.claude/settings.local.json`, `CLAUDE.local.md`.
+
+The top-level lines are anchored (`/build-*/`, `/external`), so
+`openspec/changes/build-x/` or `src/external/` stays tracked. The dump,
+`.venv*`, `third_party`, `external` and `bench-logs` have no trailing
+slash: in a worktree they are symlinks to the main checkout's, and git
+reads a symlink as a file, which a `dir/` line does not match.
 
 The game's own lines go after the marker `# --- this game ---`. `/wt/` is a
 safety net, not a place: worktrees live outside the repo, and doctor reports
@@ -87,8 +93,9 @@ uv run ruff check . && uv run ruff format --check .
 
 `scripts/test_gitignore.py` (standard library only, so it runs before
 `setup`) checks that a sample path for each baseline line is ignored,
-filled from `game.toml`, and that `game.toml`, `scripts/` and
-`docs/images/*.png` are not. It judges the rules in a scratch repo, so a
+filled from `game.toml` (the bare names too), and that `game.toml`,
+`scripts/`, `docs/images/*.png`, `openspec/changes/build-x/` and
+`src/external/` are not. It judges the rules in a scratch repo, so a
 symlinked `bench-logs` or a global excludes file does not change the
 answer.
 
@@ -104,7 +111,10 @@ so the fix lands in the private commit:
 - the data and bundle extensions above;
 - `hud-pack.toml` at any depth;
 - `[data] game_files`, `[pipeline] gen` and its `gen.*` siblings;
-- `dist/`, `bin/` and `build*/` at the top; `_local/`, `saves/`, `runs/` and
+- `dist/`, `bin/` and `build*/` at the top;
+- setup's clones and venv at the top: `third_party`, `external`, `.venv*`,
+  as a folder or a file (a worktree's symlink included);
+- `_local/`, `saves/`, `runs/` and
   `bench-logs/` at any depth, as a folder or a file (a symlink included);
 - gitlinks (embedded repos);
 - any other binary (a NUL in the first 8000 bytes);
@@ -131,8 +141,15 @@ a missing `checks.yml` or `openspec/`, a `[wizard] repo` naming another repo,
 a set `core.hooksPath`, and in export mode a public remote without the push
 guard (hook, push refspec, `--no-tags`) or with another `pushurl`.
 
+The guard problems are a maintainer's. A plain clone of the public repo
+gets one note instead: a remote names the public repo, there is no
+`[public] remote` and no `refs/public*` ref, and the repo either tracks
+nothing of the private set or has HEAD on that remote's branches. A
+private repo with the public URL under another name keeps the problems.
+`public audit` and `export` always check them.
+
 Notes: no `openspec/` without `[public]`; an unknown top-level name; an env
-header without its doc.
+header without its doc; a plain clone of the public repo.
 
 ## Publishing
 
@@ -165,9 +182,13 @@ existing `pre-push` is kept as `pre-push.chained` and runs after it). For a
 push to the public repo, by the remote's name or any URL form, it allows
 only `refs/public/<branch>` as a fast-forward of the branch, and
 `refs/public-tags/TAG` annotated tags on that history, pushed as
-`refs/tags/TAG` with the same name; it refuses deletes,
-any other commit (by ref or raw sha) and other refs. A set `core.hooksPath`
-makes git skip it: init says so and exits 1.
+`refs/tags/TAG` with the same name, and `refs/public-pr/NAME` to
+`refs/heads/pr/NAME` (`public pr`, below), or that branch's delete; it
+refuses other deletes, any other commit (by ref or raw sha), a rewind and
+other refs, except the one rewrite `export --fresh-root` allows. A set `core.hooksPath`
+makes git skip it: init says so and exits 1. The guard needs git 2.31 or
+newer (`rev-parse --path-format=absolute`); an older git refuses every
+push to the public repo.
 
 `public export [REF]`:
 1. fetches the remote, and refuses unless its branch is what `git ls-remote`
@@ -176,8 +197,8 @@ makes git skip it: init says so and exits 1.
    check reads the working tree; a dirty HEAD needs `--allow-dirty`;
 3. drops the private set, refuses the refusal list;
 4. applies the rewrite rules to every text blob, then checks every exported
-   text blob and path name against the private patterns and the `!fail`
-   checks;
+   text blob and path name against the built-in and private patterns and
+   the `!fail` checks;
 5. commits the tree with `[public] author` as author and committer, in an
    environment with no global or system git config, never signed. The parent is the
    public tip (none on an empty repo); with `[public] upstream`, the newest
@@ -194,15 +215,63 @@ makes git skip it: init says so and exits 1.
    read (`rewrite: <path> (N rules, M checks)`) and the
    push. The CLI never pushes.
 
+**A history rewrite.** `public export --fresh-root OLD` makes the round's
+commit a root (no public parent; a `[public] upstream` parent still
+applies), so the old public history, its messages and names are not in the
+new one. OLD is the public tip it replaces, 7 or more hex digits: the
+approval names that history, and a tip that moved since is refused. It
+writes a one-time allowance, `xbr-public-rewrite` in the git common dir,
+which lets the guard pass exactly that rewind (OLD to the new commit) and,
+with `--drop-tags`, the delete of each public tag at its listed sha (their
+`refs/public-tags/*` copies go too). It prints the push:
+
+```sh
+mygame public export --fresh-root b73e849 --drop-tags
+git push --atomic --force-with-lease=refs/heads/main:<OLD sha> public refs/public/main:refs/heads/main :refs/tags/v1
+```
+
+Once that push lands the remote is not at OLD, so the allowance allows
+nothing more; the next plain export (or "nothing to publish") removes it. Without `--drop-tags` the
+public tags stay and still reach the old history, and export lists them.
+A host may keep the old commits reachable by sha (a release, a cache), so
+rewriting is no substitute for never pushing a leak.
+
+**Upstream PR branches.** A fork's public repo (`[public] upstream` set)
+carries PR branches: upstream's history plus commits pushed as they are.
+`public pr NAME [REF]` (REF defaults to HEAD) audits each commit on REF
+that upstream lacks as history mode does: each commit's added lines and
+path names, the private-set paths it adds or changes (a file added and
+removed inside the range still counts), its message and identities, and
+NAME itself, against the built-in and private patterns and, in export
+mode, the `!fail` checks. Nothing rewrites a PR branch, so in export mode
+it also refuses any added line, path, message or NAME a rewrite rule would
+change. Then it sets `refs/public-pr/NAME` and prints the push and the close:
+
+```sh
+mygame public pr boot-fix
+git push --force-with-lease public refs/public-pr/boot-fix:refs/heads/pr/boot-fix
+git push public :refs/heads/pr/boot-fix && git update-ref -d refs/public-pr/boot-fix    # once closed
+```
+
+The guard lets only `refs/public-pr/NAME` reach `refs/heads/pr/NAME`, from
+any old tip, since PR branches are rebased, and deletes only a `pr/NAME`
+whose `refs/public-pr/NAME` exists.
+
 `public audit [BASE..TIP]` checks what a push would publish. The default
 range is `<remote>/<branch>..refs/public/<branch>` (history mode:
-`..<branch>`):
+`..<branch>`). A tip that does not descend from the base is read whole,
+from the empty tree, only when the allowance approves exactly that base to
+that tip (a fresh root); otherwise the tip is stale or rewound, and the
+audit exits 1 (fetch and export again):
 - the content diff against the base (the empty tree when there is none),
   and in history mode each commit, merges included, against its first
-  parent: added lines for home-directory paths, links into Claude's web
-  app and the private patterns (in export mode also the rewrite file's
-  `!fail` checks); the added and changed paths for the
-  refusal list and the private patterns. The diff reads binaries as text,
+  parent: added lines for home-directory paths (macOS, Linux, Windows and
+  MSYS, without case; a Wine prefix's own `drive_c/users/steamuser/` and
+  `drive_c/users/public/`, also as `C:` and with backslashes, and GitHub's
+  `github.com/users/` are not ones), links into Claude's web app and the
+  private patterns (in export mode also the rewrite file's `!fail` checks,
+  which hold for the messages too); the added and changed paths for the
+  refusal list, and their names for the same patterns. The diff reads binaries as text,
   ignores every attributes file (a `-diff` or `binary` attribute hides
   nothing) and decodes quoted path names; an added line under a header it
   could not read is a hit;

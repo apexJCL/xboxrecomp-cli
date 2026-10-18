@@ -193,7 +193,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | `mygame build [windows\|macos]` | Configures once, then compiles incrementally, as many jobs as the free memory holds (`--jobs N` to choose) |
 | `mygame package <target>` | Makes a private bundle for `windows`, `steamos` or `macos` |
 | `mygame wizard <config\|build\|check>` | Builds the player's build wizard for a release |
-| `mygame public <init\|export\|audit>` | Publishes a round to the game's public repo: one audited commit, the push guard |
+| `mygame public <init\|export\|pr\|audit>` | Publishes a round to the game's public repo: one audited commit, the push guard, upstream PR branches |
 | `mygame golden <subcommand>` | Records and checks golden frames; `golden run` on the Mac |
 | `mygame bench <command>` | Builds and runs on a Proton host over ssh: runs, goldens, pacing |
 | `mygame enhance hud` | Makes a HUD texture pack from your own dump |

@@ -163,6 +163,10 @@ DATA_EXT = (
 # a build tree; openspec/changes/build-resources/ is not).
 ANY_DEPTH_DIRS = ("_local", "saves", "runs", "bench-logs")
 TOP_DIRS = ("dist", "bin")
+# What `setup` makes at the top, refused as a folder or a file: a
+# worktree's copy is a symlink to the main checkout's, one `git add -A`
+# from being tracked.
+SETUP_TOP = ("third_party", "external")
 
 
 def baseline_samples(game):
@@ -175,6 +179,9 @@ def baseline_samples(game):
     b = m["build"]
     out = [
         gf + "/default.xbe",
+        # Bare: in a worktree the dump, the clones and the venv are symlinks
+        # to the main checkout's, and a `dir/` line matches a directory only.
+        gf,
         gf + ".partial/x",
         gf + ".old/x",
         gen + "/recomp_0000.c",
@@ -185,10 +192,15 @@ def baseline_samples(game):
         "build-x/x",
         "build-logs/x",
         ".venv/x",
+        ".venv",
+        ".venv-ghidra",
         "third_party/x",
+        "third_party",
         "external/x",
+        "external",
         "dist/x",
         "bench-logs/x",
+        "bench-logs",
         "wt/x/game.toml",
         "_local/x",
         "runs/x",
@@ -204,8 +216,17 @@ def baseline_samples(game):
     return [p[2:] if p.startswith("./") else p for p in out]
 
 
-# Never ignored: the manifest and the tests that guard the rest.
-NOT_IGNORED = ("game.toml", GITIGNORE_TEST, "scripts/x.py", "docs/images/x.png")
+# Never ignored: the manifest and the tests that guard the rest, and two
+# paths an unanchored top-level line would catch (a change named build-*,
+# a source folder named external).
+NOT_IGNORED = (
+    "game.toml",
+    GITIGNORE_TEST,
+    "scripts/x.py",
+    "docs/images/x.png",
+    "openspec/changes/build-x/x",
+    "src/external/x",
+)
 
 
 # ── the refusal list ─────────────────────────────────────────────────────
@@ -235,6 +256,8 @@ def refused_path(game, path):
     if gen_parent or "/" not in path:
         if sib.split("/")[0].startswith(gen_name + "."):
             return "beside generated code (%s.*)" % gen
+    if low[0] in SETUP_TOP or low[0].startswith(".venv"):
+        return "%s (setup's clones and venv)" % segs[0]
     if low[0] in TOP_DIRS and len(segs) > 1:
         return "%s/ (bundles and binaries)" % segs[0]
     if len(segs) > 1 and fnmatch.fnmatchcase(low[0], "build*"):
@@ -383,6 +406,52 @@ def guard_problems(game, root):
         if not ours:
             problems.append("no pre-push guard in %s%s" % (hook, fix))
     return problems
+
+
+def maintainer_repo(game, root):
+    """Whether `public init` or `public export` ever ran here: the [public]
+    remote, or a refs/public* ref. A plain clone of the public repo has
+    neither (its origin names the public repo), and the guard is not its
+    business; the private repo keeps every guard problem."""
+    if game.m["public"]["remote"] in git_out(root, "remote").split():
+        return True
+    return bool(
+        git_out(
+            root,
+            "for-each-ref",
+            "--count=1",
+            "refs/public/",
+            "refs/public-tags/",
+            "refs/public-pr/",
+        ).strip()
+    )
+
+
+def public_clone(game, root, remotes):
+    """A plain clone of the public repo, whose guard is not its business:
+    not a maintainer's repo, and HEAD is all public, reachable from a
+    public remote's branches. In history mode a repo that tracks nothing
+    of the private set passes too; in export mode that proves nothing (a
+    new game tracks none of it yet), so a private repo that merely has the
+    public URL under another remote name keeps every guard problem."""
+    if maintainer_repo(game, root):
+        return False
+    if game.m["public"]["mode"] != "export" and not any(
+        private(game, p) for _, _, p in tracked(root)
+    ):
+        return True
+    for name in remotes:
+        rc, out, _ = git(
+            root,
+            "for-each-ref",
+            "--contains",
+            "HEAD",
+            "--count=1",
+            "refs/remotes/%s/" % name,
+        )
+        if rc == 0 and out.strip():
+            return True
+    return False
 
 
 def tracked(root):
@@ -538,16 +607,17 @@ def report(game, strict=False):
     """{"problems": [...], "notes": [...]}: the layout block of the working
     tree. Never raises unless strict: doctor runs it on any tree, a
     player's clone included, while the audit must not pass a block that
-    did not run."""
+    did not run. Strict, the push guard is always checked; otherwise a
+    plain public clone gets a note instead (maintainer_repo())."""
     if strict:
-        return _report(game)
+        return _report(game, strict)
     try:
-        return _report(game)
+        return _report(game, strict)
     except Exception as e:  # a broken tree must not break doctor
         return {"problems": [], "notes": ["layout not checked: %s" % e]}
 
 
-def _report(game):
+def _report(game, strict=False):
     m, root = game.m, game.root
     problems, notes = [], []
     for rel, why in required(game):
@@ -581,7 +651,13 @@ def _report(game):
         problems.append(
             "%s: a worktree or repository inside the game repo (use the workspace's wt/)" % n
         )
-    if pub:
+    remotes = public_remotes(root, pub["url"]) if pub else {}
+    if pub and not strict and remotes and public_clone(game, root, remotes):
+        notes.append(
+            "a clone of the public repo: the push guard is a maintainer's"
+            " (%s public init, in the private repo)" % game.slug
+        )
+    elif pub:
         hp = config_get(root, "core.hooksPath")
         if hp:
             problems.append("core.hooksPath is %r: git would skip the push guard" % hp)

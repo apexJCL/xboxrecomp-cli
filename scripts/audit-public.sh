@@ -8,8 +8,10 @@
 #                                      whole history's messages and identities
 #
 # Checked: added lines, the paths of the files the range adds and commit
-# messages for private paths (home directories on macOS and Linux, an
-# immutable host's /var/home), links into Claude's web app, tracker ids
+# messages for private paths (home directories on macOS, Linux, Windows and
+# MSYS, an immutable host's /var/home, without case; only a Wine prefix's
+# own drive_c/users/steamuser/ and drive_c/users/public/ are nobody's), links into
+# Claude's web app, tracker ids
 # (with or without the hyphen, as run and worktree paths spell them), the review
 # model's name, the test Deck's ssh alias (as an ssh, scp or rsync host) and
 # the private patterns below; the files the range adds for binaries and
@@ -37,10 +39,17 @@ NOREPLY="4037632+apexJCL@users.noreply.github.com"
 # The tracker ids and the Deck's ssh alias are private infrastructure
 # details, yet their patterns live here rather than in the private file:
 # each is a generic word (blx, deck), so the regex reveals nothing.
-PUBLIC_PATTERNS=(
+# Home paths are read through not_homes(), which masks what is nobody's
+# home (src/xboxrecomp_cli/public.py's BUILTIN exempts the same). MSYS's
+# paths (a drive letter as the first folder) are /[U]sers/'s matches.
+HOME_PATTERNS=(
     '/[U]sers/'
+    '[d]rive_c[\\/]+[U]sers[\\/]'
     '/[h]ome/'
     '/var/[h]ome/'
+    '[A-Za-z]:[\\/]+[U]sers[\\/]'
+)
+PUBLIC_PATTERNS=(
     '[c]laude\.ai'
     '(^|[^a-z0-9])[b]lx(-?[0-9]|-$)'
     '(^|[^a-z])[f]ables?([^a-z]|$)'
@@ -130,6 +139,8 @@ skip_allowed() {
 
 # What is checked: the text (added lines, or the whole tree), the messages,
 # the files added, the identities.
+# Each check takes the regex, then a filter for the text it reads (cat, or
+# not_homes for the home paths); every pattern matches without case.
 if [ $all = 1 ]; then
     text() { git grep -I -n -E -i -e "$1" HEAD -- . || true; }
     messages=$(git log --format=$'\x01%H %B' HEAD | skip_allowed)
@@ -148,16 +159,48 @@ else
     binaries=$(git diff --numstat --diff-filter=AMR "$range" | awk -F'\t' '$1 == "-" {print $3}')
 fi
 
+# What is nobody's home: a Wine prefix's own steamuser and public users
+# (under drive_c/ or C:, either separator, only with the separator after
+# the name) and GitHub's API path github.com/users/. BSD sed has no case
+# flag, hence the classes.
+not_homes() {
+    local users='[Uu][Ss][Ee][Rr][Ss]'
+    local own='([Ss][Tt][Ee][Aa][Mm][Uu][Ss][Ee][Rr]|[Pp][Uu][Bb][Ll][Ii][Cc])'
+    sed -E \
+        -e "s#[Dd][Rr][Ii][Vv][Ee]_[Cc][\\/]+$users[\\/]+$own[\\/]#drive_c-wine-#g" \
+        -e "s#([A-Za-z]:)[\\/]+$users[\\/]+$own[\\/]#\\1-wine-#g" \
+        -e "s#([Gg][Ii][Tt][Hh][Uu][Bb]\\.[Cc][Oo][Mm])/$users/#\\1-api-#g"
+}
+# The lines of stdin whose filtered form matches, printed as they are, so
+# a hit shows the line as committed and not the mask.
+matching() {
+    local p=$1 filter=$2 line seen
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        if [ "$filter" != cat ]; then
+            seen=$($filter <<<"$line")
+            grep -q -E -i -e "$p" <<<"$seen" || continue
+        fi
+        printf '%s\n' "$line"
+    done < <(grep -E -i -e "$p" || true)
+}
+check() {
+    local p=$1 filter=$2 line
+    while IFS= read -r line; do
+        hit "text /$p/: $line"
+    done < <(text "$p" | matching "$p" "$filter")
+    while IFS= read -r line; do
+        hit "message /$p/: $line"
+    done < <(matching "$p" "$filter" <<<"$messages")
+    while IFS= read -r line; do
+        hit "path /$p/: $line"
+    done < <(matching "$p" "$filter" <<<"$files")
+}
+for p in "${HOME_PATTERNS[@]}"; do
+    check "$p" not_homes
+done
 for p in "${patterns[@]}"; do
-    while IFS= read -r line; do
-        [ -n "$line" ] && hit "text /$p/: $line"
-    done < <(text "$p")
-    while IFS= read -r line; do
-        [ -n "$line" ] && hit "message /$p/: $line"
-    done < <(grep -E -i -e "$p" <<<"$messages" || true)
-    while IFS= read -r line; do
-        [ -n "$line" ] && hit "path /$p/: $line"
-    done < <(grep -E -i -e "$p" <<<"$files" || true)
+    check "$p" cat
 done
 while IFS= read -r f; do
     [ -z "$f" ] && continue

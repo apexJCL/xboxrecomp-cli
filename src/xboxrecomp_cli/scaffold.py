@@ -229,47 +229,49 @@ no-build = true
 
 GITIGNORE = """\
 # Written by `xbr new`. Game data, generated code, the toolchain and the
-# bundles never enter git.
+# bundles never enter git. The top-level entries are anchored (/x), and the
+# ones a worktree holds as symlinks to the main checkout's are bare: a
+# trailing-slash line matches a directory only.
 
 # Your dump, and the analysis the pipeline writes beside it; `import`
 # builds the dump beside it first and keeps the old one there until the
 # new one is in place.
-@GAME_FILES@/
-@GAME_FILES@.partial/
-@GAME_FILES@.old/
+/@GAME_FILES@
+/@GAME_FILES@.partial/
+/@GAME_FILES@.old/
 
 # Generated code and its key (`@SLUG@ package` regenerates when it differs).
-@GEN@/
-@GEN_PARENT@/gen.key.json
-@GEN_PARENT@/.gen-regenerating
+/@GEN@/
+/@GEN_PARENT@/gen.key.json
+/@GEN_PARENT@/.gen-regenerating
 
 # The pipeline's intermediates.
-@OUT@/
+/@OUT@/
 
-# Builds, and the packaging build trees.
-@WINDOWS_DIR@/
-@MACOS_DIR@/
-build-*/
-build-logs/
+# Builds, and the packaging build trees (anchored: a change named
+# openspec/changes/build-*/ is not one).
+/@WINDOWS_DIR@/
+/@MACOS_DIR@/
+/build-*/
+/build-logs/
 
-# `@SLUG@ setup`: the pinned venv, the toolchain, the toolkit and CLI clones.
-.venv/
-.venv-ghidra/
-third_party/
-external/
-.xbr-pin
+# `@SLUG@ setup`: the pinned venvs, the toolchain, the toolkit and CLI clones.
+/.venv*
+/third_party
+/external
+/.xbr-pin
 
 # `@SLUG@ package`: private bundles holding the game. Never commit them.
-dist/
+/dist/
 *.dmg
 *.exe
 *.pdb
 *.nsi
 *.tar
 
-# The bench host.
-bench-logs/
-scripts/bench.env
+# The bench host. Bare: a symlink to the workspace's one store.
+bench-logs
+/scripts/bench.env
 
 # Game data, captures and game output, anywhere in the tree.
 *.xbe

@@ -38,6 +38,9 @@ KEYS = {
 
 SAMPLES = (
     "@game_files@/default.xbe",
+    # Bare: in a worktree the dump, the clones and the venv are symlinks,
+    # and a `dir/` line matches a directory only.
+    "@game_files@",
     "@game_files@.partial/x",
     "@game_files@.old/x",
     "@gen@/recomp_0000.c",
@@ -48,10 +51,15 @@ SAMPLES = (
     "build-x/x",
     "build-logs/x",
     ".venv/x",
+    ".venv",
+    ".venv-ghidra",
     "third_party/x",
+    "third_party",
     "external/x",
+    "external",
     "dist/x",
     "bench-logs/x",
+    "bench-logs",
     "wt/x/game.toml",
     "_local/x",
     "runs/x",
@@ -64,9 +72,16 @@ SAMPLES = (
     "CLAUDE.local.md",
 ) + tuple("a/x." + e for e in DATA_EXT)
 
-# Never ignored: the manifest, these tests, the game's tools and the README
-# screenshots.
-TRACKED = ("game.toml", "scripts/test_gitignore.py", "scripts/x.py", "docs/images/x.png")
+# Never ignored: the manifest, these tests, the game's tools, the README
+# screenshots, and two paths an unanchored top-level line would catch.
+TRACKED = (
+    "game.toml",
+    "scripts/test_gitignore.py",
+    "scripts/x.py",
+    "docs/images/x.png",
+    "openspec/changes/build-x/x",
+    "src/external/x",
+)
 
 
 def manifest_values(text):

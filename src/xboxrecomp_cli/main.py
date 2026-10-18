@@ -519,7 +519,7 @@ def register():
     )(cmd_wizard)
     command(
         "public",
-        "maintainers: the public repo (init, export, audit; docs/layout.md)",
+        "maintainers: the public repo (init, export, pr, audit; docs/layout.md)",
         _cfg_public,
     )(cmd_public)
 

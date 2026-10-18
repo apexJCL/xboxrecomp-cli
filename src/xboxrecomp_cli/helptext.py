@@ -44,7 +44,7 @@ Developer commands:
   @slug@ pins refresh                   maintainers: re-pin the downloads
   @slug@ wizard build [--tag TAG]       the player's build wizard for a release
                                         (dist/wizard/; config, check)
-  @slug@ public init|export|audit       maintainers: the public repo (one commit
+  @slug@ public init|export|pr|audit    maintainers: the public repo (one commit
                                         per round; docs/layout.md)
   @slug@ workflow --check               the CI workflows against the CLI's
                                         templates

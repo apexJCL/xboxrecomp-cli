@@ -6,11 +6,14 @@ pieces so this file does not trip the audit of this repository.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
 
 import pytest
+
+from xboxrecomp_cli import public
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(os.path.dirname(HERE), "scripts", "audit-public.sh")
@@ -82,6 +85,14 @@ def test_clean(d):
         ("a.py", "p = '/Us" + "ers/someone/x'\n", "c", NOREPLY, "text"),
         ("a.py", "p = '/ho" + "me/someone/x'\n", "c", NOREPLY, "text"),
         ("a.py", "p = '/var/ho" + "me/someone'\n", "c", NOREPLY, "text"),
+        # Without case: a lowercase path, MSYS, Windows, a prefix under a
+        # real user's name.
+        ("a.py", "p = '/us" + "ers/someone/x'\n", "c", NOREPLY, "text"),
+        ("a.sh", "cd /c/us" + "ers/someone\n", "c", NOREPLY, "text"),
+        ("a.md", "C:\\Us" + "ers\\someone\\x\n", "c", NOREPLY, "text"),
+        ("a.md", "c:/us" + "ers/someone\n", "c", NOREPLY, "text"),
+        ("a.md", "pfx/drive_c/us" + "ers/someone/AppData\n", "c", NOREPLY, "text"),
+        ("a.md", "pfx/drive_c/us" + "ers/steamuser/x and /Us" + "ers/me\n", "c", NOREPLY, "text"),
         ("a.md", "see https://clau" + "de.ai/chat/x\n", "c", NOREPLY, "text"),
         ("a.md", "the %s host\n" % HOSTNAME.upper(), "c", NOREPLY, "text"),
         ("a.md", "mail %sexample.invalid\n" % EMAIL, "c", NOREPLY, "text"),
@@ -128,6 +139,9 @@ def test_each_rule_hits(d, name, data, msg, email, rule):
         "**Use on the Deck:** the build\n",
         "mail t@deck.example.invalid\n",
         "a blxyz word\n",
+        # A Wine prefix's own users are no one's home.
+        "~/.steam/compatdata/1/pfx/drive_c/us" + "ers/steamuser/AppData\n",
+        "pfx/DRIVE_C/Us" + "ers/Public/Documents\n",
     ],
 )
 def test_near_misses_pass(d, line):
@@ -136,6 +150,49 @@ def test_near_misses_pass(d, line):
     commit(r, "a.md", line)
     p = audit(r)
     assert p.returncode == 0, p.stdout + p.stderr
+
+
+# The home paths, the same lines for this script and the CLI's BUILTIN
+# (src/xboxrecomp_cli/public.py): True is a hit.
+HOME_CASES = [
+    ("/Us" + "ers/me/x", True),
+    ("/c/us" + "ers/me", True),
+    ("C:\\Us" + "ers\\me\\x", True),
+    ("c:/us" + "ers/me/", True),
+    ("pfx/drive_c/us" + "ers/me/x", True),
+    ("pfx\\drive_c\\us" + "ers\\me\\x", True),
+    ("pfx/drive_c/us" + "ers/steamuser", True),
+    ("C:\\us" + "ers\\steamuserx\\", True),
+    ("/ho" + "me/me/x", True),
+    ("/var/ho" + "me/me", True),
+    ("pfx/drive_c/us" + "ers/steamuser/AppData", False),
+    ("pfx\\DRIVE_C\\Us" + "ers\\steamuser\\AppData", False),
+    ("C:\\us" + "ers\\Public\\Documents", False),
+    ("C:/Us" + "ers/steamuser/x", False),
+    ("C:\\\\us" + "ers\\\\steamuser\\\\x", False),
+    ("https://api.github.com/us" + "ers/someone", False),
+]
+
+
+@pytest.mark.parametrize("line, want", HOME_CASES)
+def test_home_paths_match_the_cli(d, line, want):
+    cli = any(re.search(p, line, f) for p, f in public.BUILTIN)
+    assert cli == want, ("cli", line)
+    r = repo(d)
+    commit(r, "a.md", line + "\n")
+    p = audit(r)
+    assert p.returncode == (1 if want else 0), (line, p.stdout, p.stderr)
+
+
+def test_a_home_hit_shows_the_line_as_committed(d):
+    """The mask hides only what is nobody's home: the line printed is the
+    one in the commit."""
+    r = repo(d)
+    line = "C:\\us" + "ers\\steamuser\\x and /ho" + "me/me"
+    commit(r, "a.md", line + "\n", msg=line)
+    p = audit(r)
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "-wine-" not in p.stdout and line in p.stdout, p.stdout
 
 
 def test_allowed_messages_skip_only_the_listed_commits(d):
@@ -199,7 +256,5 @@ def test_parity_record_names_only_fakehost():
     """The bench record moved from the game names no real host."""
     with open(os.path.join(HERE, "testdata", "bench_parity.json")) as f:
         text = f.read()
-    import re
-
     hosts = set(re.findall(r'"(?:[\w.-]+@)?([\w.-]+):[~/]', text))
     assert hosts <= {"fakehost"}, hosts

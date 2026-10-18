@@ -66,7 +66,8 @@ scripts/audit-public.sh A..B       # another range
 scripts/audit-public.sh --all      # every tracked file at HEAD, and the whole history
 ```
 
-It checks what the push would publish for private paths, private host names
+It checks what the push would publish for private paths (home directories,
+without case; a Wine prefix's own `drive_c/users/steamuser/` and `drive_c/users/public/` pass), private host names
 and addresses, binaries, game data, and any commit identity other than the
 noreply one. The private patterns are not in the repository: one extended
 regex per line (`#` starts a comment), matched without case, and the script

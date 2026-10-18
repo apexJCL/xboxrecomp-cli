@@ -7,6 +7,11 @@
                             and checked, as one commit on the public tip in
                             refs/public/<branch> (and --tag TAG); prints
                             the push, never runs it
+  public export --fresh-root OLD
+                            an approved rewrite: no public parent, and a
+                            one-time guard allowance to replace OLD
+  public pr NAME [REF]      an upstream PR branch (a fork's pr/NAME):
+                            upstream..REF audited per commit, pushed as is
   public audit [RANGE]      what a push would publish, checked for leaks,
                             data, identities, the layout and the pins
   public audit --all        export mode: a dry-run export of HEAD; history
@@ -33,16 +38,23 @@ from .host import CliError
 
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 GUARD_MARK = layout.HOOK_MARK
-# Checked on every added line, message and tag, whatever the private file
-# says: home directories (macOS, Linux, an immutable host's /var/home,
-# Windows) and links into Claude's web app. Bracketed so this file does not
-# match itself.
+# Checked on every added line, message, path and tag, whatever the private
+# file says: home directories (macOS, Linux, an immutable host's /var/home,
+# Windows) and links into Claude's web app, all without case (a lowercase
+# path, an MSYS one under /c/, a Wine prefix under a real user's name, with
+# either separator). Nobody's home: a Wine prefix's own steamuser and public
+# users (drive_c/users/steamuser/, or C: and backslashes as Wine spells
+# them, but only with the separator after the name) and GitHub's API path
+# github.com/users/. scripts/audit-public.sh masks the same exemptions.
+# Bracketed so this file does not match itself.
+NOBODY = r"(?![\\/]*(?:steamuser|public)[\\/])"
 BUILTIN = (
-    r"/[U]sers/",
-    r"/[h]ome/",
-    r"/var/[h]ome/",
-    r"[A-Za-z]:[\\/]+[U]sers[\\/]",
-    r"[c]laude\.ai",
+    (r"(?<!drive_c)(?<![A-Za-z]:)(?<!github\.com)/[U]sers/", re.I),
+    (r"drive_c[\\/]+[U]sers[\\/]+" + NOBODY, re.I),
+    (r"/[h]ome/", re.I),
+    (r"/var/[h]ome/", re.I),
+    (r"[A-Za-z]:[\\/]+[U]sers[\\/]+" + NOBODY, re.I),
+    (r"[c]laude\.ai", re.I),
 )
 
 
@@ -363,7 +375,7 @@ class Ctx:
         if layout.toplevel(game.root) != os.path.realpath(game.root):
             raise CliError("%s is not the top of a git repository" % game.root)
         self.patterns = private_patterns(self.git) if need_patterns else []
-        self.builtin = [(p, re.compile(p, re.I)) for p in BUILTIN]
+        self.builtin = [(p, re.compile(p, f)) for p, f in BUILTIN]
         self.remote_ref = "refs/remotes/%s/%s" % (self.p["remote"], self.p["branch"])
         self.public_ref = "refs/public/%s" % self.p["branch"]
 
@@ -420,13 +432,13 @@ def fetch_check(ctx):
     return have
 
 
-def build_tree(ctx, ref):
+def build_tree(ctx, ref, rules=None):
     """REF's tree as published: (tree sha, summary, problems). The private
     set and [public] exclude dropped; the refusal list refused; the rules
     applied to every text blob, then the private patterns and the !fail
     checks run over every exported text blob and path name."""
     g = ctx.git
-    rules = load_rules(g)
+    rules = rules or load_rules(g)
     upstream_blob = ctx.upstream_blob()
     keep, dropped, rewritten, problems = [], [], [], []
     blobs = Blobs(g.root)
@@ -472,7 +484,7 @@ def build_tree(ctx, ref):
         }
     )
     for name in names:
-        for src, rx in ctx.patterns + rules.fails:
+        for src, rx in ctx.builtin + ctx.patterns + rules.fails:
             if rx.search(name):
                 problems.append("path name %s: /%s/" % (name, src))
     if not keep:
@@ -550,10 +562,45 @@ def make_tag(ctx, commit, tag, tree):
     return g.out("mktag", input=body.encode(), env=clean_env(ctx.p["author"])).strip()
 
 
+def allowance_path(git):
+    """The one-time allowance `export --fresh-root` writes for the guard,
+    in the common git dir (the guard reads it from any worktree)."""
+    common = git.out("rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+    return os.path.join(common, ALLOWANCE)
+
+
+ALLOWANCE = "xbr-public-rewrite"
+
+
+def drop_allowance(git):
+    """A plain export ends any rewrite allowance: it named a root the
+    public ref has moved past."""
+    path = allowance_path(git)
+    if os.path.exists(path):
+        os.remove(path)
+        host.say("public export: dropped the rewrite allowance %s" % path)
+
+
+def approved_tip(fresh, parent):
+    """--fresh-root OLD must name the public tip it replaces: the approval
+    is typed for that history, and a tip that moved since is not it."""
+    if not parent:
+        raise CliError("--fresh-root: the public branch is empty, so a plain export is a root")
+    want = fresh.lower()
+    if len(want) < 7 or not re.fullmatch(r"[0-9a-f]+", want) or not parent.startswith(want):
+        raise CliError(
+            "--fresh-root %s: the public tip is %s; name it (7 or more hex digits) to approve"
+            " replacing its history" % (fresh, parent[:12])
+        )
+
+
 def export(ctx, a):
     g, p = ctx.git, ctx.p
     if p["mode"] != "export":
         raise CliError("[public] mode is %r: export runs in export mode only" % p["mode"])
+    fresh = a.fresh_root or ""
+    if a.drop_tags and not fresh:
+        raise CliError("--drop-tags goes with --fresh-root")
     tag = a.tag or ""
     if tag:
         if g.run("check-ref-format", "refs/tags/" + tag, check=False).returncode:
@@ -575,10 +622,22 @@ def export(ctx, a):
     if not a.allow_dirty:
         if g.out("status", "--porcelain", "--untracked-files=no").strip():
             raise CliError("the working tree has changes: commit them, or --allow-dirty")
+    # Before the network: a checkout without the rules refuses first.
+    rules = load_rules(g)
     parent = fetch_check(ctx)
-    tree, (keep, dropped, rewritten, rules), problems = build_tree(ctx, commit)
+    old_tags = {}
+    if fresh:
+        approved_tip(fresh, parent)
+        if a.drop_tags:
+            old_tags = remote_tags(ctx)
+            if tag in old_tags:
+                raise CliError("--tag %s: the public repo has it, and --drop-tags deletes it" % tag)
+    tree, (keep, dropped, rewritten, rules), problems = build_tree(ctx, commit, rules)
     if problems:
         return report_hits("export", problems, ref_moved=False)
+    # A fresh root has no public parent: the old history it replaces is
+    # not in the new one, so none of its messages or names are pushed.
+    replaced, parent = (parent, "") if fresh else ("", parent)
     parents = [parent] if parent else []
     up = p["upstream"]
     if up:
@@ -587,8 +646,9 @@ def export(ctx, a):
         u = g.out("merge-base", commit, up, check=False).strip()
         if u and not (parent and g.ancestor(u, parent)):
             parents.append(u)
-    if parent and len(parents) == 1 and g.sha(parent + "^{tree}") == tree:
+    if not fresh and parent and len(parents) == 1 and g.sha(parent + "^{tree}") == tree:
         host.say("nothing to publish: %s's tree is the public tip's" % ref)
+        drop_allowance(g)
         return 0
     msg = (
         a.message
@@ -606,13 +666,24 @@ def export(ctx, a):
         args += ["-p", x]
     new = g.out(*args, "-m", msg, env=clean_env(p["author"])).strip()
     tag_sha = make_tag(ctx, new, tag, tree) if tag else ""
-    hits = audit_commit(ctx, parent, new, extra_tags=[(tag, tag_sha)] if tag else [])
+    hits = audit_commit(
+        ctx, parent, new, extra_tags=[(tag, tag_sha)] if tag else [], fails=rules.fails
+    )
     if hits:
         return report_hits("export", hits, ref_moved=False)
     old = g.sha(ctx.public_ref)
     g.run("update-ref", "-m", "public export", ctx.public_ref, new, old or "0" * 40)
     if tag:
         g.run("update-ref", "refs/public-tags/" + tag, tag_sha, "0" * 40)
+    if fresh:
+        write_allowance(g, p["branch"], replaced, new, old_tags)
+        # The dropped tags' local copies name the old history: left, the
+        # next audit would read them as new tags and the guard refuse them.
+        for t in old_tags:
+            if g.sha("refs/public-tags/" + t):
+                g.run("update-ref", "-d", "refs/public-tags/" + t)
+    else:
+        drop_allowance(g)
     mp = map_path(ctx)
     os.makedirs(os.path.dirname(mp), exist_ok=True)
     with open(mp, "a", encoding="utf-8") as f:
@@ -633,11 +704,56 @@ def export(ctx, a):
         host.say("  tag refs/public-tags/%s %s" % (tag, tag_sha[:12]))
     host.say("  map: %s" % mp)
     push = "git push %s %s:refs/heads/%s" % (p["remote"], ctx.public_ref, p["branch"])
+    if fresh:
+        host.say("  fresh root: replaces the public history at %s" % replaced[:12])
+        host.say("  allowance: %s (this push only)" % allowance_path(g))
+        if not old_tags:
+            kept = remote_tags(ctx)
+            if kept:
+                host.say(
+                    "  %d public tag%s the old history (--drop-tags deletes them): %s"
+                    % (
+                        len(kept),
+                        " still reaches" if len(kept) == 1 else "s still reach",
+                        ", ".join(sorted(kept)),
+                    )
+                )
+        # Atomic: a branch rewritten while a tag delete fails (or the
+        # reverse) would leave tags on a history that is gone.
+        push = "git push --atomic --force-with-lease=refs/heads/%s:%s %s %s:refs/heads/%s" % (
+            p["branch"],
+            replaced,
+            p["remote"],
+            ctx.public_ref,
+            p["branch"],
+        )
+        push += "".join(" :refs/tags/%s" % t for t in sorted(old_tags))
     if tag:
         push += " refs/public-tags/%s:refs/tags/%s" % (tag, tag)
     host.say("push (audited; the CLI never pushes):")
     host.say("  " + push)
     return 0
+
+
+def allowance_names(git, branch, old, new):
+    """Whether the rewrite allowance approves branch moving old -> new."""
+    try:
+        with open(allowance_path(git), encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return False
+    return "branch %s %s %s" % (branch, old, new) in lines
+
+
+def write_allowance(git, branch, old, new, tags):
+    """The guard's one-time allowance: the branch may move from exactly old
+    to exactly new, and each listed tag, at exactly its sha, may be
+    deleted. Once the push lands the remote is no longer at old, so the
+    line allows nothing more; the next plain export removes the file."""
+    lines = ["branch %s %s %s" % (branch, old, new)]
+    lines += ["tag %s %s" % (t, sha) for t, sha in sorted(tags.items())]
+    with open(allowance_path(git), "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 def report_hits(what, hits, ref_moved=True):
@@ -733,9 +849,17 @@ def changed(git, base, tip):
     return out
 
 
+def path_hits(pats, fails, label, path):
+    """A path name against the patterns and FAILS: a name is pushed as
+    its content is."""
+    out = ["%s: /%s/" % (label, src) for src, rx in pats if rx.search(path)]
+    out += ["%s: /%s/ (a !fail check)" % (label, src) for src, rx in fails if rx.search(path)]
+    return out
+
+
 def content_hits(ctx, base, tip, fails=()):
-    """The diff base..tip: added lines (against the patterns and FAILS, the
-    rewrite file's checks), and the added or changed paths."""
+    """The diff base..tip: added lines and the added or changed paths'
+    names, against the patterns and FAILS (the rewrite file's checks)."""
     g = ctx.git
     pats = ctx.builtin + ctx.patterns
     hits = []
@@ -758,9 +882,7 @@ def content_hits(ctx, base, tip, fails=()):
     blobs = Blobs(g.root)
     try:
         for _st, mode, sha, path in changed(g, base, tip):
-            for src, rx in ctx.patterns:
-                if rx.search(path):
-                    hits.append("path %s: /%s/" % (path, src))
+            hits += path_hits(pats, fails, "path %s" % path, path)
             data = blobs.get(sha) if mode != "160000" else None
             why = refusal(ctx, mode, sha, path, data, upstream_blob)
             if why:
@@ -793,11 +915,12 @@ def tree_hits(ctx, tip):
     return hits
 
 
-def log_hits(ctx, revs):
-    """Messages and identities of the commits revs lists."""
+def log_hits(ctx, revs, fails=()):
+    """Messages and identities of the commits revs lists; FAILS, the
+    rewrite file's checks, hold for the messages too."""
     g = ctx.git
     want = ctx.p["author"]
-    pats = ctx.builtin + ctx.patterns
+    pats = ctx.builtin + ctx.patterns + list(fails)
     hits = []
     raw = g.out("log", "--format=%H%x00%an <%ae>%x00%cn <%ce>%x00%B%x01", *revs, "--")
     for rec in raw.split("\x01"):
@@ -930,13 +1053,13 @@ def layout_source_problem(ctx, tip):
     )
 
 
-def audit_commit(ctx, base, tip, extra_tags=()):
+def audit_commit(ctx, base, tip, extra_tags=(), fails=()):
     """Everything a push of tip over base would publish (export's last
     step, before any ref moves)."""
     up = ctx.p["upstream"]
     revs = [tip] + (["^" + base] if base else []) + (["^" + up] if up else [])
     hits = content_hits(ctx, base or EMPTY_TREE, tip)
-    hits += log_hits(ctx, revs)
+    hits += log_hits(ctx, revs, fails)
     tags = list(extra_tags)
     if not extra_tags:
         tags = new_public_tags(ctx)
@@ -975,6 +1098,17 @@ def audit(ctx, a):
         tip_sha = g.sha(tip + "^{commit}")
         if not tip_sha:
             raise Cannot("no %s: nothing to audit (run `%s public export`)" % (tip, ctx.game.slug))
+        whole = ""
+        if base_sha and not g.ancestor(base_sha, tip_sha):
+            # Only the approved rewrite replaces the base's history, so only
+            # then is all of the tip new; otherwise the tip is stale or
+            # rewound, and the guard would refuse its push anyway.
+            if not allowance_names(g, p["branch"], base_sha, tip_sha):
+                raise CliError(
+                    "%s is not a fast-forward of %s and no `export --fresh-root` approved"
+                    " replacing it: fetch the remote and export again" % (tip, base)
+                )
+            base_sha, whole = "", "; the approved fresh root, so the whole tip"
         unchecked = layout_source_problem(ctx, tip_sha)
         up = p["upstream"]
         revs = [tip_sha] + (["^" + base_sha] if base_sha else []) + (["^" + up] if up else [])
@@ -982,13 +1116,13 @@ def audit(ctx, a):
         # pushed, and a checkout without the rewrite file refuses here too.
         fails = load_rules(g).fails if p["mode"] == "export" else ()
         hits = content_hits(ctx, base_sha or EMPTY_TREE, tip_sha, fails)
-        hits += log_hits(ctx, revs)
+        hits += log_hits(ctx, revs, fails)
         if p["mode"] == "history":
             hits += history_hits(ctx, revs)
         hits += tag_hits(ctx, new_public_tags(ctx))
         hits += tree_hits(ctx, tip_sha) + pin_hits(ctx, tip_sha)
         hits += [] if unchecked else layout_hits(ctx)
-        what = "%s..%s" % (base if base_sha else "(empty)", tip)
+        what = "%s..%s%s" % (base if base_sha else "(empty)", tip, whole)
     if hits:
         return report_hits("audit", hits)
     if unchecked:
@@ -997,14 +1131,102 @@ def audit(ctx, a):
     return 0
 
 
-def history_hits(ctx, revs):
+def history_hits(ctx, revs, fails=()):
     """History mode: each commit against its first parent, since every one
     of them is pushed (a merge too: what it brings in is in that diff)."""
     hits = []
     for sha in ctx.git.out("rev-list", *revs).split():
         parent = ctx.git.sha(sha + "^") or EMPTY_TREE
-        hits += ["commit %s: %s" % (sha[:12], h) for h in content_hits(ctx, parent, sha)]
+        hits += ["commit %s: %s" % (sha[:12], h) for h in content_hits(ctx, parent, sha, fails)]
     return hits
+
+
+# ── upstream pull request branches ───────────────────────────────────────
+
+
+REWRITTEN = "a rewrite rule would change this; a PR branch is pushed as is"
+
+
+def rewrite_hits(git, rules, revs, name):
+    """What the rewrite file would change in the commits revs lists (added
+    lines, paths, messages) and in the branch name: export would rewrite
+    it, so a PR branch would publish it as written."""
+    hits = []
+
+    def check(label, text, show=""):
+        if rules.apply(text) != text:
+            hits.append("%s: %s%s" % (label, REWRITTEN, show and ": " + show.strip()[:160]))
+
+    check("branch name pr/%s" % name, "pr/" + name)
+    for sha in git.out("rev-list", *revs).split():
+        parent = git.sha(sha + "^") or EMPTY_TREE
+        c = "commit %s" % sha[:12]
+        check("%s: message" % c, git.out("log", "-1", "--format=%B", sha))
+        for path, lines in added_lines(git, parent, sha).items():
+            for n, line in lines:
+                check("%s: %s:%d" % (c, path, n), line, line)
+        for _st, _mode, _sha, path in changed(git, parent, sha):
+            check("%s: path %s" % (c, path), path)
+    return hits
+
+
+def pr(ctx, a):
+    """An upstream PR branch on a fork's public repo: upstream's history
+    plus our commits, pushed as they are (no rewrite). Each commit is
+    audited as history mode audits one, then the commit goes in
+    refs/public-pr/NAME, the one thing the guard lets reach
+    refs/heads/pr/NAME."""
+    g, p = ctx.git, ctx.p
+    up = p["upstream"]
+    if not up:
+        raise CliError("[public] upstream is not set: a PR branch is upstream plus commits")
+    name = a.name
+    if g.run("check-ref-format", "refs/heads/pr/" + name, check=False).returncode:
+        raise CliError("%r is not a branch name" % name)
+    src = a.ref or "HEAD"
+    commit = g.sha(src + "^{commit}")
+    if not commit:
+        raise CliError("no such commit: %s" % src)
+    if not g.sha(up + "^{commit}"):
+        raise CliError("[public] upstream %r: no such ref (fetch it)" % up)
+    revs = [commit, "^" + up]
+    n = g.out("rev-list", "--count", *revs).strip()
+    if n in ("", "0"):
+        raise CliError("%s has no commits on top of %s: nothing to open a PR with" % (src, up))
+    # The rewrite file's checks hold for what is published, as in export:
+    # the content, the paths, the messages and the branch's own name. Its
+    # rules hide names that export rewrites; nothing rewrites a PR branch.
+    rules = load_rules(g) if p["mode"] == "export" else None
+    fails = rules.fails if rules else ()
+    hits = line_hits(ctx.builtin + ctx.patterns + list(fails), "branch name", "pr/" + name)
+    hits += history_hits(ctx, revs, fails)
+    hits += log_hits(ctx, revs, fails)
+    if rules:
+        hits += rewrite_hits(g, rules, revs, name)
+    # Per commit: a file added and removed inside the range is still
+    # pushed, in the commit that added it.
+    for sha in g.out("rev-list", *revs).split():
+        parent = g.sha(sha + "^") or EMPTY_TREE
+        for _st, _mode, _sha, path in changed(g, parent, sha):
+            if layout.private(ctx.game, path):
+                hits.append(
+                    "commit %s: %s is in the private set: a PR branch is pushed as it is"
+                    % (sha[:12], path)
+                )
+    if hits:
+        return report_hits("pr", hits, ref_moved=False)
+    ref = "refs/public-pr/" + name
+    g.run("update-ref", "-m", "public pr", ref, commit)
+    host.say(
+        "public pr: %s -> %s %s (%s commit%s on %s)"
+        % (src, ref, commit[:12], n, "" if n == "1" else "s", up)
+    )
+    host.say("push (audited; the CLI never pushes):")
+    host.say("  git push --force-with-lease %s %s:refs/heads/pr/%s" % (p["remote"], ref, name))
+    host.say(
+        "close it: git push %s :refs/heads/pr/%s && git update-ref -d %s" % (p["remote"], name, ref)
+    )
+    return 0
 
 
 # ── init ─────────────────────────────────────────────────────────────────
@@ -1015,8 +1237,11 @@ HOOK = """\
 # Written by `@SLUG@ public init` (xboxrecomp-cli); init rewrites it. For a
 # push to the public repo (the remote @REMOTE@, or any URL form of
 # @ID@) it allows only refs/public/@BRANCH@ as a fast-forward of
-# refs/heads/@BRANCH@, and refs/public-tags/* tags on that history. Any
-# other hook that was here runs after it, as pre-push.chained.
+# refs/heads/@BRANCH@, refs/public-tags/* tags on that history, and
+# refs/public-pr/NAME to refs/heads/pr/NAME (`public pr`). A history
+# rewrite passes only by the allowance `public export --fresh-root` writes
+# in the git dir, for that one push. Any other hook that was here runs
+# after it, as pre-push.chained.
 remote_name=$1
 url=$2
 id_of() {
@@ -1032,6 +1257,16 @@ for u in "$(git remote get-url @REMOTE@ 2>/dev/null)" "$(git remote get-url --pu
 done
 if [ $guard = 1 ]; then
     pub=$(git rev-parse -q --verify refs/public/@BRANCH@)
+    # Before git 2.31 rev-parse echoes --path-format back: no folder, so no push.
+    common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+    if [ ! -d "$common" ]; then
+        echo "public guard: git 2.31 or newer is needed (rev-parse --path-format)" >&2
+        exit 1
+    fi
+    allowance="$common/@ALLOWANCE@"
+    allowed() {
+        [ -f "$allowance" ] && grep -qxF "$*" "$allowance"
+    }
     bad=0
     refuse() {
         echo "public guard: $*" >&2
@@ -1042,7 +1277,18 @@ if [ $guard = 1 ]; then
         case $lsha in
             *[!0]*) ;;
             *)
-                refuse "$rref: a delete; the public repo only moves forward"
+                case $rref in
+                    # A closed PR's branch goes, if `public pr` made it.
+                    refs/heads/pr/*)
+                        git rev-parse -q --verify "refs/public-pr/${rref#refs/heads/pr/}" >/dev/null ||
+                            refuse "$rref: a delete of a branch no \\`@SLUG@ public pr\\` made"
+                        ;;
+                    refs/tags/*)
+                        allowed "tag ${rref#refs/tags/} $rsha" ||
+                            refuse "$rref: a delete; the public repo only moves forward"
+                        ;;
+                    *) refuse "$rref: a delete; the public repo only moves forward" ;;
+                esac
                 continue
                 ;;
         esac
@@ -1055,9 +1301,17 @@ if [ $guard = 1 ]; then
                 case $rsha in
                     *[!0]*)
                         git merge-base --is-ancestor "$rsha" "$lsha" 2>/dev/null ||
+                            allowed "branch @BRANCH@ $rsha $lsha" ||
                             refuse "$rref: not a fast-forward of the public tip (fetch it)"
                         ;;
                 esac
+                ;;
+            refs/heads/pr/*)
+                # Rebased at will, so any old tip; only the audited commit.
+                name=${rref#refs/heads/pr/}
+                if [ "$lsha" != "$(git rev-parse -q --verify "refs/public-pr/$name")" ]; then
+                    refuse "$rref: only refs/public-pr/$name goes there (\\`@SLUG@ public pr $name\\`, then the push it prints)"
+                fi
                 ;;
             refs/tags/*)
                 # The same name both sides: a public tag pushed under
@@ -1070,7 +1324,7 @@ if [ $guard = 1 ]; then
                     refuse "$rref: its commit is not on refs/public/@BRANCH@"
                 fi
                 ;;
-            *) refuse "$rref: only refs/heads/@BRANCH@ and public tags go to the public repo" ;;
+            *) refuse "$rref: only refs/heads/@BRANCH@, refs/heads/pr/* and public tags go to the public repo" ;;
         esac
     done <<EOF
 $input
@@ -1101,6 +1355,7 @@ def hook_text(ctx):
         "REMOTE": p["remote"],
         "BRANCH": p["branch"],
         "ID": manifest.repo_id(p["url"]),
+        "ALLOWANCE": ALLOWANCE,
     }
     text = HOOK
     for k, x in v.items():
@@ -1198,6 +1453,25 @@ def configure(p):
         action="store_true",
         help="export HEAD although the working tree has changes",
     )
+    e.add_argument(
+        "--fresh-root",
+        metavar="OLD",
+        default="",
+        help="an approved history rewrite: a commit with no public parent, replacing the"
+        " public tip OLD (its sha, 7+ digits); the guard allows that one push",
+    )
+    e.add_argument(
+        "--drop-tags",
+        action="store_true",
+        help="with --fresh-root: the push also deletes the public repo's tags",
+    )
+    r = sub.add_parser(
+        "pr",
+        description="an upstream PR branch: upstream..REF audited commit by commit, into"
+        " refs/public-pr/NAME for refs/heads/pr/NAME; prints the push",
+    )
+    r.add_argument("name", help="the branch is pr/NAME")
+    r.add_argument("ref", nargs="?", default="", help="its tip (default HEAD)")
     u = sub.add_parser("audit", description="what a push would publish, checked")
     u.add_argument(
         "range", nargs="?", default="", help="BASE..TIP (default <remote>/<branch>..<tip>)"
@@ -1217,6 +1491,8 @@ def run(a):
         ctx = Ctx(G)
         if a.action == "export":
             return export(ctx, a)
+        if a.action == "pr":
+            return pr(ctx, a)
         if a.all and a.range:
             raise CliError("RANGE or --all, not both")
         return audit(ctx, a)

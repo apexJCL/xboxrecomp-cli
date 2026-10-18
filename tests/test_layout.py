@@ -210,3 +210,101 @@ def test_doctor_prints_the_block_and_keeps_its_status(g, monkeypatch, capsys):
     rc = main.cmd_doctor(type("A", (), {"json": False})())
     out = capsys.readouterr().out
     assert rc == 0 and "layout:     1 problem" in out and "missing LICENSE" in out
+
+
+def test_setup_clones_and_venvs_are_refused():
+    G = manifest.current()
+    for p in (
+        "third_party",
+        "third_party/tk/x.c",
+        "external",
+        "External/x",
+        ".venv",
+        ".venv-ghidra",
+    ):
+        assert "setup's clones and venv" in layout.refused_path(G, p), p
+    for p in ("src/external/x.c", "docs/third_party.md", "venv/x"):
+        assert not layout.refused_path(G, p), p
+
+
+@needs_git
+def test_a_tracked_symlink_to_a_setup_folder_is_a_problem(g):
+    os.symlink("/nonexistent/toolkit", g.path("third_party"))
+    git(g.root, "add", "-f", "third_party")
+    assert any("third_party (setup's clones and venv)" in p for p in problems(g)), problems(g)
+
+
+@needs_git
+@pytest.mark.parametrize(
+    "old, new, sample",
+    [
+        ("\n/build-*/\n", "\nbuild-*/\n", "openspec/changes/build-x/x"),
+        ("\n/game_files\n", "\ngame_files/\n", "game_files"),
+        ("\n/third_party\n", "\nthird_party/\n", "third_party"),
+    ],
+)
+def test_unanchored_or_directory_only_lines_drift(g, old, new, sample):
+    """build-*/ unanchored ignores a spec named build-x; game_files/ misses
+    a worktree's game_files symlink, which is a file to git."""
+    path = g.path(".gitignore")
+    text = open(path, encoding="utf-8").read()
+    assert old in text
+    write(path, text.replace(old, new, 1))
+    assert any(sample in p for p in problems(g)), problems(g)
+
+
+@needs_git
+def test_a_plain_public_clone_gets_a_note(g):
+    """origin names the public repo and there is no guard: a player's
+    clone, so a note; strict (the audit) and a maintainer's repo keep the
+    problems."""
+    url = "git@github.example:someone/g.git"
+    with open(g.path("game.toml"), "a", encoding="utf-8") as f:
+        f.write('\n[public]\nurl = "%s"\nauthor = "A <a@b.c>"\n' % url)
+    git(g.root, "remote", "add", "origin", url)
+    git(g.root, "update-ref", "refs/remotes/origin/main", "HEAD")
+    G = manifest.load(g.root)
+    rep = layout.report(G)
+    assert rep["problems"] == [], rep
+    assert any("a clone of the public repo" in n for n in rep["notes"]), rep
+    strict = "\n".join(layout.report(G, strict=True)["problems"])
+    for want in ("remotes origin name the public repo", "push refspec", "tagOpt", "pre-push"):
+        assert want in strict, (want, strict)
+    git(g.root, "update-ref", "refs/public/main", "HEAD")
+    assert len(problems(G)) == 4, problems(G)
+
+
+@needs_git
+def test_a_private_repo_with_the_public_url_keeps_its_problems(g):
+    """The public URL under another remote name in a repo that tracks its
+    private set is a maintainer's repo before `public init`, not a clone,
+    unless HEAD is all on the public remote's branches."""
+    url = "git@github.example:someone/g.git"
+    with open(g.path("game.toml"), "a", encoding="utf-8") as f:
+        f.write('\n[public]\nurl = "%s"\nauthor = "A <a@b.c>"\n' % url)
+    write(g.path("TASKS.md"), "the plan\n")
+    git(g.root, "add", "-A")
+    git(g.root, "commit", "-qm", "private")
+    git(g.root, "remote", "add", "pub", url)
+    G = manifest.load(g.root)
+    rep = layout.report(G)
+    assert any("remotes pub name the public repo" in p for p in rep["problems"]), rep
+    assert not any("a clone of the public repo" in n for n in rep["notes"]), rep
+    git(g.root, "update-ref", "refs/remotes/pub/main", "HEAD")
+    rep = layout.report(G)
+    assert rep["problems"] == [] and any("a clone of" in n for n in rep["notes"]), rep
+
+
+@needs_git
+def test_a_new_game_with_the_public_url_keeps_its_problems(g):
+    """A new game tracks none of its private set yet: in export mode that
+    is no proof of a clone, so the public URL under another remote name
+    keeps the guard problems until HEAD is on that remote's branches."""
+    url = "git@github.example:someone/g.git"
+    with open(g.path("game.toml"), "a", encoding="utf-8") as f:
+        f.write('\n[public]\nurl = "%s"\nauthor = "A <a@b.c>"\n' % url)
+    git(g.root, "remote", "add", "pub", url)
+    G = manifest.load(g.root)
+    rep = layout.report(G)
+    assert any("remotes pub name the public repo" in p for p in rep["problems"]), rep
+    assert not any("a clone of the public repo" in n for n in rep["notes"]), rep

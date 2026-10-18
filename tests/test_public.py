@@ -602,7 +602,7 @@ def test_an_unchecked_layout_is_exit_2(pub, capsys, monkeypatch):
     assert xbr(root, "public", "init", capsys=capsys)[0] == 0
     assert xbr(root, "public", "export", capsys=capsys)[0] == 0
 
-    def broken(_game):
+    def broken(_game, *_strict):
         raise OSError("unreadable")
 
     monkeypatch.setattr(layout, "_report", broken)
@@ -708,6 +708,43 @@ def test_patterns_that_are_not_utf8_are_exit_2(pub, capsys):
         f.write(b"caf\xe9\n")
     rc, out = xbr(pub["root"], "public", "audit", "--all", capsys=capsys)
     assert rc == 2 and "is not UTF-8" in out.err, out.err
+
+
+def test_the_guard_refuses_on_a_git_before_2_31(pub, capsys, d):
+    """An older git echoes rev-parse's --path-format back instead of a
+    folder: the guard refuses the push rather than guess."""
+    root = pub["root"]
+    assert xbr(root, "public", "init", capsys=capsys)[0] == 0
+    assert xbr(root, "public", "export", capsys=capsys)[0] == 0
+    hook = os.path.join(root, git(root, "rev-parse", "--git-path", "hooks/pre-push").stdout.strip())
+    tip = git(root, "rev-parse", "refs/public/main").stdout.strip()
+    line = "refs/public/main %s refs/heads/main %s\n" % (tip, "0" * 40)
+    url = git(root, "remote", "get-url", "public").stdout.strip()
+
+    def run(path):
+        env = dict(os.environ, PATH=path)
+        return subprocess.run(
+            ["sh", hook, "public", url],
+            cwd=root,
+            input=line,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    r = run(os.environ["PATH"])
+    assert r.returncode == 0, r.stderr
+    fake = os.path.join(d, "oldgit")
+    os.makedirs(fake)
+    write(
+        os.path.join(fake, "git"),
+        '#!/bin/sh\nfor a; do [ "$a" = --path-format=absolute ] && echo "$a"; done\n'
+        'for a; do shift; [ "$a" = --path-format=absolute ] || set -- "$@" "$a"; done\n'
+        'exec %s "$@"\n' % shutil.which("git"),
+    )
+    os.chmod(os.path.join(fake, "git"), 0o755)
+    r = run(fake + os.pathsep + os.environ["PATH"])
+    assert r.returncode == 1 and "git 2.31 or newer" in r.stderr, r.stderr
 
 
 def test_the_guard_wants_the_same_tag_name(pub, capsys):
@@ -858,3 +895,271 @@ def test_history_mode_skips_upstream_and_reads_the_whole_range(pub, capsys):
     rc, out = xbr(root, "public", "audit", capsys=capsys)
     assert rc == 1, out.out + out.err
     assert "docs/screenshots/race.png" in out.out and "message " in out.out, out.out
+
+
+# ── a fresh root, PR branches, home paths ────────────────────────────────
+
+
+def printed_push(out):
+    return [x.strip() for x in out.splitlines() if x.strip().startswith("git push")]
+
+
+def test_fresh_root_replaces_the_history_once(pub, capsys):
+    """An approved rewrite: the new root has no public parent, the guard
+    passes exactly the printed push (and the tag deletes it lists), and
+    the next plain export takes the allowance away."""
+    root, bare = pub["root"], pub["bare"]
+    assert xbr(root, "public", "init", capsys=capsys)[0] == 0
+    rc, out = xbr(root, "public", "export", "--tag", "v1.0.0", capsys=capsys)
+    assert rc == 0, out.err
+    git(root, *printed_push(out.out)[0].split()[1:])
+    first = git(bare, "rev-parse", "main").stdout.strip()
+    tag_obj = git(bare, "rev-parse", "refs/tags/v1.0.0").stdout.strip()
+    git(root, "fetch", "-q", "public")
+    commit_file(root, "docs/more.md", "More.\n")
+
+    for args, why in (
+        (("--drop-tags",), "goes with --fresh-root"),
+        (("--fresh-root", "abcdef0"), "name it"),
+        (("--fresh-root", first[:6]), "name it"),
+    ):
+        rc, out = xbr(root, "public", "export", *args, capsys=capsys)
+        assert rc == 1 and why in out.err, (args, out.err)
+    rc, out = xbr(root, "public", "export", "--fresh-root", first[:8], capsys=capsys)
+    assert rc == 0 and "1 public tag still reaches the old history" in out.out, out.out
+    rc, out = xbr(root, "public", "export", "--fresh-root", first[:8], "--drop-tags", capsys=capsys)
+    assert rc == 0, out.err
+    new = git(root, "rev-parse", "refs/public/main").stdout.strip()
+    assert parents(root, new) == []
+    assert not git(
+        root, "rev-parse", "-q", "--verify", "refs/public-tags/v1.0.0", check=False
+    ).stdout
+    allowance = os.path.join(root, ".git", public.ALLOWANCE)
+    assert read(allowance) == "branch main %s %s\ntag v1.0.0 %s\n" % (first, new, tag_obj)
+    push = printed_push(out.out)
+    assert push == [
+        "git push --atomic --force-with-lease=refs/heads/main:%s public"
+        " refs/public/main:refs/heads/main :refs/tags/v1.0.0" % first
+    ]
+    rc, out = xbr(root, "public", "audit", capsys=capsys)
+    assert rc == 0 and "the approved fresh root" in out.out, out.out + out.err
+
+    # Another rewrite is not the approved one, and a plain force is refused.
+    env = as_author(AUTHOR)
+    other = git(root, "commit-tree", new + "^{tree}", "-m", "x", env=env).stdout.strip()
+    git(root, "update-ref", "refs/public/main", other)
+    r = git(
+        root, "push", "-q", "--force", "public", "refs/public/main:refs/heads/main", check=False
+    )
+    assert r.returncode and "not a fast-forward" in r.stderr
+    # Nor does the audit read it whole: a stale or rewound tip is refused.
+    rc, out = xbr(root, "public", "audit", capsys=capsys)
+    assert rc == 1 and "fetch the remote and export again" in out.err, out.out + out.err
+    git(root, "update-ref", "refs/public/main", new)
+    git(root, *push[0].split()[1:])
+    assert git(bare, "rev-parse", "main").stdout.strip() == new
+    assert not git(bare, "tag").stdout.strip()
+
+    # Once landed it allows nothing more; the next plain export drops it.
+    git(root, "fetch", "-q", "public")
+    commit_file(root, "docs/again.md", "Again.\n")
+    rc, out = xbr(root, "public", "export", capsys=capsys)
+    assert rc == 0 and "dropped the rewrite allowance" in out.out, out.out
+    assert not os.path.exists(allowance) and parents(root, "refs/public/main") == [new]
+
+
+def test_nothing_to_publish_drops_the_allowance(pub, capsys):
+    root = pub["root"]
+    assert xbr(root, "public", "init", capsys=capsys)[0] == 0
+    rc, out = xbr(root, "public", "export", capsys=capsys)
+    git(root, *printed_push(out.out)[0].split()[1:])
+    git(root, "fetch", "-q", "public")
+    allowance = os.path.join(root, ".git", public.ALLOWANCE)
+    write(allowance, "branch main 1 2\n")
+    rc, out = xbr(root, "public", "export", capsys=capsys)
+    assert rc == 0 and "nothing to publish" in out.out, out.out
+    assert not os.path.exists(allowance)
+
+
+def test_fresh_root_needs_a_public_tip(pub, capsys):
+    root = pub["root"]
+    assert xbr(root, "public", "init", capsys=capsys)[0] == 0
+    rc, out = xbr(root, "public", "export", "--fresh-root", "abcdef0", capsys=capsys)
+    assert rc == 1 and "the public branch is empty" in out.err, out.err
+
+
+def test_the_rules_load_before_the_fetch(pub, capsys):
+    """No init, so no remote: a missing rewrite file is still what refuses."""
+    os.remove(os.path.join(pub["pd"], "rewrite"))
+    rc, out = xbr(pub["root"], "public", "export", capsys=capsys)
+    assert rc == 2 and "rewrite" in out.err and "no remote" not in out.err, out.err
+
+
+def pr_branch(root, d, base):
+    """A worktree d/prwt on branch prb at base, for commits on top of upstream."""
+    wt = os.path.join(d, "prwt")
+    git(root, "worktree", "add", "-q", "-b", "prb", wt, base)
+    return wt
+
+
+def test_pr_branches(pub, capsys, d):
+    root, bare = pub["root"], pub["bare"]
+    rc, out = xbr(root, "public", "pr", "fix", capsys=capsys)
+    assert rc == 1 and "upstream is not set" in out.err, out.err
+    u1 = fork_with_screenshot(root)
+    assert xbr(root, "public", "init", capsys=capsys)[0] == 0
+    rc, out = xbr(root, "public", "pr", "fix", "origin/main", capsys=capsys)
+    assert rc == 1 and "no commits on top" in out.err, out.err
+    rc, out = xbr(root, "public", "pr", "..bad", capsys=capsys)
+    assert rc == 1 and "not a branch name" in out.err, out.err
+
+    wt = pr_branch(root, d, u1)
+    env = as_author(AUTHOR)
+    write(os.path.join(wt, "fix.c"), "int fix;\n")
+    git(wt, "add", "fix.c")
+    git(wt, "commit", "-qm", "fix: one thing")  # the private identity
+    rc, out = xbr(root, "public", "pr", "fix", "prb", capsys=capsys)
+    assert rc == 1 and "author Private Person" in out.out, out.out
+    assert not git(root, "rev-parse", "-q", "--verify", "refs/public-pr/fix", check=False).stdout
+    git(wt, "commit", "-q", "--amend", "--reset-author", "-m", "fix: one thing", env=env)
+    write(os.path.join(wt, "TASKS.md"), "the plan\n")
+    git(wt, "add", "TASKS.md")
+    git(wt, "commit", "-qm", "plan", env=env)
+    rc, out = xbr(root, "public", "pr", "fix", "prb", capsys=capsys)
+    assert rc == 1 and "TASKS.md is in the private set" in out.out, out.out
+    git(wt, "reset", "-q", "--hard", "HEAD~1")
+    write(os.path.join(wt, "fix.c"), "int fix; /* " + HOME_LINE.strip() + " */\n")
+    git(wt, "commit", "-qam", "more", env=env)
+    rc, out = xbr(root, "public", "pr", "fix", "prb", capsys=capsys)
+    assert rc == 1 and "fix.c" in out.out, out.out
+    git(wt, "reset", "-q", "--hard", "HEAD~1")
+
+    rc, out = xbr(root, "public", "pr", "fix", "prb", capsys=capsys)
+    assert rc == 0 and "1 commit on origin/main" in out.out, out.out + out.err
+    tip = git(wt, "rev-parse", "HEAD").stdout.strip()
+    assert git(root, "rev-parse", "refs/public-pr/fix").stdout.strip() == tip
+    push = printed_push(out.out)
+    assert push == ["git push --force-with-lease public refs/public-pr/fix:refs/heads/pr/fix"]
+    assert (
+        "close it: git push public :refs/heads/pr/fix && git update-ref -d refs/public-pr/fix"
+        in out.out
+    )
+    # Only the audited commit reaches pr/fix, and not under another name.
+    r = git(root, "push", "-q", "--force", "public", "prb~1:refs/heads/pr/fix", check=False)
+    assert r.returncode and "only refs/public-pr/fix" in r.stderr
+    r = git(root, "push", "-q", "public", "refs/public-pr/fix:refs/heads/pr/other", check=False)
+    assert r.returncode and "only refs/public-pr/other" in r.stderr
+    git(root, *push[0].split()[1:])
+    assert git(bare, "rev-parse", "pr/fix").stdout.strip() == tip
+    # A rebased PR: any old tip, once audited again.
+    git(wt, "commit", "-q", "--amend", "-m", "fix: one thing, reworded", env=env)
+    assert xbr(root, "public", "pr", "fix", "prb", capsys=capsys)[0] == 0
+    git(root, "push", "-q", "--force", "public", "refs/public-pr/fix:refs/heads/pr/fix")
+    # Closed: the branch goes; main still cannot.
+    git(root, "push", "-q", "public", ":refs/heads/pr/fix")
+    git(root, "update-ref", "-d", "refs/public-pr/fix")
+    assert not git(bare, "branch", "--list", "pr/*").stdout.strip()
+    r = git(root, "push", "-q", "public", ":refs/heads/main", check=False)
+    assert r.returncode and "a delete" in r.stderr
+    # A pr/ branch no `public pr` made is not ours to delete.
+    git(bare, "branch", "pr/theirs", u1)
+    r = git(root, "push", "-q", "public", ":refs/heads/pr/theirs", check=False)
+    assert r.returncode and "a delete of a branch no" in r.stderr
+
+
+def test_pr_runs_the_fail_checks_and_reads_each_commit(pub, capsys, d):
+    """The rewrite file's !fail checks hold for messages and the branch
+    name too, and a private-set file added and removed inside the range is
+    still pushed in the commit that added it."""
+    root = pub["root"]
+    with open(os.path.join(pub["pd"], "rewrite"), "a") as f:
+        f.write("!fail \\bsecretword\\b\n")
+    u1 = fork_with_screenshot(root)
+    wt = pr_branch(root, d, u1)
+    env = as_author(AUTHOR)
+    write(os.path.join(wt, "fix.c"), "int fix;\n")
+    git(wt, "add", "fix.c")
+    git(wt, "commit", "-qm", "fix (the secretword)", env=env)
+    rc, out = xbr(root, "public", "pr", "fix", "prb", capsys=capsys)
+    assert rc == 1 and "message " in out.out and "secretword" in out.out, out.out
+    git(wt, "commit", "-q", "--amend", "-m", "fix", env=env)
+    rc, out = xbr(root, "public", "pr", "secretword-fix", "prb", capsys=capsys)
+    assert rc == 1 and "branch name" in out.out, out.out
+    rc, out = xbr(root, "public", "pr", HOSTNAME + "-fix", "prb", capsys=capsys)
+    assert rc == 1 and "branch name" in out.out, out.out
+    write(os.path.join(wt, "TASKS.md"), "the plan\n")
+    git(wt, "add", "TASKS.md")
+    git(wt, "commit", "-qm", "plan", env=env)
+    git(wt, "rm", "-q", "TASKS.md")
+    git(wt, "commit", "-qm", "unplan", env=env)
+    rc, out = xbr(root, "public", "pr", "fix", "prb", capsys=capsys)
+    assert rc == 1 and "TASKS.md is in the private set" in out.out, out.out
+    git(wt, "reset", "-q", "--hard", "HEAD~2")
+    assert xbr(root, "public", "pr", "fix", "prb", capsys=capsys)[0] == 0
+    # A path's name is pushed as its content is: the checks read it too.
+    write(os.path.join(wt, "docs", "secretword-notes.md"), "clean\n")
+    git(wt, "add", "docs")
+    git(wt, "commit", "-qm", "notes", env=env)
+    rc, out = xbr(root, "public", "pr", "fix", "prb", capsys=capsys)
+    assert rc == 1 and "path docs/secretword-notes.md: " in out.out, out.out
+    assert "(a !fail check)" in out.out, out.out
+
+
+def test_pr_refuses_what_a_rewrite_rule_would_change(pub, capsys, d):
+    """Export rewrites the names the rules hide; nothing rewrites a PR
+    branch, so a line, path, message or name a rule would change stays
+    out of it."""
+    root = pub["root"]
+    with open(os.path.join(pub["pd"], "rewrite"), "a") as f:
+        f.write("\\bcodename\\b\tthe game\n")
+    u1 = fork_with_screenshot(root)
+    wt = pr_branch(root, d, u1)
+    env = as_author(AUTHOR)
+    write(os.path.join(wt, "fix.c"), "int fix; /* the codename build */\n")
+    git(wt, "add", "fix.c")
+    git(wt, "commit", "-qm", "fix", env=env)
+    rc, out = xbr(root, "public", "pr", "fix", "prb", capsys=capsys)
+    assert rc == 1 and "fix.c:1: " + public.REWRITTEN in out.out, out.out
+    write(os.path.join(wt, "fix.c"), "int fix;\n")
+    git(wt, "commit", "-qam", "fix the codename", "--amend", env=env)
+    rc, out = xbr(root, "public", "pr", "fix", "prb", capsys=capsys)
+    assert rc == 1 and "message: " + public.REWRITTEN in out.out, out.out
+    git(wt, "commit", "-q", "--amend", "-m", "fix", env=env)
+    rc, out = xbr(root, "public", "pr", "codename-fix", "prb", capsys=capsys)
+    assert rc == 1 and "branch name pr/codename-fix: " + public.REWRITTEN in out.out, out.out
+    git(wt, "mv", "fix.c", "codename.c")
+    git(wt, "commit", "-q", "--amend", "-m", "fix", env=env)
+    rc, out = xbr(root, "public", "pr", "fix", "prb", capsys=capsys)
+    assert rc == 1 and "path codename.c: " + public.REWRITTEN in out.out, out.out
+    git(wt, "mv", "codename.c", "fix.c")
+    git(wt, "commit", "-q", "--amend", "-m", "fix", env=env)
+    assert xbr(root, "public", "pr", "fix", "prb", capsys=capsys)[0] == 0
+
+
+def test_home_paths_without_case(pub, capsys):
+    """A Wine prefix's own drive_c/users/steamuser/ and
+    drive_c/users/public/ are no one's home; every other home path is, in
+    any case."""
+    root = pub["root"]
+    assert xbr(root, "public", "init", capsys=capsys)[0] == 0
+    commit_file(
+        root,
+        "docs/proton.md",
+        "Saves: ~/.steam/steam/steamapps/compatdata/1/pfx/drive_c/us" + "ers/steamuser/x\n"
+        "Shared: pfx/drive_c/Us" + "ers/Public/x\n",
+    )
+    rc, out = xbr(root, "public", "export", capsys=capsys)
+    assert rc == 0, out.out + out.err
+    rc, out = xbr(root, "public", "audit", capsys=capsys)
+    assert rc == 0, out.out + out.err
+    for line in (
+        HOME_LINE,
+        "see /ho" + "me/me/x\n",
+        "see /us" + "ers/me/x\n",
+        "see /c/us" + "ers/me\n",
+        "see c:\\us" + "ers\\me\\x\n",
+        "see pfx/drive_c/us" + "ers/me/x\n",
+    ):
+        commit_file(root, "docs/bad.md", line)
+        rc, out = xbr(root, "public", "export", capsys=capsys)
+        assert rc == 1 and "docs/bad.md" in out.out, (line, out.out)

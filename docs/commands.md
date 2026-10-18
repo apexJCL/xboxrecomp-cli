@@ -336,7 +336,7 @@ Needs `[wizard]` in `game.toml` and a CLI checkout (the bootstrap's).
 | `--no-build` | `check`: the gates only |
 | `--name NAME` | `font`: look for this full name instead (to try the missing case) |
 
-### `mygame public <init|export|audit>`
+### `mygame public <init|export|pr|audit>`
 
 Maintainers: the game's public repository, from `[public]`
 ([layout.md](layout.md#publishing) has the modes, the guard and the private
@@ -344,14 +344,17 @@ inputs). The CLI never pushes; `export` prints the push.
 
 | Action | Effect |
 |---|---|
-| `init` | one remote for the public repo (`[public] remote`), its URL and push URL `[public] url`, no tags fetched; in export mode also the push refspec `refs/public/<branch>:refs/heads/<branch>` and the pre-push guard, which lets only the export and its tags reach the public repo |
+| `init` | one remote for the public repo (`[public] remote`), its URL and push URL `[public] url`, no tags fetched; in export mode also the push refspec `refs/public/<branch>:refs/heads/<branch>` and the pre-push guard, which lets only the export, its tags and `public pr` branches reach the public repo |
 | `export [REF]` | REF's tree (HEAD, the default and the only REF accepted) without the private set, rewritten and checked, as one commit on the public tip with `[public] author`; audited, then put in `refs/public/<branch>`, recorded in `<slug>.map`, and the push printed |
+| `pr NAME [REF]` | a fork's upstream PR branch (needs `[public] upstream`): REF's commits upstream lacks (default HEAD), audited as history mode does, put in `refs/public-pr/NAME`, and the push to `pr/NAME` and its close printed |
 | `audit [BASE..TIP]` | what the push would publish (default `<remote>/<branch>..refs/public/<branch>`): added lines, paths, messages, identities, new tags, the tree, the layout block and the `[cli]` and `[toolkit]` tags |
 
 | Option | Effect |
 |---|---|
 | `--tag TAG` | `export`: also the annotated tag `refs/public-tags/TAG`, its message the tag's `CHANGELOG.md` section |
 | `--message MSG` | `export`: the commit message (default `[public] message`, else `<name> static recompilation: <date> round`) |
+| `--fresh-root OLD` | `export`: a root commit replacing the public history at OLD (its tip, 7+ hex digits); writes the guard's one-time allowance and prints an `--atomic --force-with-lease` push |
+| `--drop-tags` | `export --fresh-root`: also delete the public repo's tags, through the same allowance |
 | `--allow-dirty` | `export`: export HEAD although the working tree has changes |
 | `--all` | `audit`: in export mode a dry-run export of HEAD, in history mode every tracked file and the whole history |
 

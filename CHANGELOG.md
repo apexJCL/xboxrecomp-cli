@@ -7,6 +7,43 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Added
+- `public export --fresh-root OLD [--drop-tags]`: an approved history
+  rewrite. The round's commit is a root replacing the public tip OLD, and
+  a one-time allowance lets the guard pass exactly that push (and the
+  listed tag deletes); the next plain export removes it.
+- `public pr NAME [REF]`: a fork's upstream PR branch, audited commit by
+  commit and put in `refs/public-pr/NAME`. The guard lets only it reach
+  `pr/NAME`, rebased or deleted.
+
+### Changed
+- The `.gitignore` baseline anchors its top-level lines (`/build-*/`,
+  `/external`), so a spec named `build-x` or a `src/external/` stays
+  tracked, and matches the dump, `.venv*`, `third_party`, `external` and
+  `bench-logs` without a trailing slash, so a worktree's symlinks are
+  ignored. Existing games see the drift in doctor, and `public audit` and
+  `export` fail on it until the game's `.gitignore` and
+  `scripts/test_gitignore.py` take the new lines.
+- The refusal list takes `third_party`, `external` and `.venv*` at the top,
+  as folders or symlinks.
+- The home-path checks (`public audit`, `scripts/audit-public.sh`) exempt
+  a Wine prefix's own `drive_c/users/steamuser/` and `drive_c/users/public/`
+  (also as `C:` and with backslashes) and GitHub's `github.com/users/`,
+  which are no one's home; every other home path stays a hit, without
+  case, in either separator. The script also checks drive-letter Windows
+  paths, and prints a hit's line as committed. Path names get the
+  built-in checks too.
+- `doctor` on a plain clone of the public repo (HEAD on a public remote's
+  branch) gives one note for the push guard instead of four problems; the
+  maintainer's repo, `public audit` and `export` keep them.
+- `public export` loads the rewrite file before fetching, and runs its
+  `!fail` checks over the commit message too. `public audit` reads a tip
+  that is not a fast-forward of its base whole only when an
+  `--fresh-root` allowance approves it, and refuses it otherwise.
+- `public init` writes the new guard: run it again in each maintainer repo.
+  The guard needs git 2.31 or newer and refuses every push to the public
+  repo on an older one.
+
 ## [0.9.0] - 2026-10-18
 
 ### Added
