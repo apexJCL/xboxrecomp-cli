@@ -129,6 +129,9 @@ func (w *Wizard) showPlan(p *runner.Plan) {
 	case p != nil:
 		items = append(items, para(fmt.Sprintf(summaryFresh, sized(p.FullSize))))
 	}
+	if p != nil && p.Xbe != nil && p.Xbe.Verdict == "data" {
+		items = append(items, para(fmt.Sprintf(summaryModData, strings.Join(p.Xbe.Sections, ", "))))
+	}
 	w.summaryPlan.Objects = items
 	w.summaryPlan.Refresh()
 	w.refreshNav()

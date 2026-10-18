@@ -15,7 +15,17 @@ import shutil
 import tomllib
 
 from .. import build as build_mod
-from .. import buildstate, cli_dir, doctor, gitpin, host, manifest, pipeline, setup, toolkit
+from .. import (
+    buildstate,
+    cli_dir,
+    fingerprint,
+    gitpin,
+    host,
+    manifest,
+    pipeline,
+    setup,
+    toolkit,
+)
 from ..host import CliError
 from . import incr, patch, tweaks
 from . import lib as lib_mod
@@ -378,10 +388,7 @@ def stage_payload(target, a, lib, seed=None, hud_pack=None):
         raise CliError(
             "%s: title ID 0x%08X is not %s (0x%08X)" % (G.xbe, tid, lib.PRODUCT_NAME, lib.TITLE_ID)
         )
-    sha, known = doctor.dump_state()
-    a.dump_unknown = not known
-    if not known:
-        host.say("WARNING: %s; packaging it anyway" % doctor.unknown_dump_note(sha))
+    fingerprint.warn(fingerprint.current(), "; packaging it anyway")
     btarget = build_target(target)
     bdir = build_mod.pkg_build_dir(btarget)
     st = a.state
@@ -664,6 +671,7 @@ def write_common(
         os.path.join(G.content, "launch.env.default." + fam),
         os.path.join(payload, "launch.env.default"),
     )
+    stamp_launch_env(os.path.join(payload, "launch.env.default"))
     # Read by the game beside its executable (Contents/Resources on macOS,
     # where the payload goes), never copied to the player's config/.
     if enhance:
@@ -687,9 +695,28 @@ def write_common(
     return pacing
 
 
-def write_manifest(
-    root, target, version, overrides, lib, extra=None, dump_unknown=False, hasher=None
-):
+def stamp_launch_env(path):
+    """End the staged launch.env.default with [package] stamp_env set to
+    the dump's verdict: the game prints it at boot, so a log names the XBE
+    its build was made from. Nothing when stamp_env is empty."""
+    line = fingerprint.stamp_line()
+    if not line:
+        return
+    # A template without a final newline would join our comment to its
+    # last line.
+    with open(path, "rb") as f:
+        ends = True
+        if f.seek(0, os.SEEK_END):
+            f.seek(-1, os.SEEK_END)
+            ends = f.read(1) == b"\n"
+    with open(path, "a", newline="\n") as f:
+        if not ends:
+            f.write("\n")
+        f.write("# The XBE this build was made from (xbr fingerprint).\n")
+        f.write(line + "\n")
+
+
+def write_manifest(root, target, version, overrides, lib, extra=None, hasher=None):
     G = g()
     cat, tk = lib.tree_state(G.root), lib.tree_state(toolkit.toolkit_dir())
     cli = lib.tree_state(cli_dir.cli_dir())
@@ -697,10 +724,11 @@ def write_manifest(
     btarget = build_target(target)
     cache = lib.read_cache(os.path.join(build_mod.pkg_build_dir(btarget), "CMakeCache.txt"))
     ex = {"host": {"os": host.host_os(), "arch": host.host_arch()}, "ghidra_names": ghidra_named()}
-    if dump_unknown:
-        # A dump game.toml does not list (xbe.sha256): it builds and plays,
-        # but no golden reference was recorded on it.
-        ex["xbe"] = "unknown"
+    v = fingerprint.current()
+    if v is not None:
+        # The dump this build was made from and its verdict: a modded or
+        # unknown one builds and plays, but no golden was recorded on it.
+        ex["xbe"] = fingerprint.record(v)
     if HUD_PACK:
         ex["enhance"] = {"hud_pack": dict(HUD_PACK)}
     if os.path.isfile(os.path.join(root, SEED_NAME)):
@@ -866,7 +894,7 @@ def stage_files(a, stage, payload, version, exe, lib, hud_pack, seed, enhance):
     return pacing
 
 
-def wrap(a, stage, payload, version, exe, overrides, lib, unknown):
+def wrap(a, stage, payload, version, exe, overrides, lib):
     """The bundle beside the stage. The manifest is always written again
     (a rebase that keeps the files still names new commits); the wrap is
     skipped when its key (that manifest's sha256 and the wrapper's tools)
@@ -953,7 +981,6 @@ def wrap(a, stage, payload, version, exe, overrides, lib, unknown):
             overrides,
             lib,
             os.path.join(a.icon_dir, app() + ".icns"),
-            dump_unknown=unknown,
             reuse=reuse,
             choose=choose,
         )
@@ -966,7 +993,7 @@ def wrap(a, stage, payload, version, exe, overrides, lib, unknown):
                 stage, os.path.join(a.icon_dir, app() + ".ico"), lib.PRODUCT_NAME
             )
         extra = {"root": windows.root_block(stage)}
-    write_manifest(payload, target, version, overrides, lib, extra=extra, dump_unknown=unknown)
+    write_manifest(payload, target, version, overrides, lib, extra=extra)
     man_path = os.path.join(payload, "manifest.json")
     if target == "steamos":
         choice = choose(man_path)
@@ -1156,14 +1183,13 @@ def package(a):
             incr.store_pack(st, hud_pack["path"], HUD_PACK["sha256"])
     elif choice == "clear":
         host.say("hud pack: none (--clear-hud-pack)")
-    unknown = getattr(a, "dump_unknown", False)
     global HASHER
     hc = buildstate.HashCache(st.dir)
     hc.verify = st.verify
     # Only game_files/: the CLI's own small files are hashed afresh.
     HASHER = lambda rel, p: hc.sha256(rel, p) if rel.startswith("game_files/") else None  # noqa: E731
     try:
-        result = wrap(a, stage, payload, version, exe, overrides, lib, unknown)
+        result = wrap(a, stage, payload, version, exe, overrides, lib)
     finally:
         HASHER = None
         hc.save()

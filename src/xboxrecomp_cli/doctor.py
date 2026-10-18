@@ -5,7 +5,7 @@ import platform
 import shutil
 import subprocess
 
-from . import cli_dir, env, fetch, host, toolkit
+from . import cli_dir, env, fetch, fingerprint, host, toolkit
 from .host import CliError
 
 
@@ -116,14 +116,13 @@ def windows_path_warnings(root=None, long_paths=None):
 
 
 def dump_state():
-    """(sha256 or None, known): the dump against xbe.sha256. An empty list
-    means every dump is known (the check is off)."""
-    g = host.g()
-    if not os.path.isfile(g.xbe):
+    """(sha256 or None, known): the dump against xbe.sha256, or with the
+    same sections (fingerprint.py: a header-only difference is known). An
+    empty list means every dump is known (the check is off)."""
+    v = fingerprint.current()
+    if v is None:
         return None, False
-    sha = host.sha256_path(g.xbe)
-    known = g.m["xbe"]["sha256"]
-    return sha, (not known or sha in known)
+    return v.sha, v.verdict in (fingerprint.KNOWN, fingerprint.HEADER)
 
 
 def dump_fix(game_files=None):
@@ -135,11 +134,23 @@ def dump_fix(game_files=None):
     )
 
 
-def unknown_dump_note(sha):
-    known = host.g().m["xbe"]["sha256"]
-    return "unknown dump: sha256 %s is not one game.toml lists (%s)" % (
-        sha,
-        ", ".join(k[:12] for k in known),
+def assets_line():
+    """The dump's file count against [data] reference_files, '' when the
+    game sets none. Information only: a mod may add or drop files."""
+    from . import dump
+
+    g = host.g()
+    want = g.m["data"]["reference_files"]
+    if not want or not os.path.isdir(g.game_files):
+        return ""
+    n = dump.dump_file_count(g.game_files)
+    if n == want:
+        return "%d files (as the reference dump)" % n
+    return "%d files (the reference dump has %d, %d %s)" % (
+        n,
+        want,
+        abs(n - want),
+        "fewer" if n < want else "more",
     )
 
 
@@ -235,20 +246,21 @@ def doctor_report():
         lines.append("llvm-mingw: %s" % e)
         problems.append("no llvm-mingw (%s setup)" % slug)
     gen_ok = os.path.isfile(os.path.join(g.gen, "recomp_funcs.h"))
-    sha, known = dump_state()
+    verdict = fingerprint.current()
+    sha = verdict and verdict.sha
     xbe_rel, gf_rel = g.rel(g.xbe), g.rel(g.game_files)
     lines.append(
         "game files: %s"
-        % (
-            (xbe_rel + ("" if known else " (%s)" % unknown_dump_note(sha)))
-            if sha
-            else "MISSING: " + dump_fix()
-        )
+        % ((xbe_rel + fingerprint.doctor_text(verdict)) if sha else "MISSING: " + dump_fix())
         + (dump.origin_note() if sha else "")
     )
     left = dump.leftover_note()
     if left:
         lines.append("            " + left)
+    # After the leftover note, which continues the game files line.
+    assets = assets_line() if sha else ""
+    if assets:
+        lines.append("assets:     " + assets)
     lines.append(
         "gen/:       %s"
         % ("present" if gen_ok else "not generated yet (%s analyze, %s recomp)" % (slug, slug))

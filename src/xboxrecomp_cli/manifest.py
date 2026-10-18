@@ -49,6 +49,9 @@ SPEC = {
         "path": (STR, DERIVED),
         "title_id": (INT, REQUIRED),
         "sha256": (STRS, []),
+        # Section name -> sha256 of its raw bytes, for the XBEs sha256
+        # lists (fingerprint.py): an unlisted XBE is judged by them.
+        "sections": (STRMAP, {}),
     },
     # A pin is a release tag, a commit, or both (the commit then locks the
     # tag); _check_values requires one of them (gitpin.py).
@@ -98,6 +101,9 @@ SPEC = {
     "data": {
         "game_files": (STR, "game_files"),
         "game_files_exclude": (STRS, ["default_analysis.json", "UDATA", "TDATA"]),
+        # The reference dump's file count, without game_files_exclude
+        # names: doctor reports a dump's against it (0: no line).
+        "reference_files": (INT, 0),
         "dir_env": (STR, DERIVED),
         "windows": (STR, DERIVED),
         "steamos": (STR, DERIVED),
@@ -122,6 +128,9 @@ SPEC = {
         "content": (STR, "packaging"),
         "templates": (STR, ""),
         "icon": (STR, "xbe"),
+        # The launch.env key the staged launch.env.default sets to the
+        # XBE's sha256 and verdict, for the game to print at boot ("": none).
+        "stamp_env": (STR, ""),
     },
     "bench": {
         "remote_name": (STR, ""),
@@ -722,6 +731,14 @@ def _check_values(m):
     for s in m["xbe"]["sha256"]:
         if not re.match(r"^[0-9a-f]{64}$", s):
             errors.append("xbe.sha256: %r is not a sha256" % s)
+    for name, s in m["xbe"]["sections"].items():
+        if not re.match(r"^[0-9a-f]{64}$", s):
+            errors.append("xbe.sections.%s: %r is not a sha256" % (name, s))
+    if m["data"]["reference_files"] < 0:
+        errors.append("data.reference_files: must not be negative")
+    stamp = m.get("package", {}).get("stamp_env", "")
+    if stamp and not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", stamp):
+        errors.append("package.stamp_env: %r is not an environment variable name" % stamp)
     for name, path in _paths(m):
         if os.path.isabs(path) or path.startswith("~") or "\\" in path:
             errors.append("%s: a path relative to the game root, with /" % name)

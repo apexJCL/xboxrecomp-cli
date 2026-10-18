@@ -19,7 +19,7 @@ import subprocess
 import sys
 
 from .. import build as build_mod
-from .. import buildstate, cli_dir, fetch, host, pipeline, toolkit
+from .. import buildstate, cli_dir, fetch, fingerprint, host, pipeline, toolkit
 
 PAYLOAD = "payload"
 # The files write_manifest adds after the stage: the stage's own record
@@ -287,6 +287,9 @@ def stage_inputs(target, version, enhance, seed, hud_sha, lib, exe_sha):
         "license": {n: _sha(os.path.join(G.root, n)) for n in ("LICENSE", "NOTICE")},
         # The templates and wrappers are the CLI's.
         "cli": tree_input(cli_dir.cli_dir(), lib),
+        # launch.env.default ends with it (stamp_launch_env): a new
+        # stamp_env or verdict must restage.
+        "xbe_stamp": fingerprint.stamp_line(),
     }
 
 

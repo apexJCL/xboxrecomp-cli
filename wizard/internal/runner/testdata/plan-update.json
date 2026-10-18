@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "target": "steamos",
- "version": "20261018.0815-c8646df7-tc1b737b-g209e11c4-dirtyc459f80b",
+ "version": "20261018.1513-ccbe486b-t0fdbeef-g209e11c4-dirtyc75af794",
  "stages": [
   {
    "stage": "import",
@@ -55,13 +55,13 @@
  ],
  "bases": [
   {
-   "version": "20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
-   "made": "2026-10-18T08:15:03.568628Z",
-   "sha256": "93bd038f36c97b9257fc2fff066eacf645b31ee752badd3530b36113d02793cb",
+   "version": "20261018.1513-ccbe486b-t568f89a-g209e11c4-dirtyc75af794",
+   "made": "2026-10-18T15:13:55.377091Z",
+   "sha256": "06cf6cd2aa98ea56c19dd50bd6710601dc2e3945baccb3093d588d334c3586b5",
    "size": 122880,
    "on_disk": true,
    "patch_size": null,
-   "id": "93bd038f",
+   "id": "06cf6cd2",
    "usable": true,
    "why": [],
    "why_codes": [],
@@ -79,16 +79,16 @@
  "full_size": 122880,
  "output": {
   "kind": "patch",
-  "why": "from the installed 20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
+  "why": "from the installed 20261018.1513-ccbe486b-t568f89a-g209e11c4-dirtyc75af794",
   "why_codes": [],
   "base": {
-   "version": "20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
+   "version": "20261018.1513-ccbe486b-t568f89a-g209e11c4-dirtyc75af794",
    "made": "",
-   "sha256": "93bd038f36c97b9257fc2fff066eacf645b31ee752badd3530b36113d02793cb",
-   "origin": "installed 20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
-   "path": "/tmp/game/deck/versions/20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
+   "sha256": "06cf6cd2aa98ea56c19dd50bd6710601dc2e3945baccb3093d588d334c3586b5",
+   "origin": "installed 20261018.1513-ccbe486b-t568f89a-g209e11c4-dirtyc75af794",
+   "path": "/tmp/game/deck/versions/20261018.1513-ccbe486b-t568f89a-g209e11c4-dirtyc75af794",
    "size": null,
-   "id": "93bd038f",
+   "id": "06cf6cd2",
    "usable": true,
    "why": [],
    "why_codes": [],
@@ -105,13 +105,13 @@
   },
   "patch_size": null,
   "installed": {
-   "version": "20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
+   "version": "20261018.1513-ccbe486b-t568f89a-g209e11c4-dirtyc75af794",
    "made": "",
-   "sha256": "93bd038f36c97b9257fc2fff066eacf645b31ee752badd3530b36113d02793cb",
-   "origin": "installed 20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
-   "path": "/tmp/game/deck/versions/20261018.0815-c8646df7-tc44601c-g209e11c4-dirtyc459f80b",
+   "sha256": "06cf6cd2aa98ea56c19dd50bd6710601dc2e3945baccb3093d588d334c3586b5",
+   "origin": "installed 20261018.1513-ccbe486b-t568f89a-g209e11c4-dirtyc75af794",
+   "path": "/tmp/game/deck/versions/20261018.1513-ccbe486b-t568f89a-g209e11c4-dirtyc75af794",
    "size": null,
-   "id": "93bd038f",
+   "id": "06cf6cd2",
    "usable": true,
    "why": [],
    "why_codes": [],
@@ -131,5 +131,11 @@
   "needed": false,
   "why": ""
  },
- "config_overrides": []
+ "config_overrides": [],
+ "xbe": {
+  "sha256": "9410ab98ab7a3ef7346b85d11dd591cd101b8cd439bf72c0d07906de3148cf66",
+  "verdict": "known",
+  "sections": [],
+  "note": ""
+ }
 }

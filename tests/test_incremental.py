@@ -283,7 +283,6 @@ def game(d, monkeypatch, capsys):
         monkeypatch.setattr(pkg, "check_content", lambda *a: None)
         monkeypatch.setattr(pkg, "readme", lambda t, v, lib, dst, enhance=True: write(dst, v))
         monkeypatch.setattr(pkg, "make_icon", fake_icon)
-        monkeypatch.setattr(pkg.doctor, "dump_state", lambda: ("sha", True))
         monkeypatch.setattr(pl, "xbe_title_id", lambda data: pl.TITLE_ID)
         monkeypatch.setattr(build_mod, "build", fake_build)
         monkeypatch.setattr(build_mod, "start_afresh", afresh)
@@ -937,6 +936,68 @@ def test_manifest_records_its_game_tree(game):
     assert tree["xbe_sha256"] == xbe["sha256"]
     del m["game_tree"]
     assert patch_mod.game_tree(m) == tree
+
+
+def tar_text(path, suffix):
+    with tarfile.open(path) as t:
+        name = next(n for n in t.getnames() if n.endswith(suffix))
+        return t.extractfile(name).read().decode()
+
+
+def test_manifest_and_plan_record_the_xbe(game):
+    """manifest.json and the plan carry the dump's verdict; with no
+    stamp_env, launch.env.default is the game's file as it was."""
+    import hashlib
+
+    G = game["G"]
+    sha = hashlib.sha256(open(G.xbe, "rb").read()).hexdigest()
+    game["run"]()
+    (b,) = bundles(G)
+    m = tar_manifest(G.path("dist", b))
+    assert m["xbe"] == {"sha256": sha, "verdict": "known", "sections": []}
+    assert tar_text(G.path("dist", b), "/launch.env.default") == "LOG_KEEP=10\n"
+    doc = json.loads(game["run"](plan=True, json=True))
+    assert doc["xbe"] == {"sha256": sha, "verdict": "known", "sections": [], "note": ""}
+
+
+def test_unknown_dump_builds_and_stamps(game):
+    """An unlisted dump warns and packages, and stamp_env ends the bundle's
+    launch.env.default with its verdict."""
+    import hashlib
+
+    G = game["G"]
+    host.g().m["xbe"]["sha256"] = ["0" * 64]
+    host.g().m["package"]["stamp_env"] = "GAME_BUILD_XBE"
+    sha = hashlib.sha256(open(G.xbe, "rb").read()).hexdigest()
+    out = game["run"]()
+    (b,) = bundles(G)
+    assert tar_manifest(G.path("dist", b))["xbe"]["verdict"] == "unknown"
+    assert tar_text(G.path("dist", b), "/launch.env.default").endswith(
+        "\nGAME_BUILD_XBE=%s unknown\n" % sha
+    )
+    assert "WARNING: unknown dump: sha256 %s" % sha in out, out
+
+
+def test_a_new_stamp_env_restages(game):
+    """stamp_env alone changing between two runs restages: the second
+    bundle's launch.env.default carries the line, after a newline the
+    game's file lacked."""
+    import hashlib
+
+    G = game["G"]
+    write(os.path.join(G.content, "launch.env.default.windows"), "LOG_KEEP=10")
+    sha = hashlib.sha256(open(G.xbe, "rb").read()).hexdigest()
+    game["run"]()
+    (first,) = bundles(G)
+    assert tar_text(G.path("dist", first), "/launch.env.default") == "LOG_KEEP=10"
+    os.remove(G.path("dist", first))
+    host.g().m["package"]["stamp_env"] = "GAME_BUILD_XBE"
+    game["run"]()
+    (second,) = bundles(G)
+    assert tar_text(G.path("dist", second), "/launch.env.default") == (
+        "LOG_KEEP=10\n# The XBE this build was made from (xbr fingerprint).\n"
+        "GAME_BUILD_XBE=%s known\n" % sha
+    )
 
 
 def test_patches_are_listed_apart_from_bundles(tmp_path):

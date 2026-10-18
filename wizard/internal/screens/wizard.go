@@ -509,11 +509,34 @@ func (w *Wizard) onNext() {
 			w.dumpNote.Show()
 			return
 		}
+	case pSummary:
+		if w.plan.ModdedCode() {
+			d, _ := w.modCodeDialog()
+			d.Show()
+			return
+		}
 	case pDone:
 		w.app.Quit()
 		return
 	}
 	w.move(1)
+}
+
+// modCodeDialog asks once before building modded code, as stopDialog
+// does: the way back first, and no default, so Enter never starts it.
+func (w *Wizard) modCodeDialog() (_ dialog.Dialog, body fyne.CanvasObject) {
+	var d *dialog.CustomDialog
+	back := widget.NewButtonWithIcon(modCodeBack, theme.NavigateBackIcon(), func() { d.Hide() })
+	build := widget.NewButtonWithIcon(modCodeConfirm, theme.WarningIcon(), func() {
+		d.Hide()
+		w.move(1)
+	})
+	build.Importance = widget.DangerImportance
+	text := fmt.Sprintf(modCodeText, strings.Join(w.plan.Xbe.Sections, ", "))
+	body = container.NewVBox(para(text), container.NewHBox(layout.NewSpacer(), back, build))
+	d = dialog.NewCustomWithoutButtons(modCodeTitle, body, w.win)
+	d.Resize(fyne.NewSize(stopWidth(w.win.Canvas().Size().Width), 0))
+	return d, body
 }
 
 func (w *Wizard) onClose() {

@@ -45,7 +45,8 @@ BLiNX 2's manifest is the full example
 |---|---|---|
 | `path` | `<data.game_files>/default.xbe` | The dumped executable. |
 | `title_id` | required | `package` refuses an XBE with another title ID. |
-| `sha256` | `[]` | The known dumps, the ones the goldens were recorded on. With another dump, the game still builds, packages (`"xbe": "unknown"` in `manifest.json`) and plays, with a warning, but `bench golden` refuses it. An empty list turns the check off. |
+| `sha256` | `[]` | The known dumps, the ones the goldens were recorded on. Another dump still builds, packages and plays, with the warning its fingerprint calls for (below), but `bench golden` refuses it. An empty list turns the check off. |
+| `sections` | `{}` | A table, `[xbe.sections]`: each section's name and the sha256 of its raw bytes, for the dumps `sha256` lists (`xbr fingerprint --toml` prints it). It classifies an unlisted XBE: `header` when every section matches (no warning), `data` when only data sections differ ("modded data, code stock"), `code` when a section the pipeline translates (`.text` and `[pipeline.disasm] extra_sections`, or every executable section without `text_only`) differs ("modded code, unsupported, may crash", naming them). Empty: an unlisted XBE is `unknown`. `manifest.json` records `xbe` = `{sha256, verdict, sections}`. Nothing refuses but `bench golden`. |
 
 ## [cli]
 
@@ -126,6 +127,7 @@ and the wizard leaves out the config options (see
 |---|---|---|
 | `game_files` | `"game_files"` | The dumped disc. |
 | `game_files_exclude` | `["default_analysis.json", "UDATA", "TDATA"]` | Left out of a bundle; an import carries them into the new tree. |
+| `reference_files` | `0` | The reference dump's file count, without `game_files_exclude` names: `doctor` prints the dump's count against it (`assets:`), for information only. `0`: no line. |
 | `dir_env` | `<APP>_DATA_DIR` | The variable that moves the player's data. |
 | `windows`, `steamos`, `macos` | `%LOCALAPPDATA%\<app>`, `~/Games/<app>`, `~/Library/Application Support/<app>` | The data folder on each target, as the bundle's README names it. |
 
@@ -167,6 +169,7 @@ This table is optional. Without it, `package` says so.
 | `content` | `"packaging"` | The game's own packaging content: `launch.env.default.<windows\|macos>`, `config.default.toml` (the option defaults the game reads beside its executable; a game that still has `enhance.toml.default` is refused until it renames it; `[present] pacing = "sleep"` there adds the frame pacing paragraph to README.txt and the note to `package`'s output; not staged, nor needed, when the toolkit at the pin has no enhancements layer, see "Capability blocks" below), `<target>/README.part` for windows and macos, and optionally `README.intro`. |
 | `templates` | `""` | The game's own packaging templates: the macos ones (required for `macos`), and any copy of a CLI template that must differ, at the same path (`README.txt.in`, `windows/launcher.c`, `steamos/launch.sh`, ...), which then wins. |
 | `icon` | `"xbe"` | The XBE's title image, or the generic icon. |
+| `stamp_env` | `""` | A launch.env key: `package` ends the staged `launch.env.default` with `<key>=<sha256> <verdict>[ <sections>]`, the XBE the build was made from, for the game to print at boot. `""`: no line. |
 
 ### The CLI's templates
 

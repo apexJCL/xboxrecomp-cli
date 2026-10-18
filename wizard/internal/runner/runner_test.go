@@ -342,7 +342,8 @@ func TestParsePlanFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(p.Stages) == 0 || len(p.Bases) == 0 || p.Output == nil || p.Output.Kind != "patch" ||
-		p.Output.Installed == nil || p.Output.Installed.Path == "" || p.Bases[0].GameFiles == nil {
+		p.Output.Installed == nil || p.Output.Installed.Path == "" || p.Bases[0].GameFiles == nil ||
+		p.Xbe == nil || p.Xbe.Verdict != "known" {
 		t.Fatalf("%+v", p)
 	}
 	ran := false
@@ -353,5 +354,22 @@ func TestParsePlanFixture(t *testing.T) {
 	}
 	if !ran {
 		t.Errorf("no stage runs with a reason: %+v", p.Stages)
+	}
+}
+
+// The plan's xbe verdict: absent from an older CLI, and only "code" asks.
+func TestPlanXbe(t *testing.T) {
+	p, err := ParsePlan([]byte(`{"schema": 1, "stages": []}`))
+	if err != nil || p.Xbe != nil || p.ModdedCode() {
+		t.Fatalf("%+v %v", p, err)
+	}
+	p, err = ParsePlan([]byte(`{"schema": 1, "stages": [], "xbe": {"sha256": "ab", "verdict": "code",
+		"sections": [".text", "D3D"], "note": "modded code"}}`))
+	if err != nil || !p.ModdedCode() || len(p.Xbe.Sections) != 2 {
+		t.Fatalf("%+v %v", p, err)
+	}
+	p.Xbe.Verdict = "data"
+	if p.ModdedCode() || (*Plan)(nil).ModdedCode() {
+		t.Error("data or no plan asks")
 	}
 }

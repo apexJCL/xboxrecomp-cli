@@ -7,6 +7,22 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Added
+- `fingerprint [PATH]`: the XBE's verdict from its sections' hashes
+  (`[xbe.sections]`): known, header only, modded data or modded code.
+  `--toml` prints the table for `game.toml`.
+- `manifest.json` records `xbe` (`sha256`, `verdict`, `sections`), and
+  `[package] stamp_env` names a `launch.env.default` key the bundle sets
+  to the verdict, for the game to print at boot.
+- `package --plan --json` reports `xbe`; the build wizard asks once before
+  building modded code.
+- `doctor` prints an `assets:` line against `[data] reference_files`.
+
+### Changed
+- A modded or unknown dump only warns, in `import`, `analyze`, `build`,
+  `all`, `package` and `doctor`. `manifest.json`'s `xbe` was the string
+  `"unknown"` for an unlisted dump and absent otherwise.
+
 ## [0.8.0] - 2026-10-17
 
 ### Added

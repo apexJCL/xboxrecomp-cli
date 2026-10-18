@@ -28,6 +28,8 @@ Commands:
   @slug@ import PATH [--replace]        only the import (--check compares, writes
                                         nothing)
   @slug@ doctor                         what this host has, and what it can package
+  @slug@ fingerprint [PATH]             whether your dump's code is the one the
+                                        port was made from (modded data or code)
   @slug@ enhance hud [--font FONT]      your HUD texture pack from your own dump
                                         (dist/enhance/hud/; package --hud-pack
                                         puts it in your bundle; never share it)

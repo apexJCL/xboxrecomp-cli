@@ -19,7 +19,7 @@ import sys
 
 from . import build as build_mod
 from . import doctor as doctor_mod
-from . import helptext, host, manifest, pins, pipeline, scaffold, setup
+from . import fingerprint, helptext, host, manifest, pins, pipeline, scaffold, setup
 from .host import CliError
 
 COMMANDS = []  # (name, help, configure(parser), func(args)), in --help order
@@ -72,6 +72,7 @@ def cmd_build(a):
     target = a.target or build_mod.default_build_target()
     args = [x for x in a.extra if x != "--"]
     host.step("build %s" % target)
+    fingerprint.warn(fingerprint.current())
     host.say("built %s" % build_mod.build(target, args, a.system_tools, stale_ok=a.stale_gen_ok))
 
 
@@ -95,6 +96,7 @@ def _cfg_all(p):
 
 
 def cmd_analyze(a):
+    fingerprint.warn(fingerprint.current())
     pipeline.analyze()
 
 
@@ -382,6 +384,43 @@ def cmd_import(a):
     return dump.run_import(a.path, a.replace, a.link, a.check)
 
 
+def _cfg_fingerprint(p):
+    p.add_argument(
+        "path",
+        nargs="?",
+        help="an XBE, a folder or a disc image (default: %s/)" % _gf(),
+    )
+    out = p.add_mutually_exclusive_group()
+    out.add_argument(
+        "--toml",
+        action="store_true",
+        help="maintainers: print game.toml's [xbe.sections] table for it",
+    )
+    out.add_argument("--json", action="store_true", help="the verdict as JSON")
+
+
+def cmd_fingerprint(a):
+    import json
+
+    path = a.path or host.g().game_files
+    try:
+        v = fingerprint.of_path(path)
+    except OSError as e:
+        raise CliError("%s: %s" % (path, e.strerror or e)) from e
+    if v is None:
+        raise CliError("%s: not found" % path)
+    if a.toml:
+        print(fingerprint.toml_table(fingerprint.read_xbe(path)), end="")
+        return
+    if a.json:
+        print(json.dumps(fingerprint.plan_record(v), indent=2))
+        return
+    host.say("%s: %s (sha256 %s)" % (path, v.verdict, v.sha))
+    n = fingerprint.note(v)
+    if n:
+        host.say(n)
+
+
 def _cfg_enhance(p):
     from .enhance import hud
 
@@ -439,6 +478,11 @@ def register():
         "title first, never replaces a dump unasked" % _gf(),
         _cfg_import,
     )(cmd_import)
+    command(
+        "fingerprint",
+        "the XBE's verdict against game.toml: known, header, modded data or modded code",
+        _cfg_fingerprint,
+    )(cmd_fingerprint)
     command(
         "enhance",
         "owner-made enhancement assets from your own dump (enhance hud: the HUD texture pack)",

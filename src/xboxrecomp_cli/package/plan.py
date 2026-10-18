@@ -20,7 +20,7 @@ import os
 import types
 
 from .. import build as build_mod
-from .. import buildstate, cli_dir, host, pipeline, setup, toolkit
+from .. import buildstate, cli_dir, fingerprint, host, pipeline, setup, toolkit
 from ..host import CliError
 from . import incr, tweaks
 from .progress import load_timings
@@ -89,6 +89,7 @@ def make_plan(a, lib, imp=None, enhance=True, seed=None):
 
     importing = imp is not None and imp.writes
     p.imported = importing
+    p.xbe = plan_xbe(imp.src.path if importing else G.xbe)
     p.allow = bool(getattr(a, "allow_game_file_deletes", False))
     p.fixed = fixed_fields(target, lib)
     if importing:
@@ -323,6 +324,15 @@ def patch_mod():
     return patch
 
 
+def plan_xbe(path):
+    """fingerprint's plan record for the XBE at path, None when there is
+    none or it cannot be read: the import or the run says why."""
+    try:
+        return fingerprint.plan_record(fingerprint.of_path(path))
+    except (OSError, CliError):
+        return None
+
+
 def finish(p, st, target, version, a=None):
     run = [r for r in p.rows if r["action"] in ("run", "keep")]
     known = [r["estimate_s"] for r in run if r["estimate_s"] is not None]
@@ -353,6 +363,9 @@ def finish(p, st, target, version, a=None):
         "output": out,
         "import": dict(getattr(p, "importing", None) or {"needed": False, "why": ""}),
         "config_overrides": overrides,
+        # The XBE the run builds from, judged (fingerprint.py): the wizard
+        # asks before building modded code. None without a dump.
+        "xbe": getattr(p, "xbe", None),
     }
 
 

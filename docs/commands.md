@@ -145,6 +145,36 @@ target what a run that imports a dump cannot fetch itself (each with its
 fix), and `toolkit_features` (`{feature: true|false}`, null before
 `setup`).
 
+### `mygame fingerprint [PATH]`
+
+The XBE's verdict against `game.toml`, for `game_files/` (the default), a
+folder, a disc image or an XBE file. Each section's raw bytes are hashed and
+compared with `[xbe.sections]`:
+
+| Verdict | When |
+|---|---|
+| `known` | its sha256 is in `[xbe] sha256` |
+| `header` | every section matches: another pressing of the same code |
+| `data` | only data sections differ: modded data, the code is stock |
+| `code` | a code section differs, is added or is missing: the generated code no longer matches, and the game may crash |
+| `unknown` | `[xbe.sections]` is empty, or the section table cannot be read |
+
+Code is what the pipeline disassembles: `.text` plus `[pipeline.disasm]
+extra_sections` with `text_only`, else every executable section. No command
+refuses a dump for its verdict: `import`, `analyze`, `build`, `all`,
+`package` and `doctor` print the `data`, `code` or `unknown` warning and go
+on. Only `bench golden` refuses an XBE whose sha256 is not listed, as its
+references were recorded on those. `package` records the verdict in
+`manifest.json` (`xbe`: `sha256`, `verdict`, `sections`), and with
+`[package] stamp_env` set it ends the bundle's `launch.env.default` with
+that key, for the game to print at boot. `package --plan --json` reports it
+as `xbe`, and the build wizard asks before building modded code.
+
+| Option | Effect |
+|---|---|
+| `--toml` | maintainers: print the `[xbe.sections]` table for the XBE, to paste in `game.toml` |
+| `--json` | the verdict as JSON: `sha256`, `verdict`, `sections`, `note` |
+
 ### `mygame enhance hud`
 
 The HUD texture pack from the owner's own dump, into `dist/enhance/hud/hud.pack`.

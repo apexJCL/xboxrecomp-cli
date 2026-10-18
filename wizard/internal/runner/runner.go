@@ -394,6 +394,26 @@ type Plan struct {
 	// ConfigOverrides are the lines of this computer's config.toml that
 	// override what the build ships (D8).
 	ConfigOverrides []PlanOverride `json:"config_overrides"`
+	// Xbe is the dump's XBE judged by its sections; nil without a dump
+	// or from an older CLI.
+	Xbe *PlanXbe `json:"xbe"`
+}
+
+// PlanXbe is the CLI's fingerprint verdict: "known", "header", "data"
+// (modded data, the code is stock), "code" (modded code, which may crash)
+// or "unknown". Sections are the ones that differ; Note is the CLI's
+// warning, empty for known and header.
+type PlanXbe struct {
+	Sha256   string   `json:"sha256"`
+	Verdict  string   `json:"verdict"`
+	Sections []string `json:"sections"`
+	Note     string   `json:"note"`
+}
+
+// ModdedCode says whether the plan builds from an XBE whose code is not
+// the one the port was made from.
+func (p *Plan) ModdedCode() bool {
+	return p != nil && p.Xbe != nil && p.Xbe.Verdict == "code"
 }
 
 // PlanStage is one stage of the plan: "reuse", "run", "keep" or

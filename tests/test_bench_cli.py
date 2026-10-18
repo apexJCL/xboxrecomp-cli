@@ -744,6 +744,24 @@ def test_golden_refuses_unknown_dump(capsys):
             except BenchError as e:
                 assert not ok, (xbe, e)
         assert "no game_files/default.xbe here, so the host's dump" in capsys.readouterr().err
+        # Another pressing of the same code: the CLI calls it header only
+        # and builds, but no golden was recorded on it.
+        from test_xbe import image
+
+        from xboxrecomp_cli import fingerprint
+
+        secs = [(".text", 5, b"\x90" * 32), (".rdata", 0, b"r" * 16)]
+        listed = image(secs)
+        game.m["xbe"]["sha256"][:] = [hashlib.sha256(listed).hexdigest()]
+        game.m["xbe"]["sections"] = {s.name: h for s, h in fingerprint.section_hashes(listed)}
+        with open(game.xbe, "wb") as f:
+            f.write(image(secs, title="Other Disc"))
+        assert fingerprint.classify(open(game.xbe, "rb").read(), game.m).verdict == "header"
+        try:
+            check_dump(game)
+            raise AssertionError("bench golden took a header-only dump")
+        except BenchError as e:
+            assert hashlib.sha256(listed).hexdigest()[:12] in str(e), e
         game.m["xbe"]["sha256"][:] = []
         with open(game.xbe, "wb") as f:
             f.write(b"other dump")

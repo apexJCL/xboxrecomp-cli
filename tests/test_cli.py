@@ -533,6 +533,7 @@ def test_command_table():
         "package",
         "clean",
         "import",
+        "fingerprint",
         "enhance",
         "wizard",
     ], names

@@ -182,7 +182,6 @@ def wrap_macos(
     overrides,
     lib,
     icns,
-    dump_unknown=False,
     reuse=None,
     choose=None,
 ):
@@ -250,7 +249,6 @@ def wrap_macos(
                 {"name": dylib["name"], "from": brew_origin(dylib["src"])} for dylib in plan["libs"]
             ],
         },
-        dump_unknown=dump_unknown,
     )
     for dylib in plan["libs"]:
         host.run(

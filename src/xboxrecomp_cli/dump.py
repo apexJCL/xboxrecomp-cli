@@ -22,7 +22,7 @@ import shutil
 import stat
 import time
 
-from . import __version__, doctor, host, xbe
+from . import __version__, fingerprint, host, xbe
 from .host import CliError
 from .package import lib as pkg_lib
 from .xdvdfs import SECTOR, Xiso, XisoError
@@ -85,6 +85,16 @@ def ignored(rel):
     runs' (data.game_files_exclude), the marker and file managers'."""
     parts = rel.replace("\\", "/").split("/")
     return parts[0] in g().m["data"]["game_files_exclude"] or rel == MARKER or parts[-1] in JUNK
+
+
+def dump_file_count(gf):
+    """The dump's files in gf, without what ignored() names."""
+    return sum(
+        1
+        for dp, _, fs in os.walk(gf, onerror=walk_error)
+        for f in fs
+        if not ignored(os.path.relpath(os.path.join(dp, f), gf))
+    )
 
 
 def counts_empty(path):
@@ -215,6 +225,20 @@ class Source:
         # The header and certificate sit in the first 64 KiB; the reader's
         # read() would take the whole XBE.
         return self.xbe_read(0, 0x10000, name)
+
+    def xbe_size(self, name=None):
+        """The XBE's size in bytes, so a whole read allocates no more."""
+        name = name or xbe_name()
+        if self.kind == "folder":
+            return os.path.getsize(os.path.join(self.real, *name.split("/")))
+        parts = name.split("/")
+        try:
+            e = self.iso.find(parts[-1], "/".join(parts[:-1]))
+        except XisoError:
+            e = None
+        if e is None or e.is_dir:
+            raise CliError("%s: no %s on this disc image" % (self.path, name))
+        return e.size
 
     def xbe_read(self, off, n, name=None):
         """Up to n bytes of the XBE at file offset off, read in place: the
@@ -699,9 +723,7 @@ class Import:
         if self.verdict == "link":
             return
         if warn_unknown:
-            sha, known = doctor.dump_state()
-            if sha and not known:
-                host.say("WARNING: %s" % doctor.unknown_dump_note(sha))
+            fingerprint.warn(fingerprint.current())
 
     def _adopt(self):
         write_marker(self.src, self.src.identity(), host.sha256_path(g().xbe))
