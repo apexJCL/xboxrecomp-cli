@@ -1,0 +1,11 @@
+# Commits already on the public main whose messages match a built-in pattern
+# added after they were pushed (a tracker id, the review model's name).
+# Published history is not rewritten, so audit-public.sh skips these
+# messages only; the commits' files and identities are still checked. Add a
+# sha here only for a commit that is already public.
+023c77eee626169aeb91d49c2adfe3ebd39f4eb7
+a82759801fbc6776b06688dce4695469ec0adadd
+c4e056e1bba8ed6c4f2641f5f7fe43157bc86f05
+d294419b466953693e15fdea9070a97b3dfc7539
+e18f1297b654586f45b7c3bf69c21d0b8bc0da94
+fee5e5bc627edf7effcff7f08ada77955df8a895

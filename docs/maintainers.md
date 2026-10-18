@@ -79,4 +79,9 @@ printf '%s\n' 'hostname' 'name@example[.]com' > "$(git rev-parse --git-path info
 
 `XBR_AUDIT_PRIVATE=<file>` points the script at another file.
 
+`scripts/audit-public-allowed-messages` lists the commits already on the
+public `main` whose messages match a pattern added after they were pushed.
+Their messages are skipped, since published history is not rewritten; their
+files and identities are still checked.
+
 Where each file came from: [origin.md](origin.md).

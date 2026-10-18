@@ -7,12 +7,18 @@
 #   scripts/audit-public.sh --all      every tracked file at HEAD, and the
 #                                      whole history's messages and identities
 #
-# Checked: added lines and commit messages for private paths (home
-# directories on macOS and Linux, an immutable host's /var/home), links into Claude's web app and
+# Checked: added lines, the paths of the files the range adds and commit
+# messages for private paths (home directories on macOS and Linux, an
+# immutable host's /var/home), links into Claude's web app, tracker ids
+# (with or without the hyphen, as run and worktree paths spell them), the review
+# model's name, the test Deck's ssh alias (as an ssh, scp or rsync host) and
 # the private patterns below; the files the range adds for binaries and
 # game data (*.xbe *.iso *.xiso *.bmp *.png *.wav *.sav, and *.pack, a
 # texture pack made from game data); every author and
 # committer address, which must be the noreply one. Exit 1 on any hit.
+# Commits listed in scripts/audit-public-allowed-messages were public before
+# a pattern that matches their message was added; only their messages are
+# skipped.
 #
 # Private patterns (the bench host's name, the personal email, anything
 # else that must not appear) are not in this repository, since naming them
@@ -21,15 +27,24 @@
 # Without one the audit refuses to pass.
 #
 # The regexes below bracket a letter (/[U]sers/) so this file does not
-# match itself.
+# match itself, and spell word edges as character classes because BSD
+# regcomp has no \b.
 set -euo pipefail
 
 NOREPLY="4037632+apexJCL@users.noreply.github.com"
+# The tracker ids and the Deck's ssh alias are private infrastructure
+# details, yet their patterns live here rather than in the private file:
+# each is a generic word (blx, deck), so the regex reveals nothing.
 PUBLIC_PATTERNS=(
     '/[U]sers/'
     '/[h]ome/'
     '/var/[h]ome/'
     '[c]laude\.ai'
+    '(^|[^a-z0-9])[b]lx(-?[0-9]|-$)'
+    '(^|[^a-z])[f]ables?([^a-z]|$)'
+    'ssh( +-[a-z0-9]+( +[^- ][^ ]*)?)* +[d]eck([^a-z0-9_.-]|$)'
+    '(^|[^a-z0-9_.-])[d]eck:[~/$.a-z0-9_{-]'
+    '@[d]eck([^a-z0-9_.-]|$)'
 )
 DATA_EXT='\.(xbe|iso|xiso|bmp|png|wav|sav|pack)$'
 # Files that may be binary or carry a data extension (extended regexes on
@@ -39,6 +54,7 @@ DATA_EXT='\.(xbe|iso|xiso|bmp|png|wav|sav|pack)$'
 ALLOW=('^wizard/internal/gamecfg/icon\.png$')
 
 cd "$(git rev-parse --show-toplevel)"
+ALLOW_MESSAGES=scripts/audit-public-allowed-messages
 all=0
 range="origin/main..main"
 case "${1:-}" in
@@ -82,11 +98,23 @@ allowed() {
     return 1
 }
 
+# Drops the messages of the commits in $ALLOW_MESSAGES from a log whose
+# entries start with \x01 and the full sha.
+skip_allowed() {
+    local list=""
+    # Space-separated: BSD awk rejects a newline in a -v value.
+    [ -f "$ALLOW_MESSAGES" ] && list=$(grep -Eo '^[0-9a-f]{40}' "$ALLOW_MESSAGES" | tr '\n' ' ' || true)
+    awk -v list="$list" '
+        BEGIN { n = split(list, a, " "); for (i = 1; i <= n; i++) skip[a[i]] = 1 }
+        /^\001/ { sub(/^\001/, ""); drop = (substr($0, 1, 40) in skip) }
+        !drop'
+}
+
 # What is checked: the text (added lines, or the whole tree), the messages,
 # the files added, the identities.
 if [ $all = 1 ]; then
     text() { git grep -I -n -E -i -e "$1" HEAD -- . || true; }
-    messages=$(git log --format='%H %B' HEAD)
+    messages=$(git log --format=$'\x01%H %B' HEAD | skip_allowed)
     files=$(git ls-files)
     idents=$(git log --format='%h %ae %ce' HEAD)
     empty=$(git hash-object -t tree /dev/null)
@@ -96,7 +124,7 @@ else
         git diff "$range" --unified=0 --no-color | grep -E '^\+' | grep -v '^+++ ' |
             grep -n -E -i -e "$1" || true
     }
-    messages=$(git log --format='%H %B' "$range")
+    messages=$(git log --format=$'\x01%H %B' "$range" | skip_allowed)
     files=$(git diff --name-only --diff-filter=AMR "$range")
     idents=$(git log --format='%h %ae %ce' "$range")
     binaries=$(git diff --numstat --diff-filter=AMR "$range" | awk -F'\t' '$1 == "-" {print $3}')
@@ -109,6 +137,9 @@ for p in "${patterns[@]}"; do
     while IFS= read -r line; do
         [ -n "$line" ] && hit "message /$p/: $line"
     done < <(grep -E -i -e "$p" <<<"$messages" || true)
+    while IFS= read -r line; do
+        [ -n "$line" ] && hit "path /$p/: $line"
+    done < <(grep -E -i -e "$p" <<<"$files" || true)
 done
 while IFS= read -r f; do
     [ -z "$f" ] && continue

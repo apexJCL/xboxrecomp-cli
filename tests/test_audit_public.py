@@ -85,6 +85,22 @@ def test_clean(d):
         ("a.md", "the %s host\n" % HOSTNAME.upper(), "c", NOREPLY, "text"),
         ("a.md", "mail %sexample.invalid\n" % EMAIL, "c", NOREPLY, "text"),
         ("a.txt", "ok\n", "from /Us" + "ers/me", NOREPLY, "message"),
+        ("a.md", "see BL" + "X-177\n", "c", NOREPLY, "text"),
+        ("a.txt", "ok\n", "fix (bl" + "x-42)", NOREPLY, "message"),
+        ("a.md", "a Fa" + "ble review\n", "c", NOREPLY, "text"),
+        ("a.txt", "ok\n", "Fa" + "ble: KEEP", NOREPLY, "message"),
+        ("a.md", "run `ssh de" + "ck make`\n", "c", NOREPLY, "text"),
+        ("a.sh", "ssh -o BatchMode=yes de" + "ck true\n", "c", NOREPLY, "text"),
+        ("a.sh", "ssh -4 de" + "ck true\n", "c", NOREPLY, "text"),
+        ("a.sh", "ssh -p22 de" + "ck true\n", "c", NOREPLY, "text"),
+        ("a.sh", "scp x de" + "ck:/tmp\n", "c", NOREPLY, "text"),
+        ("a.sh", "rsync -a de" + "ck:~/ out\n", "c", NOREPLY, "text"),
+        ("a.sh", "ssh carlos@de" + "ck true\n", "c", NOREPLY, "text"),
+        ("a.md", "see runs/bl" + "x132/out\n", "c", NOREPLY, "text"),
+        ("a.txt", "ok\n", "Branch bl" + "x132/x", NOREPLY, "message"),
+        ("a.md", "the Fa" + "bles\n", "c", NOREPLY, "text"),
+        ("notes/bl" + "x132-run.txt", "ok\n", "c", NOREPLY, "path"),
+        ("notes/fa" + "ble.txt", "ok\n", "c", NOREPLY, "path"),
         ("game_files/default.xbe", "XBEH", "c", NOREPLY, "game data"),
         ("shot.png", "png", "c", NOREPLY, "game data"),
         ("blob.bin", b"\0\1\2\0" * 64, "c", NOREPLY, "binary"),
@@ -98,6 +114,46 @@ def test_each_rule_hits(d, name, data, msg, email, rule):
     assert p.returncode == 1, (rule, p.stdout, p.stderr)
     assert "HIT  " + rule in p.stdout, (rule, p.stdout)
     assert audit(r, "--all").returncode == 1, rule
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "the affable reviewer\n",
+        "ssh deckhand true\n",
+        "ssh deck.example.invalid true\n",
+        "BLX-free text\n",
+        "on the Steam Deck: it runs\n",
+        "**Use on the Deck:** the build\n",
+        "mail t@deck.example.invalid\n",
+        "a blxyz word\n",
+    ],
+)
+def test_near_misses_pass(d, line):
+    """Words that only contain a built-in pattern are not hits."""
+    r = repo(d)
+    commit(r, "a.md", line)
+    p = audit(r)
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_allowed_messages_skip_only_the_listed_commits(d):
+    """A commit in scripts/audit-public-allowed-messages was public before a
+    pattern matching its message was added: its message passes --all, but
+    its files are still checked and an unlisted message still fails."""
+    r = repo(d)
+    commit(r, "a.txt", "ok\n", "Branch bl" + "x13/x")
+    old = git(r, "rev-parse", "HEAD").strip()
+    commit(r, "scripts/audit-public-allowed-messages", "# why\n%s\n" % old)
+    p = audit(r, "--all")
+    assert p.returncode == 0, p.stdout + p.stderr
+    commit(r, "b.txt", "ok\n", "fix bl" + "x14")
+    p = audit(r, "--all")
+    assert p.returncode == 1 and "x14" in p.stdout and "x13" not in p.stdout, p.stdout
+    git(r, "reset", "-q", "--hard", "HEAD~1")
+    commit(r, "c.md", "see BL" + "X-9\n", "fine")
+    p = audit(r, "--all")
+    assert p.returncode == 1 and "HIT  text" in p.stdout, p.stdout
 
 
 def test_refuses_without_private_patterns(d):
