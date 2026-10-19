@@ -16,8 +16,9 @@ directory). Below, golden.json and frames/ are the game's.
                                   analysis/golden/golden.json; exit 1 on a
                                   regression, 2 on a missing frame or reference.
                                   A run whose [ENHANCE] lines show a non-stock
-                                  render.scale, display.aspect, present.pacing
-                                  or game key (game.toml golden.enhance_stock)
+                                  render.scale, display.aspect,
+                                  display.overscan, present.pacing or game
+                                  key (game.toml golden.enhance_stock)
                                   FAILs unless that KEY=VALUE is allowed (an
                                   evaluation run, noted; record refuses the
                                   flag)
@@ -1041,6 +1042,12 @@ ENHANCE_ASPECT_RE = re.compile(r"\[ENHANCE\].*display\.aspect=([0-9:]+)")
 # carries the raw value and is not matched.
 ENHANCE_ANISO_RE = re.compile(r"\[ENHANCE\] render\.scale=\S+ render\.aniso=(\d+)\s")
 ENHANCE_PACING_RE = re.compile(r"\[ENHANCE\].* present\.pacing=(\w+)")
+# Only on the summary line, inside its parentheses and only when non-zero:
+# the clamp warning, the hor+ refusal and the CPU rasteriser's line carry
+# the raw value and are not matched, so a refused crop is stock.
+ENHANCE_OVERSCAN_RE = re.compile(
+    r"\[ENHANCE\] render\.scale=.*\(display\.aspect=\S+ display\.overscan=(\d+)\)"
+)
 # "[ENHANCE] textures.pack=none", or "=<path> (N entries, scale S)", or
 # "=<path>: <reason>; no pack" (refused, so stock: the value is "none").
 ENHANCE_PACK_RE = re.compile(r"\[ENHANCE\] textures\.pack=(?!.*; no pack$)(\S+?):?(?:\s|$)")
@@ -1051,6 +1058,7 @@ ENHANCE_STOCK = (
     ("render.scale", ENHANCE_SCALE_RE, "1"),
     ("render.aniso", ENHANCE_ANISO_RE, "0"),
     ("display.aspect", ENHANCE_ASPECT_RE, "4:3"),
+    ("display.overscan", ENHANCE_OVERSCAN_RE, "0"),
     ("present.pacing", ENHANCE_PACING_RE, "spin"),
     ("textures.pack", ENHANCE_PACK_RE, "none"),
 )
@@ -1080,7 +1088,8 @@ def enhance_nonstock(log, allow=()):
     """Why a run is not a stock run, from its enhancements lines, or None.
     Goldens always run at the title's stock resolution, aspect, pacing and
     frame rate: a render.scale other than 1, a render.aniso other than 0,
-    a display.aspect other than 4:3, a present.pacing other than spin or an
+    a display.aspect other than 4:3, a display.overscan other than 0, a
+    present.pacing other than spin or an
     fps.mode other than lock30 (asked for, even where the game falls back)
     makes the run unusable as a golden, whatever its frames look like. No
     [ENHANCE] line (a build without the layer) is stock.

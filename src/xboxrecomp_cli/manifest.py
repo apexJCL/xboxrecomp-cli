@@ -331,6 +331,7 @@ TOOLKIT_ENHANCE_KEYS = (
     "render.scale",
     "render.aniso",
     "display.aspect",
+    "display.overscan",
     "present.pacing",
     "textures.pack",
 )

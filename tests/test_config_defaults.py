@@ -41,8 +41,9 @@ WANT = {
 
 
 # Keys the private integration branch reads ahead of the public branch `new`
-# pins (Hor+): the template gains them in the push round that publishes them.
-AHEAD = {"display.movie"}
+# pins (Hor+, display.overscan): the template gains them in the push round
+# that publishes them.
+AHEAD = {"display.movie", "display.overscan"}
 
 
 def write(path, text):

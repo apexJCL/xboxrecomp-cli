@@ -359,6 +359,42 @@ def test_enhance_aspect_fails():
         assert rc == 1 and "display.aspect=16:9" in out, out
 
 
+OVERSCAN = STOCK.replace("(display.aspect=4:3)", "(display.aspect=4:3 display.overscan={})")
+
+
+def test_enhance_overscan_fails():
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = enhance_case(tmp, [OVERSCAN.format(9)])
+        assert rc == 1 and "not a stock run" in out and "display.overscan=9" in out, out
+
+
+def test_enhance_overscan_refused_or_ignored_passes():
+    """The clamp warning, the hor+ refusal and the CPU rasteriser's line
+    carry the raw value; only the summary line's value counts, and a summary
+    without the key (0, or an older toolkit) is stock."""
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = enhance_case(
+            tmp,
+            [
+                "[ENHANCE] display.overscan=-1 out of range 0..64; using 0",
+                "[ENHANCE] display.overscan=9 ignored by the CPU rasteriser:"
+                " it presents the whole frame",
+                STOCK,
+            ],
+        )
+        assert rc == 0 and "EXACT" in out, out
+    rx = G.ENHANCE_OVERSCAN_RE
+    assert rx.search(OVERSCAN.format(12)).group(1) == "12"
+    assert rx.search(STOCK) is None
+    assert (
+        rx.search(
+            "[ENHANCE] display.overscan=9 ignored with display.aspect=16:9: the 4:3"
+            " edges are inside the padded frame; using 0"
+        )
+        is None
+    )
+
+
 def test_enhance_stock_passes():
     with tempfile.TemporaryDirectory() as tmp:
         rc, out = enhance_case(tmp, [STOCK])
@@ -504,6 +540,12 @@ def test_allow_enhance_pack():
         pack = "[ENHANCE] textures.pack=enhance/hud.pack (268 entries, scale 4)"
         rc, out = check_allowing(tmp, [STOCK, pack], "textures.pack=enhance/hud.pack")
         assert rc == 0 and "NOTE" in out and "textures.pack=enhance/hud.pack" in out, out
+
+
+def test_allow_enhance_overscan():
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = check_allowing(tmp, [OVERSCAN.format(9)], "display.overscan=9")
+        assert rc == 0 and "NOTE" in out and "display.overscan=9" in out, out
 
 
 def test_allow_enhance_evaluates_with_a_note():
