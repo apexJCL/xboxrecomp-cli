@@ -15,13 +15,16 @@ import time
 # Host parts tests_key.sh prints, one "name: value" line each. A part that
 # is missing or reads "unknown" makes the whole key unknown: never skipped.
 HOST_PARTS = ("toolkit", "toolchain", "cmake", "game_src", "proton", "prefix")
+# Read too, not hashed: build_win (configured or none), whether the tree has
+# the configured build-win/ the tests build in.
+HOST_INFO = ("build_win",)
 
 
 def parse_host_parts(text):
     parts = {}
     for line in text.splitlines():
         name, sep, value = line.partition(": ")
-        if sep and name in HOST_PARTS:
+        if sep and name in HOST_PARTS + HOST_INFO:
             parts[name] = value.strip()
     return parts
 

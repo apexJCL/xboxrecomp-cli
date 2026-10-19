@@ -610,6 +610,57 @@ def test_golden_skips_unchanged_tests(d):
 
 
 @with_tree
+def test_golden_skips_tests_without_a_build_tree(d):
+    """A host tree synced for goldens only (no configured build-win/) has
+    nothing for the ctests to build in: golden skips them with a line, and
+    its exit is the scenarios' alone. --tests and bench tests still run."""
+    env = {"FAKE_TESTS_KEY": HOST_KEY + "build_win: none\\n"}
+    rc, out, err, calls = side(d, ["golden", "--only", "attract"], env)
+    assert "tests: skipped: ~/bench-test/cat has no configured build-win/" in out, out
+    assert "toolkit test failed" not in out, out
+    assert not any(c[2] and "ctest --test-dir" in c[2] for c in calls)
+    tsv = os.path.join(d["tree"][0], "bench-logs", "golden-sessions.tsv")
+    with open(tsv, encoding="utf-8") as f:
+        assert f.read().splitlines()[-1].split("\t")[2] == "tests=nobuild"
+    for argv in (["golden", "--only", "attract", "--tests"], ["tests"]):
+        rc, out, err, calls = side(d, argv, env)
+        assert any(c[2] and "ctest --test-dir" in c[2] for c in calls), argv
+    # A configured tree is judged by its key, as before (the passes above
+    # recorded this one).
+    env = {"FAKE_TESTS_KEY": HOST_KEY + "build_win: configured\\n"}
+    rc, out, err, calls = side(d, ["golden", "--only", "attract"], env)
+    assert "tests: skipped: toolkit, CLI and Proton unchanged" in out, out
+
+
+@with_tree
+def test_tests_ship_the_configured_proton(d):
+    """bench tests sends the configured PROTONPATH, exported for
+    proton_run.sh (unset, it took the newest GE-Proton), and the tests key
+    hashes the script as shipped: a pin change is a new key and a new run."""
+    import hashlib
+
+    from xboxrecomp_cli.bench import tests_skip
+
+    cat = d["tree"][0]
+
+    def tests_call(pin):
+        rc, out, err, calls = side(d, ["tests"], {"FAKE_TESTS_KEY": HOST_KEY, "PROTONPATH": pin})
+        assert rc == 0 and "tests: pass" in out, (out, err)
+        (stdin,) = [c[2] for c in calls if c[2] and "ctest --test-dir" in c[2]]
+        prefix, body = split_script(stdin)
+        assert body == host_text("tests.sh"), "tests.sh not shipped whole"
+        assert "\nexport PROTONPATH\n" in body
+        assert 'declare -- PROTONPATH="%s"' % pin in values(prefix), prefix
+        rec = tests_skip.record_path(cat, "fakehost", "~/bench-test/cat")
+        with open(rec, encoding="utf-8") as f:
+            parts = dict(line.rstrip("\n").split(": ", 1) for line in f)
+        assert parts["script"] == hashlib.sha256(stdin.encode()).hexdigest()
+        return parts["key"]
+
+    assert tests_call("GE-Proton11-7") != tests_call("GE-Proton11-9")
+
+
+@with_tree
 def test_golden_only_and_kept_verdicts(d):
     cat = d["tree"][0]
     rc, out, err, _ = side(d, ["golden", "--only", "story"])

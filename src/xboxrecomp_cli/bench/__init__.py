@@ -61,9 +61,13 @@ Commands:
             golden.txt, one line per pass to bench-logs/golden-sessions.tsv.
             The tests are skipped when the host's toolkit tree, the CLI, the
             toolchain and the Proton and prefix versions are those of their
-            last pass on this host tree (bench-logs/tests-pass/)
-  tests     build and ctest the toolkit's Proton tests, holding the run lock
-            exclusively; a pass is recorded for golden's skip
+            last pass on this host tree (bench-logs/tests-pass/), and when
+            the tree has no configured build-win/ (synced for goldens only,
+            its exe copied in; --tests then fails)
+  tests     build and ctest the toolkit's Proton tests in build-win/,
+            holding the run lock exclusively, under PROTONPATH; a pass is
+            recorded for golden's skip. A box whose /etc/resolv.conf went
+            stale (the host replaced it) is restarted first
   pacing    frame-pacing A/B (@SLUG@ pacing-stats): one golden scenario
             under two environments, alternating A B A B ..., all under one
             hold of the run lock; report in bench-logs/<stamp>-pacing/
@@ -94,8 +98,9 @@ Commands:
             --stale-gen-ok  sync even when gen/ is stale against its key
                       (run analyze and recomp instead)
   doctor    check the bench without changing anything: ssh, rsync, the
-            host's umu-run and distrobox, the run lock's holder, the host's
-            bench-provenance.txt
+            host's umu-run and distrobox, a running box's /etc/resolv.conf
+            (resolv: STALE, which tests restarts), the run lock's holder,
+            the host's bench-provenance.txt
 
 --kill-game (any command that runs the game; or BENCH_KILL_GAME=1): end a
 game running outside the bench once the run lock is held. Without it the
@@ -256,12 +261,16 @@ class Bench:
         self.step("setup: distrobox %s (%s)" % (c["BENCH_BOX"], c["BENCH_IMAGE"]))
         self.ok(r.remote(r.prologue() + fill("setup_box.sh.in", BENCH_IMAGE=c["BENCH_IMAGE"]))[0])
         self.step("setup: packages")
-        self.ok(r.in_box(r.ship("setup_pkgs.sh"))[0])
+        # Shared run lock, as builds take it: a tests run (exclusive) may
+        # restart the box (box_check.sh.in), which would kill this.
+        self.ok(setup_locked(r.in_box_locked(r.ship("setup_pkgs.sh"), what="setup")[0]))
         # Proton runs from the host, not the box: the host ships umu-run.
         self.ok(r.remote(r.ship("check_umu.sh", prologue=False))[0])
         self.step("setup: llvm-mingw %s -> %s" % (c["LLVM_MINGW_TAG"], c["LLVM_MINGW_ROOT"]))
         tag = "TAG=%s\n" % shell_quote(c["LLVM_MINGW_TAG"])
-        return self.ok(r.in_box(r.ship("setup_mingw.sh", tag))[0])
+        return self.ok(
+            setup_locked(r.in_box_locked(r.ship("setup_mingw.sh", tag), what="setup")[0])
+        )
 
     # build
     def cmd_build(self, args):
@@ -336,20 +345,38 @@ class Bench:
         rc, out = self.r.remote(self.r.ship("tests_key.sh", assigns), capture=True)
         parts = tests_skip.parse_host_parts(out) if rc == 0 else {}
         parts["cli"] = tests_skip.cli_part(cli_dir())
-        parts["script"] = hashlib.sha256(self.r.ship("tests.sh").encode()).hexdigest()
+        parts["script"] = hashlib.sha256(self.tests_script().encode()).hexdigest()
         parts["llvm_mingw"] = c["LLVM_MINGW_TAG"]
         return tests_skip.key_of(parts), parts
+
+    def tests_script(self):
+        """tests.sh as cmd_tests ships it, with the configured PROTONPATH (as
+        run and golden send it): without it proton_run.sh takes the newest
+        GE-Proton, not the Proton tests_key.sh hashed."""
+        return self.r.ship("tests.sh", "PROTONPATH=%s\n" % shell_quote(self.cfg["PROTONPATH"]))
 
     def tests_record(self):
         return tests_skip.record_path(self.cfg.game_dir, self.cfg.host, self.cfg.remote_game)
 
     def tests_or_skip(self, force=False):
         """golden's tests: skipped when the key matches the last pass on
-        this host tree (and not force). Returns (rc, 'pass'|'skip'|'FAIL'|'off')."""
+        this host tree (and not force), and when the tree has no configured
+        build-win/. Returns (rc, 'pass'|'skip'|'nobuild'|'FAIL'|'off')."""
         if not self.cfg.game.m["bench"]["toolkit_tests"]:
             self.say("tests: skipped (game.toml: bench.toolkit_tests = false)")
             return 0, "off"
         key, parts = self.tests_key()
+        if parts.get("build_win") == "none" and not force:
+            # The ctests compile in the host's build-win/, and only bench
+            # build (or integrate) makes one: sync never ships build trees,
+            # and a Mac's could not be reused (its cache names Mac paths). A
+            # tree synced for goldens alone, its exe copied in, has nothing
+            # to test, which is no failure of the scenarios.
+            self.say(
+                "tests: skipped: %s has no configured build-win/ (%s bench build "
+                "makes one; --tests fails instead)" % (self.cfg.remote_game, self.cfg.game.slug)
+            )
+            return 0, "nobuild"
         if not force:
             why = tests_skip.skip_reason(key, tests_skip.read_record(self.tests_record()))
             if why:
@@ -371,7 +398,7 @@ class Bench:
             "kernel_regressions, memory_regressions, guest_cpu, flip_hold, apu_voice_mask, apu_voice_lock, enhance_cfg, template_main (enhance off and on), fb_window_wanted (when the toolkit has them) "
             "under Proton"
         )
-        rc = self.r.in_box_locked(self.r.ship("tests.sh"), exclusive=True, what="tests")[0]
+        rc = self.r.in_box_locked(self.tests_script(), exclusive=True, what="tests")[0]
         if rc == 0:
             self.say("tests: pass")
             if key:
@@ -563,6 +590,12 @@ class Bench:
         rc, out = self.r.remote(self.r.prologue() + host_text("doctor.sh"), capture=True)
         self.say(out, end="")
         return 0 if ok and rc == 0 else 1
+
+
+def setup_locked(rc):
+    if rc == 75:
+        raise BenchError("setup: the run lock was held for an hour; the box is not set up")
+    return rc
 
 
 def gen_stale_reasons(cfg):

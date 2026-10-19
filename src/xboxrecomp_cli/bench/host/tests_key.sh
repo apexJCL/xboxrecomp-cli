@@ -3,7 +3,7 @@
 #@ Runs as: remote (golden, integrate, tests). After the prologue,
 #@ PROTONPATH and ENV_DIR (the dir of game.toml's game.env_header, or the
 #@ header itself at the game's root; empty when it names none). Prints the host's parts of the tests key (tests_skip.py),
-#@ "name: value" lines; a part it cannot read is "unknown".
+#@ "name: value" lines; a part it cannot read is "unknown"; and build_win.
 set +e
 # tests_key: the toolkit tree as sync sends it (no .git, build trees, venvs).
 if cd "$BENCH_DIR/xboxrecomp" 2>/dev/null; then
@@ -15,6 +15,9 @@ else
 fi
 hash_of() { if [ -f "$1" ]; then sha256sum "$1" | cut -d' ' -f1; else echo unknown; fi; }
 cd "$REMOTE_GAME" 2>/dev/null || { echo "cmake: unknown"; exit 0; }
+# Not a key part: whether the tree has a configured build-win/, which the
+# tests build in (a tree synced for goldens only, its exe copied in, has none).
+if [ -f build-win/CMakeCache.txt ]; then echo "build_win: configured"; else echo "build_win: none"; fi
 echo "toolchain: $(hash_of "$TOOLCHAIN")"
 echo "cmake: $(hash_of CMakeLists.txt)"
 # The game sources the tests compile against in build-win: the toolkit's

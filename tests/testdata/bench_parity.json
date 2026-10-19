@@ -26,11 +26,11 @@
      "-o",
      "ServerAliveCountMax=4",
      "fakehost",
-     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
+     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        links() { distrobox enter 'xbr-build' -- stat -c %h /etc/resolv.conf </dev/null 9>&- 2>/dev/null | grep -xE '[0-9]+' || true; }\n        if [ \"$(links)\" = 0 ]; then\n            echo \"bench: tests: /etc/resolv.conf in the distrobox xbr-build is a deleted file (the host replaced it); restarting the box\" >&2\n            distrobox stop -Y 'xbr-build' </dev/null 9>&- >&2 || exit 1\n            if [ \"$(links)\" = 0 ]; then\n                echo \"bench: tests: warning: /etc/resolv.conf in xbr-build is still a deleted file after the restart; umu's bwrap will fail (Can't bind mount /etc/resolv.conf)\" >&2\n            fi\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
     ],
     "body": "tests.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
    },
    {
     "argv": [
@@ -365,11 +365,11 @@
      "-o",
      "ServerAliveCountMax=4",
      "fakehost",
-     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
+     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        links() { distrobox enter 'xbr-build' -- stat -c %h /etc/resolv.conf </dev/null 9>&- 2>/dev/null | grep -xE '[0-9]+' || true; }\n        if [ \"$(links)\" = 0 ]; then\n            echo \"bench: tests: /etc/resolv.conf in the distrobox xbr-build is a deleted file (the host replaced it); restarting the box\" >&2\n            distrobox stop -Y 'xbr-build' </dev/null 9>&- >&2 || exit 1\n            if [ \"$(links)\" = 0 ]; then\n                echo \"bench: tests: warning: /etc/resolv.conf in xbr-build is still a deleted file after the restart; umu's bwrap will fail (Can't bind mount /etc/resolv.conf)\" >&2\n            fi\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
     ],
     "body": "tests.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
    },
    {
     "argv": [
@@ -746,11 +746,11 @@
      "-o",
      "ServerAliveCountMax=4",
      "fakehost",
-     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
+     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        links() { distrobox enter 'xbr-build' -- stat -c %h /etc/resolv.conf </dev/null 9>&- 2>/dev/null | grep -xE '[0-9]+' || true; }\n        if [ \"$(links)\" = 0 ]; then\n            echo \"bench: tests: /etc/resolv.conf in the distrobox xbr-build is a deleted file (the host replaced it); restarting the box\" >&2\n            distrobox stop -Y 'xbr-build' </dev/null 9>&- >&2 || exit 1\n            if [ \"$(links)\" = 0 ]; then\n                echo \"bench: tests: warning: /etc/resolv.conf in xbr-build is still a deleted file after the restart; umu's bwrap will fail (Can't bind mount /etc/resolv.conf)\" >&2\n            fi\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
     ],
     "body": "tests.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
    }
   ],
   "rc": 75,
@@ -783,11 +783,11 @@
      "-o",
      "ServerAliveCountMax=4",
      "fakehost",
-     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
+     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        links() { distrobox enter 'xbr-build' -- stat -c %h /etc/resolv.conf </dev/null 9>&- 2>/dev/null | grep -xE '[0-9]+' || true; }\n        if [ \"$(links)\" = 0 ]; then\n            echo \"bench: tests: /etc/resolv.conf in the distrobox xbr-build is a deleted file (the host replaced it); restarting the box\" >&2\n            distrobox stop -Y 'xbr-build' </dev/null 9>&- >&2 || exit 1\n            if [ \"$(links)\" = 0 ]; then\n                echo \"bench: tests: warning: /etc/resolv.conf in xbr-build is still a deleted file after the restart; umu's bwrap will fail (Can't bind mount /etc/resolv.conf)\" >&2\n            fi\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
     ],
     "body": "tests.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
    }
   ],
   "rc": 1,
@@ -1056,11 +1056,11 @@
      "-o",
      "ServerAliveCountMax=4",
      "fakehost",
-     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
+     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        links() { distrobox enter 'xbr-build' -- stat -c %h /etc/resolv.conf </dev/null 9>&- 2>/dev/null | grep -xE '[0-9]+' || true; }\n        if [ \"$(links)\" = 0 ]; then\n            echo \"bench: tests: /etc/resolv.conf in the distrobox xbr-build is a deleted file (the host replaced it); restarting the box\" >&2\n            distrobox stop -Y 'xbr-build' </dev/null 9>&- >&2 || exit 1\n            if [ \"$(links)\" = 0 ]; then\n                echo \"bench: tests: warning: /etc/resolv.conf in xbr-build is still a deleted file after the restart; umu's bwrap will fail (Can't bind mount /etc/resolv.conf)\" >&2\n            fi\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
     ],
     "body": "tests.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
    },
    {
     "argv": [
@@ -1395,11 +1395,11 @@
      "-o",
      "ServerAliveCountMax=4",
      "fakehost",
-     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
+     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        links() { distrobox enter 'xbr-build' -- stat -c %h /etc/resolv.conf </dev/null 9>&- 2>/dev/null | grep -xE '[0-9]+' || true; }\n        if [ \"$(links)\" = 0 ]; then\n            echo \"bench: tests: /etc/resolv.conf in the distrobox xbr-build is a deleted file (the host replaced it); restarting the box\" >&2\n            distrobox stop -Y 'xbr-build' </dev/null 9>&- >&2 || exit 1\n            if [ \"$(links)\" = 0 ]; then\n                echo \"bench: tests: warning: /etc/resolv.conf in xbr-build is still a deleted file after the restart; umu's bwrap will fail (Can't bind mount /etc/resolv.conf)\" >&2\n            fi\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
     ],
     "body": "tests.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
    },
    {
     "argv": [
@@ -3207,11 +3207,11 @@
      "-o",
      "ServerAliveCountMax=4",
      "fakehost",
-     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
+     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -x -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: tests waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -x -w 3600 -E 75 9 || exit 75\n            echo 'bench: tests got the run lock' >&2\n        fi\n        links() { distrobox enter 'xbr-build' -- stat -c %h /etc/resolv.conf </dev/null 9>&- 2>/dev/null | grep -xE '[0-9]+' || true; }\n        if [ \"$(links)\" = 0 ]; then\n            echo \"bench: tests: /etc/resolv.conf in the distrobox xbr-build is a deleted file (the host replaced it); restarting the box\" >&2\n            distrobox stop -Y 'xbr-build' </dev/null 9>&- >&2 || exit 1\n            if [ \"$(links)\" = 0 ]; then\n                echo \"bench: tests: warning: /etc/resolv.conf in xbr-build is still a deleted file after the restart; umu's bwrap will fail (Can't bind mount /etc/resolv.conf)\" >&2\n            fi\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
     ],
     "body": "tests.sh",
     "kind": "ssh",
-    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\n"
+    "prologue": "set -euo pipefail\nBENCH_DIR=~/bench-test\nREMOTE_GAME=~/bench-test/cat\nLLVM_MINGW_ROOT=~/bench-test/llvm-mingw\nBENCH_PREFIX=~/bench-test/prefix\nBENCH_BOX='xbr-build'\nSLUG=blinx2\nEXE=cat_recomp.exe\nEXE_REL=build-win/cat_recomp.exe\nGEN_DIR=src/recomp/gen\nGAME_FILES=game_files\nXBE=game_files/default.xbe\nCLI_DIR=$BENCH_DIR/xboxrecomp-cli\nTOOLCHAIN=\"$CLI_DIR\"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake\nCRASH_TAG=\\[CRASH\\]\nPROTONPATH=GE-Proton\n"
    }
   ],
   "rc": 0,
@@ -3244,12 +3244,7 @@
      "-o",
      "ServerAliveCountMax=4",
      "fakehost",
-     "distrobox",
-     "enter",
-     "xbr-build",
-     "--",
-     "bash",
-     "-s"
+     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -s -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: setup waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -s -w 3600 -E 75 9 || exit 75\n            echo 'bench: setup got the run lock' >&2\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
     ],
     "body": "setup_pkgs.sh",
     "kind": "ssh",
@@ -3280,12 +3275,7 @@
      "-o",
      "ServerAliveCountMax=4",
      "fakehost",
-     "distrobox",
-     "enter",
-     "xbr-build",
-     "--",
-     "bash",
-     "-s"
+     "\n        exec 9>>~/.recomp-run.lock\n        if ! flock -s -n 9; then\n            h=$(lslocks -n -o PID,BLOCKER,PATH 2>/dev/null | awk '!h && /recomp-run\\.lock$/ && NF == 2 {h = $1} END {print h}' || true)\n            echo \"bench: setup waiting for the run lock, held by: $( [ -n \"$h\" ] && ps -o pid=,args= -p \"$h\" | cut -c1-200 || echo '?')\" >&2\n            flock -s -w 3600 -E 75 9 || exit 75\n            echo 'bench: setup got the run lock' >&2\n        fi\n        distrobox enter 'xbr-build' -- bash -s 9>&-"
     ],
     "body": "setup_mingw.sh",
     "kind": "ssh",

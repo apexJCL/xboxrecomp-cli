@@ -195,7 +195,7 @@ SESSIONS = "golden-sessions.tsv"
 
 def session_line(kind, tests, words, rc, only=None, now=None):
     """A line of bench-logs/golden-sessions.tsv: time, kind (golden or
-    integrate), tests (pass, skip, FAIL, off), only=all or the --only list
+    integrate), tests (pass, skip, nobuild, FAIL, off), only=all or the --only list
     (a one-scenario rerun is not a full pass), scen=stamp:WORD per
     scenario, exit code. What a flake count reads."""
     t = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))

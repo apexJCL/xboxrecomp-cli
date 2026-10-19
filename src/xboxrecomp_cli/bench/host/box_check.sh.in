@@ -1,0 +1,24 @@
+#@ bench/host/box_check.sh.in: a template `<game> bench` fills into
+#@ lock_box.sh.in's @BOX_CHECK@ for the tests, under the exclusive run lock,
+#@ before `distrobox enter`. New with the CLI. The #@ lines this file starts
+#@ with are this note and are not sent. @WHAT@ and @BENCH_BOX@ as there; it
+#@ starts with a newline and has no final one, on purpose.
+#@ distrobox bind-mounts the host's /etc/resolv.conf. NetworkManager replaces
+#@ that file rather than rewriting it, so a box started before then keeps the
+#@ old, deleted inode (link count 0), and umu's bwrap in the box fails with
+#@ "Can't bind mount /etc/resolv.conf": every Proton test fails. A restarted
+#@ box binds the current file. The exclusive lock protects only the box's
+#@ users that take the run lock (build, setup, tests): an interactive
+#@ `distrobox enter`, or a build orphaned by a dropped ssh, is stopped with
+#@ the box. </dev/null: ssh's stdin is the script for the `bash -s` after
+#@ this; 9>&-: the box keeps no lock fd. Only a line of digits is a link
+#@ count: anything else distrobox prints reads as unknown, and is left alone.
+
+        links() { distrobox enter '@BENCH_BOX@' -- stat -c %h /etc/resolv.conf </dev/null 9>&- 2>/dev/null | grep -xE '[0-9]+' || true; }
+        if [ "$(links)" = 0 ]; then
+            echo "bench: @WHAT@: /etc/resolv.conf in the distrobox @BENCH_BOX@ is a deleted file (the host replaced it); restarting the box" >&2
+            distrobox stop -Y '@BENCH_BOX@' </dev/null 9>&- >&2 || exit 1
+            if [ "$(links)" = 0 ]; then
+                echo "bench: @WHAT@: warning: /etc/resolv.conf in @BENCH_BOX@ is still a deleted file after the restart; umu's bwrap will fail (Can't bind mount /etc/resolv.conf)" >&2
+            fi
+        fi

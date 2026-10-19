@@ -168,24 +168,24 @@ class Remote:
         """ssh HOST bash -s"""
         return self._run(self.argv("bash", "-s"), script, capture)
 
-    def in_box(self, script):
-        """ssh HOST distrobox enter BOX -- bash -s"""
-        return self._run(
-            self.argv("distrobox", "enter", self.cfg["BENCH_BOX"], "--", "bash", "-s"),
-            script,
-            False,
-        )
-
     def in_box_locked(self, script, exclusive=False, what=None):
-        """The same, inside the host's run lock, taken by the host: shared
-        for builds, exclusive (-x) for tests. Exit 75: waited an hour."""
-        cmd = fill(
+        """ssh HOST distrobox enter BOX -- bash -s, inside the host's run
+        lock, taken by the host: shared for builds and setup, exclusive (-x)
+        for tests. Exit 75: waited an hour."""
+        return self._run(self.argv(self.in_box_lock_cmd(exclusive, what)), script, False)
+
+    def in_box_lock_cmd(self, exclusive=False, what=None):
+        """in_box_locked's ssh command. The exclusive holder first restarts
+        a box whose resolv.conf went stale (box_check.sh.in)."""
+        what = what or ("tests" if exclusive else "build")
+        box = self.cfg["BENCH_BOX"]
+        return fill(
             "lock_box.sh.in",
             FL="-x" if exclusive else "-s",
-            WHAT=what or ("tests" if exclusive else "build"),
-            BENCH_BOX=self.cfg["BENCH_BOX"],
+            WHAT=what,
+            BENCH_BOX=box,
+            BOX_CHECK=fill("box_check.sh.in", WHAT=what, BENCH_BOX=box) if exclusive else "",
         )
-        return self._run(self.argv(cmd), script, False)
 
     def command(self, cmd, stdin=None, capture=False, batch=True, tty=False):
         """ssh [-t] HOST CMD, CMD one string for the host's shell."""

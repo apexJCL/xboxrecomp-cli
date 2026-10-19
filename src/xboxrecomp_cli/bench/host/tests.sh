@@ -1,6 +1,6 @@
 #@ bench/host/tests.sh: a host script `<game> bench` ships over ssh, first
 #@ moved from a blinx2-recomp scripts/bench.sh heredoc. The #@ lines this file starts
-#@ with are this note and are not sent. Runs as: in_box_locked -x tests (tests). After the prologue; no other variables.
+#@ with are this note and are not sent. Runs as: in_box_locked -x tests (tests). After the prologue and PROTONPATH.
 cd "$REMOTE_GAME"
 [ -f "$TOOLCHAIN" ] || { echo "$TOOLCHAIN missing -- not synced yet?" >&2; exit 1; }
 export PATH="$LLVM_MINGW_ROOT/bin:$PATH"
@@ -24,7 +24,7 @@ fresh_if_stale() {
     rm -rf "$dir/CMakeCache.txt" "$dir/CMakeFiles"
 }
 fresh_if_stale build-win
-[ -f build-win/CMakeCache.txt ] || { echo "tests: no build-win (run bench.sh build first)" >&2; exit 1; }
+[ -f build-win/CMakeCache.txt ] || { echo "tests: no configured build-win/ in $REMOTE_GAME ($SLUG bench build makes one)" >&2; exit 1; }
 cmake -B build-win -DCMAKE_CROSSCOMPILING_EMULATOR="$emu" >/dev/null
 cmake --build build-win --target d3d8_hlsl_split d3d11_backend_smoke input_map_test input_keyboard_test
 # tests/nv2a_zbuf, apu_irq, kernel_irql_abi, fp_precision, x87_trig, vblank_ack,
@@ -77,6 +77,9 @@ case " $have_optional " in *" template_main "*)
 esac
 unset PROTON_RUN_LOCK
 export WINEPREFIX="$BENCH_PREFIX"
+# The bench's Proton, as run and golden use: unset, proton_run.sh takes the
+# newest GE-Proton, which need not be the one tests_key.sh hashed.
+export PROTONPATH
 fail=0
 for d in src/d3d/d3d8_hlsl_split src/d3d/d3d11_backend_smoke src/input/input_map src/input/input_keyboard; do
     t=${d##*/}

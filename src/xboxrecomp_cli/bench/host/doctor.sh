@@ -8,10 +8,24 @@ if command -v umu-run >/dev/null; then
 else
     echo "umu-run:  MISSING on the host (Proton runs through it)"; bad=1
 fi
-if distrobox list 2>/dev/null | awk -F'|' -v box="$BENCH_BOX" 'NR>1 {gsub(/ /,"",$2)} $2 == box {f=1} END {exit !f}'; then
+boxes=$(distrobox list 2>/dev/null || true)
+if printf '%s\n' "$boxes" | awk -F'|' -v box="$BENCH_BOX" 'NR>1 {gsub(/ /,"",$2)} $2 == box {f=1} END {exit !f}'; then
     echo "box:      $BENCH_BOX"
 else
     echo "box:      MISSING: no distrobox $BENCH_BOX ($SLUG bench setup)"; bad=1
+fi
+# A running box may hold a deleted /etc/resolv.conf (box_check.sh.in), which
+# breaks umu in it. Only a running one: entering a stopped box starts it.
+# </dev/null: this script is on stdin.
+if printf '%s\n' "$boxes" | awk -F'|' -v box="$BENCH_BOX" 'NR>1 {gsub(/ /,"",$2)} $2 == box && $3 ~ /^ *Up/ {f=1} END {exit !f}'; then
+    n=$(distrobox enter "$BENCH_BOX" -- stat -c %h /etc/resolv.conf </dev/null 2>/dev/null | grep -xE '[0-9]+' || true)
+    if [ "$n" = 0 ]; then
+        echo "resolv:   STALE in $BENCH_BOX: the host replaced /etc/resolv.conf ($SLUG bench tests restarts the box)"
+    elif [ -n "$n" ]; then
+        echo "resolv:   ok"
+    else
+        echo "resolv:   unknown (stat /etc/resolv.conf in $BENCH_BOX failed)"
+    fi
 fi
 cc="$LLVM_MINGW_ROOT/bin/x86_64-w64-mingw32-clang"
 if [ -x "$cc" ]; then

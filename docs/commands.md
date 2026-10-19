@@ -400,7 +400,7 @@ bench --help` is the full text; the commands:
 | `build [-- CMAKE ARGS]` | configure and compile `build-win/` on the host (shared run lock) |
 | `run [GAME ARGS]` | launch the game under Proton, log to `bench-logs/<stamp>/`, pull the logs; fails on a crash or a present mismatch |
 | `golden [--record] [--only SCEN,...] [--tests]` | the golden-frame scenarios from `golden.json`, after `tests`; exit 1 on a regression, 3 when the host was busy (INCONCLUSIVE) |
-| `tests` | build and ctest the toolkit's Proton tests (exclusive run lock) |
+| `tests` | build and ctest the toolkit's Proton tests in `build-win/` under `PROTONPATH` (exclusive run lock); first restarts a box whose `/etc/resolv.conf` went stale |
 | `pacing [--scen S] [--runs N] [--gate clock\|sleep] ["A env" "B env"]` | a frame-pacing A/B of one scenario under two environments |
 | `logs [STAMP]` | symbolize a run's crash reports, then pull `bench-logs/` from the host |
 | `symbolize [STAMP]` | name the native addresses in a run's crash reports, into `bench-logs/<stamp>/crash-symbols.txt` (default: the newest run) |
@@ -408,7 +408,7 @@ bench --help` is the full text; the commands:
 | `shell` | an ssh shell in the host's project directory |
 | `all` | `sync`, `build`, `run` |
 | `integrate [--golden] [--dirty] [--stale-gen-ok]` | sync and build the integration heads, then optionally `golden` |
-| `doctor` | check ssh, rsync, the host's umu-run and distrobox, the run lock's holder |
+| `doctor` | check ssh, rsync, the host's umu-run and distrobox, a running box's `/etc/resolv.conf` (the `resolv:` line), the run lock's holder |
 
 Flags shared by the commands that run the game: `--kill-game`
 (`BENCH_KILL_GAME=1`) ends a game running outside the bench once the lock is
@@ -448,7 +448,9 @@ read; each scenario's verdict is in its run's `golden.txt`, and every pass
 adds a line to `bench-logs/golden-sessions.tsv`. The toolkit's Proton tests
 are skipped when the host's toolkit, the CLI, the toolchain and the Proton
 and prefix versions are those of their last pass (`--tests` runs them
-anyway). `bench gc` spares runs named in `golden.json`, `TASKS.md`,
+anyway), and when the host tree has no configured `build-win/` (a tree
+synced for goldens only, with its exe copied in), since `sync` never ships
+build trees; there `--tests` fails. `bench gc` spares runs named in `golden.json`, `TASKS.md`,
 `RESUME*.md`, `openspec/` or `[bench.gc] refs` in any worktree, other games'
 runs, young runs and the newest per scenario.
 
