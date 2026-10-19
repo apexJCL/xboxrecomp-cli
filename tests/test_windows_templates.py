@@ -235,6 +235,7 @@ def test_readme_pacing_paragraph(d, monkeypatch, game2, defaults, note):
     game at "spin", without the key or without the file reads as before."""
     monkeypatch.setattr(game2, "content", os.path.join(d, "content"))
     monkeypatch.setattr(game2, "templates", "")
+    monkeypatch.setattr(game2, "spin_waits", os.path.join(game2.root, "config", "spin_waits.json"))
     if defaults is not None:
         with open(os.path.join(d, "config.default.toml"), "w") as f:
             f.write(defaults)
@@ -250,6 +251,33 @@ def test_readme_pacing_paragraph(d, monkeypatch, game2, defaults, note):
         )
     else:
         assert "renamed to config.toml once.\n\n\nInstall v1\n" in text
+
+
+def test_readme_pacing_needs_spin_waits(d, monkeypatch, game2):
+    """A game generated without spin waits (no [pipeline] spin_waits, as
+    JSRF, Spartan and SSX 3) gets no paragraph and no terminal note even
+    when it ships "sleep": its busy loops hold the core either way, so
+    "saves CPU and battery" would be false. The same game with spin waits
+    gets both."""
+    monkeypatch.setattr(game2, "content", os.path.join(d, "content"))
+    monkeypatch.setattr(game2, "templates", "")
+    with open(os.path.join(d, "config.default.toml"), "w") as f:
+        f.write('[present]\npacing = "sleep"\n')
+    monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
+    monkeypatch.setattr(toolkit, "toolkit_dir", lambda: d)
+    os.makedirs(os.path.join(game2.content, "windows"), exist_ok=True)
+    with open(os.path.join(game2.content, "windows", "README.part"), "w") as f:
+        f.write("\nInstall\n")
+    dst = os.path.join(d, "README.txt")
+    assert game2.spin_waits == ""
+    assert pkg.readme("windows", "v1", pl, dst) is False
+    with open(dst) as f:
+        text = f.read()
+    assert "console-original" not in text and "battery" not in text
+    monkeypatch.setattr(game2, "spin_waits", os.path.join(game2.root, "config", "spin_waits.json"))
+    assert pkg.readme("windows", "v1", pl, dst) is True
+    with open(dst) as f:
+        assert "saves CPU and battery" in f.read()
 
 
 @pytest.mark.parametrize(
@@ -269,7 +297,7 @@ def test_readme_pacing_unparsable(d, monkeypatch, game2, capsys, data):
     out = capsys.readouterr().out
     assert "console-original" not in text and not PLACEHOLDER.findall(text)
     assert out.count("WARNING: config.default.toml: ") == 1, out
-    assert "no frame pacing note" in out
+    assert "no frame pacing or key bindings note" in out
 
 
 def test_readme_pacing_game_template_without_placeholder(d, monkeypatch, game2):
@@ -281,6 +309,7 @@ def test_readme_pacing_game_template_without_placeholder(d, monkeypatch, game2):
         f.write("@NAME@ @VERSION@\n\nOur own README.\n")
     monkeypatch.setattr(game2, "content", os.path.join(d, "content"))
     monkeypatch.setattr(game2, "templates", tdir)
+    monkeypatch.setattr(game2, "spin_waits", os.path.join(game2.root, "config", "spin_waits.json"))
     with open(os.path.join(d, "config.default.toml"), "w") as f:
         f.write('[present]\npacing = "sleep"\n')
     monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
@@ -327,9 +356,11 @@ def test_installer_counts_game_files(d):
 FORK_OUT = os.path.join(HERE, "testdata", "readme")
 
 
-def readme_bytes(d, monkeypatch, target, enhance):
+def readme_bytes(d, monkeypatch, target, enhance, bindings=True):
     """README.txt for BLiNX 2's test game as package renders it, with a
-    defaults file that ships "sleep" beside it (the pacing paragraph)."""
+    defaults file that ships "sleep" beside it (the pacing paragraph) and,
+    as BLiNX 2's does, an [input.bindings] table (bindings: True; "empty"
+    writes the table with no controls; False leaves it out)."""
     G = host.g()
     monkeypatch.setattr(G, "content", os.path.join(d, "content"))
     monkeypatch.setattr(G, "templates", "")
@@ -342,6 +373,10 @@ def readme_bytes(d, monkeypatch, target, enhance):
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "config.default.toml"), "w") as f:
         f.write('[present]\npacing = "sleep"\n')
+        if bindings == "empty":
+            f.write("[input.bindings]\n")
+        elif bindings:
+            f.write('[input.bindings]\na = ["Space", "J"]\n')
     dst = os.path.join(out, "README.txt")
     pacing = pkg.readme(target, "v1", pl, dst, enhance)
     with open(dst, "rb") as f:
@@ -384,6 +419,24 @@ def test_readme_upstream_has_no_fork_text(d, monkeypatch, target):
     if target == "steamos":
         assert "the Deck's own\ncontrols then drive player 1.\n" in text
         assert text.endswith("controls then drive player 1.\n")
+
+
+@pytest.mark.parametrize("bindings", [False, "empty"], ids=["absent", "empty"])
+def test_readme_steamos_without_bindings_table(d, monkeypatch, bindings):
+    """A defaults file with no [input.bindings] table (JSRF, Spartan, SSX 3,
+    Burnout 3), or an empty one that lists no controls: the steamos README
+    does not point the player to it. The rest of the Controls section is
+    the fork's, sentence for sentence."""
+    got, _ = readme_bytes(d, monkeypatch, "steamos", True, bindings=bindings)
+    with open(os.path.join(FORK_OUT, "fork-steamos.txt"), "rb") as f:
+        want = f.read().replace(b"\r\n", b"\n").decode()
+    text = got.decode()
+    assert "lists its" not in text and not PLACEHOLDER.findall(text)
+    assert "while the game\nwindow has the focus.\n\nBy default, focusing" in text
+    sentence = (
+        " config.default.toml beside the game lists its\ncontrols and keys, under [input.bindings]."
+    )
+    assert text == want.replace(sentence, "")
 
 
 def test_readme_part_capability_blocks(d, monkeypatch, game2):

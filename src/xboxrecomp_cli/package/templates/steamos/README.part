@@ -108,8 +108,7 @@ Gamepad template in the game's controller settings: the Deck's own
 @if enhance@
 controls then drive player 1. When the game turns them on, the keyboard
 and the mouse work too, merged with a pad on player 1, while the game
-window has the focus. config.default.toml beside the game lists its
-controls and keys, under [input.bindings].
+window has the focus.@INPUT_BINDINGS@
 
 By default, focusing the window grabs the mouse and F9 frees the cursor
 and grabs it again. To change a key, put the control under

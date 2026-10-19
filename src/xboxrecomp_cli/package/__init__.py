@@ -38,8 +38,11 @@ NOTICE_TEXT = (
     "never share, upload or publish this bundle."
 )
 # The bundle README's paragraph and the terminal note for a game whose
-# defaults file ships the sleeping frame wait: the console spins there, so
-# the player is told how to get the original timing back.
+# defaults file ships the sleeping frame wait and whose code is generated
+# with spin waits ([pipeline] spin_waits): only there does "sleep" save CPU
+# over "spin", so only there is the player told how to get the original
+# timing back. Without spin waits the game's own busy loops hold the core
+# either way, and the paragraph's promise would be false.
 PACING_README = (
     'Frame pacing defaults to "sleep": the game\'s frame wait sleeps until the\n'
     'next vblank, which saves CPU and battery. "spin" is the console-original\n'
@@ -248,22 +251,45 @@ def ghidra_named():
     return os.path.isfile(g().ghidra_export)
 
 
-def pacing_sleeps(defaults):
-    """Whether the staged defaults file sets [present] pacing = "sleep".
-    That file is what the bundle's player gets, so the note needs no
-    toolkit knowledge: a game that ships "spin", or omits the key, gets
-    none. A file tomllib cannot read gets one warning and no note; the
-    runtime reports its own defaults file."""
+def staged_defaults(defaults):
+    """The staged defaults file (config.default.toml) as a table: that
+    file is what the bundle's player gets, so the README's notes need no
+    toolkit knowledge. No file reads as an empty table; a file tomllib
+    cannot read gets one warning and reads as empty too (the runtime
+    reports its own defaults file)."""
     try:
         with open(defaults, "rb") as f:
-            doc = tomllib.load(f)
+            return tomllib.load(f)
     except FileNotFoundError:
-        return False
+        return {}
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
-        host.say("WARNING: %s: %s; no frame pacing note" % (os.path.basename(defaults), e))
-        return False
+        host.say(
+            "WARNING: %s: %s; no frame pacing or key bindings note"
+            % (os.path.basename(defaults), e)
+        )
+        return {}
+
+
+def pacing_sleeps(doc):
+    """Whether the defaults set [present] pacing = "sleep": a game that
+    ships "spin", or omits the key, gets no pacing note."""
     present = doc.get("present")
     return isinstance(present, dict) and present.get("pacing") == "sleep"
+
+
+def lists_bindings(doc):
+    """Whether the defaults carry a non-empty [input.bindings] table,
+    which the steamos README then points the player to: an empty one
+    lists no controls."""
+    section = doc.get("input")
+    bindings = section.get("bindings") if isinstance(section, dict) else None
+    return isinstance(bindings, dict) and bool(bindings)
+
+
+# The steamos README's sentence for a defaults file with [input.bindings].
+BINDINGS_README = (
+    " config.default.toml beside the game lists its\ncontrols and keys, under [input.bindings]."
+)
 
 
 def reads_config(cache=None):
@@ -343,8 +369,9 @@ def readme(target, version, lib, dst, enhance=True):
     `@if enhance@` blocks of the frame, the intro and the part go."""
     G = g()
     caps = {"enhance"} if enhance else set()
-    # The paragraph names config.toml: only for a game that reads it.
-    pacing = enhance and pacing_sleeps(os.path.join(os.path.dirname(dst), "config.default.toml"))
+    # The notes name config.toml: only for a game that reads it.
+    doc = staged_defaults(os.path.join(os.path.dirname(dst), "config.default.toml"))
+    pacing = enhance and bool(G.spin_waits) and pacing_sleeps(doc)
     cat = lib.tree_state(G.root)
     tk = lib.tree_state(toolkit.toolkit_dir())
     values = {
@@ -372,7 +399,10 @@ def readme(target, version, lib, dst, enhance=True):
         text = text.replace("@%s@" % k, v)
     with open(dst, "w", newline="\n") as f:
         f.write(text)
-    part_values = {"VERSION": version}
+    part_values = {
+        "VERSION": version,
+        "INPUT_BINDINGS": BINDINGS_README if enhance and lists_bindings(doc) else "",
+    }
     # steamos: the CLI's own install section, unless the game has its own.
     part_path = readme_part_path(target, G)
     if target == "steamos":

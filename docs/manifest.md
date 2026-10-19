@@ -183,7 +183,7 @@ This table is optional. Without it, `package` says so.
 | `targets` | `["windows", "steamos"]` | The bundles: `windows`, `steamos`, `macos`. `macos` needs `build.targets` to include it. The command with no arguments packages this host's own bundle when it is listed, else the first listed one this host can make. |
 | `brew` | `[]` | The Homebrew formulae the macos target links. `doctor` checks them. |
 | `dylib_companions` | `[]` | `NAME=brew:FORMULA`: libraries loaded with dlopen, bundled too. |
-| `content` | `"packaging"` | The game's own packaging content: `launch.env.default.<windows\|macos>`, `config.default.toml` (the option defaults the game reads beside its executable; a game that still has `enhance.toml.default` is refused until it renames it; `[present] pacing = "sleep"` there adds the frame pacing paragraph to README.txt and the note to `package`'s output; not staged, nor needed, when the toolkit at the pin has no enhancements layer, see "Capability blocks" below), `<target>/README.part` for windows and macos, and optionally `README.intro`. |
+| `content` | `"packaging"` | The game's own packaging content: `launch.env.default.<windows\|macos>`, `config.default.toml` (the option defaults the game reads beside its executable; a game that still has `enhance.toml.default` is refused until it renames it; `[present] pacing = "sleep"` there, in a game with `[pipeline] spin_waits`, adds the frame pacing paragraph to README.txt and the note to `package`'s output; not staged, nor needed, when the toolkit at the pin has no enhancements layer, see "Capability blocks" below), `<target>/README.part` for windows and macos, and optionally `README.intro`. |
 | `templates` | `""` | The game's own packaging templates: the macos ones (required for `macos`), and any copy of a CLI template that must differ, at the same path (`README.txt.in`, `windows/launcher.c`, `steamos/launch.sh`, ...), which then wins. |
 | `icon` | `"xbe"` | The XBE's title image, or the generic icon. |
 | `stamp_env` | `""` | A launch.env key: `package` ends the staged `launch.env.default` with `<key>=<sha256> <verdict>[ <sections>]`, the XBE the build was made from, for the game to print at boot. `""`: no line. |
@@ -203,7 +203,9 @@ under `package.content`).
   (`game.name`) and `package.product`; a game with its own wording puts
   `README.intro` in `package.content` (the same placeholders work there).
   The frame pacing paragraph (`@OPTION_NOTES@`) follows the options
-  paragraph when `config.default.toml` sets `[present] pacing = "sleep"`.
+  paragraph when `config.default.toml` sets `[present] pacing = "sleep"`
+  and the game sets `[pipeline] spin_waits`: without spin waits the
+  game's busy loops hold a core either way, so "sleep" saves nothing.
   The target's install section `<target>/README.part` follows.
 - **windows** (`launcher.c`, `installer.nsi.in`, `app.rc.in`): the
   launcher `<app>.exe`, with the icon compiled in, sets the game's
@@ -215,9 +217,10 @@ under `package.content`).
   `%LOCALAPPDATA%\Programs\<app>`; the Start Menu shortcut is `game.name`
   without the characters a file name cannot hold (`:` becomes ` -`).
 - **steamos** (`install.sh`, `install_lib.py`, `launch.sh` and the
-  install section `README.part`): filled with the name, `package.app` and
-  `product`, `build.exe`, `pipeline.game_name`, `data.steamos` (the install
-  root), `<SLUG>_ROOT` (the variable that moves it), and the umu-launcher
+  install section `README.part`, whose Controls section points to
+  `[input.bindings]` only when `config.default.toml` has that table):
+  filled with the name, `package.app` and `product`, `build.exe`,
+  `pipeline.game_name`, `data.steamos` (the install root), `<SLUG>_ROOT` (the variable that moves it), and the umu-launcher
   pin from `pins.py`. They run on a Steam Deck with stock SteamOS (the
   installer offers to download the pinned umu-launcher when umu-run is
   missing) and on a distribution that ships umu-run. The bundle also gets

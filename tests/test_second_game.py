@@ -718,12 +718,14 @@ def test_rsync_escapes_args():
 def test_package_pacing_note(d, monkeypatch, capsys):
     """package() prints the frame pacing note once, after the bundle: line
     and before the PRIVATE notice, only when the README got the paragraph
-    (a staged config.default.toml at "sleep"); never at "spin"."""
+    (a staged config.default.toml at "sleep", in a game generated with
+    spin waits); never at "spin"."""
     from xboxrecomp_cli.package import windows
 
     with game2_tree(d) as (G, _):
         host.g().m["package"] = dict(PKG2)
         G.content = G.path("packaging")
+        G.spin_waits = G.path("config", "spin_waits.json")
         write(os.path.join(G.content, "launch.env.default.windows"), "LOG_KEEP=10\n")
         write(G.path("LICENSE"), "MIT\n")
         stage = os.path.join(d, "stage")

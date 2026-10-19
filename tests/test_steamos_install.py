@@ -196,7 +196,8 @@ def test_templates_render_fully(d):
             text = f.read()
         left = re.findall(r"@[A-Z_]+@", text)
         if name == "README.part":
-            left = [x for x in left if x != "@VERSION@"]  # readme() fills it
+            # readme() fills these from the version and the defaults file.
+            left = [x for x in left if x not in ("@VERSION@", "@INPUT_BINDINGS@")]
         assert not left, (name, left)
     r = subprocess.run([BASH, "-n", os.path.join(d, "launch.sh")])
     assert r.returncode == 0
