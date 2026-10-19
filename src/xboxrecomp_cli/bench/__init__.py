@@ -12,6 +12,7 @@ import hashlib
 import os
 import posixpath
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -46,7 +47,11 @@ Commands:
   run       launch @WINDOWS_EXE@ under Proton, log to
             bench-logs/<timestamp>/ on the host, then pull logs   [game args];
             fails if any D3D11 flip presented a surface other than the one the
-            walker drew, or on @CRASH_TAG@, or (with a limit) an early exit
+            walker drew, or on @CRASH_TAG@, or (with a limit) an early exit.
+            The game starts from the Windows package's launch.env.default
+            (as the installed launchers do; BENCH_ENV wins over it), so it
+            gets the packaged backend; pacing and all do the same, golden
+            does not (its scenarios pin their own env)
   golden    run the golden-frame scenarios (@GOLDEN_JSON@) and
             compare their frames; first runs `tests`. Exit 1 on a regression,
             3 when a run was slow on a busy host (INCONCLUSIVE)
@@ -143,7 +148,8 @@ this machine's home, as it did when bench.sh sourced the file:
                    "RECOMP_AC97_READY=0 WINEDEBUG=+seh"; RECOMP_SAVE_DIR=@run
                    gives the run an empty save dir, bench-logs/<stamp>/save/.
                    RECOMP_TRACE=/RECOMP_DEBUG= entries add up (comma-joined)
-                   with the ones a scenario pins
+                   with the ones a scenario pins. run, pacing and all put
+                   launch.env.default under it; a key here replaces the file's
   BENCH_TIMEOUT    stop the game with SIGINT after this many seconds
   BENCH_FRAMES     1: RECOMP_DEBUG=d3d11_dump into bench-logs/<stamp>/frames/
                    on the host (every 60th present; not pulled by logs)
@@ -208,6 +214,82 @@ def proton_log_mode(cfg):
     if mode not in PROTON_LOG_MODES:
         raise BenchError("BENCH_PROTON_LOG=%s: use one of %s" % (mode, ", ".join(PROTON_LOG_MODES)))
     return mode
+
+
+# Keys run_game.sh sets for every run itself, after the env it is sent, as
+# the installed launchers set theirs after reading the defaults; PROTONPATH
+# as the SteamOS launch.sh skips it: the bench runs the Proton it pins.
+BENCH_OWN_KEYS = frozenset(
+    ("PROTONPATH", "RECOMP_STDIO_LOG", "WINEPREFIX", "GAMEID", "PROTON_LOG", "PROTON_LOG_DIR")
+)
+# Keys only the launchers read (log trimming, finding umu-run, the start
+# notice): the game never sees them, so they stay out of GAME_ENV and
+# run-info.txt.
+LAUNCHER_ONLY_KEYS = frozenset(("LOG_KEEP", "LOG_MAX_MB", "UMU_RUN", "LAUNCH_NOTICE", "NOTICE_MAX"))
+ENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def read_launch_env(path):
+    """[(key, value)] of a launch.env file, read as the SteamOS launch.sh
+    reads it: KEY=value lines, the value raw to the end of the line, '#'
+    comments and empty lines skipped. None when the file does not exist.
+    Any other line (an indented one, one of blanks) is an error naming it,
+    as launch.sh fails on one. Split on \n alone: splitlines() would also
+    break a value at \x0b, \x0c, \x85 or U+2028, which bash does not."""
+    try:
+        with open(path, encoding="utf-8", newline="") as f:
+            lines = f.read().split("\n")
+    except FileNotFoundError:
+        return None
+    if lines and lines[-1] == "":
+        lines.pop()
+    out = []
+    for n, raw in enumerate(lines, 1):
+        line = raw.rstrip("\r")
+        if not line or line.startswith("#"):
+            continue
+        k, eq, v = line.partition("=")
+        if not eq or not ENV_KEY.match(k):
+            raise BenchError("%s:%d: not a KEY=value line: %s" % (path, n, line))
+        out.append((k, v))
+    return out
+
+
+def env_pairs(text):
+    """[(key, value)] of a raw GAME_ENV text (BENCH_ENV and what callers
+    add), split as the host's bash splits it."""
+    try:
+        words = shlex.split(text)
+    except ValueError:
+        words = text.split()
+    return [tuple(w.split("=", 1)) for w in words if "=" in w]
+
+
+def env_keys(text):
+    return {k for k, _ in env_pairs(text)}
+
+
+def launch_defaults(game):
+    """(path, [(key, value)] or None): the game's launch.env.default for the
+    Windows target, the file `package windows` and `package steamos` stage
+    (package.launch_env_path), less the keys the bench owns and those only
+    the launchers read."""
+    from ..package import launch_env_path
+
+    path = launch_env_path("windows", game)
+    kvs = read_launch_env(path)
+    if kvs is not None:
+        kvs = [(k, v) for k, v in kvs if k not in BENCH_OWN_KEYS | LAUNCHER_ONLY_KEYS]
+    return path, kvs
+
+
+def with_defaults(defaults, text):
+    """GAME_ENV's raw text with the defaults first and quoted, less any key
+    the text sets itself: the explicit value wins outright, even for the
+    list keys (RECOMP_TRACE, RECOMP_DEBUG) that run_game.sh would join."""
+    own = env_keys(text)
+    words = [shell_quote("%s=%s" % kv) for kv in defaults or () if kv[0] not in own]
+    return " ".join(words + ([text] if text else []))
 
 
 class Exit(Exception):
@@ -287,10 +369,18 @@ class Bench:
         return 0
 
     # run
-    def run_game(self, game_args, bench_env=None, timeout=None, frames=None, lock_held=None):
-        """Launch the game on the host and pull its logs; returns the stamp."""
+    def run_game(
+        self, game_args, bench_env=None, timeout=None, frames=None, lock_held=None, defaults=False
+    ):
+        """Launch the game on the host and pull its logs; returns the stamp.
+        defaults: start from the game's launch.env.default (run, pacing,
+        all); golden never does, so its verdicts stay comparable."""
         self.need_host()
         c = self.cfg
+        if bench_env is None:
+            bench_env = c["BENCH_ENV"]
+        if defaults:
+            bench_env = self.apply_defaults(bench_env)
         stamp = time.strftime("%Y%m%d-%H%M%S")
         self.step("run: under %s -> bench-logs/%s" % (c["PROTONPATH"], stamp))
         assigns = (
@@ -301,7 +391,7 @@ class Bench:
                 shell_quote(c["PROTONPATH"]),
                 quote_words(game_args),
                 # Raw, as bench.sh sent it: the host word-splits BENCH_ENV.
-                c["BENCH_ENV"] if bench_env is None else bench_env,
+                bench_env,
                 shell_quote(c.get("BENCH_TIMEOUT") if timeout is None else timeout),
                 shell_quote((c.get("BENCH_FRAMES") or "0") if frames is None else frames),
                 shell_quote(c.get("BENCH_KILL_GAME") or "0"),
@@ -315,8 +405,28 @@ class Bench:
         self.say("local: %s" % os.path.join(c.game_dir, "bench-logs", stamp))
         return stamp
 
+    def apply_defaults(self, text):
+        """text with the game's launch.env.default under it, and a warning
+        (once per command, on stderr) when neither sets RECOMP_PB_BACKEND:
+        the exe then falls back to the CPU rasteriser, which is slow enough
+        to look like a hang."""
+        path, kvs = launch_defaults(self.cfg.game)
+        out = with_defaults(kvs, text)
+        if not getattr(self, "_defaults_said", False):
+            self._defaults_said = True
+            rel = os.path.relpath(path, self.cfg.game.root)
+            if kvs is None:
+                print("bench: warning: no %s; the game gets BENCH_ENV only" % rel, file=sys.stderr)
+            if not any(k == "RECOMP_PB_BACKEND" and v for k, v in env_pairs(out)):
+                print(
+                    "bench: warning: RECOMP_PB_BACKEND is not set (%s, BENCH_ENV); the game "
+                    "falls back to the CPU rasteriser" % rel,
+                    file=sys.stderr,
+                )
+        return out
+
     def cmd_run(self, args):
-        stamp = self.run_game(args)
+        stamp = self.run_game(args, defaults=True)
         log = os.path.join(self.cfg.game_dir, "bench-logs", stamp)
         rc = 0
         with self.no_errexit():

@@ -75,6 +75,7 @@ def cmd_pacing(b, args):
                         bench_env="%s %s RECOMP_TRACE=flip,pacing=all %s" % (genv, benv, envs[k]),
                         timeout=secs,
                         lock_held="1",
+                        defaults=True,
                     )
                 with open(os.path.join(out, "runs.txt"), "a") as fh:
                     fh.write("%d %s\n" % (k, stamp))

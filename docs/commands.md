@@ -398,7 +398,7 @@ bench --help` is the full text; the commands:
 | `setup` | once per host: the build distrobox, cmake, ninja, umu-launcher, llvm-mingw |
 | `sync [--game-files[=reflink]]` | rsync the toolkit and the game to the host; `--game-files` sets up the host's one `game_files/` copy |
 | `build [-- CMAKE ARGS]` | configure and compile `build-win/` on the host (shared run lock) |
-| `run [GAME ARGS]` | launch the game under Proton, log to `bench-logs/<stamp>/`, pull the logs; fails on a crash or a present mismatch |
+| `run [GAME ARGS]` | launch the game under Proton, log to `bench-logs/<stamp>/`, pull the logs; fails on a crash or a present mismatch. The game starts from the Windows package's `launch.env.default` (`BENCH_ENV` wins), as do `pacing` and `all`; `golden` keeps its scenarios' own env |
 | `golden [--record] [--only SCEN,...] [--tests]` | the golden-frame scenarios from `golden.json`, after `tests`; exit 1 on a regression, 3 when the host was busy (INCONCLUSIVE) |
 | `tests` | build and ctest the toolkit's Proton tests in `build-win/` under `PROTONPATH` (exclusive run lock); first restarts a box whose `/etc/resolv.conf` went stale |
 | `pacing [--scen S] [--runs N] [--gate clock\|sleep] ["A env" "B env"]` | a frame-pacing A/B of one scenario under two environments |
@@ -429,7 +429,7 @@ environment). Quote a host path that starts with `~`.
 | `PROTONPATH` | Proton for umu-run (`GE-Proton`, the latest GE) |
 | `BENCH_PREFIX` | Wine prefix on the host (`$BENCH_DIR/prefix`) |
 | `BENCH_GAME_FILES` | the host's single `game_files/` copy; every other tree links to it |
-| `BENCH_ENV` | `VAR=value` pairs for the game; `RECOMP_TRACE`/`RECOMP_DEBUG` entries add up with a scenario's |
+| `BENCH_ENV` | `VAR=value` pairs for the game; `RECOMP_TRACE`/`RECOMP_DEBUG` entries add up with a scenario's; a key here replaces `launch.env.default`'s |
 | `BENCH_TIMEOUT` | stop the game with SIGINT after this many seconds |
 | `BENCH_FRAMES` | `1`: frame dumps into `bench-logs/<stamp>/frames/` on the host |
 | `BENCH_HOLD_MAX` | pacing: the longest hold of the run lock if the command dies (14400 s) |

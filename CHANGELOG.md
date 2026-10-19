@@ -45,6 +45,13 @@ a release by its tag in `game.toml`'s `[cli]` table.
   repo on an older one.
 
 ### Fixed
+- `bench run`, `pacing` and `all` start the game from the Windows
+  package's `launch.env.default` (`<content>/launch.env.default.windows`),
+  as the installed launchers do, with `BENCH_ENV` and a scenario's pins
+  replacing its keys; the launcher-only keys (`LOG_KEEP`, `UMU_RUN`, ...)
+  stay out. Without it the exe got no `RECOMP_PB_BACKEND`, fell
+  back to the CPU rasteriser and looked hung. The bench warns when no
+  backend is set. `golden` is unchanged: its scenarios pin their own env.
 - `package` works on a game folder that is not a git repository, or a
   repo with no commits yet, and on a toolkit or CLI tree like that: the
   version names a digest of the tree's files (`cnogit<6>` or
