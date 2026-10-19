@@ -15,6 +15,14 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - `public pr NAME [REF]`: a fork's upstream PR branch, audited commit by
   commit and put in `refs/public-pr/NAME`. The guard lets only it reach
   `pr/NAME`, rebased or deleted.
+- `xbr new` writes `packaging/config.default.toml` with the toolkit's
+  option defaults at the toolkit branch it pins (`[render]`, `[display]`
+  and `[present]`, with `present.pacing = "sleep"`), so a new game no
+  longer starts from another game's copy and its drift. The template is
+  the one place the CLI holds those defaults.
+- doctor's `defaults:` line names the keys a game's `config.default.toml`
+  sets to another value than the toolkit's defaults (a note, never a
+  problem).
 
 ### Changed
 - The `.gitignore` baseline anchors its top-level lines (`/build-*/`,

@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from types import SimpleNamespace
 
-from . import cli_dir, env, fetch, fingerprint, host, resources, toolkit
+from . import cli_dir, config_defaults, env, fetch, fingerprint, host, resources, toolkit
 from .host import CliError
 
 
@@ -276,6 +276,11 @@ def doctor_report():
             "game env:   %s"
             % ", ".join(e + ("" if os.path.isfile(g.path(e)) else " (missing)") for e in envs)
         )
+    dl = config_defaults.doctor_line(
+        os.path.join(g.content or os.path.join(g.root, "packaging"), config_defaults.NAME)
+    )
+    if dl:
+        lines.append("defaults:   " + dl)
     if os_name == "macos":
         lines.append("DEVELOPER_DIR: %s" % host.build_env().get("DEVELOPER_DIR", "(Xcode default)"))
     if os_name == "windows":

@@ -5,13 +5,14 @@ starts with one command instead of copying files out of another game.
 
 It writes the manifest with every pin filled in, the bootstrap and its two
 wrappers, the tools pyproject.toml, .gitignore, .gitattributes, README.md,
-CHANGELOG.md, the release workflow, and the toolkit's templates/new-game/ with the game's constants patched
-in; then, when the network, git and uv allow, it clones the toolkit at the
-pin and writes config/setup-pins.json and uv.lock. Whatever cannot be done
-is named as the command that finishes it. It never overwrites a file and
-never copies, moves or links a dump: --xbe reads a header (from a disc
-image, a dump folder or the XBE), and the dump goes into game_files/ through
-`import` or by the developer's own hand.
+CHANGELOG.md, the release workflow, packaging/config.default.toml with the
+toolkit's option defaults, and the toolkit's templates/new-game/ with the
+game's constants patched in; then, when the network, git and uv allow, it
+clones the toolkit at the pin and writes config/setup-pins.json and uv.lock.
+Whatever cannot be done is named as the command that finishes it. It never
+overwrites a file and never copies, moves or links a dump: --xbe reads a
+header (from a disc image, a dump folder or the XBE), and the dump goes into
+game_files/ through `import` or by the developer's own hand.
 
 This module runs before a game is loaded (main.py dispatches `new` first);
 once game.toml is written it loads the scaffold as the current game and
@@ -28,7 +29,7 @@ import subprocess
 import sys
 from importlib import metadata
 
-from . import cli_dir, dump, gitpin, host, manifest, pins, toolkit, wrapper, xbe
+from . import cli_dir, config_defaults, dump, gitpin, host, manifest, pins, toolkit, wrapper, xbe
 from .host import CliError
 
 # The toolkit every game the CLI builds pins: the fork's integration branch.
@@ -914,6 +915,9 @@ def scaffold(root, a):
     write(j(*WORKFLOW.split("/")), workflow_text(v))
     write(j(*CHECKS.split("/")), cli_template(CHECKS, v))
     write(j(*GITIGNORE_TEST.split("/")), cli_template(GITIGNORE_TEST, v))
+    # The option defaults, so a game starts from the toolkit's rather than
+    # from another game's copy and its drift.
+    write(j("packaging", config_defaults.NAME), config_defaults.template_text(name))
     if a.license:
         write(
             j("LICENSE"), fill(LICENSES[a.license], dict(v, YEAR=str(datetime.date.today().year)))

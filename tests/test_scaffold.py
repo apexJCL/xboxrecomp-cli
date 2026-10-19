@@ -20,6 +20,7 @@ from test_xbe import XDK, fence_wait, header, image
 
 from xboxrecomp_cli import (
     cli_dir,
+    config_defaults,
     doctor,
     env,
     fetch,
@@ -160,6 +161,11 @@ def test_offline_scaffold_loads_and_names_what_is_left(d, tk, game):
     assert "extern int recomp_dispatch_init(void);" in c
     assert "YOUR_GAME_NAME" not in c and c.count("my-game") == 3  # every occurrence
     assert read(os.path.join(root, "src", "recomp_manual.c")) == FAKE_MANUAL
+    # The option defaults are the toolkit's, under the game's name, and doctor
+    # says so.
+    defaults = read(os.path.join(root, "packaging", "config.default.toml"))
+    assert defaults == config_defaults.template_text("my-game")
+    assert defaults.startswith("# my-game options:") and 'pacing = "sleep"' in defaults
     # Offline: the toolkit beside is used, the pins and the lock are named.
     assert "setup' clones" not in out
     assert "pins refresh' writes config/setup-pins.json and uv.lock" in out
@@ -428,6 +434,7 @@ def test_doctor_next_line(d, tk, game, monkeypatch):
     assert lines[-1].startswith("next:       install uv: winget install --id=astral-sh.uv")
     assert targets == [] and blocked == {}  # no [package]: nothing to package
     assert any("game.toml has no [package]" in x for x in lines)
+    assert "defaults:   config.default.toml: the toolkit's defaults" in lines
     # The order after uv: setup, the dump, the pipeline, the build.
     nxt = doctor.next_step
     assert nxt(

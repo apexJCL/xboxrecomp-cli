@@ -18,7 +18,7 @@ uvx --from git+https://github.com/apexJCL/xboxrecomp-cli xbr new mygame --xbe /p
   ID, entry point, the XDK libraries it links), copies the toolkit's game
   template with those constants filled in, finds D3D's fence wait and
   writes the fence-mirror line into `src/main.c`, and adds the bootstrap,
-  a release workflow and a changelog.
+  the toolkit's option defaults, a release workflow and a changelog.
 - **One pipeline, pinned.** `./mygame all` runs analyze, recomp and build.
   The CLI, the toolkit, CMake, Ninja, llvm-mingw and the Python tools are
   pinned by tag, commit or sha256, so a checkout builds the same way on
@@ -105,13 +105,16 @@ keys a port meets first and the macOS target.
 ### 4. Package it
 
 Turn packaging on in `game.toml` (the scaffold has the table commented
-out) and add the files `package` stages, which `xbr new` does not write:
+out) and add the files `package` stages that `xbr new` does not write:
 
 - `packaging/launch.env.default.windows`: the launcher's defaults;
 - `packaging/windows/README.part`: the install section of the bundle's README;
-- `packaging/config.default.toml` (on the fork's toolkit): the option
-  defaults, including every key a wizard option names;
 - `LICENSE` at the game's root.
+
+`xbr new` writes `packaging/config.default.toml` with the toolkit's option
+defaults; it is read only on the fork's toolkit with the enhancements layer
+on (`-DXBOXRECOMP_ENHANCE=ON` in `stock_cmake`), and every key a wizard
+option names must be in it.
 
 Then build a bundle:
 

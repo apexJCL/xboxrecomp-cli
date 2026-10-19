@@ -180,6 +180,15 @@ pin runs on the CPU rasteriser with stock settings. Exit 1 when the game's
 steamos target is blocked, or when anything is missing for a game without
 one.
 
+`defaults:` compares the game's `config.default.toml` (under
+`package.content`, else `packaging/`) with the toolkit's option defaults,
+the file `new` writes, and names each key set to another value, such as
+`present.pacing = "spin" (toolkit "sleep")`. A game may keep one on
+purpose, so it is a note: it never changes `next:` or the exit status.
+Keys the toolkit file lacks (the game's own, `[input]`) are not compared.
+Only a build with the enhancements layer (`-DXBOXRECOMP_ENHANCE=ON`) reads
+the file; without it the line still checks the file the release ships.
+
 `layout:` is the repo's drift from the standard layout
 ([layout.md](layout.md#doctors-layout-block)): missing entries, ignore
 gaps, tracked data, a nested worktree, workflows off their templates, the
@@ -365,15 +374,17 @@ patterns, no network, an `XBR_PUBLIC_DIR` inside the work tree, no
 ### `xbr new DIR`
 
 Start another game: `game.toml`, the bootstrap and its wrappers, the tools
-environment, the toolkit's `templates/new-game/` with the game's constants,
-the toolkit clone and the pins. Runs without a game (`uvx --from
-git+https://github.com/apexJCL/xboxrecomp-cli xbr new mygame`, or `mygame
-new DIR` from an existing game). Whatever it could not finish (offline, or
-with no network) it names as the later command that does it: `setup` for the
-toolkit clone (and the template copy that follows it), `pins refresh` for
-the pins and the lock. `@<tag>` after the repository URL pins a release,
-`@<sha>` a commit (`…/xboxrecomp-cli@v0.6.0 xbr new mygame`); the no-pipe
-way is a clone and `uv run xbr new ../mygame`.
+environment, `packaging/config.default.toml` with the toolkit's option
+defaults (the CLI's `templates/new-game/packaging/`; read only by a build
+with the enhancements layer), the toolkit's `templates/new-game/` with the
+game's constants, the toolkit clone and the pins. Runs without a game
+(`uvx --from git+https://github.com/apexJCL/xboxrecomp-cli xbr new mygame`,
+or `mygame new DIR` from an existing game). Whatever it could not finish
+(offline, or with no network) it names as the later command that does it:
+`setup` for the toolkit clone (and the template copy that follows it),
+`pins refresh` for the pins and the lock. `@<tag>` after the repository URL
+pins a release, `@<sha>` a commit (`…/xboxrecomp-cli@v0.6.0 xbr new
+mygame`); the no-pipe way is a clone and `uv run xbr new ../mygame`.
 
 | Option | Effect |
 |---|---|
