@@ -415,6 +415,20 @@ type Plan struct {
 	// Xbe is the dump's XBE judged by its sections; nil without a dump
 	// or from an older CLI.
 	Xbe *PlanXbe `json:"xbe"`
+	// Disk is what the run writes per volume (D9); empty when the plan
+	// could not count it.
+	Disk []PlanDisk `json:"disk"`
+}
+
+// PlanDisk is one volume of the plan's disk needs: its first path, the
+// free bytes (nil when unknown), the need with the CLI's slack, and the
+// bytes per stage ("import", "setup", "generate", "build", "enhance hud",
+// "package").
+type PlanDisk struct {
+	Path   string           `json:"path"`
+	Free   *int64           `json:"free"`
+	Need   int64            `json:"need"`
+	Stages map[string]int64 `json:"stages"`
 }
 
 // PlanXbe is the CLI's fingerprint verdict: "known", "header", "data"

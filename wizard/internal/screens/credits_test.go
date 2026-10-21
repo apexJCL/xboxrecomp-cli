@@ -1,13 +1,11 @@
 package screens
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 	"testing"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/software"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
@@ -29,27 +27,29 @@ func creditTexts(o fyne.CanvasObject) (links []*widget.Hyperlink, metas []*quiet
 	return links, metas
 }
 
-// The info button: in the header on every page but Welcome, which lists
-// the credits itself; a tap opens the dialog.
+// The credits button: centred in the footer on every page, in the
+// user's words; a tap opens the dialog. Welcome lists no credits.
 func TestCreditsButton(t *testing.T) {
 	isolate(t)
 	a := test.NewApp()
 	defer a.Quit()
 	w := New(a, sampleOptions(t))
-	if w.info.Visible() {
-		t.Error("the info button shows on Welcome")
-	}
-	if w.info.Text != "" || w.info.Importance != widget.LowImportance ||
-		w.info.Icon.Name() != infoIcon().Name() {
-		t.Errorf("button %q %v %q", w.info.Text, w.info.Importance, w.info.Icon.Name())
+	w.win.Resize(fyne.NewSize(780, 580))
+	if w.credits.Text != "♥️ Open-source" ||
+		w.credits.Importance != widget.LowImportance {
+		t.Errorf("button %q %v", w.credits.Text, w.credits.Importance)
 	}
 	for i := range w.pages {
 		w.render(i)
-		if w.info.Visible() != (i != pWelcome) {
-			t.Errorf("page %d: shown %v", i, w.info.Visible())
+		if !w.credits.Visible() {
+			t.Errorf("page %d: the button is hidden", i)
+		}
+		at := a.Driver().AbsolutePositionForObject(w.credits)
+		if mid := at.X + w.credits.Size().Width/2; mid < 380 || mid > 400 {
+			t.Errorf("page %d: the button's middle is at %v", i, mid)
 		}
 	}
-	test.Tap(w.info)
+	test.Tap(w.credits)
 	if w.creditsD == nil {
 		t.Fatal("the button opened no dialog")
 	}
@@ -57,50 +57,25 @@ func TestCreditsButton(t *testing.T) {
 	if w.creditsD != nil {
 		t.Error("a closed dialog still follows the window")
 	}
+	// A tap on the pink frame opens it too.
+	var frame *outlineButton
+	walkTree(w.win.Content(), func(o fyne.CanvasObject) {
+		if v, ok := o.(*outlineButton); ok {
+			frame = v
+		}
+	})
+	if frame == nil || frame.btn != w.credits {
+		t.Fatal("the credits button is not in its outline frame")
+	}
+	test.Tap(frame)
+	if w.creditsD == nil {
+		t.Fatal("a tap on the frame opened no dialog")
+	}
+	w.creditsD.Hide()
 	w.render(pWelcome)
-	if w.info.Visible() {
-		t.Error("back on Welcome, the button shows")
-	}
-}
-
-// Welcome: the heading right under the intro, one line an entry in the
-// CLI's order (the game's own repo first), cut short rather than wrapped, in
-// a box eight rows tall.
-func TestCreditsWelcome(t *testing.T) {
-	isolate(t)
-	a := test.NewApp()
-	defer a.Quit()
-	opt := sampleOptions(t)
-	w := New(a, opt)
-	items := w.pages[pWelcome].obj.(*container.Scroll).Content.(*fyne.Container).Objects
-	if h, ok := items[2].(*widget.Label); !ok || h.Text != creditsHeading || !h.TextStyle.Bold {
-		t.Fatalf("after the intro: %#v", items[2])
-	}
-	box, ok := items[3].(*container.Scroll)
-	if !ok {
-		t.Fatalf("the list is not in a scroll: %#v", items[3])
-	}
-	links, metas := creditTexts(box)
-	want := opt.Cfg.CreditList()
-	if len(links) != len(want) || len(metas) != len(want) {
-		t.Fatalf("%d links, %d lines for %d credits", len(links), len(metas), len(want))
-	}
-	for i, c := range want {
-		if links[i].Text != c.Name || links[i].URL.String() != c.URL ||
-			metas[i].Text() != fmt.Sprintf(creditMeta, c.Role, c.License) {
-			t.Errorf("entry %d: %q %q %q", i, links[i].Text, links[i].URL, metas[i].Text())
-		}
-		if metas[i].Truncation != fyne.TextTruncateEllipsis || metas[i].Wrapping == fyne.TextWrapWord {
-			t.Errorf("entry %d is not one line", i)
-		}
-	}
-	if links[0].Text != "blinx2-recomp" || links[1].Text != "xboxrecomp-cli" {
-		t.Errorf("order: %q, %q", links[0].Text, links[1].Text)
-	}
-	_, rows := w.creditsList(true)
-	row := rows[0].MinSize().Height
-	if h := box.MinSize().Height; h < 8*row || h > 9*row {
-		t.Errorf("the box is %v high, a row %v", h, row)
+	links, _ := creditTexts(w.pages[pWelcome].obj)
+	if len(links) != 0 || strings.Contains(shown(w.pages[pWelcome].obj), "Made with these") {
+		t.Errorf("Welcome still lists %d credits", len(links))
 	}
 }
 
@@ -127,6 +102,9 @@ func TestCreditsDialog(t *testing.T) {
 			notes = true
 		}
 	})
+	if links[0].Text != "blinx2-recomp" || links[1].Text != "xboxrecomp-cli" {
+		t.Errorf("order: %q, %q", links[0].Text, links[1].Text)
+	}
 	if !notes || creditsTitle != "Open-source credits" {
 		t.Error("no NOTICES sentence, or the title changed")
 	}
@@ -160,7 +138,7 @@ func TestCreditsFallback(t *testing.T) {
 	opt := sampleOptions(t)
 	opt.Cfg.Credits = nil
 	w := New(a, opt)
-	list, _ := w.creditsList(false)
+	list, _ := w.creditsList()
 	links, _ := creditTexts(list)
 	var names []string
 	for _, l := range links {

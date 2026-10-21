@@ -12,6 +12,6 @@ these are strokes).
 | Glyph | Where |
 |---|---|
 | `external-link` | after every hint link and credit: it opens the browser |
-| `info-circle` | the header's button that opens the open-source credits |
+| `info-circle` | the glyph after each Welcome statement: its tip has more |
 | `download`, `photo`, `list-check`, `settings`, `code`, `hammer`, `package` | the Building checklist's part kinds |
 | `circle-dashed`, `circle-check`, `circle-x`, `circle-minus`, `player-stop` | the checklist's states |

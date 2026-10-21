@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image/color"
 	"math"
 	"net/http"
 	"net/url"
@@ -128,7 +129,8 @@ type Wizard struct {
 	title   *widget.Label
 	step    *quietText
 	stepBar *thinBar
-	info    *widget.Button // the credits; Welcome lists them and hides it
+	credits *widget.Button // the footer's credits button, on every page
+	tips    *tipLayer      // the Welcome statements' tips, over the page
 	footer  *quietText
 	body    *fyne.Container
 	back    *widget.Button
@@ -167,7 +169,8 @@ type Wizard struct {
 
 	// target, options, summary
 	targetBox    *fyne.Container
-	targetRadios map[string]*widget.RadioGroup
+	targetRadios map[string]*widget.RadioGroup // Update: one platform
+	targetChecks map[string]*widget.Check      // Fresh: any of them
 	optionsNote  *quietText
 	optionsSync  []func()
 	// the font check: fonts are the options' font lines, fontRun counts
@@ -190,14 +193,17 @@ type Wizard struct {
 	// asks so a late one is dropped, planAsk asks (the tests replace it);
 	// techBase is the technical details before the plan.
 	plan     *runner.Plan
+	plans    []*runner.Plan // one per platform built, plan the first
 	planRun  int
 	planAsk  func(runner.Runner, []string) (*runner.Plan, error)
 	techBase string
 
-	// the paths (paths.go): pathRadios are Welcome's Fresh and Update;
-	// the Base page's plan, its ask counter and rows, the file picked;
-	// the Changes page's plan and ask counter.
-	pathRadios   map[string]*widget.RadioGroup
+	// the paths (paths.go): pathTiles are Welcome's Fresh and Update and
+	// pathHelp the chosen one's sentence; the Base page's plan, its ask
+	// counter and rows, the file picked; the Changes page's plan and ask
+	// counter.
+	pathTiles    map[string]*pathTile
+	pathHelp     *quietText
 	baseBox      *fyne.Container
 	basePlan     *runner.Plan
 	baseAsked    bool
@@ -236,7 +242,13 @@ type Wizard struct {
 	building  bool
 	prog      *runner.Progress
 	buildErr  error
-	doneBox   *fyne.Container
+	// results are the run's platforms, in order: made, failed or not
+	// built (the build stopped first).
+	results []targetResult
+	// cleaned is set once the CLI ran this session's --clean; procMu
+	// guards it, and ticking "Rebuild everything" again clears it.
+	cleaned bool
+	doneBox *fyne.Container
 	// the disk line: diskRun counts measurements; treeSize and cleanRun
 	// are hostinfo's and the CLI's (the tests replace them).
 	diskLabel *widget.Label
@@ -299,6 +311,9 @@ func New(a fyne.App, opt Options) *Wizard {
 		w.st.Path = w.settings.Path
 	}
 	w.st.Jobs = max(0, w.settings.Jobs)
+	if len(w.settings.Targets) > 0 {
+		w.st.SetTargets(w.settings.Targets)
+	}
 	w.latest = func() (*update.Release, string) {
 		if opt.Cfg.Private {
 			return nil, "none (a private game has no public releases)"
@@ -312,13 +327,16 @@ func New(a fyne.App, opt Options) *Wizard {
 	w.back = widget.NewButton(backText, func() { w.move(-1) })
 	w.next = widget.NewButton(nextText, w.onNext)
 	w.next.Importance = widget.HighImportance
+	w.tips = newTipLayer()
 	w.pages = []*page{
 		w.welcomePage(), w.checksPage(), w.dumpPage(), w.targetPage(),
 		w.optionsPage(), w.summaryPage(), w.buildPage(), w.donePage(),
 		w.basePage(), w.changesPage(),
 	}
 	page := container.NewBorder(w.header(), w.bottom(), nil, nil, container.NewPadded(w.body))
-	w.win.SetContent(container.NewStack(newSizeWatch(w.fitDialogs), page))
+	// A tip sits where its item was: a resize moves the item, so it goes.
+	resized := func(s fyne.Size) { w.tips.hide(nil); w.fitDialogs(s) }
+	w.win.SetContent(container.NewStack(newSizeWatch(resized), page, w.tips.layer))
 	w.win.Resize(fyne.NewSize(780, 580))
 	w.win.SetCloseIntercept(w.onClose)
 	w.render(pWelcome)
@@ -332,10 +350,7 @@ func (w *Wizard) header() fyne.CanvasObject {
 	w.title.SizeName = theme.SizeNameSubHeadingText
 	w.step = newQuiet(theme.SizeNameCaptionText, fyne.TextAlignTrailing, fyne.TextStyle{})
 	w.stepBar = newThinBar(len(w.pages))
-	w.info = widget.NewButtonWithIcon("", infoIcon(), func() { d, _ := w.creditsDialog(); d.Show() })
-	w.info.Importance = widget.LowImportance
-	line := container.NewBorder(nil, nil, w.title,
-		container.NewHBox(container.NewVBox(layout.NewSpacer(), w.step), w.info))
+	line := container.NewBorder(nil, nil, w.title, container.NewVBox(layout.NewSpacer(), w.step))
 	rows := []fyne.CanvasObject{line, w.stepBar}
 	if s := w.opt.Source; s != nil {
 		rows = append(rows, blockedLine(SourceBanner(s.Commit, s.Dirty, s.Local.Path)))
@@ -343,11 +358,14 @@ func (w *Wizard) header() fyne.CanvasObject {
 	return container.NewPadded(container.NewVBox(rows...))
 }
 
-// bottom is Back and Next, then the version: small, low contrast, at the
-// bottom right of every page (the user's 2026-10-15 request). The pins a
-// bug report wants are in the Summary's technical details.
+// bottom is Back and Next with the credits button centred between them,
+// so the credits are one tap away on every page (the user's 2026-10-19
+// request), then the version: small, low contrast, at the bottom right
+// of every page (the user's 2026-10-15 request). The pins a bug report
+// wants are in the Summary's technical details.
 func (w *Wizard) bottom() fyne.CanvasObject {
-	nav := container.NewHBox(w.back, layout.NewSpacer(), w.next)
+	w.credits = widget.NewButton(creditsButton, func() { d, _ := w.creditsDialog(); d.Show() })
+	nav := container.NewBorder(nil, nil, w.back, w.next, container.NewCenter(newOutlineButton(w.credits)))
 	f := footerText
 	if w.opt.Cfg.Release.Dev {
 		f = footerDev
@@ -401,7 +419,7 @@ func (w *Wizard) Logf(format string, a ...any) {
 	if os.MkdirAll(w.setDir, 0o755) != nil {
 		return
 	}
-	f, err := os.OpenFile(filepath.Join(w.setDir, "wizard.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(w.logFile(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
@@ -438,7 +456,61 @@ func (w *Wizard) openPath(p string) {
 	}
 }
 
-func (w *Wizard) errorBox(err error) { dialog.ShowError(err, w.win) }
+// errorBox is a failure outside the pages (a folder that would not
+// open, a setting that would not save), over the log's path and buttons.
+// A playerError's own sentence is shown as it is; any other error's
+// words are for a developer, so the player reads a plain sentence and
+// the words go to the log (the user's 2026-10-19 decision).
+func (w *Wizard) errorBox(err error) {
+	w.Logf("error: %v", err)
+	dialog.ShowCustom(errorTitle, closeText, w.errorBody(err), w.win)
+}
+
+// errorBody is the box's sentence over the log's path and buttons.
+func (w *Wizard) errorBody(err error) fyne.CanvasObject {
+	text := errorText
+	var pe playerError
+	if errors.As(err, &pe) {
+		text = string(pe)
+	}
+	return container.NewVBox(para(text), w.errorHelp(err, w.logFile()))
+}
+
+// logFile is the wizard's own log, where Logf writes.
+func (w *Wizard) logFile() string { return filepath.Join(w.setDir, "wizard.log") }
+
+// errorHelp says where the log is, its path selectable, over logButtons.
+func (w *Wizard) errorHelp(err error, logPath string) fyne.CanvasObject {
+	return container.NewVBox(para(errorSeeLog), mono(logPath), container.NewHBox(w.logButtons(err, logPath)...))
+}
+
+// logButtons copy the error and the log's path to the clipboard and open
+// the log's folder; with no error, only the last two.
+func (w *Wizard) logButtons(err error, logPath string) []fyne.CanvasObject {
+	copyBtn := func(label, text string) fyne.CanvasObject {
+		return widget.NewButtonWithIcon(label, theme.ContentCopyIcon(), func() {
+			fyne.CurrentApp().Clipboard().SetContent(text)
+		})
+	}
+	var row []fyne.CanvasObject
+	if err != nil {
+		row = append(row, copyBtn(copyErrorText, err.Error()))
+	}
+	return append(row, copyBtn(copyLogPathText, logPath),
+		widget.NewButtonWithIcon(openLogFolder, theme.FolderOpenIcon(), func() { w.openFolder(logPath) }))
+}
+
+// openFolder opens the folder p is in, or p when it is a folder. A
+// folder that will not open is logged, not boxed: the box would offer
+// the same folder again.
+func (w *Wizard) openFolder(p string) {
+	if fi, err := os.Stat(p); err != nil || !fi.IsDir() {
+		p = filepath.Dir(p)
+	}
+	if err := OpenPath(p); err != nil {
+		w.Logf("open %s: %v", p, err)
+	}
+}
 
 // render shows page i without running its enter step (the tests use it).
 func (w *Wizard) render(i int) {
@@ -456,11 +528,8 @@ func (w *Wizard) render(i int) {
 	// The current page counts as reached: step 2 of 8 fills two segments.
 	w.stepBar.Segments = len(o)
 	w.stepBar.SetValue(float64(k+1) / float64(len(o)))
-	if i == pWelcome {
-		w.info.Hide()
-	} else {
-		w.info.Show()
-	}
+	// A tip belongs to the page it was opened on.
+	w.tips.hide(nil)
 	w.body.Objects = []fyne.CanvasObject{p.obj}
 	w.body.Refresh()
 	w.refreshNav()
@@ -602,15 +671,15 @@ func short(c string) string {
 
 // --- welcome
 
-// statement is one "Before you start" row: an icon, the lead in bold and
-// the sentence after it.
-func statement(lead, text string) fyne.CanvasObject {
-	rt := widget.NewRichText(
-		&widget.TextSegment{Style: widget.RichTextStyleStrong, Text: lead + " "},
-		&widget.TextSegment{Style: widget.RichTextStyleInline, Text: text})
-	rt.Wrapping = fyne.TextWrapWord
-	icon := widget.NewIcon(theme.InfoIcon())
-	return container.NewBorder(nil, nil, container.NewVBox(container.NewPadded(icon)), nil, rt)
+// statements are Welcome's three promises in one row: each its own icon
+// and its lead, with the sentence behind it as a tip, so the page reads
+// at a glance (the user's 2026-10-19 request).
+func (w *Wizard) statements() *fyne.Container {
+	game := w.opt.Cfg.Game.Name
+	return container.NewGridWithColumns(3,
+		newTipItem(w.tips, theme.StorageIcon(), noGameLead, noGameText(game)),
+		newTipItem(w.tips, theme.DownloadIcon(), downloadsLead, downloadsText),
+		newTipItem(w.tips, theme.VisibilityOffIcon(), sendsLead, sendsText))
 }
 
 func (w *Wizard) welcomePage() *page {
@@ -642,11 +711,7 @@ func (w *Wizard) welcomePage() *page {
 	items := []fyne.CanvasObject{
 		heading,
 		para(welcomeIntro(c.Game.Name, c.Targets)),
-		bold(creditsHeading),
-		w.welcomeCredits(),
-		statement(noGameLead, noGameText(c.Game.Name)),
-		statement(downloadsLead, downloadsText),
-		statement(sendsLead, sendsText),
+		w.statements(),
 		w.pathChoice(),
 		container.NewBorder(nil, nil, bold(buildFolder), nil, folderIs),
 		container.NewBorder(nil, nil, nil, change, w.rootLabel),
@@ -661,7 +726,10 @@ func (w *Wizard) welcomePage() *page {
 	}
 	w.showOutClash()
 	w.showFolderFound()
-	return &page{title: titleWelcome, obj: container.NewVScroll(container.NewVBox(items...)), enter: w.showOutClash,
+	scroll := container.NewVScroll(container.NewVBox(items...))
+	// The bubble does not scroll with its item: close it instead.
+	scroll.OnScrolled = func(fyne.Position) { w.tips.hide(nil) }
+	return &page{title: titleWelcome, obj: scroll, enter: w.showOutClash,
 		ready: func() bool { return w.st.Path != "" && w.root != "" && w.out != "" && w.outClash() == "" }}
 }
 
@@ -811,6 +879,9 @@ func (w *Wizard) runChecks() {
 		}
 		// The pane's one visible line ends on the outcome in plain words.
 		if err != nil {
+			// The error's own words stay in the pane's full log; its last
+			// line is the plain one.
+			log("  " + err.Error())
 			w.checksLog.Fail(fmt.Sprintf(checksStopped, lowerFirst(plainPrepare(err))))
 		} else {
 			log(checksDone)
@@ -917,6 +988,9 @@ func (w *Wizard) rowView(r checkRow, nameW float32) fyne.CanvasObject {
 	}
 	if len(r.Raw) > 0 {
 		inner = append(inner, mono(strings.Join(r.Raw, "\n")))
+	}
+	if r.Err != nil {
+		inner = append(inner, w.errorHelp(r.Err, w.logFile()))
 	}
 	indent := theme.IconInlineSize() + 2*theme.Padding()
 	detail := container.New(layout.NewCustomPaddedLayout(0, theme.Padding(), indent, 0), container.NewVBox(inner...))
@@ -1138,39 +1212,59 @@ func (w *Wizard) checkDump() error {
 func (w *Wizard) targetPage() *page {
 	w.targetBox = container.NewVBox()
 	return &page{title: titleTarget, obj: container.NewVScroll(w.targetBox), enter: w.fillTargets,
-		ready: func() bool { return slices.Contains(w.okTargets(), w.st.Target) }}
-}
-
-func (w *Wizard) fillTargets() {
-	ok := w.okTargets()
-	if !slices.Contains(ok, w.st.Target) && len(ok) > 0 {
-		w.st.Target = ok[0]
-	}
-	// One single-choice group per platform, so each can carry its glyph;
-	// choosing one clears the others, as one group would.
-	w.targetRadios = map[string]*widget.RadioGroup{}
-	items := []fyne.CanvasObject{para(targetIntro)}
-	for _, t := range ok {
-		t := t
-		r := widget.NewRadioGroup([]string{model.TargetLabels[t]}, nil)
-		r.Required = true
-		if t == w.st.Target {
-			r.SetSelected(model.TargetLabels[t])
-		}
-		r.OnChanged = func(s string) {
-			if s == "" {
-				return
-			}
-			w.st.Target = t
-			for other, g := range w.targetRadios {
-				if other != t {
-					g.SetSelected("")
+		ready: func() bool {
+			ok := w.okTargets()
+			for _, t := range w.st.Builds() {
+				if !slices.Contains(ok, t) {
+					return false
 				}
 			}
-			w.refreshNav()
+			return true
+		}}
+}
+
+// fillTargets offers the platforms this computer can build: a box each on
+// Fresh, so one run makes several installers, and one choice on Update,
+// whose base is one platform's build. A choice it cannot build is dropped.
+func (w *Wizard) fillTargets() {
+	ok := w.okTargets()
+	if w.st.Update() {
+		if !slices.Contains(ok, w.st.Target) && len(ok) > 0 {
+			w.st.Target = ok[0]
 		}
-		w.targetRadios[t] = r
-		items = append(items, container.NewHBox(widget.NewIcon(platformIcon(t)), r))
+	} else {
+		// The fresh ticks, kept through a visit to Update's one choice.
+		chosen := w.st.Targets
+		if len(chosen) == 0 {
+			chosen = []string{w.st.Target}
+		}
+		var keep []string
+		for _, t := range chosen {
+			if slices.Contains(ok, t) {
+				keep = append(keep, t)
+			}
+		}
+		if len(keep) == 0 && len(ok) > 0 {
+			keep = ok[:1]
+		}
+		w.st.SetTargets(keep)
+	}
+	w.targetRadios = map[string]*widget.RadioGroup{}
+	w.targetChecks = map[string]*widget.Check{}
+	intro := targetIntro
+	if w.st.Update() {
+		intro = targetIntroUpdate
+	}
+	items := []fyne.CanvasObject{para(intro)}
+	for _, t := range ok {
+		t := t
+		var choice fyne.CanvasObject
+		if w.st.Update() {
+			choice = w.targetRadio(t)
+		} else {
+			choice = w.targetCheck(t)
+		}
+		items = append(items, container.NewHBox(widget.NewIcon(platformIcon(t)), choice))
 	}
 	if w.doctor != nil {
 		for _, t := range w.opt.Cfg.Targets {
@@ -1185,6 +1279,54 @@ func (w *Wizard) fillTargets() {
 	}
 	w.targetBox.Objects = items
 	w.targetBox.Refresh()
+}
+
+// targetCheck is a Fresh platform's box. The last ticked one stays: a
+// build makes at least one platform.
+func (w *Wizard) targetCheck(t string) *widget.Check {
+	c := widget.NewCheck(model.TargetLabels[t], nil)
+	c.SetChecked(slices.Contains(w.st.Targets, t))
+	c.OnChanged = func(on bool) {
+		ts := slices.DeleteFunc(slices.Clone(w.st.Targets), func(x string) bool { return x == t })
+		if on {
+			ts = append(ts, t)
+		}
+		if len(ts) == 0 {
+			c.SetChecked(true)
+			return
+		}
+		w.st.SetTargets(ts)
+		w.settings.Targets = hostinfo.Targets(w.st.Targets)
+		w.saveSettings()
+		w.refreshNav()
+	}
+	w.targetChecks[t] = c
+	return c
+}
+
+// targetRadio is an Update platform's choice: one single-choice group
+// per platform, so each can carry its glyph; choosing one clears the
+// others, as one group would.
+func (w *Wizard) targetRadio(t string) *widget.RadioGroup {
+	r := widget.NewRadioGroup([]string{model.TargetLabels[t]}, nil)
+	r.Required = true
+	if t == w.st.Target {
+		r.SetSelected(model.TargetLabels[t])
+	}
+	r.OnChanged = func(s string) {
+		if s == "" {
+			return
+		}
+		w.st.Target = t
+		for other, g := range w.targetRadios {
+			if other != t {
+				g.SetSelected("")
+			}
+		}
+		w.refreshNav()
+	}
+	w.targetRadios[t] = r
+	return r
 }
 
 // --- options
@@ -1226,8 +1368,7 @@ func (w *Wizard) optionControl(o gamecfg.Option) (objs []fyne.CanvasObject, sync
 			return
 		}
 		if err := w.st.Set(o.Key, v); err != nil {
-			w.Logf("option %s: %v", o.Key, err)
-			w.errorBox(err)
+			w.errorBox(fmt.Errorf("option %s: %w", o.Key, err)) // errorBox logs it
 		}
 	}
 	switch o.Kind {
@@ -1377,7 +1518,7 @@ func (w *Wizard) fillOptions() {
 		w.optionsNote.SetText(optionsNoConfig)
 		return
 	}
-	if p := ConfigPath(w.opt.Cfg, w.st.Target); p != "" {
+	if p := ConfigPath(w.opt.Cfg, w.hereTarget()); p != "" {
 		w.optionsNote.SetText(fmt.Sprintf(optionsLater, p))
 		return
 	}
@@ -1482,7 +1623,7 @@ func (w *Wizard) fillSummary() {
 		para(fmt.Sprintf(summaryGame, c.Game.Name, c.Release.Tag)),
 		para(fmt.Sprintf(summaryFolder, w.root)),
 		para(fmt.Sprintf(summaryOut, w.out)),
-		para(fmt.Sprintf(summaryPlatform, model.TargetLabels[w.st.Target])),
+		para(platformLine(w.st.Builds())),
 		w.summaryPlan,
 	}
 	var changed []fyne.CanvasObject
@@ -1497,12 +1638,23 @@ func (w *Wizard) fillSummary() {
 		items = append(items, para(summarySettings),
 			container.New(layout.NewCustomPaddedLayout(0, 0, 2*theme.Padding(), 0), container.NewVBox(changed...)))
 	}
-	items = append(items, para(fmt.Sprintf(summaryData, c.Data[w.st.Target])))
+	if ts := w.st.Builds(); len(ts) > 1 {
+		for _, t := range ts {
+			items = append(items, para(fmt.Sprintf(summaryDataFor, platformName[t], c.Data[t])))
+		}
+	} else {
+		items = append(items, para(fmt.Sprintf(summaryData, c.Data[w.st.Target])))
+	}
 	items = append(items, w.jobsSelect(), under(hintText(jobsHint)))
 	rebuild := widget.NewCheck(summaryRebuild, nil)
 	rebuild.SetChecked(w.st.Clean)
 	rebuild.OnChanged = func(on bool) {
 		w.st.Clean = on
+		if on {
+			w.procMu.Lock()
+			w.cleaned = false
+			w.procMu.Unlock()
+		}
 		w.fillSummary()
 	}
 	items = append(items, rebuild, under(hintText(rebuildHint)))
@@ -1524,6 +1676,23 @@ func (w *Wizard) fillSummary() {
 	w.techBase = strings.TrimRight(b.String(), "\n")
 	w.summaryTech.SetText(w.techBase)
 	w.askPlan()
+}
+
+// platformLine is the Summary's platform line, plural for several.
+func platformLine(ts []string) string {
+	if len(ts) > 1 {
+		return fmt.Sprintf(summaryPlatforms, targetNames(ts))
+	}
+	return fmt.Sprintf(summaryPlatform, targetNames(ts))
+}
+
+// targetNames are the platforms' names for a sentence.
+func targetNames(ts []string) string {
+	names := make([]string, len(ts))
+	for i, t := range ts {
+		names[i] = model.TargetLabels[t]
+	}
+	return strings.Join(names, ", ")
 }
 
 // --- build
@@ -1608,7 +1777,9 @@ func (s *sizeWatch) Resize(size fyne.Size) {
 }
 
 func (s *sizeWatch) CreateRenderer() fyne.WidgetRenderer {
-	return widget.NewSimpleRenderer(&canvas.Rectangle{})
+	// Transparent, not nil: the software painter (the screenshots) cannot
+	// fill a rectangle with no colour.
+	return widget.NewSimpleRenderer(canvas.NewRectangle(color.Transparent))
 }
 
 // partLines is every line part i kept, for its Copy button.
@@ -1680,9 +1851,14 @@ func (w *Wizard) startBuild() {
 	w.cancelBtn.Enable()
 	w.refreshNav()
 	seed := w.seedArg()
-	steps := w.st.Steps(seed, w.out)
+	steps, targets := w.st.StepTargets(seed, w.out)
+	groups := targets
+	if len(w.st.Builds()) < 2 {
+		groups = nil // one platform needs no headings
+	}
+	w.results = nil
 	w.partsMu.Lock()
-	w.parts = runner.NewChecklist(steps)
+	w.parts = runner.NewGroupedChecklist(steps, groups)
 	w.partsMu.Unlock()
 	w.buildParts.reset()
 	w.doneParts.reset()
@@ -1692,12 +1868,12 @@ func (w *Wizard) startBuild() {
 	w.clockRun++
 	go w.tickClock(done, w.clockRun)
 	go func() {
-		err := w.runSteps(seed, steps)
+		results, err := w.runSteps(seed, steps, targets)
 		close(done)
-		w.logBuildEnd(err)
+		w.logBuildEnd(results, err)
 		fyne.Do(func() {
 			w.building = false
-			w.buildErr = err
+			w.buildErr, w.results = err, results
 			w.buildEnd = time.Now()
 			w.bar.StopPulse()
 			w.flushParts()
@@ -1741,61 +1917,162 @@ func (w *Wizard) partsDo(f func(c *runner.Checklist)) {
 	w.armParts()
 }
 
-func (w *Wizard) runSteps(seed string, steps [][]string) error {
+// targetResult is one platform's end: its bundle, or why it has none.
+type targetResult struct {
+	Target, Bundle string
+	Err            error // a *buildFailure, errCanceled or errNotBuilt
+}
+
+// errNotBuilt is a platform the run never reached: an earlier one stopped
+// it in work they share.
+var errNotBuilt = errors.New("not built")
+
+// sharedStages are package's stages whose work every platform shares:
+// one that fails there would fail the same way for the next. A failure
+// before any stage (the bootstrap, the config, seed or content checks,
+// the disk check) is shared too.
+var sharedStages = []string{"", "import", "setup", "generate"}
+
+// buildTree is the build tree a target compiles in, as the CLI's
+// build_target names it: macOS has its own, every other target shares
+// the Windows one (a Steam Deck bundle wraps the Windows build).
+func buildTree(t string) string {
+	if t == "macos" {
+		return "macos"
+	}
+	return "windows"
+}
+
+// runSteps runs the steps (targets names each one's platform, "" for a
+// shared prerequisite) and returns each platform's result and the run's
+// error: the first failure, errCanceled, or nil when every platform made
+// its bundle. A platform that fails in its own packaging, or in a build
+// tree no later platform uses, lets the next one run (the user's
+// 2026-10-19 request: one failure costs one installer, not all). A
+// failure in shared work, or the disk check, stops the rest, which would
+// only fail again; a failed build skips the platforms in the same tree.
+func (w *Wizard) runSteps(seed string, steps [][]string, targets []string) ([]targetResult, error) {
+	var results []targetResult
+	var first error
+	// rest marks the platforms not reached yet with err.
+	rest := func(from int, err error) {
+		for j := from; j < len(targets); j++ {
+			if targets[j] != "" && !slices.ContainsFunc(results, func(r targetResult) bool { return r.Target == targets[j] }) {
+				results = append(results, targetResult{Target: targets[j], Err: err})
+			}
+		}
+	}
+	broken := map[string]bool{} // build trees a platform failed to compile
 	log := w.buildLog.Append
 	if seed != "" {
 		if err := os.WriteFile(seed, []byte(w.st.Seed()), 0o644); err != nil {
-			return &buildFailure{Step: buildPrepare, Cmd: seed, Err: err}
+			f := &buildFailure{Step: buildPrepare, Cmd: seed, Err: err}
+			rest(0, errNotBuilt)
+			return results, f
 		}
 	}
 	slug := w.opt.Cfg.Game.Slug
-	cmd := ""
 	for i, s := range steps {
 		w.procMu.Lock()
 		if w.canceled {
 			w.procMu.Unlock()
 			w.partsDo(func(c *runner.Checklist) { c.Stop(true, time.Now()) })
-			return errCanceled
+			rest(i, errCanceled)
+			return results, errCanceled
 		}
+		// The player's "Rebuild everything" is one clean per session: a
+		// Retry after it, or a platform after the one that cleaned, does
+		// not clean again; one that stopped before the CLI cleaned leaves
+		// it to the next.
+		owe := w.st.Clean && !w.cleaned
 		w.procMu.Unlock()
-		cmd = runner.Display(slug, s)
+		tg := targets[i]
+		if tg != "" && broken[buildTree(tg)] {
+			results = append(results, targetResult{Target: tg, Err: errNotBuilt})
+			continue
+		}
+		if tg != "" {
+			s = withClean(s, owe)
+			if i > 0 {
+				// Each platform's own progress: its stage, its bundle.
+				w.prog = &runner.Progress{}
+			}
+		}
+		cmd := runner.Display(slug, s)
 		log("$ " + cmd)
 		w.partsDo(func(c *runner.Checklist) { c.StartCommand(i, time.Now()); c.Feed("$ "+cmd, time.Now()) })
+		prog := w.prog
 		p, err := w.env.Runner.Start(context.Background(), []string{"CI=1"}, func(line string) {
 			log(line)
-			w.prog.Feed(line)
+			prog.Feed(line)
 			w.partsDo(func(c *runner.Checklist) { c.Feed(line, time.Now()) })
 		}, s...)
+		canceled := false
 		if err != nil {
 			w.partsDo(func(c *runner.Checklist) { c.EndCommand(err, false, time.Now()) })
-			return w.failure(cmd, err)
+		} else {
+			w.procMu.Lock()
+			w.proc = p
+			w.procMu.Unlock()
+			err = p.Wait()
+			w.procMu.Lock()
+			w.proc = nil
+			canceled = w.canceled
+			w.procMu.Unlock()
+			w.partsDo(func(c *runner.Checklist) { c.EndCommand(err, canceled, time.Now()) })
 		}
-		w.procMu.Lock()
-		w.proc = p
-		w.procMu.Unlock()
-		err = p.Wait()
-		w.procMu.Lock()
-		w.proc = nil
-		canceled := w.canceled
-		w.procMu.Unlock()
-		w.partsDo(func(c *runner.Checklist) { c.EndCommand(err, canceled, time.Now()) })
+		if tg != "" && owe && len(prog.Steps) > 0 {
+			// package prints its plan line after the clean.
+			w.procMu.Lock()
+			w.cleaned = true
+			w.procMu.Unlock()
+		}
 		if canceled {
-			return errCanceled
+			rest(i, errCanceled)
+			return results, errCanceled
+		}
+		if err == nil && tg != "" && prog.Bundle == "" {
+			err = errNoBundle
 		}
 		if err != nil {
-			return w.failure(cmd, err)
+			f := w.failure(cmd, err)
+			if first == nil {
+				first = f
+			}
+			if tg == "" {
+				rest(i+1, errNotBuilt)
+				return results, first
+			}
+			results = append(results, targetResult{Target: tg, Err: f})
+			if slices.Contains(sharedStages, prog.Stage) || refusedCode(f.Tail) == runner.WhyDisk {
+				rest(i+1, errNotBuilt)
+				return results, first
+			}
+			if prog.Stage == "build" {
+				broken[buildTree(tg)] = true
+			}
+			continue
+		}
+		if tg != "" {
+			results = append(results, targetResult{Target: tg, Bundle: prog.Bundle})
 		}
 	}
-	if w.prog.Bundle == "" {
-		return w.failure(cmd, errNoBundle)
+	return results, first
+}
+
+// withClean is a package step with --clean when on, without it otherwise.
+func withClean(s []string, on bool) []string {
+	out := slices.DeleteFunc(slices.Clone(s), func(a string) bool { return a == "--clean" })
+	if on {
+		out = append(out, "--clean")
 	}
-	return nil
+	return out
 }
 
 // failure is the build stopping in cmd: where, in the player's words, and
 // the log's last lines.
 func (w *Wizard) failure(cmd string, err error) *buildFailure {
-	return &buildFailure{Step: failedStep(w.prog), Cmd: cmd, Err: err, Tail: w.buildLog.Tail(tailLines)}
+	return &buildFailure{Step: failedStep(w.prog), Cmd: cmd, Err: err, Tail: w.buildLog.Tail(tailLines), Log: w.prog.Log}
 }
 
 // failedStep is where the build stopped: the CLI's FAILED line, else the
@@ -1814,23 +2091,40 @@ func failedStep(p *runner.Progress) string {
 	return buildPrepare
 }
 
-// logBuildEnd is the build's entry in wizard.log: the failure with what
-// the build said, the cancel, or the bundle.
-func (w *Wizard) logBuildEnd(err error) {
-	var f *buildFailure
-	switch {
-	case err == nil:
-		w.Logf("build done: %s", w.prog.Bundle)
-	case errors.Is(err, errCanceled):
+// logBuildEnd is the build's entry in wizard.log: each platform's
+// bundle or failure with what the build said, or the cancel.
+func (w *Wizard) logBuildEnd(results []targetResult, err error) {
+	if errors.Is(err, errCanceled) {
 		w.Logf("build canceled by the player")
-	case errors.As(err, &f):
-		msg := fmt.Sprintf("build stopped at %s: %s: %v", f.Step, f.Cmd, f.Err)
-		if ex := failureExcerpt(f.Tail); len(ex) > 0 {
-			msg += "\n  " + strings.Join(ex, "\n  ")
+	}
+	logged := false
+	for _, r := range results {
+		var f *buildFailure
+		switch {
+		case r.Err == nil:
+			w.Logf("build done (%s): %s", r.Target, r.Bundle)
+		case errors.As(r.Err, &f):
+			msg := fmt.Sprintf("build stopped (%s) at %s: %s: %v", r.Target, f.Step, f.Cmd, f.Err)
+			if ex := failureExcerpt(f.Tail); len(ex) > 0 {
+				msg += "\n  " + strings.Join(ex, "\n  ")
+			}
+			w.Logf("%s", msg)
+			logged = logged || f == err
+		case errors.Is(r.Err, errNotBuilt):
+			w.Logf("build: %s not built", r.Target)
 		}
-		w.Logf("%s", msg)
-	default:
-		w.Logf("build: %v", err)
+	}
+	var f *buildFailure
+	if err != nil && !errors.Is(err, errCanceled) && !logged {
+		if errors.As(err, &f) {
+			msg := fmt.Sprintf("build stopped at %s: %s: %v", f.Step, f.Cmd, f.Err)
+			if ex := failureExcerpt(f.Tail); len(ex) > 0 {
+				msg += "\n  " + strings.Join(ex, "\n  ")
+			}
+			w.Logf("%s", msg)
+		} else {
+			w.Logf("build: %v", err)
+		}
 	}
 }
 
@@ -1844,19 +2138,52 @@ func (w *Wizard) donePage() *page {
 	return &page{title: titleDone, obj: container.NewVScroll(w.doneBox), next: doneNext}
 }
 
+// doneResults are the run's platforms as they ended; a run without
+// results (one set by hand in tests, or before this was kept) is its one
+// platform's progress.
+func (w *Wizard) doneResults() []targetResult {
+	if len(w.results) > 0 {
+		return w.results
+	}
+	if w.buildErr == nil && w.prog != nil && w.prog.Bundle != "" {
+		return []targetResult{{Target: w.st.Target, Bundle: w.prog.Bundle}}
+	}
+	return nil
+}
+
 func (w *Wizard) fillDone() {
 	c := w.opt.Cfg
 	var items []fyne.CanvasObject
 	var f *buildFailure
 	retry := []fyne.CanvasObject{widget.NewButton(retryText, func() { w.show(pBuild) })}
-	switch {
-	case w.buildErr == nil && w.prog.Bundle != "":
-		bundle := w.prog.Bundle
+	results := w.doneResults()
+	var made []targetResult
+	for _, r := range results {
+		if r.Err == nil {
+			made = append(made, r)
+		}
+	}
+	w.pages[pDone].title = titleStopped
+	if w.buildErr == nil && len(made) > 0 {
 		w.pages[pDone].title = titleDone
-		items = append(items, bold(doneReady), mono(bundle), para(applyText(w.st.Target, bundle)))
+	}
+	if len(made) > 0 && w.buildErr != nil {
+		// Some made, some not: what each computer got, then what stopped.
+		items = append(items, bold(doneSome))
+		for _, r := range results {
+			items = append(items, para(platformEnd(r)))
+		}
+	}
+	for _, r := range made {
+		head := doneReady
+		if len(results) > 1 {
+			head = fmt.Sprintf(doneReadyFor, platformName[r.Target])
+		}
+		bundle, target := r.Bundle, r.Target
+		items = append(items, bold(head), mono(bundle), para(applyText(target, bundle)))
 		row := []fyne.CanvasObject{widget.NewButton(openBundleFolder, func() { w.openPath(filepath.Dir(bundle)) })}
-		if w.st.Target == hostinfo.NativeTarget() {
-			row = append(row, widget.NewButton(installNowText, func() { w.installNow(bundle) }))
+		if target == hostinfo.NativeTarget() {
+			row = append(row, widget.NewButton(installNowText, func() { w.installNow(target, bundle) }))
 		}
 		items = append(items, container.NewHBox(row...))
 		if w.st.Update() && isPatch(bundle) {
@@ -1866,17 +2193,22 @@ func (w *Wizard) fillDone() {
 				items = append(items, para(note))
 			}
 		}
-		items = append(items, para(fmt.Sprintf(doneData, c.Data[w.st.Target])),
-			container.NewBorder(nil, nil, nil, w.freeBtn, w.diskLabel))
+		items = append(items, para(fmt.Sprintf(doneData, c.Data[target])))
+	}
+	if len(made) > 0 {
+		items = append(items, container.NewBorder(nil, nil, nil, w.freeBtn, w.diskLabel))
 		w.showDisk()
+	}
+	switch {
+	case w.buildErr == nil && len(made) > 0:
 	case errors.Is(w.buildErr, errCanceled):
-		w.pages[pDone].title = titleStopped
 		items = append(items, bold(doneCanceled))
 		items, _ = w.doneChecklist(items)
 		items = append(items, container.NewHBox(retry...), para(doneRetry))
 	default:
-		w.pages[pDone].title = titleStopped
-		items = append(items, bold(doneFailed))
+		if len(made) == 0 {
+			items = append(items, bold(doneFailed))
+		}
 		if !errors.As(w.buildErr, &f) {
 			f = &buildFailure{Step: failedStep(w.prog), Err: w.buildErr, Tail: w.buildLog.Tail(tailLines)}
 		}
@@ -1894,18 +2226,24 @@ func (w *Wizard) fillDone() {
 			q.SetText(fmt.Sprintf(doneExit, ee.ExitCode()))
 			items = append(items, q)
 		}
+		// The failed platform's log, not the last platform's.
 		logDir := ""
-		if w.prog.Log != "" {
+		if f.Log != "" {
+			logDir = filepath.Dir(f.Log)
+		} else if w.prog.Log != "" {
 			logDir = filepath.Dir(w.prog.Log)
 		} else if w.env != nil {
 			logDir = filepath.Join(w.env.Game, "build-logs")
 		}
-		row := retry
 		if logDir != "" {
 			items = append(items, para(fmt.Sprintf(doneLogs, logDir)))
-			row = append([]fyne.CanvasObject{widget.NewButton(openLogFolder, func() { w.openPath(logDir) })}, retry...)
+		} else {
+			// Stopped before the build had its log: the wizard's own has
+			// the error.
+			logDir = w.logFile()
+			items = append(items, para(errorSeeLog), mono(logDir))
 		}
-		items = append(items, container.NewHBox(row...), para(doneRetry))
+		items = append(items, container.NewHBox(append(w.logButtons(f, logDir), retry...)...), para(doneRetry))
 		if refusedCode(f.Tail) == runner.WhyDisk {
 			// Not a verdict on the build: Retry once space is free.
 			items = append(items, para(doneDisk))
@@ -1920,6 +2258,21 @@ func (w *Wizard) fillDone() {
 	if w.cur == pDone {
 		w.title.SetText(w.pages[pDone].title)
 	}
+}
+
+// platformEnd is one platform's line on the Done page.
+func platformEnd(r targetResult) string {
+	name := platformName[r.Target]
+	var f *buildFailure
+	switch {
+	case r.Err == nil:
+		return fmt.Sprintf(donePlatformMade, name)
+	case errors.As(r.Err, &f):
+		return fmt.Sprintf(donePlatformStop, name, f.Step)
+	case errors.Is(r.Err, errCanceled):
+		return fmt.Sprintf(donePlatformAbort, name)
+	}
+	return fmt.Sprintf(donePlatformNot, name)
 }
 
 // doneChecklist adds the build's parts as they ended, the failed one open
@@ -1963,9 +2316,9 @@ func setupIn(bundle string) (string, error) {
 // installNow installs on this computer by the target's own route: the
 // setup program, the .dmg, or install.sh in a terminal (it may ask about
 // umu there).
-func (w *Wizard) installNow(bundle string) {
+func (w *Wizard) installNow(target, bundle string) {
 	var err error
-	switch w.st.Target {
+	switch target {
 	case "windows":
 		// A patch folder's applier, else the full bundle's setup program.
 		prog := filepath.Join(bundle, "apply.exe")
@@ -1989,7 +2342,7 @@ func (w *Wizard) installNow(bundle string) {
 				line = `cd "$1" && ./install.sh`
 			}
 			if script == "" {
-				err = errors.New("the bundle has no install.sh")
+				err = playerError(installNoScript)
 			} else {
 				err = termlaunch.Open(line, filepath.Dir(script))
 			}

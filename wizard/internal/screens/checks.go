@@ -31,7 +31,8 @@ type checkRow struct {
 	Detail       string   // the plain explanation; "" with no Raw and no Actions hides the toggle
 	Raw          []string // the CLI's own lines behind the row, for whoever helps the player
 	Actions      []runner.Action
-	Open         bool // the detail starts open
+	Open         bool  // the detail starts open
+	Err          error // a failure's own words: the log and Copy error have them, the row does not
 }
 
 func (r checkRow) hasDetail() bool { return r.Detail != "" || len(r.Raw) > 0 || len(r.Actions) > 0 }
@@ -77,7 +78,8 @@ func isMissing(v string) bool {
 // Homebrew is installed, which changes what its fix button does.
 func checkRows(cfg *gamecfg.Config, env *Env, d *runner.Doctor, prepErr error, brew bool) []checkRow {
 	if prepErr != nil {
-		r := checkRow{Name: rowPrepare, Status: statusFailed, State: stateFail, Detail: plainPrepare(prepErr), Open: true}
+		r := checkRow{Name: rowPrepare, Status: statusFailed, State: stateFail, Detail: plainPrepare(prepErr), Open: true,
+			Err: prepErr}
 		var need *NeedError
 		if errors.As(prepErr, &need) && need.Action.Kind != "" {
 			r.Actions = []runner.Action{need.Action}
@@ -338,7 +340,10 @@ func plainPrepare(err error) string {
 	case errors.As(err, &space):
 		return fmt.Sprintf(prepareNoSpace, gib(space.Free), gib(space.Need))
 	}
-	return err.Error()
+	// Any other error is the code's own words ("names no release tag to
+	// clone: run it with --game DIR"), meant for a developer: the row
+	// says where the log is instead.
+	return prepareOther
 }
 
 // gib is a byte count in the GB the Welcome page states: hostinfo.NeedBytes

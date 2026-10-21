@@ -55,5 +55,5 @@ func hexColor(c color.Color) string {
 // browser. The link's own colour, so the two read as one control.
 func externalLinkIcon() fyne.Resource { return tablerIcon("external-link", theme.ColorNameHyperlink) }
 
-// infoIcon is the header's credits button: the button's own text colour.
+// infoIcon is the glyph after each Welcome statement, in the text's colour.
 func infoIcon() fyne.Resource { return tablerIcon("info-circle", theme.ColorNameForeground) }

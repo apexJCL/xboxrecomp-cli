@@ -22,9 +22,17 @@ type buildFailure struct {
 	Step, Cmd string
 	Err       error
 	Tail      []string
+	Log       string // the failed run's full log, "" before it had one
 }
 
-func (f *buildFailure) Error() string { return fmt.Sprintf("%s: %v", f.Cmd, f.Err) }
+// Error leads with the command when there is one: a failure the Done page
+// rebuilds from a bare error has none.
+func (f *buildFailure) Error() string {
+	if f.Cmd == "" {
+		return fmt.Sprint(f.Err)
+	}
+	return fmt.Sprintf("%s: %v", f.Cmd, f.Err)
+}
 func (f *buildFailure) Unwrap() error { return f.Err }
 
 const (

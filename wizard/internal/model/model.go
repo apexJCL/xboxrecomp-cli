@@ -47,9 +47,14 @@ var Tweaks = map[string]Tweak{
 }
 
 type State struct {
-	Cfg    *gamecfg.Config
-	Target string
-	Dump   string
+	Cfg *gamecfg.Config
+	// Target is the platform the commands below are for; Targets are the
+	// ones a Fresh build makes, in the config's order, each in turn
+	// (Target is the first). An Update makes Target alone: its base is
+	// one platform's build.
+	Target  string
+	Targets []string
+	Dump    string
 	// Path is PathFresh or PathUpdate, "" before the player chose; an
 	// unchosen path builds as Fresh.
 	Path string
@@ -89,7 +94,43 @@ func New(cfg *gamecfg.Config, native string) *State {
 	} else if len(cfg.Targets) > 0 {
 		s.Target = cfg.Targets[0]
 	}
+	if s.Target != "" {
+		s.Targets = []string{s.Target}
+	}
 	return s
+}
+
+// SetTargets chooses the platforms: those the config has, in its order,
+// once each; Target becomes the first. None the config has changes
+// nothing.
+func (s *State) SetTargets(ts []string) {
+	var out []string
+	for _, t := range s.Cfg.Targets {
+		if slices.Contains(ts, t) {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return
+	}
+	s.Targets, s.Target = out, out[0]
+}
+
+// Builds are the platforms this run makes, in order: the chosen ones on
+// Fresh, Target alone on Update.
+func (s *State) Builds() []string {
+	// A Target set on its own, not through SetTargets, is a single choice.
+	if s.Update() || len(s.Targets) == 0 || s.Targets[0] != s.Target {
+		return []string{s.Target}
+	}
+	return s.Targets
+}
+
+// For is the state with Target set to t, for that platform's commands.
+func (s *State) For(t string) *State {
+	c := *s
+	c.Target = t
+	return &c
 }
 
 func (s *State) option(key string) (gamecfg.Option, bool) {
@@ -248,11 +289,21 @@ func (s *State) choiceArgs() []string {
 }
 
 // Steps are the CLI commands of the build in order: each passed flag's
-// prerequisites (once each), then the package line. On Update the import
-// runs only when the plan asked for the disc (D6); a kept or cleared
-// tweak has none. seedPath is where the caller writes Seed(), or "" when
-// the seed is empty; out is the output folder.
+// prerequisites (once each), then the package line of each platform the
+// run builds (Builds). On Update the import runs only when the plan asked
+// for the disc (D6); a kept or cleared tweak has none. seedPath is where
+// the caller writes Seed(), or "" when the seed is empty; out is the
+// output folder.
 func (s *State) Steps(seedPath, out string) [][]string {
+	steps, _ := s.StepTargets(seedPath, out)
+	return steps
+}
+
+// StepTargets is Steps with the platform of each step: "" for a
+// prerequisite, which every platform shares. The later platforms reuse
+// what the first made (the import, the generated code, a Windows build
+// tree the Steam Deck's shares), so only the first package line cleans.
+func (s *State) StepTargets(seedPath, out string) ([][]string, []string) {
 	var steps [][]string
 	seen := map[string]bool{}
 	for _, f := range s.Flags() {
@@ -274,5 +325,12 @@ func (s *State) Steps(seedPath, out string) [][]string {
 			steps = append(steps, step)
 		}
 	}
-	return append(steps, s.PackageArgs(seedPath, out))
+	targets := make([]string, len(steps))
+	for i, t := range s.Builds() {
+		c := s.For(t)
+		c.Clean = s.Clean && i == 0
+		steps = append(steps, c.PackageArgs(seedPath, out))
+		targets = append(targets, t)
+	}
+	return steps, targets
 }

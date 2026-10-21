@@ -208,3 +208,29 @@ func TestChecklistLines(t *testing.T) {
 		t.Fatal("the snapshot shares the lines")
 	}
 }
+
+// Two platforms in one run: each package line's stages carry its
+// platform, a failure on the first leaves the second to start, and the
+// shared step has none.
+func TestChecklistGroups(t *testing.T) {
+	c := NewGroupedChecklist([][]string{{"enhance", "hud"}, {"package", "windows"}, {"package", "steamos"}},
+		[]string{"", "windows", "steamos"})
+	c.StartCommand(0, at(0))
+	c.EndCommand(nil, false, at(1))
+	c.StartCommand(1, at(1))
+	c.Feed("plan: build (build-pkg-win), package (windows)", at(2))
+	c.Feed("== [2/2] package ==", at(3))
+	c.EndCommand(errors.New("exit status 1"), false, at(4))
+	c.StartCommand(2, at(4))
+	c.Feed("plan: package (steamos)", at(5))
+	c.Feed("== [9/9] notes ==", at(6))
+	c.EndCommand(nil, false, at(7))
+	want(t, c, "enhance hud", D, "build", D, "package", F, "package", D, "notes", D)
+	var groups []string
+	for _, p := range c.Parts {
+		groups = append(groups, p.Group)
+	}
+	if strings.Join(groups, ",") != ",windows,windows,steamos,steamos" {
+		t.Fatalf("groups %q", groups)
+	}
+}

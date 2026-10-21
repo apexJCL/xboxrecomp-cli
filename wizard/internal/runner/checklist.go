@@ -32,7 +32,10 @@ const maxPartLines = 2000
 // before package (Name is its words, "enhance hud"), a stage of
 // package's plan ("setup"), or PlanPart before the plan is known.
 type Part struct {
-	Name  string
+	Name string
+	// Group is the platform of the command the part belongs to, "" for a
+	// command every platform shares: one run may build several.
+	Group string
 	State PartState
 	Step  string // the running step inside the part (the CLI's label)
 	Pct   int    // the step's percentage, -1 when it printed none
@@ -78,14 +81,23 @@ var (
 // NewChecklist is the checklist of the build's commands: one part per
 // command before package (named by its leading words), and PlanPart for
 // package, whose plan line replaces it with its stages.
-func NewChecklist(steps [][]string) *Checklist {
+func NewChecklist(steps [][]string) *Checklist { return NewGroupedChecklist(steps, nil) }
+
+// NewGroupedChecklist is NewChecklist with each command's group (its
+// platform, StepTargets' second list); its parts, the plan's stages
+// included, carry it.
+func NewGroupedChecklist(steps [][]string, groups []string) *Checklist {
 	c := &Checklist{cur: -1, cmd: -1}
 	for i, s := range steps {
 		name := PlanPart
 		if len(s) == 0 || s[0] != "package" {
 			name = CommandName(s)
 		}
-		c.Parts = append(c.Parts, &Part{Name: name, Pct: -1, cmd: i})
+		g := ""
+		if i < len(groups) {
+			g = groups[i]
+		}
+		c.Parts = append(c.Parts, &Part{Name: name, Group: g, Pct: -1, cmd: i})
 	}
 	return c
 }
@@ -191,7 +203,7 @@ func (c *Checklist) replacePlan(stages []string) {
 	old := c.Parts[c.cur]
 	var parts []*Part
 	for i, s := range stages {
-		p := &Part{Name: s, Pct: -1, cmd: old.cmd}
+		p := &Part{Name: s, Group: old.Group, Pct: -1, cmd: old.cmd}
 		if i == 0 {
 			p.State, p.Start, p.Lines, p.Seq = PartWorking, old.Start, old.Lines, old.Seq
 		}
@@ -226,7 +238,7 @@ func (c *Checklist) stage(name string, now time.Time) (reshaped bool) {
 	}
 	if at < 0 {
 		at = c.cur + 1
-		p := &Part{Name: name, Pct: -1, cmd: c.cmd}
+		p := &Part{Name: name, Group: cur.Group, Pct: -1, cmd: c.cmd}
 		c.Parts = append(c.Parts[:at], append([]*Part{p}, c.Parts[at:]...)...)
 		reshaped = true
 	}

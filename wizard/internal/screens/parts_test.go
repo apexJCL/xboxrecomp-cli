@@ -1,6 +1,7 @@
 package screens
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -152,7 +153,7 @@ func TestPartsView(t *testing.T) {
 		t.Error("a rebuild closed an open log")
 	}
 	// The plan's first stage is the placeholder's output: its log stays open.
-	if !v.rows[1].detail.Visible() || v.open[runner.PlanPart] || !strings.HasSuffix(v.rows[1].log.Text, "package (windows)") {
+	if !v.rows[1].detail.Visible() || v.open["/"+runner.PlanPart] || !strings.HasSuffix(v.rows[1].log.Text, "package (windows)") {
 		t.Errorf("the placeholder's open log: %v %q", v.rows[1].detail.Visible(), v.rows[1].log.Text)
 	}
 	if got := rowTexts(v); got[0] != "Redraw the HUD and menus|done · 1:00|Hide log" || !strings.HasPrefix(got[1], "Get the tools|0:02|") {
@@ -488,11 +489,11 @@ esac
 	if err := w.st.Set("hud_pack", "true"); err != nil {
 		t.Fatal(err)
 	}
-	steps := w.st.Steps("", t.TempDir())
+	steps, targets := w.st.StepTargets("", t.TempDir())
 	w.prog = &runner.Progress{}
 	w.parts = runner.NewChecklist(steps)
 	w.building = true
-	if err := w.runSteps("", steps); err != nil {
+	if _, err := w.runSteps("", steps, targets); err != nil {
 		t.Fatal(err)
 	}
 	w.building, w.buildEnd = false, time.Now()
@@ -512,5 +513,166 @@ esac
 	}
 	if len(w.buildParts.rows) != 5 || w.buildParts.rows[2].nameL.Text != "Get the tools" {
 		t.Errorf("rows %q", rowTexts(w.buildParts))
+	}
+}
+
+// Several platforms in one run: a platform that fails in its own build
+// lets the next one run; one that fails in shared work stops the rest.
+func TestBuildPlatforms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in is a shell script")
+	}
+	isolate(t)
+	dir := t.TempDir()
+	uv := filepath.Join(dir, "uv")
+	script := `#!/bin/sh
+clean=
+for a; do [ "$prev" = package ] && tgt=$a; [ "$a" = --clean ] && clean=+clean; prev=$a; done
+echo "$tgt$clean" >> "$0.ran"
+stage=$(cat "$0.fail-$tgt" 2>/dev/null)
+[ "$stage" = pre ] && { echo "error: no toolkit"; exit 2; }
+echo "plan: setup (toolkit), generate (gen), build (build), package ($tgt)"
+echo "full log: /logs/$tgt/run.log"
+n=0
+for s in setup generate build package; do
+  n=$((n+1)); echo "== [$n/4] $s =="
+  [ "$s" = "$stage" ] && { echo "error: $tgt broke"; exit 2; }
+  [ "$stage" = disk ] && [ "$s" = build ] && { echo "xbr: package: refused: disk"; exit 2; }
+done
+echo "bundle: /out/Game-1-$tgt"
+`
+	if err := os.WriteFile(uv, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fresh := func() *Wizard {
+		a := test.NewApp()
+		t.Cleanup(a.Quit)
+		w := New(a, sampleOptions(t))
+		w.partsAfter = func(time.Duration, func()) {}
+		w.buildLog.after = func(time.Duration, func()) {}
+		return w
+	}
+	runOn := func(w *Wizard, fail map[string]string) (*Wizard, []targetResult, error, string) {
+		os.Remove(uv + ".ran")
+		for _, tg := range []string{"windows", "steamos", "macos"} {
+			os.Remove(uv + ".fail-" + tg)
+		}
+		for tg, st := range fail {
+			if err := os.WriteFile(uv+".fail-"+tg, []byte(st), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		w.env = &Env{Runner: runner.Runner{UV: uv, Game: dir, Slug: "game"}}
+		w.st.SetTargets([]string{"windows", "steamos", "macos"})
+		steps, targets := w.st.StepTargets("", t.TempDir())
+		w.prog = &runner.Progress{}
+		w.parts = runner.NewGroupedChecklist(steps, targets)
+		w.building = true
+		res, err := w.runSteps("", steps, targets)
+		w.building, w.buildEnd = false, time.Now()
+		w.flushParts()
+		ran, _ := os.ReadFile(uv + ".ran")
+		return w, res, err, strings.Join(strings.Fields(string(ran)), " ")
+	}
+	run := func(fail map[string]string) (*Wizard, []targetResult, error, string) {
+		return runOn(fresh(), fail)
+	}
+	ends := func(res []targetResult) []string {
+		var out []string
+		for _, r := range res {
+			out = append(out, platformEnd(r))
+		}
+		return out
+	}
+
+	// The Steam Deck's own build fails: Windows and the Mac still get theirs.
+	w, res, err, ran := run(map[string]string{"steamos": "build"})
+	var f *buildFailure
+	if !errors.As(err, &f) || f.Step != "build" || ran != "windows steamos macos" {
+		t.Fatalf("err %v, ran %q", err, ran)
+	}
+	want := []string{"Windows: ready", "Steam Deck or Linux: stopped at " + "build", "macOS: ready"}
+	if got := ends(res); !slices.Equal(got, want) || res[2].Bundle != "/out/Game-1-macos" {
+		t.Errorf("ends %q, want %q", got, want)
+	}
+	w.buildErr, w.results = err, res
+	w.fillDone()
+	got := shown(w.doneBox)
+	for _, s := range []string{doneSome, "The Windows build is ready.", "/out/Game-1-windows", "/out/Game-1-macos", fmt.Sprintf(doneStoppedAt, "build")} {
+		if !strings.Contains(got, s) {
+			t.Errorf("the Done page lacks %q:\n%s", s, got)
+		}
+	}
+	if w.pages[pDone].title != titleStopped {
+		t.Errorf("title %q", w.pages[pDone].title)
+	}
+
+	// Windows fails making the code every platform shares: the rest stop.
+	_, res, err, ran = run(map[string]string{"windows": "generate"})
+	if err == nil || ran != "windows" {
+		t.Fatalf("err %v, ran %q", err, ran)
+	}
+	want = []string{"Windows: stopped at " + "generate", fmt.Sprintf(donePlatformNot, "Steam Deck or Linux"), fmt.Sprintf(donePlatformNot, "macOS")}
+	if got := ends(res); !slices.Equal(got, want) {
+		t.Errorf("ends %q, want %q", got, want)
+	}
+
+	// Stopped before the plan (the toolkit fetch, a refused config): every
+	// platform would stop there the same way.
+	_, res, err, ran = run(map[string]string{"windows": "pre"})
+	if err == nil || ran != "windows" || len(res) != 3 || !errors.Is(res[2].Err, errNotBuilt) {
+		t.Fatalf("pre-plan: err %v, ran %q, results %v", err, ran, res)
+	}
+
+	// Short of disk space, even mid-run where a compile failure would
+	// skip only its own tree: the rest would only hit the same wall.
+	w, res, err, ran = run(map[string]string{"windows": "disk"})
+	if err == nil || ran != "windows" || len(res) != 3 || !errors.Is(res[1].Err, errNotBuilt) {
+		t.Fatalf("disk: err %v, ran %q, results %v", err, ran, res)
+	}
+
+	// Windows fails to compile: the Steam Deck shares its build tree and
+	// is skipped, the Mac has its own and still builds. Done points at
+	// the failed platform's log, not the Mac's.
+	w, res, err, ran = run(map[string]string{"windows": "build"})
+	if err == nil || ran != "windows macos" {
+		t.Fatalf("same tree: err %v, ran %q", err, ran)
+	}
+	want = []string{"Windows: stopped at " + "build", fmt.Sprintf(donePlatformNot, "Steam Deck or Linux"), "macOS: ready"}
+	if got := ends(res); !slices.Equal(got, want) {
+		t.Errorf("ends %q, want %q", got, want)
+	}
+	w.buildErr, w.results = err, res
+	w.fillDone()
+	if got := shown(w.doneBox); !strings.Contains(got, fmt.Sprintf(doneLogs, "/logs/windows")) {
+		t.Errorf("the Done page lacks the Windows log folder:\n%s", got)
+	}
+
+	// Rebuild everything cleans once a session: the first platform's run
+	// cleans; one that stopped before the CLI cleaned leaves it to the
+	// next run; a Retry after a clean does not clean again.
+	w = fresh()
+	w.st.Clean = true
+	_, _, _, ran = runOn(w, map[string]string{"windows": "pre"})
+	if ran != "windows+clean" || w.cleaned {
+		t.Errorf("stopped before the clean: ran %q, cleaned %v", ran, w.cleaned)
+	}
+	_, _, _, ran = runOn(w, map[string]string{"steamos": "build"})
+	if ran != "windows+clean steamos macos" || !w.cleaned {
+		t.Errorf("first clean: ran %q, cleaned %v", ran, w.cleaned)
+	}
+	if _, _, _, ran = runOn(w, nil); ran != "windows steamos macos" {
+		t.Errorf("retry: ran %q", ran)
+	}
+
+	// All made: Done, a ready line each.
+	w, res, err, _ = run(nil)
+	if err != nil || len(res) != 3 {
+		t.Fatalf("err %v, results %v", err, res)
+	}
+	w.buildErr, w.results = err, res
+	w.fillDone()
+	if got := shown(w.doneBox); strings.Contains(got, doneSome) || !strings.Contains(got, "The macOS build is ready.") || w.pages[pDone].title != titleDone {
+		t.Errorf("Done page:\n%s", got)
 	}
 }

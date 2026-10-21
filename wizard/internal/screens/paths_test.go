@@ -33,6 +33,10 @@ func shown(o fyne.CanvasObject) string {
 			b.WriteString(v.Text + "\n")
 		case *widget.RadioGroup:
 			b.WriteString(strings.Join(v.Options, "\n") + "\n")
+		case *pathTile:
+			b.WriteString(v.label + "\n")
+		case *tipItem:
+			b.WriteString(v.lead + "\n")
 		}
 	})
 	return b.String()
@@ -48,6 +52,20 @@ func radioOf(t *testing.T, o fyne.CanvasObject, label string) *widget.RadioGroup
 	})
 	if r == nil {
 		t.Fatalf("no choice %q in\n%s", label, shown(o))
+	}
+	return r
+}
+
+func tileOf(t *testing.T, w *Wizard, path string) *pathTile {
+	t.Helper()
+	var r *pathTile
+	walkTree(w.pages[pWelcome].obj, func(c fyne.CanvasObject) {
+		if g, ok := c.(*pathTile); ok && g == w.pathTiles[path] {
+			r = g
+		}
+	})
+	if r == nil {
+		t.Fatalf("no tile for %q on Welcome", path)
 	}
 	return r
 }
@@ -140,8 +158,8 @@ func TestPathOrder(t *testing.T) {
 	if w.step.Text() != fmt.Sprintf(stepText, 2, 8) {
 		t.Fatalf("step %q", w.step.Text())
 	}
-	radioOf(t, w.pages[pWelcome].obj, pathUpdate).SetSelected(pathUpdate)
-	if w.st.Path != model.PathUpdate || radioOf(t, w.pages[pWelcome].obj, pathFresh).Selected != "" {
+	test.Tap(tileOf(t, w, model.PathUpdate))
+	if w.st.Path != model.PathUpdate || tileOf(t, w, model.PathFresh).selected {
 		t.Fatalf("path %q", w.st.Path)
 	}
 	want := []int{pWelcome, pChecks, pTarget, pBase, pChanges, pSummary, pBuild, pDone}
@@ -160,7 +178,7 @@ func TestPathOrder(t *testing.T) {
 		t.Error("the path is not saved")
 	}
 	w2 := New(a, sampleOptions(t))
-	if w2.st.Path != model.PathUpdate || radioOf(t, w2.pages[pWelcome].obj, pathUpdate).Selected != pathUpdate {
+	if w2.st.Path != model.PathUpdate || !tileOf(t, w2, model.PathUpdate).selected {
 		t.Error("the saved path is not chosen again")
 	}
 	// The developers' --patch-from is an update.

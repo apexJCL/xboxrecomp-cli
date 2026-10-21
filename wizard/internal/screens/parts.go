@@ -193,7 +193,7 @@ func newPartsView(copyPart func(int) string) *partsView {
 func (v *partsView) show(parts []runner.Part, final bool, now time.Time) {
 	names := make([]string, len(parts))
 	for i, p := range parts {
-		names[i] = p.Name
+		names[i] = partKey(p)
 	}
 	if v.rows == nil || !slices.Equal(names, v.names) {
 		v.carryPlan(names)
@@ -218,15 +218,21 @@ func (v *partsView) reset() {
 // placeholder's place, the placeholder's open log: it is the same output,
 // now under its stage's name.
 func (v *partsView) carryPlan(names []string) {
-	i := slices.Index(v.names, runner.PlanPart)
-	if i < 0 || i >= len(names) || names[i] == runner.PlanPart {
+	i := slices.IndexFunc(v.names, isPlanKey)
+	if i < 0 || i >= len(names) || isPlanKey(names[i]) {
 		return
 	}
-	if v.open[runner.PlanPart] {
+	if v.open[v.names[i]] {
 		v.open[names[i]] = true
 	}
-	delete(v.open, runner.PlanPart)
+	delete(v.open, v.names[i])
 }
+
+// partKey tells a row from another platform's of the same name: one run
+// may build several, each with its own stages.
+func partKey(p runner.Part) string { return p.Group + "/" + p.Name }
+
+func isPlanKey(k string) bool { return strings.HasSuffix(k, "/"+runner.PlanPart) }
 
 func (v *partsView) build(parts []runner.Part) {
 	v.stop()
@@ -238,10 +244,16 @@ func (v *partsView) build(parts []runner.Part) {
 		nameW = max(nameW, widget.NewLabel(partName(p.Name)).MinSize().Width)
 	}
 	var objs []fyne.CanvasObject
+	group := ""
 	for i, p := range parts {
-		r := v.newRow(i, p.Name, nameW)
+		// A platform's parts under its name, when the run builds several.
+		if p.Group != "" && p.Group != group {
+			objs = append(objs, container.NewHBox(widget.NewIcon(platformIcon(p.Group)), bold(platformName[p.Group])))
+		}
+		group = p.Group
+		r := v.newRow(i, p.Name, partKey(p), nameW)
 		v.rows = append(v.rows, r)
-		v.names = append(v.names, p.Name)
+		v.names = append(v.names, partKey(p))
 		objs = append(objs, r.obj)
 	}
 	v.box.Objects = objs
@@ -258,8 +270,8 @@ func (v *partsView) stop() {
 	}
 }
 
-func (v *partsView) newRow(i int, cli string, nameW float32) *partRow {
-	r := &partRow{name: cli, fresh: true, saySeq: -1}
+func (v *partsView) newRow(i int, cli, key string, nameW float32) *partRow {
+	r := &partRow{name: key, fresh: true, saySeq: -1}
 	name := widget.NewLabel(partName(cli))
 	r.nameL = name
 	lead := container.NewHBox(widget.NewIcon(partIcon(cli)),
@@ -293,7 +305,7 @@ func (v *partsView) newRow(i int, cli string, nameW float32) *partRow {
 	r.toggle.OnTapped = func() { r.setOpen(v, !r.detail.Visible()) }
 	tap := newTapRow(line, r.toggle.OnTapped)
 	r.obj = container.NewVBox(container.NewBorder(nil, nil, nil, r.toggle, tap), r.bar, r.detail, widget.NewSeparator())
-	if v.open[cli] {
+	if v.open[key] {
 		r.setOpen(v, true)
 	}
 	return r

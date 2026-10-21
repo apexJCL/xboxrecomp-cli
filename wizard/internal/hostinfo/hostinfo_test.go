@@ -3,6 +3,7 @@ package hostinfo
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -51,15 +52,34 @@ func TestExpandData(t *testing.T) {
 
 func TestSettingsRoundTrip(t *testing.T) {
 	d := filepath.Join(t.TempDir(), "x-wizard")
-	if s := LoadSettings(d); s != (Settings{}) {
+	if s := LoadSettings(d); !reflect.DeepEqual(s, Settings{}) {
 		t.Fatalf("missing file: %+v", s)
 	}
-	want := Settings{Root: "/r", NoUpdateCheck: true, Jobs: 3}
+	want := Settings{Root: "/r", NoUpdateCheck: true, Jobs: 3, Targets: Targets{"windows", "steamos"}}
 	if err := SaveSettings(d, want); err != nil {
 		t.Fatal(err)
 	}
-	if got := LoadSettings(d); got != want {
+	if got := LoadSettings(d); !reflect.DeepEqual(got, want) {
 		t.Fatalf("%+v", got)
+	}
+}
+
+// One platform as a string, the Platform page's single choice before it
+// took several, reads as a list of one; a value of another kind is no
+// choice and keeps the rest.
+func TestSettingsTargets(t *testing.T) {
+	for text, want := range map[string]Targets{
+		`{"targets": "steamos", "jobs": 2}`:            {"steamos"},
+		`{"targets": ["windows", "macos"], "jobs": 2}`: {"windows", "macos"},
+		`{"targets": 7, "jobs": 2}`:                    nil,
+	} {
+		d := t.TempDir()
+		if err := os.WriteFile(filepath.Join(d, "settings.json"), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := LoadSettings(d); !reflect.DeepEqual(got.Targets, want) || got.Jobs != 2 {
+			t.Errorf("%s: %+v", text, got)
+		}
 	}
 }
 

@@ -128,6 +128,26 @@ type Settings struct {
 	// Jobs is the Summary page's build jobs: 0 is Automatic (the CLI
 	// sizes the compile to the free memory), else package's --jobs N.
 	Jobs int `json:"jobs,omitempty"`
+	// Targets are the Platform page's ticked platforms.
+	Targets Targets `json:"targets,omitempty"`
+}
+
+// Targets reads a list, or one platform as a string: the single choice
+// the Platform page had before it took several. Anything else is no
+// choice, not an error that would lose the other settings.
+type Targets []string
+
+func (t *Targets) UnmarshalJSON(b []byte) error {
+	*t = nil
+	var one string
+	var many []string
+	switch {
+	case json.Unmarshal(b, &one) == nil && one != "":
+		*t = Targets{one}
+	case json.Unmarshal(b, &many) == nil:
+		*t = many
+	}
+	return nil
 }
 
 // SettingsDir is <user config dir>/<slug>-wizard: %APPDATA% on Windows,

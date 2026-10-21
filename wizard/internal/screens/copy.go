@@ -51,9 +51,9 @@ const (
 	pickOutTitle    = "Output folder"
 )
 
-// The open-source credits: on Welcome and in the header's info dialog.
+// The open-source credits: the footer's button and its dialog.
 const (
-	creditsHeading = "Made with these open-source projects"
+	creditsButton  = "♥️ Open-source"
 	creditsTitle   = "Open-source credits"
 	creditsNotices = "NOTICES.txt, which came with the wizard, holds each licence's full text."
 	// What the project does for the build, then its licence.
@@ -124,6 +124,18 @@ func noGameText(game string) string {
 const sendsText = "Your game, your files and your settings stay on this computer. " +
 	"Apart from the downloads above, the only other request is a check for a newer wizard, which you can turn off below."
 
+// What went wrong, wherever it went wrong: the player reads a plain
+// sentence and where the log is; the error's own words go to the log
+// and to the Copy error button, for whoever helps them.
+const (
+	errorTitle      = "Something went wrong"
+	errorText       = "The wizard could not finish that step."
+	installNoScript = "The build has no install.sh, so the wizard cannot install it. Build it again, or install it by hand."
+	errorSeeLog     = "The log says what went wrong. Send it, or the error, to whoever helps you:"
+	copyErrorText   = "Copy error"
+	copyLogPathText = "Copy log path"
+)
+
 func newerTitle(tag string) string { return "A newer wizard is available: " + tag }
 
 // Checks.
@@ -135,6 +147,7 @@ const (
 	copyText        = "Copy"
 	checksDone      = "Checks finished."
 	checksStopped   = "The checks stopped: %s"
+	prepareOther    = "Something went wrong while getting ready."
 
 	rowTools      = "Build tools"
 	rowSource     = "Game source"
@@ -190,6 +203,14 @@ const (
 	gitMissingOther = "This system has no git, which the build needs. Install it with: %s"
 )
 
+// platformName is a platform's short name, for the lines that list
+// several: the build's headings, the Summary's and the Done page's.
+var platformName = map[string]string{
+	"windows": "Windows",
+	"macos":   "macOS",
+	"steamos": "Steam Deck or Linux",
+}
+
 // targetRowName names a platform row of the checks table.
 var targetRowName = map[string]string{
 	"windows": "Build for Windows",
@@ -225,10 +246,12 @@ func dumpDialogTitle(game string) string { return "Your copy of " + game }
 
 // Platform.
 const (
-	titleTarget   = "Platform"
-	targetIntro   = "Which computer is the game for? This one is already selected. A build for another computer of yours is copied there and installed the same way."
-	targetBlocked = "%s: not on this computer yet. The Checks page (step 2) says what it needs."
-	targetDeck    = "On a Steam Deck the build is slow and needs a lot of memory; a PC or Mac is faster."
+	titleTarget = "Platform"
+	targetIntro = "Which computers is the game for? This one is already ticked. Tick more to make an installer for each in one run: the shared work is done once. A build for another computer of yours is copied there and installed the same way."
+	// An update patches one platform's build.
+	targetIntroUpdate = "Which computer is the update for? An update is for one computer at a time: it changes that computer's build."
+	targetBlocked     = "%s: not on this computer yet. The Checks page (step 2) says what it needs."
+	targetDeck        = "On a Steam Deck the build is slow and needs a lot of memory; a PC or Mac is faster."
 )
 
 // Options.
@@ -250,6 +273,8 @@ const (
 	summaryFolder    = "Build folder: %s"
 	summaryOut       = "Output folder: %s"
 	summaryPlatform  = "Platform: %s"
+	summaryPlatforms = "Platforms: %s"
+	summaryDataFor   = "%s: saves and settings go in %s."
 	summaryShipped   = "Settings: as shipped"
 	summarySettings  = "Settings:"
 	summarySetting   = "%s: %s"
@@ -259,6 +284,7 @@ const (
 	techSeed         = "config.toml for a first install:"
 	techNoSeed       = "Every option at its default: no config.toml is written."
 	techPlan         = "The plan, from package --plan --json:"
+	summaryDiskAll   = "There is not enough free disk space for all these platforms in one run: they need %s in %s and %s is free. Untick a platform or free some space: the platforms after the space runs out stop otherwise."
 	summaryDisk      = "There is not enough free disk space for this build (%s). Free some space before you build: the build stops at the start otherwise."
 	summaryJobs      = "Build jobs"
 	jobsAuto         = "Automatic"
@@ -318,14 +344,21 @@ const (
 	installNowText   = "Install now"
 	doneData         = "Saves and settings live in %s on the computer you install it on."
 	doneFailed       = "The build did not finish."
-	doneStoppedAt    = "It stopped at: %s."
-	doneSaid         = "What the build said:"
-	doneExit         = "(exit status %d)"
-	doneLogs         = "The full logs are in %s."
-	doneCanceled     = "You stopped the build."
-	openLogFolder    = "Open the log folder"
-	doneRetry        = "Retry runs the build again and reuses most of what already finished."
-	doneDisk         = "There was not enough free disk space for the build. The message above says how much it needs and where: free that much, then press Retry."
+	// One run, several computers: what each one got.
+	doneReadyFor      = "The %s build is ready."
+	doneSome          = "Some builds are ready; the others stopped. Each computer's end:"
+	donePlatformMade  = "%s: ready"
+	donePlatformStop  = "%s: stopped at %s"
+	donePlatformNot   = "%s: not built. It shares the work that failed, so it would fail the same way."
+	donePlatformAbort = "%s: not built. You stopped the build."
+	doneStoppedAt     = "It stopped at: %s."
+	doneSaid          = "What the build said:"
+	doneExit          = "(exit status %d)"
+	doneLogs          = "The full logs are in %s."
+	doneCanceled      = "You stopped the build."
+	openLogFolder     = "Open the log folder"
+	doneRetry         = "Retry runs the build again and reuses most of what already finished."
+	doneDisk          = "There was not enough free disk space for the build. The message above says how much it needs and where: free that much, then press Retry."
 )
 
 // The notice on the Done page (notice.go): the lead and the tail in bold,
@@ -371,6 +404,7 @@ const (
 	pathFreshHint  = "A complete installer: for a first install, a new device, or to start over. Your saves and settings on the device are kept."
 	pathUpdate     = "Update build"
 	pathUpdateHint = "A small update for a device that already has a build made with this wizard. Only what changed is copied."
+	pathPickHint   = "Pick one to see what it makes."
 
 	titleHas        = "What does the device have now?"
 	hasIntro        = "An update only works on the build it was made for. Pick the one %s has now."
@@ -414,6 +448,7 @@ const (
 	rebuildHint     = "Slower. Only for when a build misbehaves: your game files and the translated code stay."
 	summaryUpdates  = "Updates: %s (update ID %s)"
 	summaryFresh    = "Makes: the full installer%s"
+	summaryFreshFor = "Makes: the full installer for %s%s"
 	summaryModData  = "Your game's data is modded (%s); its code is the one this port was made from."
 	modCodeTitle    = "Modded game code"
 	modCodeText     = "Your game's code differs from the one this port was made from (%s). Modded code is not supported: the build may crash."

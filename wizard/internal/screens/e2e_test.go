@@ -214,13 +214,14 @@ func e2eBuild(t *testing.T, w *Wizard, name, base string) e2eRun {
 	r := e2eRun{Name: name, Path: w.st.Path, Base: base, Summary: shown(w.pages[pSummary].obj)}
 	w.prog = &runner.Progress{}
 	seed := w.seedArg()
-	r.Steps = w.st.Steps(seed, w.out)
+	var targets []string
+	r.Steps, targets = w.st.StepTargets(seed, w.out)
 	w.partsMu.Lock()
-	w.parts = runner.NewChecklist(r.Steps)
+	w.parts = runner.NewGroupedChecklist(r.Steps, targets)
 	w.partsMu.Unlock()
 	t.Logf("%s: %q", name, r.Steps)
-	err := w.runSteps(seed, r.Steps)
-	w.buildErr = err
+	results, err := w.runSteps(seed, r.Steps, targets)
+	w.buildErr, w.results = err, results
 	w.fillDone()
 	r.Done, r.Bundle = shown(w.doneBox), w.prog.Bundle
 	if err != nil {

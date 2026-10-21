@@ -31,15 +31,21 @@ The wizard has two paths, chosen on Welcome and kept for the next run:
 "Step n of m" counts the chosen path's pages. The developers'
 `--patch-from` starts on Update with that build chosen.
 
-1. **Welcome**: what the wizard does and what it never does (no game
-   inside, downloads by checksum, sends nothing), the path, the build
-   folder and
-   the output folder (both changeable and remembered), and a box for the
-   newer-release check. The check goes
+1. **Welcome**: what the wizard does and what it never does, the path,
+   the build folder and the output folder (both changeable and
+   remembered), and a box for the newer-release check. What it never does
+   is one row of three short statements (no game inside, downloads only
+   what it needs, sends nothing), each with its own icon and an info
+   glyph; the sentence behind each opens in a tip when the pointer is
+   over it or the statement is tapped (a second tap closes a tapped one,
+   for a touch screen such as the Steam Deck). The path is two large
+   tiles in a row, an icon over each label: they act as radios (one
+   chosen at a time, framed in the theme's primary colour; none until the
+   player picks or the settings remember one), and the line under them
+   says what the chosen one makes. The check goes
    out only when the player leaves this page with the box ticked, so
    nothing is sent before they have seen it; a newer release shows as a
-   note then. Right under the intro, "Made with these open-source
-   projects" lists the credits (see Credits below). A build folder
+   note then. A build folder
    that already holds the wizard's clone gets a line under it, from the
    clone's mark alone ("Build folder found: BLiNX 2 v1 (1a2b3c4). This
    release will reuse it."); whether the clone is clean is checked at
@@ -53,7 +59,11 @@ The wizard has two paths, chosen on Welcome and kept for the next run:
    files are the next page's, and the host's own lines (host, gen/, next)
    are information; both appear only in the raw log. The host's limits
    reach the page as each target's blockers, and a failed setup (no git,
-   too little disk) as one "Getting ready" row. Each row leads with an
+   too little disk) as one "Getting ready" row. A failure the wizard has
+   no plain words for says "Something went wrong while getting ready."
+   and where `wizard.log` is, with Copy error, Copy log path and Open the
+   log folder; the error's own words go to the log, never the row. Each
+   row leads with an
    icon for what it is about: a platform row has a small original glyph
    for its kind of computer (a window, a laptop, a handheld; a monitor for
    a target the wizard does not know), not a vendor logo. The state's icon
@@ -66,10 +76,27 @@ The wizard has two paths, chosen on Welcome and kept for the next run:
    checks the free space for the build in the build folder and for the
    bundle (the game files and about 1 GB) in the output folder, as one
    sum when both are on one disk.
-4. **Target**: one choice per platform, each with its glyph, for the
+4. **Target**: one row per platform, each with its glyph, for the
    targets `[wizard] targets` offers that this host can
    package (Windows and macOS natively; SteamOS on Linux, a Steam Deck
-   included).
+   included). On a fresh build each is a checkbox, this host's ticked
+   first, and the last ticked one stays ticked: one run makes an
+   installer for each. The prerequisites run once, then one `package`
+   per platform in the config's order; the CLI reuses the import, the
+   generated code and (Windows and SteamOS) the compile tree.
+   "Rebuild everything" cleans once a session: `--clean` goes on the
+   first `package` run, and once a run has printed its `plan:` line (the
+   CLI cleans before it) no later platform and no Retry cleans again; a
+   run that stopped before that leaves the clean to the next. A platform
+   that fails in its package stage lets the next run. One that fails to
+   compile skips the later platforms on the same compile tree (Windows
+   and SteamOS share one, macOS has its own), which would fail the same
+   way, and lets the others run. A failure in a prerequisite, before the
+   plan line (the toolkit fetch, a refused config or seed), in import,
+   setup or generate, or a `refused: disk` stops the rest. On
+   an update it is one choice: a patch is from one platform's bundle.
+   The ticked platforms are saved as `targets` (a list; a single string
+   reads as one).
 5. **Options**: one control per `[[wizard.option]]`: a checkbox for a
    bool, radio buttons for a choice of up to three values and a drop-down
    for more, a slider for a range with its value and label beside it,
@@ -121,7 +148,15 @@ The wizard has two paths, chosen on Welcome and kept for the next run:
    device a static note says the installer will tell.
 6. **Summary**: the game, the two folders, target and changed options,
    then from `package --plan --json`: on Fresh "Makes: the full
-   installer" with its size; on Update the build it updates (version
+   installer" with its size (a line and a plan per platform when
+   several are ticked, and a data folder line each). With several
+   ticked, the plans' `disk` lists are summed per volume as one run
+   writes them: the import, setup, generate and HUD stages once (the
+   largest), a compile per tree, and staging and a bundle per platform;
+   when that is more than is free, a line says to untick a platform or
+   free space. A plan without a `disk` list (an older CLI) adds nothing,
+   so the sum can be low, and each run's own disk check still refuses
+   before it writes. On Update the build it updates (version
    and update ID), what it keeps and changes, the update's size, and how many game
    files it removes when it removes any. When the plan's output is `none` (the update cannot be made), the
    Summary says why, Build waits, and "Make a Fresh build instead" is
@@ -129,7 +164,8 @@ The wizard has two paths, chosen on Welcome and kept for the next run:
    again. Under "Technical details", the wizard, release, CLI and
    toolkit versions, every command the build will run, and the plan's
    stages.
-7. **Build**: a checklist of the build's parts, in order. The wizard
+7. **Build**: a checklist of the build's parts, in order, under a
+   heading per platform when several are ticked. The wizard
    knows its own commands (each prerequisite, such as `import` and
    `enhance hud`, then `package`); `package`'s row reads "Build the
    game" until its `plan:` line names the stages, which then take its
@@ -154,7 +190,7 @@ The wizard has two paths, chosen on Welcome and kept for the next run:
    finished: the dump, the tools, a finished `gen/` and every compiled
    object; the HUD pack and the staging are redone, and an interrupted
    recomp starts over.
-8. **Done**: the bundle, "Open the folder", and the target's install step
+8. **Done**: per platform made, the bundle, "Open the folder", and its install step
    ("Install now" on the host's own target: the Windows setup program,
    the `.dmg`, or `install.sh` in a terminal). An update (a bundle named
    `-patch-from-`) gets its own step: `apply.exe` in the folder on
@@ -164,11 +200,14 @@ The wizard has two paths, chosen on Welcome and kept for the next run:
    build folder's size and "Free space", which asks first and then runs
    `clean --bundles --build`: the compiled program and the kept bundles
    go, the game files, the translated code and the output folder stay,
-   and the next build compiles again. When the build fails: the
+   and the next build compiles again. With several platforms and a
+   failure, each platform's end comes first (ready, stopped at a step,
+   or not built), then the made ones, then the failure. When the build fails: the
    part that stopped, the checklist as it ended with the failed row open
    on what it said (its last lines, from the Python traceback when there
    is one, in a box that can be selected and copied), the exit status,
-   where the full logs are, and Retry ("Retry runs the build again and
+   where the full logs are with Copy error, Copy log path and Open the
+   log folder, and Retry ("Retry runs the build again and
    reuses most of what already finished."); the same goes to `wizard.log` in
    the settings folder. When `package` refused an update the plan
    expected (its `refused: CODE` line: the strict `--patch-from`, or a
@@ -252,7 +291,14 @@ in its controller settings.
 `wizard.log` is in the wizard's settings folder (`%APPDATA%\<game>-wizard`,
 `~/Library/Application Support/<game>-wizard` or `~/.config/<game>-wizard`),
 and the build's own logs are in `src/build-logs/` under the build folder;
-a failed build names the log, with a button to open it. Report a game
+a failed build names the log, with buttons to copy the error and the
+log's path and to open the log folder. Any other failure (a folder that
+would not open, a setting that would not save) opens a box that says
+something went wrong and where `wizard.log` is, with the same buttons; the
+error's own words go to the log and to Copy error. An error the wizard
+wrote for the player (a dump folder with no `default.xbe`, too little
+space for the bundle, an output folder inside the dump) shows its own
+sentence in the box instead, over the same log path and buttons. Report a game
 problem on the game's repository, and a wizard or command line problem at
 [apexJCL/xboxrecomp-cli/issues](https://github.com/apexJCL/xboxrecomp-cli/issues).
 Attach the log, never the bundle or your game files. The messages and
@@ -261,17 +307,13 @@ their fixes: [troubleshooting.md](troubleshooting.md).
 ## Credits
 
 The wizard credits the open-source projects it and the build rely on.
-On Welcome the list sits right under the intro, so everyone is credited
-before the player does anything: one line per project, its name as a
-link with its role and licence dimmed beside it (cut short in a narrow
-window), in a box about eight rows tall that scrolls. On every other page
-an info button (Tabler's `info-circle`, low importance) at the right end
-of the header line, after the step counter, opens the same list as
-"Open-source credits": two lines per project there, the name as a link
-over its role and licence, then "NOTICES.txt, which came with the wizard,
-holds each licence's full text." The dialog is 560 by 520, smaller in a
-smaller window, and follows a resize. Welcome hides the button, since the
-list is already on the page. Each link opens in the browser.
+On every page, centred in the footer between Back and Next, an outline
+button (no fill, a pink outline on light and dark) reads "♥️ Open-source"
+and opens the list as a modal dialog, "Open-source credits":
+two lines per project, the name as a link over its role and licence, then
+"NOTICES.txt, which came with the wizard, holds each licence's full
+text." The dialog is 560 by 520, smaller in a smaller window, and follows
+a resize. Each link opens in the browser.
 
 The CLI owns the list and its order (`credits.py`), and `wizard config`
 puts it in the config as `credits`. My repos come first, then the
@@ -517,7 +559,8 @@ A moved player pin reaches players with the next wizard build.
 ## The gates
 
 `<game> wizard check [--tag TAG | --dev] [--no-build]` runs
-`wizard/check.sh` on the pinned Go (`gofmt -l` empty, `go vet`, `go test`,
+`wizard/check.sh` on the pinned Go (`gofmt -l` empty, `go vet`, `go vet
+-tags e2e` on the end-to-end test so it keeps compiling, `go test`,
 `go test -race` where the host supports it, `staticcheck` when installed),
 then builds every asset twice and compares
 the sha256s of the archives and the binaries. The second build shares no

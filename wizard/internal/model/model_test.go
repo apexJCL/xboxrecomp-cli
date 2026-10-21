@@ -175,3 +175,39 @@ func TestUpdateTweaks(t *testing.T) {
 		})
 	}
 }
+
+// Several platforms on Fresh: the config's order, the shared steps once,
+// one package line each, and only the first cleans. An Update makes one.
+func TestTargets(t *testing.T) {
+	s := New(sample(t), "macos")
+	s.Dump, s.Clean = "/d/b2.iso", true
+	if err := s.Set("hud_pack", "true"); err != nil {
+		t.Fatal(err)
+	}
+	s.SetTargets([]string{"steamos", "nope", "windows", "steamos"})
+	if !reflect.DeepEqual(s.Targets, []string{"windows", "steamos"}) || s.Target != "windows" {
+		t.Fatalf("targets %q, target %q", s.Targets, s.Target)
+	}
+	steps, targets := s.StepTargets("", "/o")
+	var got []string
+	for _, st := range steps {
+		got = append(got, strings.Join(st, " "))
+	}
+	want := []string{
+		"import /d/b2.iso",
+		"enhance hud",
+		"package windows --dump /d/b2.iso --hud-pack --out /o --clean --full --plain",
+		"package steamos --dump /d/b2.iso --hud-pack --out /o --full --plain",
+	}
+	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(targets, []string{"", "", "windows", "steamos"}) {
+		t.Fatalf("steps %q for %q", got, targets)
+	}
+	s.SetTargets(nil)
+	if len(s.Targets) != 2 {
+		t.Errorf("no platform cleared the choice: %q", s.Targets)
+	}
+	s.Path = PathUpdate
+	if b := s.Builds(); !reflect.DeepEqual(b, []string{"windows"}) {
+		t.Errorf("an update builds %q", b)
+	}
+}

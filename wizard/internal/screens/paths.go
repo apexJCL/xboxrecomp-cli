@@ -49,40 +49,51 @@ func (w *Wizard) move(d int) {
 
 // --- the choice on Welcome
 
-// pathChoice is the Fresh and Update radios, each with its sentence: one
-// group per path so each sentence sits under its own choice.
+// pathChoice is Fresh and Update as two large tiles in a row, an icon
+// over each label, and under both the chosen one's sentence (the user,
+// 2026-10-19). They act as radios: one is chosen at a time, and none
+// until the player picks or the saved settings say.
 func (w *Wizard) pathChoice() fyne.CanvasObject {
-	w.pathRadios = map[string]*widget.RadioGroup{}
-	box := container.NewVBox(bold(pathHeading))
-	for _, c := range []struct{ path, label, hint string }{
-		{model.PathFresh, pathFresh, pathFreshHint},
-		{model.PathUpdate, pathUpdate, pathUpdateHint},
+	w.pathTiles = map[string]*pathTile{}
+	row := container.NewGridWithColumns(2)
+	// A gap past the grid's own padding, so the chosen tile's frame does
+	// not touch its neighbour.
+	gap := theme.Padding()
+	for i, c := range []struct {
+		path, label string
+		icon        fyne.Resource
+	}{
+		{model.PathFresh, pathFresh, theme.FileApplicationIcon()},
+		{model.PathUpdate, pathUpdate, theme.ViewRefreshIcon()},
 	} {
-		r := widget.NewRadioGroup([]string{c.label}, nil)
-		r.Required = true
-		r.OnChanged = func(s string) {
-			if s != "" {
-				w.setPath(c.path)
-			}
+		t := newPathTile(c.icon, c.label, func() { w.setPath(c.path) })
+		w.pathTiles[c.path] = t
+		left, right := float32(0), gap
+		if i == 1 {
+			left, right = gap, 0
 		}
-		w.pathRadios[c.path] = r
-		box.Add(r)
-		box.Add(under(hintText(c.hint)))
+		row.Add(container.New(layout.NewCustomPaddedLayout(0, 0, left, right), t))
 	}
+	w.pathHelp = hintText("")
 	w.syncPath()
-	return box
+	return container.NewVBox(bold(pathHeading), row, w.pathHelp)
 }
 
-// syncPath shows the state's path on the radios.
+// pathHints are the sentences under the tiles, by path.
+var pathHints = map[string]string{model.PathFresh: pathFreshHint, model.PathUpdate: pathUpdateHint}
+
+// syncPath shows the state's path on the tiles and its sentence under
+// them.
 func (w *Wizard) syncPath() {
-	for p, r := range w.pathRadios {
-		sel := ""
-		if p == w.st.Path {
-			sel = r.Options[0]
+	for p, t := range w.pathTiles {
+		t.setSelected(p == w.st.Path)
+	}
+	if w.pathHelp != nil {
+		help, ok := pathHints[w.st.Path]
+		if !ok {
+			help = pathPickHint
 		}
-		if r.Selected != sel {
-			r.SetSelected(sel)
-		}
+		w.pathHelp.SetText(help)
 	}
 }
 
@@ -552,7 +563,7 @@ func (w *Wizard) fillChanges() {
 		}
 		items = append(items, clear, under(hintText(tweakTexts["hud_pack"].clear)))
 	}
-	if p := ConfigPath(w.opt.Cfg, w.st.Target); p != "" && w.opt.Cfg.ReadsConfig() {
+	if p := ConfigPath(w.opt.Cfg, w.hereTarget()); p != "" && w.opt.Cfg.ReadsConfig() {
 		items = append(items, para(fmt.Sprintf(changesConfig, p)))
 		if note := w.overrideNote(w.changesPlan); note != "" {
 			items = append(items, para(note))
@@ -580,7 +591,7 @@ func (w *Wizard) overrideNote(p *runner.Plan) string {
 			return ""
 		}
 		for _, o := range p.ConfigOverrides {
-			return fmt.Sprintf(changesOverride, ConfigPath(w.opt.Cfg, w.st.Target), o.Key, o.Value)
+			return fmt.Sprintf(changesOverride, ConfigPath(w.opt.Cfg, w.hereTarget()), o.Key, o.Value)
 		}
 		return ""
 	}
@@ -703,5 +714,14 @@ func refusedCode(tail []string) string {
 	return ""
 }
 
-// native says the target is this computer's own platform.
-func (w *Wizard) native() bool { return w.st.Target == hostinfo.NativeTarget() }
+// native says this computer's own platform is among those built.
+func (w *Wizard) native() bool { return slices.Contains(w.st.Builds(), hostinfo.NativeTarget()) }
+
+// hereTarget is the platform the "this computer" notes are about: this
+// computer's own when it is built, else the first one built.
+func (w *Wizard) hereTarget() string {
+	if w.native() {
+		return hostinfo.NativeTarget()
+	}
+	return w.st.Target
+}

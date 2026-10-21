@@ -427,7 +427,7 @@ func TestPlainBlocker(t *testing.T) {
 	if got := plainPrepare(&OverlapError{Root: "/a", Data: "/a/b"}); !strings.Contains(got, "/a/b") {
 		t.Errorf("overlap: %q", got)
 	}
-	if got := plainPrepare(errors.New("as it is")); got != "as it is" {
+	if got := plainPrepare(errors.New("as it is")); got != prepareOther {
 		t.Errorf("other: %q", got)
 	}
 }
@@ -739,6 +739,7 @@ func TestScreenshots(t *testing.T) {
 	c := software.NewCanvas()
 	c.SetContent(w.win.Content())
 	c.Resize(fyne.NewSize(780, 580))
+	w.win.Resize(fyne.NewSize(780, 580))
 	n := 0
 	shot := func(name string) {
 		t.Helper()
@@ -777,6 +778,31 @@ func TestScreenshots(t *testing.T) {
 
 	w.render(pWelcome)
 	shot("welcome")
+	// A dialog is the window's overlay: draw it over the page too.
+	overlayShot := func(name string) {
+		t.Helper()
+		o := w.win.Canvas().Overlays().Top()
+		if o == nil {
+			t.Fatalf("%s: no dialog", name)
+		}
+		c.Overlays().Add(o)
+		shot(name)
+		c.Overlays().Remove(o)
+		o.Hide()
+	}
+	var tips []*tipItem
+	walkTree(w.pages[pWelcome].obj, func(o fyne.CanvasObject) {
+		if v, ok := o.(*tipItem); ok {
+			tips = append(tips, v)
+		}
+	})
+	test.Tap(tips[1])
+	shot("welcome-tip")
+	w.tips.hide(nil)
+	test.Tap(w.pathTiles[model.PathFresh])
+	shot("welcome-fresh")
+	test.Tap(w.credits)
+	overlayShot("credits")
 
 	w.checking = true
 	w.setRows(checkRows(opt.Cfg, nil, nil, nil, false))
@@ -823,6 +849,17 @@ func TestScreenshots(t *testing.T) {
 	w.refreshNav()
 	w.render(pChecks)
 	shot("checks-failed")
+
+	// An error with no plain words: the row points at the log.
+	other := errors.New("this developer build names no release tag to clone: run it with --game DIR")
+	logLines(w.checksLog, prepLog[:4]...)
+	w.checksLog.Fail(fmt.Sprintf(checksStopped, lowerFirst(plainPrepare(other))))
+	w.checksLog.flush()
+	w.showChecks(other)
+	w.render(pChecks)
+	shot("checks-failed-other")
+	w.errorBox(errors.New("exec: xdg-open: not found"))
+	overlayShot("error-box")
 
 	w.doctor = ready
 	w.showChecks(nil)
@@ -915,6 +952,61 @@ func TestScreenshots(t *testing.T) {
 	w.render(pChecks)
 	test.Tap(w.rowParts[rowTools].line)
 	shot("checks-row-open")
+
+	// Several platforms in one run: ticked on the Platform page, listed
+	// on the Summary, a heading each while building, an end each on Done.
+	w.fillTargets()
+	ok := w.okTargets()
+	w.targetChecks[ok[len(ok)-1]].SetChecked(true)
+	w.render(pTarget)
+	shot("platform-multi")
+	ts := w.st.Builds()
+	w.fillSummary()
+	w.showPlans([]*runner.Plan{{FullSize: 1_400_000_000}, {FullSize: 1_100_000_000}})
+	w.render(pSummary)
+	shot("summary-multi")
+
+	w.building = true
+	w.cancelBtn.Enable()
+	w.bar.SetValue(0.7)
+	steps, targets := w.st.StepTargets("", w.out)
+	w.parts = runner.NewGroupedChecklist(steps, targets)
+	var lines []string
+	for i, tg := range targets {
+		if tg == "" {
+			lines = append(lines, "$ "+runner.Display(opt.Cfg.Game.Slug, steps[i]), "  ✓ done  0:40", "")
+			continue
+		}
+		lines = append(lines, "$ "+runner.Display(opt.Cfg.Game.Slug, steps[i]),
+			"plan: setup (toolkit), generate (gen/), build (build), package ("+tg+")",
+			"== [1/4] setup ==", "  ✓ setup: toolkit  0:02", "== [2/4] generate ==", "  ✓ disasm  1:10",
+			"== [3/4] build ==", "  compile ... 2:00, ~3 min left | [400/1200]")
+		if tg == ts[0] {
+			lines = append(lines, "== [4/4] package ==", "bundle: "+filepath.Join(src, "dist", "Game-1.0-"+tg), "")
+		}
+	}
+	feedParts(w.parts, at, lines, 900)
+	w.flushParts()
+	w.overall.SetText(overallText(w.parts.Snapshot(1), 0.7, 900*time.Second))
+	w.render(pBuild)
+	shot("building-multi")
+	w.building = false
+
+	w.results = []targetResult{{Target: ts[0], Bundle: filepath.Join(src, "dist", "Game-1.0-"+ts[0])}}
+	f := &buildFailure{Step: "build", Cmd: "./" + opt.Cfg.Game.Slug + " package " + ts[1], Err: errors.New("exit status 1"),
+		Tail: []string{"== [3/4] build ==", "error: the disk is full"}}
+	w.results = append(w.results, targetResult{Target: ts[1], Err: f})
+	w.buildErr = f
+	w.prog = &runner.Progress{Stage: "build", Log: filepath.Join(src, "build-logs", "package-"+ts[1]+".log")}
+	w.fillDone()
+	w.render(pDone)
+	shot("done-multi-partial")
+	w.results = nil
+
+	w.st.Path = model.PathUpdate
+	w.fillTargets()
+	w.render(pTarget)
+	shot("platform-update")
 }
 
 // The state colours read as text on both backgrounds (WCAG AA, 4.5:1),
@@ -988,15 +1080,73 @@ func TestPlatformIcons(t *testing.T) {
 	w.st.Target = "steamos"
 	w.fillTargets()
 	ok := w.okTargets()
-	if len(w.targetRadios) != len(ok) {
-		t.Fatalf("%d choices for %d buildable platforms", len(w.targetRadios), len(ok))
+	if len(w.targetChecks) != len(ok) || len(w.targetRadios) != 0 {
+		t.Fatalf("%d boxes, %d radios for %d buildable platforms", len(w.targetChecks), len(w.targetRadios), len(ok))
 	}
 	w.doctor = loadDoctor(t, "doctor.json")
 	w.doctor.Blockers = map[string][]string{"windows": nil, "steamos": nil, "macos": nil}
+	w.st.SetTargets([]string{"steamos"})
 	w.fillTargets()
+	// A fresh build: tick more, each is built; the last one stays ticked.
+	w.targetChecks["windows"].SetChecked(true)
+	if !slices.Equal(w.st.Builds(), []string{"windows", "steamos"}) || w.st.Target != "windows" {
+		t.Errorf("builds %q, target %q", w.st.Builds(), w.st.Target)
+	}
+	if !slices.Equal([]string(w.settings.Targets), []string{"windows", "steamos"}) {
+		t.Errorf("saved targets %q", w.settings.Targets)
+	}
+	w.targetChecks["windows"].SetChecked(false)
+	w.targetChecks["steamos"].SetChecked(false)
+	if !w.targetChecks["steamos"].Checked || !slices.Equal(w.st.Builds(), []string{"steamos"}) {
+		t.Errorf("the last box unticked: builds %q", w.st.Builds())
+	}
+	if !w.pages[pTarget].ready() {
+		t.Error("Next is off with a platform ticked")
+	}
+	// An update changes one computer's build: one choice.
+	w.st.Path = model.PathUpdate
+	w.st.SetTargets([]string{"windows", "steamos"})
+	w.fillTargets()
+	if len(w.targetRadios) != 3 || len(w.targetChecks) != 0 {
+		t.Fatalf("update: %d radios, %d boxes", len(w.targetRadios), len(w.targetChecks))
+	}
 	w.targetRadios["macos"].SetSelected(model.TargetLabels["macos"])
 	if w.st.Target != "macos" || w.targetRadios["steamos"].Selected != "" || w.targetRadios["windows"].Selected != "" {
 		t.Errorf("target %q, steamos %q, windows %q", w.st.Target, w.targetRadios["steamos"].Selected, w.targetRadios["windows"].Selected)
+	}
+	if !slices.Equal(w.st.Builds(), []string{"macos"}) {
+		t.Errorf("update builds %q", w.st.Builds())
+	}
+	// Back to a fresh build: the ticks from before Update are still there.
+	w.st.Path = model.PathFresh
+	w.fillTargets()
+	if !slices.Equal(w.st.Builds(), []string{"windows", "steamos"}) || !w.targetChecks["windows"].Checked || !w.targetChecks["steamos"].Checked || w.targetChecks["macos"].Checked {
+		t.Errorf("fresh again: builds %q", w.st.Builds())
+	}
+}
+
+// The "this computer" notes follow this computer's own platform when it
+// is among those built, wherever it is in the list; else the first.
+func TestHereTarget(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	w := New(a, sampleOptions(t))
+	w.st.Path = model.PathFresh
+	here := hostinfo.NativeTarget()
+	var other string
+	for _, tg := range w.opt.Cfg.Targets {
+		if tg != here {
+			other = tg
+			break
+		}
+	}
+	w.st.SetTargets(w.opt.Cfg.Targets)
+	if slices.Contains(w.opt.Cfg.Targets, here) && (!w.native() || w.hereTarget() != here) {
+		t.Errorf("all built: native %v, here %q, want %q", w.native(), w.hereTarget(), here)
+	}
+	w.st.SetTargets([]string{other})
+	if w.native() || w.hereTarget() != other {
+		t.Errorf("only %s: native %v, here %q", other, w.native(), w.hereTarget())
 	}
 }
 
@@ -1283,7 +1433,16 @@ func TestDoneFailure(t *testing.T) {
 	if !slices.ContainsFunc(sel, func(s string) bool { return strings.Contains(s, "error: the disk is full") }) {
 		t.Errorf("the excerpt is not in a selectable label: %q", sel)
 	}
-	w.logBuildEnd(f)
+	// The copy buttons sit with Open the log folder.
+	test.Tap(buttonOf(t, w.doneBox, copyLogPathText))
+	if got := a.Clipboard().Content(); got != filepath.Join("/r", "build-logs") {
+		t.Errorf("Copy log path copied %q", got)
+	}
+	test.Tap(buttonOf(t, w.doneBox, copyErrorText))
+	if got := a.Clipboard().Content(); got != f.Error() {
+		t.Errorf("Copy error copied %q, not %q", got, f.Error())
+	}
+	w.logBuildEnd(nil, f)
 	b, rerr := os.ReadFile(filepath.Join(w.setDir, "wizard.log"))
 	if rerr != nil {
 		t.Fatal(rerr)
@@ -1310,7 +1469,7 @@ func TestDoneCanceled(t *testing.T) {
 	if slices.Contains(all, doneSaid) || slices.ContainsFunc(all, func(s string) bool { return strings.Contains(s, "build-logs") }) {
 		t.Errorf("a cancel shows a log: %q", all)
 	}
-	w.logBuildEnd(errCanceled)
+	w.logBuildEnd(nil, errCanceled)
 	if b, _ := os.ReadFile(filepath.Join(w.setDir, "wizard.log")); !strings.Contains(string(b), "build canceled by the player") {
 		t.Errorf("wizard.log:\n%s", b)
 	}

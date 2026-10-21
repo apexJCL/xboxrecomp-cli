@@ -15,6 +15,9 @@ if [ -n "$unformatted" ]; then
 fi
 echo "gofmt: ok"
 go vet ./...
+# The end-to-end test builds a real game behind its tag: vet it too, so
+# it keeps compiling between the runs that use it.
+go vet -tags e2e ./internal/screens
 echo "vet: ok"
 go test -count=1 ./...
 # The race detector catches a test or a page that touches widgets from

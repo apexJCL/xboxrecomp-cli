@@ -14,6 +14,35 @@ import (
 	"wizard/internal/runner"
 )
 
+// Summary's sum of the platforms' disk plans: what all platforms share
+// counts once, a compile once per build tree, a bundle per platform.
+func TestSumDisk(t *testing.T) {
+	free := int64(100)
+	plan := func(build, pkg int64) *runner.Plan {
+		return &runner.Plan{Disk: []runner.PlanDisk{{Path: "/v", Free: &free, Need: 10 + 20 + build + pkg + 5,
+			Stages: map[string]int64{"import": 10, "generate": 20, "build": build, "package": pkg}}}}
+	}
+	same := func(a, b string) bool { return a == b }
+	// Windows and the Steam Deck share one tree: the larger compile.
+	v := sumDisk([]string{"windows", "steamos"}, []*runner.Plan{plan(30, 7), plan(25, 6)}, same)
+	if len(v) != 1 || v[0].Need != 10+20+30+7+6+5 || v[0].Free != 100 {
+		t.Errorf("one tree: %+v", v)
+	}
+	// The Mac's compile is its own tree.
+	v = sumDisk([]string{"windows", "macos"}, []*runner.Plan{plan(30, 7), plan(25, 6)}, same)
+	if v[0].Need != 10+20+30+25+7+6+5 {
+		t.Errorf("two trees: %+v", v)
+	}
+	v = sumDisk([]string{"windows", "steamos", "macos"}, []*runner.Plan{plan(30, 40), plan(30, 40), plan(30, 40)}, same)
+	if shortVolume(v) == nil || v[0].Need != 10+20+60+120+5 {
+		t.Errorf("short: %+v", v)
+	}
+	// An older CLI's plan has no disk list: nothing to add.
+	if v = sumDisk([]string{"windows"}, []*runner.Plan{{}}, same); len(v) != 0 {
+		t.Errorf("no disk list: %+v", v)
+	}
+}
+
 func writeMark(t *testing.T, root string, m string) {
 	t.Helper()
 	d := filepath.Join(root, "src", ".git", "xbr")
