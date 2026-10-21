@@ -7,6 +7,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-21
+
 ### Added
 - `public export --fresh-root OLD [--drop-tags]`: an approved history
   rewrite. The round's commit is a root replacing the public tip OLD, and
@@ -25,6 +27,12 @@ a release by its tag in `game.toml`'s `[cli]` table.
   problem).
 
 ### Changed
+- The build wizard: a fresh build can tick several platforms (the shared
+  work runs once, then one package run per platform); Welcome shows its
+  statements as tiles with tooltips and Fresh and Update as two large
+  tiles; the credits open from a footer button on every page; player
+  errors keep their words, other errors point to the log with Copy error,
+  Copy log path and Open the log folder.
 - The `.gitignore` baseline anchors its top-level lines (`/build-*/`,
   `/external`), so a spec named `build-x` or a `src/external/` stays
   tracked, and matches the dump, `.venv*`, `third_party`, `external` and
@@ -455,7 +463,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.7...v0.8.0
 [0.7.7]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.6...v0.7.7
