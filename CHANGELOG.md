@@ -7,6 +7,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-21
+
 ### Fixed
 - `package` and `setup` move a toolkit clone this CLI made to the game's
   `[toolkit]` pin when an update moved it. Before, setup ran only for a
@@ -474,7 +476,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.7.7...v0.8.0
