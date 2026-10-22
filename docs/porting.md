@@ -143,19 +143,20 @@ elsewhere a SIGBUS/SIGSEGV handler that prints the same `[CRASH]` report
 return addresses, the native stack), and the SDL window, with the guest on
 its own thread. So `new` writes `build.targets = ["windows", "macos"]`.
 The macos build needs the Command Line Tools and
-`brew install sdl2 openssl libepoxy pkg-config` (a new game's `game.toml`
+`brew install sdl3 openssl libepoxy pkg-config` (a new game's `game.toml`
 has no `[package] brew` list, so `setup` does not check them). Then, on a
 Mac:
 
 ```sh
 ./mygame build macos                      # build/<exe>, Apple clang
-SDL_AUDIODRIVER=dummy RECOMP_HEADLESS=1 ./build/<exe>
+SDL_AUDIO_DRIVER=dummy RECOMP_HEADLESS=1 ./build/<exe>
 ```
 
 Run it from the game's root, where `game_files/` is. `RECOMP_HEADLESS=1`
-runs with no window; `SDL_AUDIODRIVER=dummy` keeps it silent. The backend
-is Metal unless `RECOMP_PB_BACKEND` says otherwise (`cpu` is the CPU
-rasteriser, a few frames a second on a Mac). `RECOMP_STDIO_LOG=<file>`
+runs with no window; `SDL_AUDIO_DRIVER=dummy` keeps it silent (a toolkit
+still on SDL2 reads `SDL_AUDIODRIVER`). The backend is Metal unless
+`RECOMP_PB_BACKEND` says otherwise (`cpu` is the CPU rasteriser, a few
+frames a second on a Mac). `RECOMP_STDIO_LOG=<file>`
 sends stdout and stderr to a file on both hosts, which is how the bench and
 the launchers read the Windows build's log under Proton.
 

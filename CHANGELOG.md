@@ -7,6 +7,23 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-21
+
+### Added
+- `[toolchain] sdl3` in `game.toml`: the SDL3 release a game's toolkit is
+  tested against. `pins refresh` pins its GitHub source tarball
+  (`SDL3-<ver>.tar.gz`) under `sdl3` in `setup-pins.json`; a game without
+  the key gets the same file as before.
+- `doctor` on macOS prints an `sdl3:` line with the installed version
+  (`pkg-config`, else Homebrew's keg) and the pin, and a warning when the
+  installed major.minor is older. It never blocks the macos target.
+
+### Changed
+- `golden run` sets `SDL_AUDIO_DRIVER=dummy` (SDL3's name) as well as
+  `SDL_AUDIODRIVER=dummy`, so a run stays silent on toolkits on either SDL.
+  The old name goes once no game pins an SDL2 toolkit.
+- `docs/porting.md` installs `sdl3` and names `SDL_AUDIO_DRIVER`.
+
 ## [0.10.1] - 2026-10-21
 
 ### Fixed
@@ -476,7 +493,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.8.0...v0.9.0

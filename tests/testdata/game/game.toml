@@ -106,6 +106,7 @@ commit = "6d51fa2d2b9eae4a31b22022925c6e72ad14dd04"
 [toolchain]
 llvm_mingw = "20260922"
 nsis = "3.13"
+sdl3 = "3.4.18"
 
 [pipeline]
 game_name = "cat"
@@ -159,8 +160,7 @@ enhance_stock = { "fps.mode" = "lock30", "fx.glow" = "on", "fx.glow_intensity" =
 app = "BLiNX2"
 product = "blinx2-recomp"
 targets = ["windows", "steamos", "macos"]
-brew = ["sdl2", "sdl3", "openssl", "libepoxy"]
-dylib_companions = ["libSDL3.dylib=brew:sdl3"]
+brew = ["sdl3", "openssl", "libepoxy"]
 content = "packaging"
 templates = "packaging"
 icon = "xbe"

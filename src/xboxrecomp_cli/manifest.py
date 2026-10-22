@@ -69,6 +69,10 @@ SPEC = {
     "toolchain": {
         "llvm_mingw": (STR, ""),
         "nsis": (STR, "3.13"),
+        # The SDL3 release the toolkit is tested against (e.g. "3.4.18"):
+        # pinned by pins refresh, shown by doctor on macOS. "" for a game
+        # whose toolkit is still on SDL2.
+        "sdl3": (STR, ""),
     },
     "pipeline": {
         "game_name": (STR, REQUIRED),

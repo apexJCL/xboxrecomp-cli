@@ -129,16 +129,16 @@ func TestDoctorSample(t *testing.T) {
 func TestActions(t *testing.T) {
 	got := Actions([]string{
 		"Command Line Tools: xcode-select --install",
-		"Homebrew: brew install sdl2 sdl3 openssl libepoxy",
+		"Homebrew: brew install sdl3 openssl libepoxy",
 		"makensis: brew install makensis",
 		"makensis: sudo apt install nsis",
 		"makensis: sudo pacman -S nsis   (or the AUR package)",
 		"makensis: in a toolbox or distrobox: distrobox create -n x",
-		"Homebrew: brew install sdl2 sdl3 openssl libepoxy",
+		"Homebrew: brew install sdl3 openssl libepoxy",
 	})
 	want := []Action{
 		{"clt", "xcode-select --install"},
-		{"brew", "brew install sdl2 sdl3 openssl libepoxy"},
+		{"brew", "brew install sdl3 openssl libepoxy"},
 		{"brew", "brew install makensis"},
 		{"sudo", "sudo apt install nsis"},
 		{"sudo", "sudo pacman -S nsis"},

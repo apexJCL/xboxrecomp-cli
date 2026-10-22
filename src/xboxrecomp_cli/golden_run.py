@@ -9,7 +9,8 @@ SCEN: golden.json's scenarios (default: all, in its order). Per scenario:
 
   env    the process environment without inherited RECOMP_* variables,
          then the scenario's (golden plan), RECOMP_PB_BACKEND=BACKEND,
-         RECOMP_HEADLESS=1, SDL_AUDIODRIVER=dummy, a save dir of its own
+         RECOMP_HEADLESS=1, SDL_AUDIO_DRIVER=dummy (and SDL2's
+         SDL_AUDIODRIVER=dummy), a save dir of its own
          (the run's save/), frame dumps by flip (fb_dump into the run's
          frames/, fb_dump_at = golden dumpat), then the VAR=val arguments
          (RECOMP_TRACE and RECOMP_DEBUG add up, comma-joined)
@@ -244,6 +245,10 @@ def run_env(base, scen_env, backend, run_dir, dumpat, extra):
     env.update(
         RECOMP_PB_BACKEND=backend,
         RECOMP_HEADLESS="1",
+        # SDL3 reads SDL_AUDIO_DRIVER, SDL2 SDL_AUDIODRIVER. Both, until no
+        # game pins an SDL2 toolkit: a golden run on one setting only the new
+        # name would play sound on the Mac.
+        SDL_AUDIO_DRIVER="dummy",
         SDL_AUDIODRIVER="dummy",
         RECOMP_SAVE_DIR=os.path.join(run_dir, "save"),
     )

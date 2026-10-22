@@ -182,6 +182,8 @@ def pins_refresh():
         "llvm_mingw": {"tag": tag, "assets": assets},
         "nsis": nsis,
     }
+    if g.m["toolchain"]["sdl3"]:
+        pins["sdl3"] = sdl3_pin(g.m["toolchain"]["sdl3"])
     with open(g.pins, "w", newline="\n") as f:
         json.dump(pins, f, indent=2, sort_keys=True)
         f.write("\n")
@@ -222,6 +224,17 @@ def release_pins(rel, wanted):
         else:
             raise CliError("release %s has no %s" % (rel.get("tag_name"), want))
     return out
+
+
+def sdl3_pin(version, get_json=None):
+    """The SDL3 source tarball of a GitHub release: the version a game
+    names as tested, the source build for hosts with no SDL3 package (and
+    iOS), and what doctor compares the installed SDL3 against."""
+    rel = (get_json or _get_json)(
+        "https://api.github.com/repos/libsdl-org/SDL/releases/tags/release-%s" % version
+    )
+    tarball = release_pins(rel, {"src": "SDL3-%s.tar.gz" % version})["src"]
+    return dict(tarball, version=version)
 
 
 def wizard_pins_refresh(path=None, get_json=None):

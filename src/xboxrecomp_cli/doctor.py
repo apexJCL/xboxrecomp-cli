@@ -2,6 +2,7 @@
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 from types import SimpleNamespace
@@ -62,6 +63,46 @@ def makensis_hint():
 def brew_formulae():
     """The Homebrew formulae the macos target links (package.brew)."""
     return list(host.g().m.get("package", {}).get("brew", []))
+
+
+def sdl3_installed():
+    """The installed SDL3's version, or "" when none is found:
+    `pkg-config --modversion sdl3`, else the Homebrew keg that holds
+    libSDL3.0.dylib (Cellar/sdl3/<version>[_<revision>])."""
+    for cmd in (["pkg-config", "--modversion", "sdl3"], ["brew", "--prefix", "sdl3"]):
+        if not shutil.which(cmd[0]):
+            continue
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        out = r.stdout.strip()
+        if r.returncode or not out:
+            continue
+        if cmd[0] == "brew":
+            if not os.path.isfile(os.path.join(out, "lib", "libSDL3.0.dylib")):
+                continue
+            out = os.path.basename(os.path.realpath(out)).split("_")[0]
+        if re.match(r"^\d+\.\d+", out):
+            return out
+    return ""
+
+
+def _major_minor(version):
+    """(major, minor), or None when the string is not "X.Y...": game.toml
+    takes any string, and doctor never crashes on one."""
+    m = re.match(r"^(\d+)\.(\d+)", version)
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def sdl3_report(installed, pin):
+    """The doctor line for SDL3 and a warning, or None, for the installed
+    version against game.toml's [toolchain] sdl3. Only an older major.minor
+    warns: a patch release behind changes no API, and an old SDL3 never
+    blocks the macos target (the toolkit's CMake floor decides that)."""
+    have = installed or "not found"
+    line = "sdl3:       %s" % have + (" (pin %s)" % pin if pin else "")
+    have_mm, pin_mm = _major_minor(installed or ""), _major_minor(pin or "")
+    if have_mm and pin_mm and have_mm < pin_mm:
+        return line, "SDL3 %s is older than the pinned %s: brew upgrade sdl3" % (installed, pin)
+    return line, None
 
 
 def brew_missing(pkgs=None):
@@ -286,6 +327,13 @@ def doctor_report():
         lines.append("defaults:   " + dl)
     if os_name == "macos":
         lines.append("DEVELOPER_DIR: %s" % host.build_env().get("DEVELOPER_DIR", "(Xcode default)"))
+        pin = g.m["toolchain"]["sdl3"]
+        installed = sdl3_installed()
+        if pin or installed:
+            line, w = sdl3_report(installed, pin)
+            lines.append(line)
+            if w:
+                lines.append("warning:    " + w)
     if os_name == "windows":
         for w in windows_path_warnings(g.root, windows_long_paths_enabled()):
             lines.append("warning:    " + w)

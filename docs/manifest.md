@@ -85,6 +85,7 @@ and the wizard leaves out the config options (see
 |---|---|---|
 | `llvm_mingw` | `""` | The llvm-mingw release tag. The windows target and the bench need it. |
 | `nsis` | `"3.13"` | The NSIS version, used on Windows build hosts only. |
+| `sdl3` | `""` | The SDL3 release the toolkit is tested against, such as `"3.4.18"`. `pins refresh` pins its source tarball, and `doctor` on macOS warns when the installed SDL3 is an older major.minor. Leave it empty for a toolkit still on SDL2. |
 
 ## [pipeline]
 

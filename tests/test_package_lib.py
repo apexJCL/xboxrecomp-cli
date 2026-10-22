@@ -305,14 +305,16 @@ def fake_otool(table):
 
 
 def test_dylib_plan():
+    # SDL3 from Homebrew is an ordinary dependency (absolute install name);
+    # the companion is a library the game loads itself, which otool cannot see.
     table = {
         "/b/cat_recomp": [
-            "/opt/homebrew/opt/sdl2/lib/libSDL2-2.0.0.dylib",
+            "/opt/homebrew/opt/sdl3/lib/libSDL3.0.dylib",
             "/usr/lib/libSystem.B.dylib",
             "/opt/homebrew/opt/openssl/lib/libcrypto.3.dylib",
         ],
-        "/opt/homebrew/opt/sdl2/lib/libSDL2-2.0.0.dylib": [
-            "/opt/homebrew/opt/sdl2/lib/libSDL2-2.0.0.dylib",
+        "/opt/homebrew/opt/sdl3/lib/libSDL3.0.dylib": [
+            "/opt/homebrew/opt/sdl3/lib/libSDL3.0.dylib",
             "/usr/lib/libSystem.B.dylib",
         ],
         "/opt/homebrew/opt/openssl/lib/libcrypto.3.dylib": [
@@ -320,21 +322,26 @@ def test_dylib_plan():
             "/opt/homebrew/opt/zz/lib/libz.1.dylib",
         ],
         "/opt/homebrew/opt/zz/lib/libz.1.dylib": ["/opt/homebrew/opt/zz/lib/libz.1.dylib"],
-        "/opt/homebrew/lib/libSDL3.dylib": [
-            "@rpath/libSDL3.0.dylib",
+        "/opt/homebrew/lib/libplugin.dylib": [
+            "@rpath/libplugin.1.dylib",
             "/System/Library/Frameworks/X",
         ],
     }
     plan = pl.dylib_plan(
         "/b/cat_recomp",
-        ["libSDL3.dylib=/opt/homebrew/lib/libSDL3.dylib"],
+        ["libplugin.dylib=/opt/homebrew/lib/libplugin.dylib"],
         run=fake_otool(table),
         realpath=lambda p: p,
     )
     names = [dylib["name"] for dylib in plan["libs"]]
-    assert names == ["libSDL2-2.0.0.dylib", "libSDL3.dylib", "libcrypto.3.dylib", "libz.1.dylib"], (
+    assert names == ["libSDL3.0.dylib", "libcrypto.3.dylib", "libplugin.dylib", "libz.1.dylib"], (
         names
     )
+    assert {
+        "file": "@exe",
+        "old": "/opt/homebrew/opt/sdl3/lib/libSDL3.0.dylib",
+        "new": "@rpath/libSDL3.0.dylib",
+    } in plan["changes"]
     assert {
         "file": "libcrypto.3.dylib",
         "old": "/opt/homebrew/opt/zz/lib/libz.1.dylib",

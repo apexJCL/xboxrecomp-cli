@@ -852,8 +852,8 @@ def otool_runner(path):
 
 def dylib_plan(exe, companions=(), run=otool_runner, realpath=os.path.realpath):
     """The libraries to bundle: every non-system install name reachable
-    from exe, plus companions (libraries loaded with dlopen, NAME=PATH, such
-    as sdl2-compat's libSDL3), with their own dependencies. Returns
+    from exe, plus companions (libraries loaded with dlopen, NAME=PATH, which
+    otool cannot see), with their own dependencies. Returns
     {"libs": [{"name", "src"}], "changes": [{"file", "old", "new"}]}, file
     being "@exe" or a bundled lib name."""
     libs = {}  # name -> src realpath

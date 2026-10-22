@@ -101,7 +101,8 @@ def test_run_env():
     )
     assert "RECOMP_KEYBOARD" not in env and env["PATH"] == "/bin"
     assert env["RECOMP_PB_BACKEND"] == "metal" and env["RECOMP_HEADLESS"] == "1"
-    assert env["SDL_AUDIODRIVER"] == "dummy" and env["RECOMP_SAVE_DIR"] == "/r/d/save"
+    assert env["SDL_AUDIO_DRIVER"] == env["SDL_AUDIODRIVER"] == "dummy"
+    assert env["RECOMP_SAVE_DIR"] == "/r/d/save"
     assert env["RECOMP_DEBUG"] == "fb_dump=/r/d/frames/,fb_dump_at=61-65,121"
     assert env["RECOMP_TRACE"] == "flip,pacing" and env["RECOMP_GLOW"] == "off"
 

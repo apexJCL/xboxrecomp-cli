@@ -49,6 +49,7 @@ def test_minimal_defaults():
     assert m["pipeline"]["out"] == "analysis" and m["pipeline"]["split"] == 250
     assert m["pipeline"]["disasm"] == {"text_only": False, "extra_sections": []}
     assert m["build"]["targets"] == ["windows"]
+    assert m["toolchain"] == {"llvm_mingw": "", "nsis": "3.13", "sdl3": ""}
     assert m["build"]["stock_cmake"] == ["-DXBOXRECOMP_ENHANCE=ON"]
     assert m["data"]["dir_env"] == "SOME_GAME_DATA_DIR"
     assert m["data"]["steamos"] == "~/Games/some-game"
@@ -258,7 +259,7 @@ def test_blinx2_constants():
         "steamos": "  ~/Games/BLiNX2/   (hdd, config, logs; the program is in versions/)",
         "macos": "  ~/Library/Application Support/BLiNX2/   (hdd, config, logs)",
     }  # DATA_PATHS
-    assert doctor_mod.brew_formulae() == ["sdl2", "sdl3", "openssl", "libepoxy"]  # brew_missing
+    assert doctor_mod.brew_formulae() == ["sdl3", "openssl", "libepoxy"]  # brew_missing
     pkg.plib()
     assert pl.TITLE_ID == 0x4D530065
     assert pl.PRODUCT == "blinx2-recomp" and pl.PRODUCT_NAME == "BLiNX 2"
