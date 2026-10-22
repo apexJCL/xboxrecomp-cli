@@ -836,6 +836,44 @@ def test_golden_presets_checked():
     check_presets(game)
 
 
+def test_verb_help_starts_nothing():
+    """`bench <verb> --help` prints the usage and exits 0 before any config,
+    ssh, rsync or game launch: run once passed --help on to the game, which
+    the host then ran with no BENCH_TIMEOUT for 12 minutes."""
+    import contextlib
+    import io
+    from unittest import mock
+
+    from xboxrecomp_cli import bench, manifest
+
+    game = manifest.load(GAME)
+    usage = bench.render_help(game)
+
+    def boom(*a, **k):
+        raise AssertionError("started something: %r %r" % (a, k))
+
+    verbs = ["setup", "build", "run", "logs", "symbolize", "shell", "integrate", "tests"]
+    verbs += ["doctor", "sync", "golden", "pacing", "all"]
+    with contextlib.ExitStack() as st:
+        for target in ("Config", "Bench", "dispatch"):
+            st.enter_context(mock.patch.object(bench, target, boom))
+        st.enter_context(mock.patch.object(subprocess, "run", boom))
+        st.enter_context(mock.patch.object(subprocess, "Popen", boom))
+        for verb in verbs:
+            for argv in ([verb, "--help"], [verb, "-h"], [verb, "--kill-game", "SCEN", "--help"]):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = bench.main(argv, game)
+                assert rc == 0, (argv, rc)
+                assert out.getvalue() == usage, argv
+        # gc keeps its argparse usage.
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = bench.main(["gc", "--help"], game)
+        assert rc == 0, rc
+        assert out.getvalue().startswith("usage: %s bench gc" % game.slug), out.getvalue()
+
+
 def test_bench_env_file():
     from xboxrecomp_cli.bench.config import ConfigError, read_env_file
 

@@ -21,6 +21,7 @@ import time
 from . import checks, tests_skip
 from .config import Config, ConfigError
 from .gc import cmd_gc
+from .gc import parse_args as gc_parse_args
 from .golden import cmd_golden, golden_py, select_rows
 from .golden import parse_args as golden_parse_args
 from .pacing import cmd_pacing
@@ -778,6 +779,18 @@ def main(argv, game):
     if cmd not in COMMANDS and cmd not in ("sync", "golden", "pacing", "all", "gc"):
         sys.stdout.write(render_help(game))
         return 1
+    # A verb's -h/--help is the bench's usage, before any config or host is
+    # touched: run once passed --help on as a game argument, and the host ran
+    # the game with no BENCH_TIMEOUT until it was killed. gc's argparse has
+    # its own usage.
+    if "-h" in argv or "--help" in argv:
+        if cmd == "gc":
+            try:
+                gc_parse_args(["--help"], game)
+            except SystemExit as e:
+                return e.code or 0
+        sys.stdout.write(render_help(game))
+        return 0
     try:
         cfg = Config(game)
     except ConfigError as e:
