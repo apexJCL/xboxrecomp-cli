@@ -226,6 +226,9 @@ def doctor_report():
         w = toolkit.drift_warning("toolkit", tk, g.m["toolkit"])
         if w:
             lines.append("warning:    " + w)
+        off = toolkit.off_pin(tk, g.m["toolkit"])
+        if off:
+            problems.append("toolkit not at the pin %s (%s setup)" % (off, slug))
         FEATURES[0] = toolkit.features(tk)
         lines.append("features:   " + features_line(FEATURES[0]))
     else:

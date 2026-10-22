@@ -33,6 +33,11 @@ def step_nsis(pins, force):
     fetch.fetch_nsis(pins, force)
 
 
+# The needs setup meets by fetching or moving the toolkit: what is generated
+# and built on it is judged only after.
+TOOLKIT_NEEDS = frozenset(("no toolkit", "toolkit not at the pin"))
+
+
 def setup_needs(target, system_tools=False):
     """What `setup` would fetch for this target: [] when nothing."""
     needs = []
@@ -49,8 +54,13 @@ def setup_needs(target, system_tools=False):
             env.find_uv()
         except CliError:
             needs.append("no uv")
-    if not os.path.isdir(os.path.join(toolkit.toolkit_dir(), "tools")):
+    tk = toolkit.toolkit_dir()
+    if not os.path.isdir(os.path.join(tk, "tools")):
         needs.append("no toolkit")
+    elif toolkit.off_pin(tk, host.g().m["toolkit"]):
+        # Setup moves the clone to the pin. Left behind, a game update
+        # compiled its new code against the old toolkit and failed.
+        needs.append("toolkit not at the pin")
     if target in ("windows", "steamos"):
         try:
             fetch.mingw_root()

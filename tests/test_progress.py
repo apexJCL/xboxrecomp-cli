@@ -166,6 +166,56 @@ def test_failure_tail(d):
     assert "FAILED recomp" in text
 
 
+def test_failure_errors_before_tail(d):
+    # A compile's error lines scroll out of the tail behind Ninja's later
+    # lines; they are shown on their own, first, before the tail.
+    out = Out()
+    v = pg.View("plain", out, logs=os.path.join(d, "logs"))
+    v.begin("build")
+    body = (
+        "import sys\n"
+        "print('FAILED: CMakeFiles/x.dir/a.c.obj')\n"
+        "for i in range(8):\n"
+        "    print('C:/src/a.c:%d:5: error: bad thing %d' % (i + 1, i))\n"
+        "    print('    %d | int x = y;' % (i + 1))\n"
+        "    print('      |         ^')\n"
+        "print('ld.lld: error: undefined symbol: f')\n"
+        "print('a.c:1:1: warning: not an error')\n"
+        "print('2 warnings and 8 errors generated.')\n"
+        "for i in range(40): print('[%d/81] Building C object b%d.c.obj' % (i, i))\n"
+        "print('ninja: build stopped: subcommand failed.')\n"
+        "sys.exit(1)\n"
+    )
+    assert pg.run_step(v, fake_child(d, body)) == 1
+    text = out.getvalue()
+    head, _, rest = text.partition("the errors:")
+    errs, _, last = rest.partition("failed (exit 1); the last lines:")
+    assert errs and last, text
+    assert "FAILED: CMakeFiles/x.dir/a.c.obj" in errs
+    assert "a.c:1:5: error: bad thing 0" in errs and "a.c:8:5: error: bad thing 7" in errs
+    assert "ld.lld: error: undefined symbol: f" in errs
+    assert "warning" not in errs and "errors generated" not in errs and "| int x" not in errs
+    assert "bad thing" not in last and "ninja: build stopped" in last
+
+
+def test_failure_errors_capped(d):
+    out = Out()
+    v = pg.View("plain", out, logs=os.path.join(d, "logs"))
+    v.begin("build")
+    body = "import sys\nfor i in range(100): print('a.c:%d:1: error: e%d' % (i, i))\nsys.exit(1)\n"
+    assert pg.run_step(v, fake_child(d, body)) == 1
+    errs = out.getvalue().partition("the errors:")[2].partition("the last lines:")[0]
+    assert "error: e0\n" in errs and "error: e19\n" in errs and "error: e20\n" not in errs
+
+
+def test_failure_without_errors_has_no_block(d):
+    out = Out()
+    v = pg.View("plain", out, logs=os.path.join(d, "logs"))
+    v.begin("recomp")
+    assert pg.run_step(v, fake_child(d, "import sys\nprint('no luck')\nsys.exit(2)\n")) == 2
+    assert "the errors:" not in out.getvalue()
+
+
 def test_silent_child_still_repaints(d):
     out = Out(tty=True)
     v = pg.View("tty", out, logs=os.path.join(d, "logs"))

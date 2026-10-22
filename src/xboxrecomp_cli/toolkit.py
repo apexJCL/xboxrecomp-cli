@@ -279,6 +279,21 @@ def pin_note(d, pin):
     return " (differs from the pin %s)" % gitpin.describe(pin)
 
 
+def off_pin(d, pin):
+    """The pin a clone this CLI made is not at ('' when it is, when d is a
+    developer's own checkout, or when the pin cannot be told offline). A
+    game update moves [toolkit]'s pin; the clone stays where setup left it
+    until setup runs again, and a build on it compiles the game's new code
+    against the old toolkit."""
+    marked = any(host.read_text(os.path.join(d, m)) for m in (PIN_MARK, legacy_pin_mark()))
+    if not marked:
+        return ""
+    want = gitpin.expected(d, pin)
+    if not want or host.git_head(d) == want:
+        return ""
+    return gitpin.describe(pin)
+
+
 def drift_warning(what, d, pin):
     """doctor's warning when d's own copy of the pinned tag is not the
     lock (fetching refuses it on its own), else ''."""
@@ -313,8 +328,22 @@ def checkout_pin(d, pin, what):
         ).returncode
         != 0
     ):
-        host.run(["git", "-C", d, "fetch", "--quiet", "origin"])
-    host.run(["git", "-C", d, "checkout", "--quiet", commit])
+        try:
+            host.run(["git", "-C", d, "fetch", "--quiet", "origin"])
+        except host.CliError:
+            raise host.CliError(
+                "%s: could not download %s into %s (offline, or the server is "
+                "down?): go online and run this again, or delete %s and run "
+                "this again to clone it afresh" % (what, commit[:12], d, d)
+            ) from None
+    try:
+        host.run(["git", "-C", d, "checkout", "--quiet", commit])
+    except host.CliError:
+        # A player's local edit to a file the pin changes blocks the move.
+        raise host.CliError(
+            "%s: could not check out %s in %s (files there were changed by "
+            "hand?): delete %s and run this again to clone it afresh" % (what, commit[:12], d, d)
+        ) from None
     with open(os.path.join(d, PIN_MARK), "w") as f:
         f.write(commit + "\n")
 
@@ -324,8 +353,10 @@ def clone_toolkit():
     tk = toolkit_dir()
     if os.path.isdir(os.path.join(tk, "tools")):
         rename_legacy_mark(tk)
+        before = host.git_head(tk)
         checkout_pin(tk, pin, "toolkit")
-        host.say("toolkit: %s (left as it is)" % tk)
+        if host.git_head(tk) == before:
+            host.say("toolkit: %s (left as it is)" % tk)
         return tk
     if not shutil.which("git"):
         raise CliError("git is needed to fetch the toolkit")

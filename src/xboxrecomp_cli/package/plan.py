@@ -117,7 +117,7 @@ def make_plan(a, lib, imp=None, enhance=True, seed=None, into=None):
     hud_on = getattr(a, "hud_pack", None) is not None
     keeping = p.hud["choice"] == "keep"
     later = (["hud"] if hud_on or keeping else []) + [cstage, sname, wname]
-    if "no toolkit" in needs:
+    if setup.TOOLKIT_NEEDS & set(needs):
         rest("checked after setup", ["generate", "icon"] + later)
         return finish(p, st, target, version, a, into)
 

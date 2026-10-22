@@ -512,6 +512,66 @@ def test_checkout_pin_refuses_a_moved_tag_in_a_marked_clone(d, remote, tag_game)
     assert host.git_head(dest) == remote.c[1]
 
 
+def test_a_game_update_moves_a_marked_toolkit_before_the_build(d, remote, tag_game, monkeypatch):
+    # The game's update moves [toolkit]'s pin while its clone stays at the
+    # old one. package ran setup only for a missing toolkit, so it built
+    # the new game code on the old toolkit and failed to compile: an off-pin
+    # clone is a setup need (and a doctor problem) until setup moves it.
+    from xboxrecomp_cli import doctor, setup
+
+    dest = toolkit.clone_toolkit()
+    pin = tag_game.m["toolkit"]
+    assert toolkit.off_pin(dest, pin) == ""
+    remote.tag("blinx2-v0.2.0", 2)
+    remote.push_tags()
+    pin.update(tag="blinx2-v0.2.0", commit=remote.c[2])
+    assert toolkit.off_pin(dest, pin) == "blinx2-v0.2.0 (%s)" % remote.c[2][:12]
+    monkeypatch.setattr(toolkit, "tool_python", lambda env=None: sys.executable)
+    monkeypatch.setenv("LLVM_MINGW_ROOT", d)
+    needs = setup.setup_needs("macos", True)
+    assert needs == ["toolkit not at the pin"], needs
+    assert setup.TOOLKIT_NEEDS & set(needs)
+    monkeypatch.setattr(cli_dir, "doctor_line", lambda: "cli:        test")
+    monkeypatch.setattr(cli_dir, "drift_warning", lambda: "")
+    doctor.doctor_report()
+    problems = doctor.PROBLEMS
+    assert any(p.startswith("toolkit not at the pin blinx2-v0.2.0") for p in problems), problems
+    toolkit.clone_toolkit()
+    assert host.git_head(dest) == remote.c[2]
+    assert setup.setup_needs("macos", True) == []
+    # The old single-file CLI's mark counts as this CLI's.
+    git("-C", dest, "checkout", "-q", remote.c[1])
+    os.replace(os.path.join(dest, toolkit.PIN_MARK), os.path.join(dest, toolkit.legacy_pin_mark()))
+    assert toolkit.off_pin(dest, pin)
+    # A developer's own checkout (no mark) is never moved or flagged.
+    os.remove(os.path.join(dest, toolkit.legacy_pin_mark()))
+    assert toolkit.off_pin(dest, pin) == ""
+    assert setup.setup_needs("macos", True) == []
+
+
+def test_checkout_pin_failures_name_the_cause_and_the_fix(d, remote, tag_game):
+    # A bare "git failed (exit 1)" told players nothing: say why the move
+    # failed and how to get past it.
+    dest = toolkit.clone_toolkit()
+    pin = tag_game.m["toolkit"]
+    pin.update(tag="", commit=remote.c[2])
+    with open(os.path.join(dest, "tools", "x.py"), "w") as f:
+        f.write("# edited by hand\n")
+    with pytest.raises(CliError, match="files there were changed by hand.*delete %s" % dest):
+        toolkit.clone_toolkit()
+    assert host.git_head(dest) == remote.c[1]
+    git("-C", dest, "checkout", "-q", "--", ".")
+    # A commit the clone lacks, with the server unreachable.
+    with open(os.path.join(remote.src, "tools", "x.py"), "w") as f:
+        f.write("# 4\n")
+    git("commit", "-q", "-am", "c4", cwd=remote.src)
+    pin.update(commit=git("rev-parse", "HEAD", cwd=remote.src))
+    git("-C", dest, "remote", "set-url", "origin", os.path.join(d, "gone.git"))
+    with pytest.raises(CliError, match="could not download .*go online.*delete %s" % dest):
+        toolkit.clone_toolkit()
+    assert host.git_head(dest) == remote.c[1]
+
+
 def test_clone_toolkit_refuses_a_full_dest_without_tools(tag_game):
     dest = os.path.join(tag_game.root, "external", "xboxrecomp")
     os.makedirs(dest)

@@ -7,6 +7,17 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Fixed
+- `package` and `setup` move a toolkit clone this CLI made to the game's
+  `[toolkit]` pin when an update moved it. Before, setup ran only for a
+  missing toolkit, so an updated game was built against the toolkit its
+  first setup cloned and could fail to compile. `doctor` reports such a
+  clone as a problem (`toolkit not at the pin`). A developer's own
+  checkout (no pin mark) is still left alone.
+- A failed step prints the compiler's, linker's and Ninja's error lines
+  before the log's last lines, and the wizard's failure excerpt leads with
+  them: a compile with several errors no longer scrolls them out of view.
+
 ## [0.10.0] - 2026-10-21
 
 ### Added

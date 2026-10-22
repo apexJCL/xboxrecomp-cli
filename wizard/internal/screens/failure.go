@@ -3,6 +3,7 @@ package screens
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -36,17 +37,26 @@ func (f *buildFailure) Error() string {
 func (f *buildFailure) Unwrap() error { return f.Err }
 
 const (
-	tailLines    = 40  // what a failure keeps of the build log
+	tailLines    = 120 // what a failure keeps of the build log
 	excerptPlain = 12  // the excerpt without a traceback: the last non-blank lines
+	excerptErrs  = 20  // the most compiler error lines an excerpt leads with
 	excerptMax   = 40  // the most an excerpt shows
 	excerptWidth = 200 // a line's most characters
 	tracebackTop = "Traceback (most recent call last):"
 )
 
+// errorLine is a compiler's, linker's or Ninja's error line, as the CLI's
+// ERROR_RE (package/progress.py) keeps them: "a.c:1:2: error: ...",
+// "fatal error:", "ld.lld: error:", "FAILED: target".
+var errorLine = regexp.MustCompile(`(^|[\s:])(fatal )?error:|^\s*FAILED: `)
+
 // failureExcerpt is what the Done page and wizard.log show of a failed
 // build's tail: from the last Python traceback when there is one, so it
-// is shown whole, else the last few non-blank lines. A traceback longer
-// than the limit keeps its first line and its end, where the error is.
+// is shown whole, else the compiler's error lines (each once) and then the
+// last few non-blank lines. A failed compile ends with Ninja's later lines
+// and its error count, so the last lines alone miss the errors.
+// A traceback longer than the limit keeps its first line and its end,
+// where the error is.
 func failureExcerpt(tail []string) []string {
 	start := -1
 	for i, l := range tail {
@@ -61,11 +71,24 @@ func failureExcerpt(tail []string) []string {
 			out = append(out[:1:1], out[len(out)-(excerptMax-1):]...)
 		}
 	} else {
-		for i := len(tail) - 1; i >= 0 && len(out) < excerptPlain; i-- {
+		var last []string
+		for i := len(tail) - 1; i >= 0 && len(last) < excerptPlain; i-- {
 			if strings.TrimSpace(tail[i]) != "" {
-				out = append([]string{tail[i]}, out...)
+				last = append([]string{tail[i]}, last...)
 			}
 		}
+		seen := map[string]bool{}
+		for _, l := range last {
+			seen[strings.TrimSpace(l)] = true
+		}
+		for _, l := range tail {
+			t := strings.TrimSpace(l)
+			if len(out) < excerptErrs && errorLine.MatchString(l) && !seen[t] {
+				seen[t] = true
+				out = append(out, l)
+			}
+		}
+		out = append(out, last...)
 	}
 	for i, l := range out {
 		out[i] = cut(strings.TrimRight(l, " \t\r"), excerptWidth)

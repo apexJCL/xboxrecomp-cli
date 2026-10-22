@@ -32,6 +32,12 @@ from .. import host, resources
 
 KEEP_RUNS = 20
 TAIL_LINES = 40
+# A failed compile prints each error with its source line and caret, then
+# Ninja's later lines: eight errors fill the tail, so the error lines are
+# also kept on their own and shown first (the first ones, which cause the
+# rest).
+ERROR_LINES = 20
+ERROR_RE = re.compile(r"(^|[\s:])(fatal )?error:|^FAILED: ")
 REPAINT_S = 0.1
 # Plain mode prints nothing between a step's start and its 10% lines, and
 # recomp loads for minutes before its first one: a line this often keeps a
@@ -389,6 +395,7 @@ def run_step(view, argv, cwd=None, env=None, parser=None, verbose=False):
     os.makedirs(view.logs, exist_ok=True)
     log_path = view.log_path(view.label or os.path.basename(str(argv[0])))
     tail = []
+    errors = []
     q = queue.Queue()
     with open(log_path, "ab") as log:
         log.write(("$ %s\n" % " ".join(str(a) for a in argv)).encode("utf-8", "replace"))
@@ -440,6 +447,8 @@ def run_step(view, argv, cwd=None, env=None, parser=None, verbose=False):
                     continue
                 tail.append(text)
                 del tail[:-TAIL_LINES]
+                if len(errors) < ERROR_LINES and ERROR_RE.search(text):
+                    errors.append(text.strip())
                 if verbose:
                     view.say(text)
                 got = parser.feed(text)
@@ -459,7 +468,11 @@ def run_step(view, argv, cwd=None, env=None, parser=None, verbose=False):
         rc, host.LAST_PEAK = resources.wait(p, job)
     if rc != 0:
         view.end(False)
-        view.say("%s failed (exit %d); the last lines:" % (os.path.basename(str(argv[0])), rc))
+        name = os.path.basename(str(argv[0]))
+        if errors:
+            view.say("%s: the errors:" % name)
+            view.say("\n".join("  " + line for line in errors))
+        view.say("%s failed (exit %d); the last lines:" % (name, rc))
         view.say("\n".join("  " + line for line in tail))
         view.say("full log: %s" % log_path)
     return rc

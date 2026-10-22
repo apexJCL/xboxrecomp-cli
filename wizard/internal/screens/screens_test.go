@@ -1366,6 +1366,60 @@ func TestFailureExcerpt(t *testing.T) {
 	}
 }
 
+// A failed compile: the CLI's error block, then its tail where Ninja's
+// later lines push the errors out of the last lines. The excerpt leads
+// with each error line once, then the last lines.
+func TestFailureExcerptCompileErrors(t *testing.T) {
+	var errs []string
+	for i := range 8 {
+		errs = append(errs, fmt.Sprintf("C:/src/gen/recomp_0000.c:%d:5: error: bad thing %d", i+1, i))
+	}
+	tail := []string{"  build windows ... 9:47", "blinx2: the errors:", "  FAILED: CMakeFiles/cat.dir/recomp_0000.c.obj"}
+	for _, e := range errs {
+		tail = append(tail, "  "+e)
+	}
+	tail = append(tail, "cmake.exe failed (exit 1); the last lines:", "  FAILED: CMakeFiles/cat.dir/recomp_0000.c.obj")
+	for _, e := range errs {
+		tail = append(tail, "  "+e, "    1 | int x = y;", "      |         ^")
+	}
+	tail = append(tail, "  a.c:1:1: warning: not an error here", "  2 warnings and 8 errors generated.")
+	for i := range 8 {
+		tail = append(tail, fmt.Sprintf("  [%d/81] Building C object b%d.c.obj", i, i))
+	}
+	tail = append(tail, "  ninja: build stopped: subcommand failed.", "full log: C:/x.log", "blinx2: cmake.exe failed (exit 1)")
+	got := failureExcerpt(tail)
+	if len(got) != 9+excerptPlain {
+		t.Fatalf("%d lines: %q", len(got), got)
+	}
+	if strings.TrimSpace(got[0]) != "FAILED: CMakeFiles/cat.dir/recomp_0000.c.obj" {
+		t.Errorf("first line %q", got[0])
+	}
+	for i, e := range errs {
+		if strings.TrimSpace(got[1+i]) != e {
+			t.Errorf("line %d: %q, want %q", 1+i, got[1+i], e)
+		}
+	}
+	if got[len(got)-1] != "blinx2: cmake.exe failed (exit 1)" || slices.ContainsFunc(got[:9], func(l string) bool { return strings.Contains(l, "warning") }) {
+		t.Errorf("the last lines: %q", got[9:])
+	}
+	// An error line still in the last lines is not shown twice.
+	short := []string{"a.c:1:1: error: x", "ninja: build stopped: subcommand failed."}
+	if got := failureExcerpt(short); !slices.Equal(got, short) {
+		t.Errorf("short: %q", got)
+	}
+	// At most excerptErrs error lines lead.
+	var many []string
+	for i := range 50 {
+		many = append(many, fmt.Sprintf("a.c:%d:1: error: e%d", i, i))
+	}
+	for i := range 12 {
+		many = append(many, fmt.Sprintf("after %d", i))
+	}
+	if got := failureExcerpt(many); len(got) != excerptErrs+excerptPlain || got[excerptErrs-1] != "a.c:19:1: error: e19" {
+		t.Errorf("many: %d lines, %q", len(got), got)
+	}
+}
+
 // texts are the labels' and rich texts' strings on a page, and whether
 // each label is selectable.
 func texts(o fyne.CanvasObject) (all []string, selectable []string) {
