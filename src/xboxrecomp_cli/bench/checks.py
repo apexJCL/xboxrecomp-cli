@@ -141,21 +141,68 @@ def check_run_end(log, min_flips="", out=print, crash_tag="[CRASH]"):
     except ZeroDivisionError:
         rate = ""
     fi, mi = _int(flips), _int(min_flips)
+    floor = _floor_only(info)
+    shown = "at least " + flips if floor else flips
     if fi is not None and mi is not None and fi >= mi:
-        out("end: %s flips (%s/s; floor %s)" % (flips, rate, min_flips))
+        out("end: %s flips (%s/s; floor %s)" % (shown, rate, min_flips))
         return 0
     load = "\n".join(x[len("load:") :].lstrip(" ") for x in _lines(info) if x.startswith("load:"))
+    if floor and fi is not None and mi is not None and fi + FLOOR_SLACK >= mi:
+        # The run's own count is N to N+299: the floor may be met or not.
+        out(
+            "end: INCONCLUSIVE at least %s flips, under the floor %s (%s/s): no flip trace, "
+            "so the count is a floor; set RECOMP_TRACE=flip" % (flips, min_flips, rate)
+        )
+        return 3
     if busy.startswith("yes"):
         out(
             "end: INCONCLUSIVE %s flips under the floor %s (%s/s): host busy, %s; load %s"
-            % (flips, min_flips, rate, busy, load)
+            % (shown, min_flips, rate, busy, load)
         )
         return 3
     out(
         "end: FAIL %s flips under the floor %s (%s/s) on an idle host: perf regression? load %s"
-        % (flips, min_flips, rate, load)
+        % (shown, min_flips, rate, load)
     )
     return 1
+
+
+# A floor count is the last "[d3d11] present #N", logged at present 1 and
+# every 300th, so the run made N to N+299 presents.
+FLOOR_SLACK = 299
+
+
+def _floor_only(info):
+    """run_game.sh's flips: line counted no flip trace lines and fell back
+    to the last [d3d11] present #N, a floor up to 299 short."""
+    return any(x.startswith("flips: ") and "(at least" in x for x in _lines(info))
+
+
+def report_flips(log, out=print):
+    """bench run's speed line: the run-info flip count over the limit, as
+    `end: N flips (R/s)`, or `at least N` when run_game.sh only had the
+    backend's present #N lines. Silent without a limit or a count."""
+    info = _read(os.path.join(log, "run-info.txt"))
+    limit = flips = ""
+    for x in _lines(info):
+        f = x.split()
+        if x.startswith("limit: ") and len(f) > 1 and f[1] != "none":
+            limit = f[1]
+        if x.startswith("flips: ") and len(f) > 1:
+            flips = f[1]
+    n, secs = _int(flips), awk_num(limit)
+    if not n or not secs:
+        return
+    floor = _floor_only(info)
+    out(
+        "end: %s%d flips (%.1f/s%s)"
+        % (
+            "at least " if floor else "",
+            n,
+            n / secs,
+            "; no flip trace, set RECOMP_TRACE=flip for the exact count" if floor else "",
+        )
+    )
 
 
 def _git(d, *args):

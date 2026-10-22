@@ -7,6 +7,15 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Fixed
+- `bench run` no longer records `flips: 0` for a run without the flip
+  trace. `run-info.txt` falls back to the D3D11 backend's last
+  `[d3d11] present #N` line (logged at the first present and every
+  300th) and marks the
+  count as a floor (`at least`). `bench run` now prints the run's flips/s.
+  Under `min_flips`, a floor count within 299 of the minimum is
+  INCONCLUSIVE; one further below fails as before.
+
 ## [0.11.0] - 2026-10-21
 
 ### Added

@@ -161,6 +161,26 @@ survivors() {
     done
 }
 loadavg() { cut -d' ' -f1-3 /proc/loadavg; }
+# The run's flip count, for check_run_end and bench run's flips/s. Exact
+# from the flip trace's line per present (RECOMP_TRACE=flip, which golden
+# and pacing set). Without that trace the D3D11 backend still logs
+# "[d3d11] present #N" at present 1 and every 300th, so the last N is a
+# floor up to 299 short; a plain run then reads its speed from that
+# instead of 0, and says it is a floor.
+flip_count() {
+    local n
+    n=$(grep -c '^\[D3D11\] flip' "$1" || true)
+    if [ "$n" != 0 ]; then
+        echo "$n"
+        return
+    fi
+    n=$(sed -n 's/.*\[d3d11\] present #\([0-9][0-9]*\):.*/\1/p' "$1" | sort -n | tail -n 1)
+    if [ -n "$n" ]; then
+        echo "$n (at least: no flip trace, the last [d3d11] present #N line; logged every 300)"
+    else
+        echo 0
+    fi
+}
 # CPU pressure (PSI): microseconds during which some runnable task waited
 # for a cpu. Empty where the kernel has PSI off.
 psi_cpu() { sed -n 's/^some .*total=\([0-9]*\).*/\1/p' /proc/pressure/cpu 2>/dev/null || true; }
@@ -224,7 +244,7 @@ if [ "${#why[@]}" != 0 ]; then
 fi
 {
     if [ -f "$LOG/game-stdio.log" ]; then
-        echo "flips:  $(grep -c '^\[D3D11\] flip' "$LOG/game-stdio.log" || true)"
+        echo "flips:  $(flip_count "$LOG/game-stdio.log")"
     else
         echo "flips:  ? (no game-stdio.log)"
     fi

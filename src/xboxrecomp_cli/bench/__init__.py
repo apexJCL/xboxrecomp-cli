@@ -48,6 +48,9 @@ Commands:
             bench-logs/<timestamp>/ on the host, then pull logs   [game args];
             fails if any D3D11 flip presented a surface other than the one the
             walker drew, or on @CRASH_TAG@, or (with a limit) an early exit.
+            Prints the run's flips/s: exact with RECOMP_TRACE=flip, else a
+            floor from the D3D11 backend's present #N line (at the first
+            present and every 300th).
             The game starts from the Windows package's launch.env.default
             (as the installed launchers do; BENCH_ENV wins over it), so it
             gets the packaged backend; pacing and all do the same, golden
@@ -433,6 +436,8 @@ class Bench:
             tag = self.cfg.game.m["bench"]["crash_tag"]
             if checks.check_run_end(log, out=self.say, crash_tag=tag) != 0:
                 rc = 1
+            else:
+                checks.report_flips(log, out=self.say)
             if (
                 checks.check_present_mismatch(os.path.join(log, "game-stdio.log"), out=self.say)
                 != 0
