@@ -1,10 +1,12 @@
 """bench_matrix.py on synthetic scenes, logs, GPU samples and profiles."""
 
 import csv
+import datetime
 import json
 import os
 import re
 import struct
+import time
 
 import pytest
 
@@ -267,6 +269,61 @@ def test_parse_nvsmi():
     assert len(rows) == 1 and rows[0][1:] == (1905, 37)
 
 
+@pytest.fixture
+def analyser_tz(monkeypatch):
+    """Run in a zone that is not the PC's, so a stamp read in the analysing
+    machine's zone gives a wrong answer on every machine."""
+    monkeypatch.setenv("TZ", "Asia/Kolkata")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+PC_INFO = {"started": "2026-10-22T23:06:32", "unix_us": 1792731992925000}
+
+
+def test_nvsmi_stamps_use_the_pcs_zone(analyser_tz):
+    # A PC at UTC-6: 23:06:32 local is 05:06:32 UTC the next day, whatever
+    # zone the analysing machine is in.
+    info = dict(PC_INFO)
+    off = B.pc_utc_offset(info)
+    assert off == -6 * 3600
+    ((us, _, _),) = B.parse_nvsmi("2026/10/22 23:06:32.925, 300, 2", off)
+    assert us == info["unix_us"]
+    # A zone suffix is overridden: `started` is read as the PC's wall time.
+    assert B.pc_utc_offset(dict(info, started="2026-10-22T23:06:32-06:00")) == off
+    assert B.pc_utc_offset(dict(info, started="2026-10-22T23:06:32+02:00")) == off
+    # No zone to go on: None, never a guess.
+    assert B.pc_utc_offset({}) is None
+    assert B.pc_utc_offset({"started": "2026-10-22T23:06:32"}) is None
+    assert B.pc_utc_offset(dict(info, started="yesterday")) is None
+    assert B.pc_utc_offset(dict(info, unix_us=None)) is None
+
+
+def test_pc_cpu_stats():
+    # Launch at QPC 1 s, the scene starts 2 s later; 1.5 cores in warm-up,
+    # then 0.5 a second.
+    rows = [(float(t), 1500 * t if t <= 4 else 6000 + 500 * (t - 4)) for t in range(0, 15)]
+    text = "t,total_ms\n" + "\n".join("%g,%d" % r for r in rows) + "\nbad\n"
+    s = B.parse_pc_cpu(text)
+    assert len(s) == 15
+    out = B.pc_cpu_stats(s, 1_000_000, 3_000_000, 10, 2)
+    assert out["warmup"]["cores_mean"] == 1.5
+    assert out["steady"]["cores_mean"] == 0.5 and out["cores_max"] == 0.5
+    assert out["total_s"] == 11.0
+
+
+def test_pc_cpu_stats_short_parts():
+    # One sample in the warm-up and none in the steady window: no part
+    # stats, but the run's total still counts.
+    s = [(1.0, 1000.0), (3.5, 3000.0)]
+    out = B.pc_cpu_stats(s, 1_000_000, 3_000_000, 10, 2)
+    assert "warmup" not in out and "steady" not in out and "cores_max" not in out
+    assert out["total_s"] == 3.0
+    assert B.pc_cpu_stats([], 1_000_000, 3_000_000, 10, 2) == {}
+
+
 PROF = """# recomp-prof 1 hz 250 rounds 100 samples 300 dropped 0 mode running
 thread 0 11 150 guest-main
 thread 1 12 0 ?
@@ -410,6 +467,8 @@ def test_write_windows_and_info(scene, tmp_path):
     # The game's exe and the host's backend, not constants of this CLI.
     assert "\\game_recomp.exe" in ps1 and "RECOMP_PB_BACKEND = 'vulkan'" in ps1
     assert "RECOMP_SAVE_DIR" in ps1 and "[int]$Rep = 1" in ps1
+    # collect names the profile's exe module from it.
+    assert "exe = (Split-Path -Leaf $exe);" in ps1
     assert "\r\n" in ps1 and "$S = 'D:\\b'" in ps1 and "Programs\\Game" in ps1
     # One mirrored hdd copy for every arm, not a full copy per run.
     assert "robocopy" in ps1 and "Copy-Item -Recurse" not in ps1
@@ -529,6 +588,70 @@ def test_summary_top_function_mode_all(scene, tmp_path):
     assert B.summary_row(r)["top_function"] == "sub_1"
     r["profile"]["header"]["mode"] = "running"
     assert B.summary_row(r)["top_function"] == "[mmdevapi.dll]"
+    # Windows: "running" still lands in ntdll's waits.
+    r["profile"]["functions"] = [{"name": "[ntdll.dll]", "share": 95.0}] + fns
+    assert B.summary_row(r)["top_function"] == "sub_1"
+    r["profile"]["functions"] = [{"name": "[win32u.dll]", "share": 90.0}] + fns
+    assert B.summary_row(r)["top_function"] == "sub_1"
+    # All waits: the no-wait view is empty, so the wait module shows.
+    r["profile"]["functions_no_wait"] = []
+    assert B.summary_row(r)["top_function"] == "[win32u.dll]"
+
+
+def make_pc_run(root, scene, gpu=True, cpu_tsv=False, **info_extra):
+    """A PC run: QPC flips, nvidia-smi stamps in the PC's local time (UTC-6)
+    and cpu.csv seconds from the launch."""
+    d = os.path.join(root, "windows", "s1-dsp0-43")
+    os.makedirs(d)
+    qpc0 = 1_000_000_000  # launch; the flips start here, the scene 2 s later
+    with open(os.path.join(d, "game.log"), "w") as f:
+        f.write(flip_log(scene_ms=[16.0], n=800, t0_us=qpc0))
+    d_us = qpc0 - PC_INFO["unix_us"]
+    local = datetime.timezone(datetime.timedelta(hours=-6))
+    lines = []
+    for k in range(0, 40):
+        q = qpc0 + k * 500_000
+        dt = datetime.datetime.fromtimestamp((q - d_us) / 1e6, local)
+        lines.append("%s, 1500, 30" % dt.strftime("%Y/%m/%d %H:%M:%S.%f")[:-3])
+    if gpu:
+        with open(os.path.join(d, "gpu.csv"), "w") as f:
+            f.write("\n".join(lines) + "\n")
+    # 1.25 cores the whole run.
+    with open(os.path.join(d, "cpu.csv"), "w") as f:
+        f.write("t,total_ms\n" + "".join("%d,%d\n" % (t, 1250 * t) for t in range(25)))
+    if cpu_tsv:
+        with open(os.path.join(d, "cpu.tsv"), "w") as f:
+            f.write("not a sampler log\n")
+    a = B.find_arm(scene, "windows", "s1-dsp0-43")
+    info = B.base_info(
+        scene, dict(scene["hosts"]["windows"], _name="windows"), a, False, "/none", {}, 0, []
+    )
+    info.update(qpc_us=qpc0, **PC_INFO)
+    info.update(info_extra)
+    B.write_info(d, info)
+    return B.collect(d)
+
+
+def test_collect_pc_run(scene, tmp_path, analyser_tz):
+    r = make_pc_run(str(tmp_path), scene)
+    assert r["gpu"]["source"] == "nvidia-smi" and r["gpu"]["utc_offset_s"] == -6 * 3600
+    assert r["cpu"]["source"] == "process cpu time"
+    row = B.summary_row(r)
+    assert row["gpu_mhz_steady"] == 1500
+    assert row["cpu_cores_steady"] == 1.25
+
+
+def test_collect_pc_run_without_started(scene, tmp_path):
+    r = make_pc_run(str(tmp_path), scene, started=None)
+    assert r["gpu"] == {"source": "nvidia-smi", "error": "no started stamp for the PC's zone"}
+    assert B.summary_row(r)["gpu_mhz_steady"] is None
+
+
+def test_collect_pc_cpu_tsv_wins(scene, tmp_path):
+    # cpu.csv is the PC's fallback; a sampler log, when there is one, is read
+    # instead.
+    r = make_pc_run(str(tmp_path), scene, gpu=False, cpu_tsv=True)
+    assert (r.get("cpu") or {}).get("source") != "process cpu time"
 
 
 def test_cpu_sampler_skips_itself():

@@ -518,19 +518,76 @@ def cpu_stats(samples, threads, col, t0, duration_s, warmup_s, hot_pct=50.0):
     return out
 
 
-def parse_nvsmi(text):
+def parse_nvsmi(text, utc_offset_s=0):
     """nvidia-smi csv (timestamp, clocks.gr, utilization.gpu, no header or
-    units) -> [(unix_us, mhz, busy)]."""
+    units) -> [(unix_us, mhz, busy)]. The stamps are the PC's local time
+    with no zone, so the PC's offset from UTC turns them into unix time; the
+    analysing machine's own zone must play no part."""
     out = []
+    utc = datetime.UTC
     for line in text.splitlines():
         p = [x.strip() for x in line.split(",")]
         if len(p) < 3:
             continue
         try:
-            dt = datetime.datetime.strptime(p[0], "%Y/%m/%d %H:%M:%S.%f")
-            out.append((int(dt.timestamp() * 1e6), int(float(p[1])), int(float(p[2]))))
+            dt = datetime.datetime.strptime(p[0], "%Y/%m/%d %H:%M:%S.%f").replace(tzinfo=utc)
+            us = int(dt.timestamp() * 1e6) - int(utc_offset_s * 1e6)
+            out.append((us, int(float(p[1])), int(float(p[2]))))
         except ValueError:
             continue
+    return out
+
+
+def pc_utc_offset(info):
+    """The PC's offset from UTC in seconds: run-info's `started` is local
+    time with no zone, taken next to `unix_us`. Zones are whole quarter
+    hours, so rounding absorbs the second between the two stamps. None
+    when either stamp is missing or unreadable: guessing a zone would empty
+    the GPU columns without a word."""
+    try:
+        dt = datetime.datetime.fromisoformat(info["started"]).replace(tzinfo=datetime.UTC)
+        return round((dt.timestamp() - info["unix_us"] / 1e6) / 900) * 900
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def parse_pc_cpu(text):
+    """The PC runner's cpu.csv (t,total_ms: seconds since the launch, the
+    game process's CPU time so far) -> [(t_s, total_ms)]."""
+    out = []
+    for line in text.splitlines()[1:]:
+        p = line.split(",")
+        try:
+            out.append((float(p[0]), int(p[1])))
+        except (IndexError, ValueError):
+            continue
+    return out
+
+
+def pc_cpu_stats(samples, qpc0, t0, duration_s, warmup_s):
+    """Cores' worth of CPU the game used per window, from its CPU time.
+    qpc0 is the launch in QPC microseconds, t0 the scene's start. A run
+    that waits (throttled presents, a stalled thread) shows as few cores
+    where a spinning one shows many."""
+    rel = [((qpc0 + t * 1e6 - t0) / 1e6, ms) for t, ms in samples]
+    out = {}
+    for name, lo, hi in (("warmup", 0, warmup_s), ("steady", warmup_s, duration_s)):
+        part = [r for r in rel if lo <= r[0] <= hi]
+        if len(part) >= 2 and part[-1][0] > part[0][0]:
+            span = part[-1][0] - part[0][0]
+            out[name] = {
+                "cores_mean": round((part[-1][1] - part[0][1]) / 1000 / span, 2),
+                "samples": len(part),
+            }
+    steps = [
+        (b[1] - a[1]) / 1000 / (b[0] - a[0])
+        for a, b in zip(rel, rel[1:])
+        if warmup_s <= a[0] and b[0] <= duration_s and b[0] > a[0]
+    ]
+    if steps:
+        out["cores_max"] = round(max(steps), 2)
+    if rel:
+        out["total_s"] = round(rel[-1][1] / 1000, 1)
     return out
 
 
@@ -612,9 +669,11 @@ def module_name(path):
     return re.split(r"[\\/]", path)[-1]
 
 
-# Where a thread blocked in a wait sits under Wine. A profile taken in
+# Where a thread blocked in a wait sits. Under Wine a profile taken in
 # mode "all" (Wine's thread cycle counter does not move, so every thread is
-# sampled, waiting or not) is mostly these; the no-wait view leaves them out.
+# sampled, waiting or not) is mostly these; native Windows' "running" mode
+# still counts threads parked in a wait here too. The no-wait view leaves
+# them out.
 WAIT_MODULES = ("ntdll.dll", "win32u.dll")
 
 
@@ -732,11 +791,23 @@ def collect(run_dir, scene=None, exe=None, nm=None):
     elif gpu_c and "qpc_us" in info and "unix_us" in info:
         # The PC runner wrote (QPC, wall) at one instant; nvidia-smi stamps
         # wall time. col 0 then holds QPC microseconds like the flips.
-        d = info["qpc_us"] - info["unix_us"]
-        s = [(u + d, u + d, mhz, busy) for u, mhz, busy in parse_nvsmi(gpu_c)]
-        rows, summ = gpu_stats(s, 0, t0, sc["duration_s"], warm)
-        out["gpu"] = dict(summ, source="nvidia-smi", samples=rows)
+        # The offset is taken once, at `started`: a DST change inside a run
+        # (or the repeated fall-back hour) is not handled, which is fine for
+        # a bench.
+        off = pc_utc_offset(info)
+        if off is None:
+            out["gpu"] = {"source": "nvidia-smi", "error": "no started stamp for the PC's zone"}
+        else:
+            d = info["qpc_us"] - info["unix_us"]
+            nv = parse_nvsmi(gpu_c, off)
+            s = [(u + d, u + d, mhz, busy) for u, mhz, busy in nv]
+            rows, summ = gpu_stats(s, 0, t0, sc["duration_s"], warm)
+            out["gpu"] = dict(summ, source="nvidia-smi", utc_offset_s=off, samples=rows)
     cpu_t = read(os.path.join(run_dir, "cpu.tsv"))
+    cpu_c = read(os.path.join(run_dir, "cpu.csv"))
+    if not cpu_t and cpu_c and "qpc_us" in info:
+        stats = pc_cpu_stats(parse_pc_cpu(cpu_c), info["qpc_us"], t0, sc["duration_s"], warm)
+        out["cpu"] = dict(stats, source="process cpu time")
     if cpu_t:
         s = parse_cpu_tsv(cpu_t)
         col = gpu_clock_for([(x[0], x[1]) for x in s], [f[1] for f in flips])
@@ -808,6 +879,7 @@ COLUMNS = [
     "gpu_mhz_max",
     "gpu_first_above_idle_s",
     "cpu_mhz_steady",
+    "cpu_cores_steady",
     "cpu_hot_threads",
     "cpu_shared_share",
     "top_function",
@@ -861,10 +933,18 @@ def summary_row(r, run_dir=None):
     p = r.get("profile", {})
     # Mode "all" samples waiting threads too, and a thread blocked outside
     # ntdll (audio in mmdevapi) still tops the no-wait view; the exe's own
-    # hottest function is the useful column there.
-    if (p.get("header") or {}).get("mode") == "all":
+    # hottest function is the useful column there. Windows' "running" mode
+    # still counts threads parked in a wait (95% of samples in ntdll), so
+    # a wait module on top takes the same view.
+    first = ((p.get("functions") or [{}])[0].get("name") or "").strip("[]").lower()
+    if (p.get("header") or {}).get("mode") == "all" or first in WAIT_MODULES:
         fns = p.get("functions_no_wait") or []
-        top = next((f for f in fns if not f["name"].startswith("[")), fns[0] if fns else {})
+        # An all-wait profile has no no-wait rows; the wait module itself
+        # says more than an empty column.
+        top = next(
+            (f for f in fns if not f["name"].startswith("[")),
+            fns[0] if fns else (p.get("functions") or [{}])[0],
+        )
     else:
         top = (p.get("functions") or [{}])[0]
     m = REP_RE.search(os.path.basename(os.path.normpath(run_dir))) if run_dir else None
@@ -911,6 +991,7 @@ def summary_row(r, run_dir=None):
         "gpu_mhz_max": max(gmhz) if gmhz else None,
         "gpu_first_above_idle_s": g.get("first_above_idle_s"),
         "cpu_mhz_steady": c.get("steady", {}).get("mhz_mean"),
+        "cpu_cores_steady": c.get("steady", {}).get("cores_mean"),
         "cpu_hot_threads": len(hot) if "hot_threads" in c else None,
         "cpu_shared_share": max((h["shared_share"] for h in hot), default=None),
         "top_function": top.get("name"),
@@ -944,6 +1025,7 @@ ARM_STATS = (
     "gpu_busy_steady",
     "gpu_busy_max",
     "cpu_mhz_steady",
+    "cpu_cores_steady",
     "cpu_shared_share",
 )
 ARM_SUFFIXES = ("_median", "_min", "_max", "_mad")
@@ -1542,7 +1624,7 @@ $cpu | Set-Content "$R\cpu.csv"
 $rc = if ($killed) { 'killed' } else { "$($proc.ExitCode)" }
 $envs = @{}; Get-ChildItem env: | Where-Object { $_.Name -like 'RECOMP_*' } | ForEach-Object { $envs[$_.Name] = $_.Value }
 @{ host = 'windows'; backend = '%(backend)s'; arm = $name; rep = $Rep; prof = (-not $NoProf); version = $v; rc = $rc;
-   refresh_hz = $hz; quiet_wait_s = $waited; busy_at_start = $busy; qpc_us = $qpc_us; unix_us = $wall * 1000;
+   refresh_hz = $hz; quiet_wait_s = $waited; busy_at_start = $busy; qpc_us = $qpc_us; unix_us = $wall * 1000; exe = (Split-Path -Leaf $exe);
    started = $t0.ToString('s'); ended = (Get-Date).ToString('s'); env = $envs } | ConvertTo-Json -Depth 4 | Set-Content "$R\run-info.json"
 Write-Host "$name (rep $Rep) rc=$rc -> $R"
 """
