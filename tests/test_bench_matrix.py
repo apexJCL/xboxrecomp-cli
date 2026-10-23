@@ -465,7 +465,7 @@ def test_write_windows_and_info(scene, tmp_path):
     with open(os.path.join(out, "run-arm.ps1"), newline="") as f:
         ps1 = f.read()
     # The game's exe and the host's backend, not constants of this CLI.
-    assert "\\game_recomp.exe" in ps1 and "RECOMP_PB_BACKEND = 'vulkan'" in ps1
+    assert "'game_recomp.exe'" in ps1 and "RECOMP_PB_BACKEND = 'vulkan'" in ps1
     assert "RECOMP_SAVE_DIR" in ps1 and "[int]$Rep = 1" in ps1
     # collect names the profile's exe module from it.
     assert "exe = (Split-Path -Leaf $exe);" in ps1
@@ -527,16 +527,30 @@ def test_write_windows_and_info(scene, tmp_path):
         + re.findall(r"\$([A-Za-z_]\w*)\s*,(?=[^=\n]*=[^=])", ps1)
     }
     assert not assigned & auto, assigned & auto
-    # The quiet wait compares cores in use (CPU seconds over a 5 s sleep)
-    # with a share of one core, not with a percentage it can never reach.
-    assert "/ 5) -gt %g " % (B.BUSY_PCT / 100) in ps1
+    # The quiet wait reads the raw counters (Get-Process has no CPU time for
+    # SYSTEM's processes) and compares cores in use with a share of one core.
+    assert "Win32_PerfRawData_PerfProc_Process" in ps1 and "Get-Process | Select" not in ps1
+    assert "$use -gt %g)" % (B.BUSY_PCT / 100) in ps1
     assert "-gt %g " % B.BUSY_PCT not in ps1
+    # Mid-run: other processes by id (a second copy of the game counts) and
+    # the foreground window, both into run-info.json, and a loud end line.
+    assert "Get-Busy $snapPrev $snapNow $proc.Id" in ps1
+    assert "GetForegroundWindow" in ps1 and "focus_lost = $focusLost" in ps1
+    assert "busy_during = $busyRun" in ps1 and "DISTURBED" in ps1
+    assert "host = 'windows'" in ps1
+    # The review's low findings: no silent failed delete, no empty env value
+    # set, a case-exact check, a literal @R, the whole current.txt, real
+    # displays only.
+    assert "if (Test-Path $R) { Remove-Item -Recurse -Force $R -ErrorAction Stop }" in ps1
+    assert "-cne $want[$k]" in ps1 and "$val.Replace('@R', $R)" in ps1
+    assert "Get-Content -Raw" in ps1 and "CurrentRefreshRate -gt 0" in ps1
     # A run that did not get its arm stops before the game starts.
     assert "not applied" in ps1 and "exit 3" in ps1
     assert ps1.index("exit 3") < ps1.index("Start-Process $exe")
     with open(os.path.join(out, "arms", "s2-dsp1-169", "env.txt")) as f:
         env = f.read()
     assert "prof_out=@R\\prof.txt" in env and "RECOMP_APU_DSP=1" in env
+    assert "RECOMP_PRESENT_FULLSCREEN=1" in env
     # What the PC brings back: a BOM'd run-info.json without the scene.
     d = tmp_path / "back"
     d.mkdir()
@@ -556,9 +570,10 @@ def test_busy_processes():
 def test_quiet_ignore(scene):
     deck = dict(scene["hosts"]["deck"], quiet_ignore=["steamwebhelper"])
     got = B.quiet_ignore(scene, deck, "game_recomp.exe")
-    assert got == ("game_recomp", "steamwebhelper", "wineserver", "umu-run")
-    sc = dict(scene, scene=dict(scene["scene"], quiet_ignore=["a", "b"]))
-    assert B.quiet_ignore(sc, {}, "game_recomp.exe")[:2] == ("a", "b")
+    assert got == ("steamwebhelper", "wineserver", "umu-run")
+    # The game's own name never: a second copy of it must count as busy.
+    sc = dict(scene, scene=dict(scene["scene"], quiet_ignore=["a", "Game_Recomp", "b"]))
+    assert B.quiet_ignore(sc, {}, "game_recomp.exe")[:3] == ("a", "b", "wineserver")
 
 
 def test_plan_cli(scene, tmp_path, capsys):
@@ -658,3 +673,438 @@ def test_cpu_sampler_skips_itself():
     # Its own command line names the exe, so it once logged only itself.
     compile(B.CPU_SAMPLER, "cpu_sampler.py", "exec")
     assert "p == me" in B.CPU_SAMPLER and "os.getpid()" in B.CPU_SAMPLER
+
+
+def test_deck_run_stops_samplers_on_any_exit():
+    # A run cut short (ssh drops, a kill) still stops and flushes them.
+    assert "trap 'kill $GS $CS 2>/dev/null' EXIT" in B.DECK_RUN
+    assert "trap 'exit 130' HUP INT TERM" in B.DECK_RUN
+    assert B.DECK_RUN.index("trap") < B.DECK_RUN.index("gpu_sampler.py")
+    assert "os.getppid() == parent" in B.CPU_SAMPLER
+    s = B.DECK_RUN % {
+        "period": 250,
+        "cpu_period": 1000,
+        "exe_name": "g.exe",
+        "busy_pct": 50.0,
+        "ignore": "g,wineserver",
+    }
+    assert 'cpu_sampler.py" "$R" g.exe 1000 50 g,wineserver &' in s
+
+
+def test_cpu_stats_listed_threads_and_cores():
+    t0 = 1_000_000_000
+    cpu = "".join("%d %d 1000000 1000000\n" % ((t0 + k * 1_000_000,) * 2) for k in range(0, 12))
+    s = B.parse_cpu_tsv(cpu)
+    lines, cores = [], []
+    for k in range(0, 11):
+        t = t0 + k * 1_000_000
+        lines.append("%d %d 11 0 %d guest-main 0" % (t, t, 100 * k))
+        # A 10% helper on the main thread's core every sample: listed, and
+        # it shares core 0 with the main thread although it is not hot.
+        lines.append("%d %d 12 0 %d helper 0-7" % (t, t, 10 * k))
+        lines.append("%d %d 13 1 %d idle 0-7" % (t, t, k))
+        cores.append("%d %d 0:%d:%d 1:%d:%d" % (t, t, 100 * k, 100 * k, 25 * k, 100 * k))
+    th = B.parse_threads_tsv("\n".join(lines))
+    out = B.cpu_stats(s, th, 0, t0, 10, 2, B.parse_cores_tsv("\n".join(cores) + "\nx\n"))
+    assert [t["name"] for t in out["threads"]] == ["guest-main", "helper"]
+    assert [t["name"] for t in out["hot_threads"]] == ["guest-main"]
+    main = out["threads"][0]
+    assert main["allowed"] == "0" and main["shared_share"] == 1.0
+    assert main["shared_with"] == ["helper"]
+    assert out["cores_load_pct"] == {0: 110.0, 1: 1.0}
+    assert out["core_max"] == 0 and out["core_max_pct"] == 110.0
+    assert out["sys_cores_busy_pct"] == {0: 100.0, 1: 25.0} and out["sys_core_max_pct"] == 100.0
+    # A log from before the affinity column still parses.
+    assert B.parse_threads_tsv("1 1 11 0 5 guest")[0][6] == "-"
+    assert B.parse_busy_tsv("5 6 80.5 baloo\nbad\n") == [(5, 6, 80.5, "baloo")]
+
+
+def pacing_log(t0=1_000_000_000, sites=True):
+    lines = []
+    for b in range(6):
+        t = t0 + b * 10_000_000
+        lines.append("[PACING] flip %d t_us %d batches 500" % (600 * (b + 1), t))
+        lines.append(
+            "[PACING] flips 600: 16.67 ms avg; cpu process %d%%; mode sleep" % (120 + 10 * b)
+        )
+        if sites:
+            lines.append("[PACING]   site 0x1912a0: waits 40 slept 30")
+    return "\n".join(lines) + "\n"
+
+
+def test_parse_pacing_and_stats():
+    t0 = 1_000_000_000
+    blocks, sites = B.parse_pacing(pacing_log(t0))
+    assert len(blocks) == 6 and blocks[0] == (t0, 120.0, "sleep")
+    assert sites == {"0x001912A0": 240}
+    out = B.pacing_stats(blocks, sites, t0, 50, 10)
+    # The blocks from 10-20 s to 40-50 s lie inside the steady part.
+    assert out["blocks_steady"] == 4 and out["cores_steady"] == 1.55
+    assert out["mode"] == "sleep" and out["spin_sites"] == {"0x001912A0": 240}
+    assert B.parse_pacing(pacing_log(t0, sites=False))[1] == {}
+
+
+def test_hot_paths_spin_share(monkeypatch):
+    p = B.parse_prof(PROF)
+    monkeypatch.setattr(B, "symbols", lambda exe, nm=None: ([0x1000, 0x2000], ["spin", "draw"]))
+    h = B.hot_paths(p, "/elsewhere/GAME.EXE", spin_functions=("spin", "nowhere"))
+    assert h["spin"]["functions"] == {"spin": 150, "nowhere": 0}
+    assert h["spin"]["share_all"] == 50.0 and h["spin"]["share"] == pytest.approx(62.5)
+    assert B.hot_paths(p, "/elsewhere/GAME.EXE")["spin"] is None
+
+
+def test_focus_lost_disturbs_a_run(scene, tmp_path):
+    root = str(tmp_path / "out")
+    r = make_run(root, scene, "mac", "s1-dsp0-43", [16.7])
+    r["focus_lost"] = [[30.5, "explorer"]]
+    row = B.summary_row(r, "mac/s1-dsp0-43")
+    assert row["focus_lost"] == 1 and row["disturbed"]
+
+
+def test_collect_deck_busy_tsv(scene, tmp_path):
+    root = str(tmp_path / "out")
+    r = make_run(root, scene, "deck", "s1-dsp0-43", [16.7])
+    d = os.path.join(root, "deck", "s1-dsp0-43")
+    t0 = 1_000_000_000 + 100 * 20_000  # the scene starts after the intro
+    with open(os.path.join(d, "cpu.tsv"), "w") as f:
+        f.write("".join("%d %d 1000 1000\n" % ((t0 + k * 1_000_000,) * 2) for k in range(-3, 15)))
+    with open(os.path.join(d, "busy.tsv"), "w") as f:
+        # One before the scene (the load), one inside it.
+        f.write(
+            "%d %d 90 steam\n%d %d 70 baloo\n" % ((t0 - 2_000_000,) * 2 + (t0 + 5_000_000,) * 2)
+        )
+    r = B.collect(d)
+    assert r["busy_during"] == [[5.0, 70.0, "baloo"]]
+    assert B.summary_row(r)["disturbed"]
+
+
+def test_run_names_and_misnamed(scene, tmp_path):
+    assert B.run_name("s1-dsp0-43") == "s1-dsp0-43"
+    assert B.run_name("s1-dsp0-43", False, 3) == "s1-dsp0-43-noprof-r3"
+    root = str(tmp_path / "out")
+    make_run(root, scene, "mac", "s1-dsp0-43", [16.7], prof=False)
+    os.rename(os.path.join(root, "mac", "s1-dsp0-43-noprof"), os.path.join(root, "mac", "noprof-3"))
+    rows, _, _ = B.analyse(root)
+    assert B.misnamed(rows) == [("mac/noprof-3", "s1-dsp0-43-noprof")]
+    row = {"arm": "a1", "prof": 1, "rep": 1}
+    assert B.misnamed([dict(row, run_dir="h/a10-noprof")]) == [("h/a10-noprof", "a1")]
+    assert B.misnamed([dict(row, run_dir="h/a1-noprof-r2"), dict(row, run_dir="h/a1")]) == []
+    with open(os.path.join(root, "summary.json")) as f:
+        assert json.load(f)["misnamed"] == [["mac/noprof-3", "s1-dsp0-43-noprof"]]
+
+
+def test_series_plan_orders():
+    assert B.series_plan(["a", "b"], 1, order="blocks") == [
+        ("a", True, 1),
+        ("b", True, 1),
+        ("a", False, 1),
+        ("b", False, 1),
+    ]
+    # Interleaved: each arm's two sides back to back, the first side
+    # alternating, so a drift lands on both alike.
+    assert B.series_plan(["a", "b"], 2, first_rep=3) == [
+        ("a", True, 3),
+        ("a", False, 3),
+        ("b", False, 3),
+        ("b", True, 3),
+        ("a", True, 4),
+        ("a", False, 4),
+        ("b", False, 4),
+        ("b", True, 4),
+    ]
+    assert B.series_plan(["a"], 2, prof="off") == [("a", False, 1), ("a", False, 2)]
+
+
+def test_host_order_remote_first(scene):
+    # The local host analyses everything, so it runs last.
+    assert B.host_order(scene) == ["deck", "windows", "mac"]
+    assert B.host_order(scene, ["mac", "deck"]) == ["deck", "mac"]
+
+
+def test_series_dry_run_skips_done(scene, tmp_path, capsys):
+    sc = tmp_path / "scene.toml"
+    sc.write_text(SCENE)
+    root = tmp_path / "res"
+    (root / "deck" / "s1-dsp0-43-noprof").mkdir(parents=True)
+    (root / "deck" / "s1-dsp0-43-noprof" / "run.json").write_text("{}")
+    rc = B.main(
+        [
+            "series",
+            str(sc),
+            "--host",
+            "mac,deck",
+            "--root",
+            str(root),
+            "--local",
+            "none.toml",
+            "--arms",
+            "s1-dsp0-43",
+            "--dry-run",
+        ]
+    )
+    out = capsys.readouterr().out.splitlines()
+    assert rc == 0 and len(out) == 4
+    assert "deck/s1-dsp0-43\n" not in out[0] and out[0].endswith("deck/s1-dsp0-43")
+    assert out[1].endswith("s1-dsp0-43-noprof: done, skipped")
+    assert out[2].endswith("mac/s1-dsp0-43") and out[3].endswith("mac/s1-dsp0-43-noprof")
+    assert (
+        B.main(
+            [
+                "series",
+                str(sc),
+                "--host",
+                "windows",
+                "--root",
+                str(root),
+                "--local",
+                "x",
+                "--dry-run",
+            ]
+        )
+        == 2
+    )
+
+
+def test_windows_series_and_quoting(scene, tmp_path):
+    out = str(tmp_path / "pc")
+    plan = B.series_plan(["s1-dsp0-43"], 1)
+    B.write_windows(scene, {"dir": "D:\\it's", "app": "Game"}, out, "game", None, plan)
+    with open(os.path.join(out, "run-arm.ps1")) as f:
+        ps1 = f.read()
+    assert "$S = 'D:\\it''s'" in ps1
+    with open(os.path.join(out, "run-series.ps1"), newline="") as f:
+        ser = f.read()
+    assert "\r\n" in ser
+    assert ser.index("-Arm 's1-dsp0-43' -Rep 1 -SkipDone") < ser.index(
+        "-Arm 's1-dsp0-43' -NoProf -Rep 1 -SkipDone"
+    )
+    assert 'if ($SkipDone -and (Test-Path "$R\\run-info.json"))' in ps1
+    sc = dict(scene, scene=dict(scene["scene"], quiet_ignore=["obs64.exe", "game"]))
+    B.write_windows(sc, {"dir": "D:\\b", "app": "G"}, out, "game")
+    with open(os.path.join(out, "run-arm.ps1")) as f:
+        assert "'WmiPrvSE', 'obs64')" in f.read()
+    with pytest.raises(B.MatrixError, match="no arm"):
+        B.write_windows(scene, {"dir": "D:\\b", "app": "G"}, out, "game", None, [("x", True, 1)])
+
+
+def test_run_env_fullscreen(scene):
+    a = B.find_arm(scene, "mac", "s1-dsp0-43")
+    assert B.run_env(scene, a)["RECOMP_PRESENT_FULLSCREEN"] == "1"
+    a2 = dict(a, env={"RECOMP_PRESENT_FULLSCREEN": "0"})
+    assert B.run_env(scene, a2)["RECOMP_PRESENT_FULLSCREEN"] == "0"
+    sc = dict(scene, scene=dict(scene["scene"], fullscreen=False))
+    assert "RECOMP_PRESENT_FULLSCREEN" not in B.run_env(sc, a)
+
+
+def test_build_jobs():
+    ps = "COMM\n/usr/bin/ninja\n/Applications/x/game_recomp\nlaunchd\n"
+    assert B.build_jobs(ps, ("game_recomp",)) == ["game_recomp", "ninja"]
+    assert B.build_jobs("COMM\nlaunchd\n") == []
+
+
+def test_compare(scene, tmp_path):
+    before, after = str(tmp_path / "before"), str(tmp_path / "after")
+    make_run(before, scene, "deck", "s1-dsp0-43", [20.0])
+    make_run(before, scene, "mac", "s1-dsp0-43", [16.7])
+    make_run(after, scene, "deck", "s1-dsp0-43", [16.0])
+    rows = B.compare(before, after)
+    d = next(r for r in rows if r["host"] == "deck")
+    assert d["fps_before"] == pytest.approx(50, abs=0.5)
+    assert d["fps_after"] == pytest.approx(62.5, abs=0.5) and d["fps_delta"] > 12
+    m = next(r for r in rows if r["host"] == "mac")
+    assert m["n_before"] == 1 and m["n_after"] is None and m["fps_delta"] is None
+    md = B.compare_table(rows, before, after)
+    assert "### deck" in md and "### mac" in md and "->" in md
+    B.write_compare(rows, str(tmp_path / "cmp"), before, after)
+    with open(tmp_path / "cmp" / "compare.csv") as f:
+        got = list(csv.DictReader(f))
+    assert len(got) == 2 and "spin_pct_delta" in got[0]
+
+
+def test_compare_cores_one_measure_and_fullscreen():
+    b = {"n": 1, "cpu_cores_steady_median": 1.2, "fullscreen": ["None"]}
+    a = {"n": 1, "cpu_process_cores_median": 2.0, "fullscreen": ["1"]}
+    old = {"n": 1, "cpu_process_cores_median": 1.5, "cpu_cores_steady_median": 1.1}
+    rows = {}
+
+    def fake(root, *_):
+        return [], [root]
+
+    import unittest.mock as um
+
+    with (
+        um.patch.object(B, "load_rows", fake),
+        um.patch.object(
+            B, "arm_rows", lambda rs, _: [dict(rows[rs[0]], host="h", arm="x", prof=0)]
+        ),
+    ):
+        rows.update(b=b, a=a, o=old)
+        r = B.compare("b", "a")[0]
+        # Two different measures: values shown, no change.
+        assert (r["cores_before"], r["cores_after"], r["cores_delta"]) == (1.2, 2.0, None)
+        assert r["present_differs"] and "not directly comparable" in B.compare_table([r])
+        r = B.compare("o", "a")[0]
+        assert r["cores_delta"] == 0.5 and not r["present_differs"]
+
+
+def test_busy_processes_skips_the_game_by_id():
+    ps = "PID %CPU COMM\n 10 90.0 /x/game_recomp\n 11 80.0 /x/game_recomp\n 12 70.0 ide\n"
+    got = B.busy_processes(ps, ("ide",), skip_pids={"10"})
+    assert got == [(80.0, "/x/game_recomp")]
+
+
+def test_deck_scan_counts_a_second_game(scene, tmp_path, monkeypatch):
+    """The Deck sampler's mid-run scan, on a fake /proc: the game (by id)
+    and ignored names are skipped, a second copy of the game is logged."""
+    host = dict(scene["hosts"]["deck"], quiet_ignore=["steamwebhelper"])
+    sc = dict(scene, scene=dict(scene["scene"], quiet_ignore=["game_recomp"]))
+    ignore = ",".join(B.quiet_ignore(sc, host, "game_recomp.exe"))
+    procs = {
+        "/proc/10": ("game_recomp.ex", "Z:\\g\\game_recomp.exe"),
+        "/proc/11": ("game_recomp.ex", "Z:\\g\\game_recomp.exe"),
+        "/proc/12": ("steamwebhelper", "steamwebhelper --x"),
+    }
+    ticks = {p: 0 for p in procs}
+    clock = [0.0]
+
+    def text(p, f, mode="r"):
+        comm, cmd = procs[p]
+        if f == "stat":
+            rest = ["S"] + ["0"] * 10 + [str(ticks[p]), "0"] + ["0"] * 30
+            return "%s (%s) %s" % (p.rsplit("/", 1)[1], comm, " ".join(rest))
+        return (cmd.replace(" ", "\0") + "\0").encode() if "b" in mode else cmd
+
+    class G:
+        @staticmethod
+        def glob(_):
+            return list(procs)
+
+    class T:
+        @staticmethod
+        def monotonic():
+            return clock[0]
+
+    monkeypatch.setattr("sys.argv", ["s", str(tmp_path), "game_recomp.exe", "100", "50", ignore])
+    ns = {}
+    exec(B.CPU_SAMPLER.split("\ntick = -1")[0], ns)
+    ns.update(text=text, glob=G, time=T, pid="/proc/10", ws=None, me="/proc/1")
+    ns["scan"](0, 0)
+    clock[0] = 1.0
+    for p in ticks:
+        ticks[p] = ns["tck"]
+    ns["scan"](1, 1)
+    for k in ("cpu", "thr", "stat", "bsy"):
+        ns[k].close()
+    got = (tmp_path / "busy.tsv").read_text().split()
+    assert got == ["1", "1", "100.0", "game_recomp.ex"]
+
+
+def test_series_reruns_a_failed_run(scene, tmp_path, monkeypatch, capsys):
+    sc = tmp_path / "scene.toml"
+    sc.write_text(SCENE)
+    root = tmp_path / "res"
+    calls = []
+
+    def fail(a, scene, host, local, arm, out, prof, rep, order=None):
+        calls.append(out)
+        os.makedirs(out)
+        raise B.MatrixError("ssh host: hdd copy failed")
+
+    monkeypatch.setattr(B, "run_one", fail)
+    monkeypatch.setattr(B, "local_table", lambda path, h: {})
+    args = ["series", str(sc), "--host", "deck", "--root", str(root), "--local", "x"]
+    args += ["--arms", "s1-dsp0-43", "--prof", "on"]
+    assert B.main(args) == 1
+    assert len(calls) == 1 and "failed" in capsys.readouterr().out
+    # The folder it left is not a done run: the next series moves it aside
+    # and runs it again.
+    assert B.main(args) == 1
+    assert len(calls) == 2
+    left = sorted(os.listdir(root / "deck"))
+    assert left[0] == "s1-dsp0-43" and left[1].startswith("s1-dsp0-43.failed-")
+    # A collected run is done.
+    (root / "deck" / "s1-dsp0-43" / "run.json").write_text("{}")
+    assert B.main(args) == 0 and len(calls) == 2
+
+
+def test_locks_files_and_wrapper(tmp_path):
+    import fcntl
+
+    lk = str(tmp_path / "a.lock")
+    log = tmp_path / "wrap.log"
+    wrap = tmp_path / "wrap.sh"
+    wrap.write_text('echo in >> "%s"; "$@"; echo out >> "%s"\n' % (log, log))
+    L = B.Locks()
+    L.take_file(lk)
+    L.take_wrapper(["sh", str(wrap)])
+    assert L.held == [lk, "sh %s" % wrap]
+    fd = os.open(lk, os.O_RDWR)
+    with pytest.raises(BlockingIOError):
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    assert log.read_text() == "in\n"
+    L.release()
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with pytest.raises(B.MatrixError, match="not granted"):
+        B.Locks().take_file(lk, wait_s=0, step_s=0)
+    os.close(fd)
+    assert log.read_text() == "in\nout\n"
+    with pytest.raises(B.MatrixError, match="no lock"):
+        B.Locks().take_wrapper(["sh", "-c", "exit 75", "x"])
+
+
+def test_run_local_locks_first_and_kills_the_group(scene, tmp_path, monkeypatch):
+    """The quiet waits run inside the locks; a game past the cap is killed
+    with what it started, and the locks are free afterwards."""
+    import fcntl
+
+    lk = str(tmp_path / "bench.lock")
+    held_in_wait = []
+
+    def wait(*a, **k):
+        fd = os.open(lk, os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            held_in_wait.append(False)
+        except BlockingIOError:
+            held_in_wait.append(True)
+        finally:
+            os.close(fd)
+        return 0, []
+
+    monkeypatch.setattr(B, "wait_builds", wait)
+    monkeypatch.setattr(B, "wait_quiet", wait)
+    monkeypatch.setattr(B, "LOCAL_CAP_EXTRA_S", 1)
+    child = tmp_path / "child.pid"
+    exe = tmp_path / "game"
+    exe.write_text("#!/bin/sh\nsleep 60 &\necho $! > %s\nwait\n" % child)
+    exe.chmod(0o755)
+    (tmp_path / "seed").mkdir()
+    local = {
+        "exe": str(exe),
+        "hdd_seed": str(tmp_path / "seed"),
+        "game_files": str(tmp_path),
+        "lock": lk,
+    }
+    sc = dict(scene, scene=dict(scene["scene"], run_s=0))
+    host = dict(scene["hosts"]["mac"], _name="mac")
+    out = str(tmp_path / "run")
+    B.run_local(sc, host, local, B.find_arm(scene, "mac", "s1-dsp0-43"), out, False, None)
+    info = json.loads(open(os.path.join(out, "run-info.json")).read())
+    assert held_in_wait == [True, True]
+    assert info["rc"] == "killed" and info["locks"] == [lk]
+    pid = int(child.read_text())
+    time.sleep(0.2)
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+    fd = os.open(lk, os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    os.close(fd)
+
+
+def test_quiet_wait_given_up_disturbs_a_run(scene, tmp_path):
+    r = make_run(str(tmp_path), scene, "mac", "s1-dsp0-43", [16.7])
+    assert not B.summary_row(r)["disturbed"] and B.summary_row(r)["fullscreen"] is None
+    assert B.summary_row(dict(r, present_fullscreen="1"))["fullscreen"] == "1"
+    for k in ("busy_at_start", "builds_at_start"):
+        row = B.summary_row(dict(r, **{k: [[60.0, "ninja"]]}))
+        assert row["disturbed"] and row["busy_at_start"] == 1

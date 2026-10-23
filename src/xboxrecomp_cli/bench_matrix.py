@@ -4,9 +4,16 @@ several hosts, measured the same way everywhere.
   <game> bench-matrix plan SCENE [--host H] [--json]
   <game> bench-matrix run SCENE --host H --arm ID --out DIR --local LOCAL
                           [--no-prof] [--rep N] [--benches FILE]
+  <game> bench-matrix series SCENE --host H[,H] --root ROOT --local LOCAL
+                          [--arms A,B] [--reps N] [--first-rep N]
+                          [--prof on|off|both] [--order interleave|blocks]
+                          [--benches FILE] [--dry-run]
   <game> bench-matrix collect RUN_DIR [--scene SCENE] [--exe EXE]
   <game> bench-matrix analyse ROOT [--out DIR] [--include-disturbed]
-  <game> bench-matrix windows SCENE --local LOCAL --out DIR
+                          [--recollect [--scene SCENE] [--exe EXE]]
+  <game> bench-matrix compare BEFORE AFTER [--out DIR] [--include-disturbed]
+  <game> bench-matrix windows SCENE --local LOCAL --out DIR [--host H]
+                          [--series [series options]]
 
 SCENE is the game's TOML (its config, never this CLI's): how long to run,
 how the scene's start is found from the flip trace, the axes and how each
@@ -14,16 +21,40 @@ maps onto config.toml or the environment, and which hosts run which arms.
 LOCAL is the machine's own TOML (paths, ssh names, locks); it is not
 tracked. An arm is one value per axis, named by the scene's arm_id.
 
-run takes the host's lock, waits (30 min at most) for the host to be quiet,
-starts the game from a fresh copy of the hdd seed with the arm's config,
+run takes the host's lock, then waits (30 min at most) for the host to be
+quiet, starts the game from a fresh copy of the hdd seed with the arm's config,
 and collects the run into DIR/run.json:
-  - host "local": this machine (the Mac); lockf on the lock file.
+  - host "local": this machine (the Mac); flock (as lockf takes it) on the
+    lock file and quiet_locks, then run_wrapper, a command prefix holding
+    a lock of its own (a run queue), all before the quiet checks; the game
+    runs in its own session, killed whole at the cap.
   - host "proton": a SteamOS box over ssh, the Windows exe under umu-run
     and Proton, flock on the lock file, the GPU clock and busy sampled
     every 250 ms from sysfs, the CPU cores' clocks and the game's threads
     (load, last core) every second from /proc.
   - host "windows" is not run from here: windows writes run-arm.ps1 and the
-    arms, for whoever drives that PC; collect reads what it brings back.
+    arms (and run-series.ps1 with --series), for whoever drives that PC;
+    collect reads what it brings back.
+Every run opens borderless desktop fullscreen (present.fullscreen): an OS
+throttles the presents of a covered or unfocused window. Each runner also
+watches the run: another process busy (the game is skipped by id, never by
+name, so a second copy of it counts) and, on the PC, another window taking the foreground mark it
+disturbed.
+
+The local host (the Mac) pulls and analyses every host's data, so it runs
+last: plan and series put the remote hosts first (the Deck and the PC are
+separate machines and may overlap). A local run holds its locks, then waits
+out builds and other benches inside them; run-info.json lists the locks
+it held. A quiet wait that gave up marks the run disturbed.
+
+series runs many arms in order into ROOT/<host>/<run>/, each named
+<arm>[-noprof][-rN], skipping those collected (run.json), and collects
+each. A run folder without run.json (a run that failed) is moved aside to
+<run>.failed-<time> and run again; a failed run does not stop the series,
+which then exits 1.
+--order interleave (the default) runs each arm's sampled and unsampled runs
+back to back, alternating which goes first; blocks runs every sampled run,
+then every unsampled one.
 
 The frame series is the "[PACING] flip N t_us T batches B" trace
 (RECOMP_TRACE=pacing=all), every backend. The hot paths come from the
@@ -37,6 +68,16 @@ median, min, max and MAD over its repeats, and how many runs the scene's
 [verdict] calls good or bad). A run's repeat is run --rep, else a -rN
 suffix on its directory. Runs another process disturbed (busy_during) stay
 in the rows but out of the per-arm figures unless --include-disturbed.
+--recollect runs collect again on each run first (newer columns for old
+runs). A run whose directory is not its arm plus -noprof and -rN is
+listed as misnamed.
+
+compare puts two results (a baseline and its rerun) side by side per
+(host, arm, sampler rate): the run counts, good and bad, and the medians of
+steady fps, 1% low, p99, the process's cores, the spin share, the busiest
+core and the load gap, before, after and the change. The cores' change
+is blank when the two sides measured them differently, and an arm
+windowed on one side and fullscreen on the other is flagged.
 
 Frame statistics: frame times run between the window's own flips (the
 load before the scene is load_gap_ms, not a frame); percentiles are
@@ -50,6 +91,7 @@ import argparse
 import bisect
 import csv
 import datetime
+import fcntl
 import glob
 import hashlib
 import itertools
@@ -59,6 +101,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import statistics
 import struct
 import subprocess
@@ -73,6 +116,9 @@ PACING_FLIP_RE = re.compile(r"^\[PACING\] flip (\d+) t_us (\d+) batches (\d+)")
 # measured run; the game itself and the tools of the run are not counted.
 BUSY_PCT = 50.0
 QUIET_WAIT_S = 30 * 60
+# A local run's cap past the scene's run_s: the game's own quit comes first;
+# the cap ends a hung one. The lock and quiet waits come before it.
+LOCAL_CAP_EXTRA_S = 120
 GPU_PERIOD_MS = 250
 
 
@@ -191,6 +237,13 @@ def run_env(scene, arm, prof=True, prof_out=None, host=None):
     extra = env.pop("RECOMP_TRACE", "")
     env["RECOMP_TRACE"] = ",".join([t for t in extra.split(",") if t] + trace)
     env.update(arm["env"])
+    # Borderless fullscreen over the desktop (present.fullscreen; no mode
+    # change): a window another one covers, or one not in front, gets its
+    # presents throttled by the OS (Windows to about one a second). An arm
+    # or the scene's env may still set it; scene.fullscreen = false keeps
+    # the window.
+    if scene["scene"].get("fullscreen", True):
+        env.setdefault("RECOMP_PRESENT_FULLSCREEN", "1")
     env["RECOMP_WINDOW_QUIT_AFTER"] = str(scene["scene"]["run_s"])
     return env
 
@@ -332,6 +385,51 @@ def frame_stats(times_us, t0, duration_s, warmup_s, slow_fps=50):
     }
 
 
+PACING_BLOCK_RE = re.compile(r"^\[PACING\] flips \d+: .*cpu process (\d+(?:\.\d+)?)%; mode (\w+)")
+PACING_SITE_RE = re.compile(r"^\[PACING\]\s+site 0x([0-9A-Fa-f]+): waits (\d+)")
+
+
+def parse_pacing(text):
+    """The runtime's [PACING] block every 600 flips: [(t_us of its flip or
+    None, process CPU %, pacing mode)], and {site va: waits} over the run
+    for each spin-wait site that waited. A run with no site is one whose
+    generated code has no lowered spin wait, so present.pacing=sleep had
+    nothing to act on."""
+    blocks, sites, last = [], {}, None
+    for line in text.splitlines():
+        m = PACING_FLIP_RE.match(line)
+        if m:
+            last = int(m.group(2))
+            continue
+        m = PACING_BLOCK_RE.match(line)
+        if m:
+            blocks.append((last, float(m.group(1)), m.group(2)))
+            continue
+        m = PACING_SITE_RE.match(line)
+        if m:
+            va = "0x%08X" % int(m.group(1), 16)
+            sites[va] = sites.get(va, 0) + int(m.group(2))
+    return blocks, sites
+
+
+def pacing_stats(blocks, sites, t0, duration_s, warmup_s):
+    """The process's cores (the [PACING] block's CPU over its 600 flips) in
+    the steady part, the mode, and the spin-wait sites. A block counts when
+    it starts and ends inside the steady part (it starts where the one
+    before it ended)."""
+    out = {"spin_sites": dict(sorted(sites.items())), "mode": blocks[-1][2] if blocks else None}
+    lo, hi = t0 + warmup_s * 1e6, t0 + duration_s * 1e6
+    steady, start = [], None
+    for t, pct, _ in blocks:
+        if t is not None and start is not None and lo <= start and t <= hi:
+            steady.append(pct)
+        start = t
+    if steady:
+        out["cores_steady"] = round(statistics.median(steady) / 100.0, 2)
+        out["blocks_steady"] = len(steady)
+    return out
+
+
 # --- GPU samples -------------------------------------------------------------
 
 
@@ -385,38 +483,83 @@ def gpu_stats(samples, col, t0, duration_s, warmup_s):
     return rows, out
 
 
-# The Deck's CPU sampler (1 Hz): each core's clock, and where each of the
-# game's threads last ran with its CPU time so far. On 4 cores / 8 threads
-# two spinning guest threads plus Wine's own can land on one core, which
-# would show as a slow run that no setting explains.
+# The Deck's CPU sampler (1 Hz): each core's clock and /proc/stat times, and
+# where each of the game's threads (and wineserver's) last ran, its CPU time
+# so far and the cores it may run on. On 4 cores / 8 threads two spinning
+# guest threads plus Wine's own can land on one core, which would show as a
+# slow run that no setting explains. Every few seconds it also looks for
+# another process busy mid-run (busy.tsv), which the quiet check before the
+# start cannot see.
 CPU_SAMPLER = r"""
 import glob, os, re, sys, time
 d, name, period = sys.argv[1], sys.argv[2].lower(), float(sys.argv[3]) / 1000.0
+busy_pct = float(sys.argv[4]) if len(sys.argv) > 4 else 50.0
+ignore = [x.lower() for x in (sys.argv[5] if len(sys.argv) > 5 else "").split(",") if x not in ("", "-")]
+tck = os.sysconf("SC_CLK_TCK")
 num = lambda p: int(re.search(r"cpu(\d+)/", p).group(1))
 cores = sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq"), key=num)
 cpu = open(d + "/cpu.tsv", "w", buffering=1)
 thr = open(d + "/threads.tsv", "w", buffering=1)
-pid = None
+stat = open(d + "/cores.tsv", "w", buffering=1)
+bsy = open(d + "/busy.tsv", "w", buffering=1)
+pid = ws = None
 me = "/proc/%d" % os.getpid()
+# run.sh starts this; should it die without stopping it (its trap is the
+# first line of defence), the sampler is reparented and stops by itself.
+parent = os.getppid()
+def text(p, f, mode="r"):
+    try:
+        with open(p + "/" + f, mode) as h:
+            return h.read()
+    except OSError:
+        return None
 # The game is the process with the most threads whose command line names
 # the exe. This sampler's own command line names it too, and so do
 # timeout and umu-run, so look again every few seconds until Wine's
 # process, with its many threads, is up.
 def find():
-    best = None
+    best, server = None, None
     for p in glob.glob("/proc/[0-9]*"):
         if p == me:
             continue
-        try:
-            if name in open(p + "/cmdline", "rb").read().decode(errors="replace").lower():
+        if (text(p, "comm") or "").strip() == "wineserver":
+            server = p
+        c = text(p, "cmdline", "rb")
+        if c and name in c.decode(errors="replace").lower():
+            try:
                 n = len(os.listdir(p + "/task"))
-                if not best or n > best[0]:
-                    best = (n, p)
-        except OSError:
-            pass
-    return best[1] if best else None
+            except OSError:
+                continue
+            if not best or n > best[0]:
+                best = (n, p)
+    return (best[1] if best else None), server
+def ticks(s):
+    rest = s[s.rindex(")") + 2 :].split()
+    return s[s.index("(") + 1 : s.rindex(")")], rest
+prev, prev_t = {}, None
+def scan(m, r):
+    # Every process's CPU time against the last scan: one over busy_pct of
+    # a core that is not the game, Wine's own or an ignored name is logged.
+    global prev, prev_t
+    now, cur = time.monotonic(), {}
+    for p in glob.glob("/proc/[0-9]*"):
+        s = text(p, "stat")
+        if not s:
+            continue
+        comm, rest = ticks(s)
+        cur[p] = int(rest[11]) + int(rest[12])
+        if prev_t is None or p in (me, pid, ws) or p not in prev:
+            continue
+        pct = 100.0 * (cur[p] - prev[p]) / tck / (now - prev_t)
+        if pct < busy_pct:
+            continue
+        cmd = (text(p, "cmdline", "rb") or b"").replace(b"\0", b" ").decode(errors="replace")
+        if any(i in comm.lower() or i in cmd.lower() for i in ignore):
+            continue
+        bsy.write("%d %d %.1f %s\n" % (m, r, pct, comm.replace(" ", "_") or "-"))
+    prev, prev_t = cur, now
 tick = -1
-while True:
+while os.getppid() == parent:
     m = time.clock_gettime_ns(time.CLOCK_MONOTONIC) // 1000
     r = time.clock_gettime_ns(time.CLOCK_MONOTONIC_RAW) // 1000
     f = []
@@ -426,17 +569,30 @@ while True:
         except OSError:
             f.append("-1")
     cpu.write("%d %d %s\n" % (m, r, " ".join(f)))
+    # Per core: busy and total jiffies so far (idle and iowait are not busy).
+    st = []
+    for line in (text("/proc", "stat") or "").splitlines():
+        p = line.split()
+        if p and p[0].startswith("cpu") and p[0] != "cpu":
+            v = [int(x) for x in p[1:9]]
+            st.append("%s:%d:%d" % (p[0][3:], sum(v) - v[3] - v[4], sum(v)))
+    stat.write("%d %d %s\n" % (m, r, " ".join(st)))
     tick += 1
     if pid is None or not os.path.isdir(pid) or tick % 5 == 0:
-        pid = find()
-    for t in glob.glob(pid + "/task/*") if pid else []:
-        try:
-            s = open(t + "/stat").read()
-        except OSError:
+        pid, ws = find()
+    for t in [x for q in (pid, ws) if q for x in glob.glob(q + "/task/*")]:
+        s = text(t, "stat")
+        if not s:
             continue
-        comm, rest = s[s.index("(") + 1 : s.rindex(")")], s[s.rindex(")") + 2 :].split()
-        thr.write("%d %d %s %s %d %s\n" % (m, r, t.rsplit("/", 1)[1], rest[36],
-                  int(rest[11]) + int(rest[12]), comm.replace(" ", "_") or "-"))
+        comm, rest = ticks(s)
+        allowed = "-"
+        for line in (text(t, "status") or "").splitlines():
+            if line.startswith("Cpus_allowed_list:"):
+                allowed = line.split(":", 1)[1].strip() or "-"
+        thr.write("%d %d %s %s %d %s %s\n" % (m, r, t.rsplit("/", 1)[1], rest[36],
+                  int(rest[11]) + int(rest[12]), comm.replace(" ", "_") or "-", allowed))
+    if tick % 5 == 0:
+        scan(m, r)
     time.sleep(period)
 """
 CPU_PERIOD_MS = 1000
@@ -455,21 +611,63 @@ def parse_cpu_tsv(text):
 
 
 def parse_threads_tsv(text):
-    """ "mono_us raw_us tid core ticks comm" -> [(mono, raw, tid, core,
-    ticks, comm)]."""
+    """ "mono_us raw_us tid core ticks comm [allowed]" -> [(mono, raw, tid,
+    core, ticks, comm, allowed)]; allowed (the Cpus_allowed_list) is "-"
+    in logs from before it was logged."""
     out = []
     for line in text.splitlines():
         p = line.split()
-        if len(p) == 6 and p[0].isdigit():
-            out.append((int(p[0]), int(p[1]), int(p[2]), int(p[3]), int(p[4]), p[5]))
+        if len(p) in (6, 7) and p[0].isdigit():
+            allowed = p[6] if len(p) == 7 else "-"
+            out.append((int(p[0]), int(p[1]), int(p[2]), int(p[3]), int(p[4]), p[5], allowed))
     return out
 
 
-def cpu_stats(samples, threads, col, t0, duration_s, warmup_s, hot_pct=50.0):
-    """The cores' clocks by part of the window, and the game's hot threads
-    (over hot_pct of a core in the steady part): their load, the cores
-    they ran on, and how often another hot thread was on the same core at
-    the same sample."""
+def parse_cores_tsv(text):
+    """ "mono_us raw_us N:busy:total ..." (jiffies so far, from /proc/stat)
+    -> [(mono, raw, {core: (busy, total)})]."""
+    out = []
+    for line in text.splitlines():
+        p = line.split()
+        if len(p) < 3 or not p[0].isdigit():
+            continue
+        try:
+            cores = {int(c): (int(b), int(t)) for c, b, t in (x.split(":") for x in p[2:])}
+        except ValueError:
+            continue
+        out.append((int(p[0]), int(p[1]), cores))
+    return out
+
+
+def parse_busy_tsv(text):
+    """The CPU sampler's busy scan, "mono_us raw_us pct comm" -> [(mono,
+    raw, pct, comm)]."""
+    out = []
+    for line in text.splitlines():
+        p = line.split()
+        if len(p) == 4 and p[0].isdigit():
+            try:
+                out.append((int(p[0]), int(p[1]), float(p[2]), p[3]))
+            except ValueError:
+                continue
+    return out
+
+
+# A thread over LISTED_PCT of a core in the steady part is listed (and can
+# share a core with a hot one); one over HOT_PCT is hot. Sharing counted
+# among hot threads alone hid the slow mode: a 10% helper on the main
+# thread's core in every sample.
+LISTED_PCT = 5.0
+HOT_PCT = 50.0
+
+
+def cpu_stats(samples, threads, col, t0, duration_s, warmup_s, cores=None):
+    """The cores' clocks by part of the window; the game's threads over
+    LISTED_PCT in the steady part (load, the cores they ran on, their
+    affinity, how often another listed thread was on the same core at the
+    same sample), the hot ones apart; each core's load from those threads
+    (a thread's CPU time between two samples goes to the core it was last
+    seen on) and, from /proc/stat, each core's busy share whoever ran."""
     out = {}
     for name, lo, hi in (("warmup", 0, warmup_s), ("steady", warmup_s, duration_s)):
         part = [s[2] for s in samples if lo <= (s[col] - t0) / 1e6 < hi]
@@ -485,36 +683,69 @@ def cpu_stats(samples, threads, col, t0, duration_s, warmup_s, hot_pct=50.0):
     for t in threads:
         if lo <= t[col] < hi:
             by_tid.setdefault(t[2], []).append(t)
-    hot = {}
+    listed = {}
+    per_core = {}
+    span = 0.0
     for tid, ts in by_tid.items():
         if len(ts) < 2:
             continue
         secs = (ts[-1][col] - ts[0][col]) / 1e6
+        span = max(span, secs)
+        for a, b in zip(ts, ts[1:]):
+            per_core[b[3]] = per_core.get(b[3], 0) + b[4] - a[4]
         load = 100.0 * (ts[-1][4] - ts[0][4]) / CLK_TCK / secs if secs > 0 else 0.0
-        if load >= hot_pct:
-            hot[tid] = (load, ts)
+        if load >= LISTED_PCT:
+            listed[tid] = (load, ts)
     at = {}
-    for tid, (_, ts) in hot.items():
+    for tid, (_, ts) in listed.items():
         for t in ts:
             at.setdefault(t[col], {})[tid] = t[3]
     rows = []
-    for tid, (load, ts) in sorted(hot.items(), key=lambda kv: -kv[1][0]):
-        cores = {}
+    for tid, (load, ts) in sorted(listed.items(), key=lambda kv: -kv[1][0]):
+        cores_ = {}
         shared = 0
+        mates = set()
         for t in ts:
-            cores[t[3]] = cores.get(t[3], 0) + 1
-            if any(o != tid and c == t[3] for o, c in at[t[col]].items()):
+            cores_[t[3]] = cores_.get(t[3], 0) + 1
+            others = [o for o, c in at[t[col]].items() if o != tid and c == t[3]]
+            if others:
                 shared += 1
+                mates.update(others)
+        allowed = {}
+        for t in ts:
+            allowed[t[6]] = allowed.get(t[6], 0) + 1
         rows.append(
             {
                 "tid": tid,
                 "name": ts[-1][5],
                 "load_pct": round(load, 1),
-                "cores": dict(sorted(cores.items())),
+                "cores": dict(sorted(cores_.items())),
+                # The most common Cpus_allowed_list (one core: pinned).
+                "allowed": max(allowed, key=allowed.get),
                 "shared_share": round(shared / len(ts), 3),
+                "shared_with": sorted(listed[o][1][-1][5] for o in mates),
             }
         )
-    out["hot_threads"] = rows
+    out["threads"] = rows
+    out["hot_threads"] = [r for r in rows if r["load_pct"] >= HOT_PCT]
+    if span > 0:
+        load = {c: round(100.0 * n / CLK_TCK / span, 1) for c, n in sorted(per_core.items())}
+        out["cores_load_pct"] = load
+        if load:
+            busiest = max(load, key=load.get)
+            out["core_max"] = busiest
+            out["core_max_pct"] = load[busiest]
+    part = [c for c in cores or [] if lo <= c[col] < hi]
+    if len(part) >= 2:
+        first, last = part[0][2], part[-1][2]
+        busy = {}
+        for c in sorted(set(first) & set(last)):
+            dt = last[c][1] - first[c][1]
+            if dt > 0:
+                busy[c] = round(100.0 * (last[c][0] - first[c][0]) / dt, 1)
+        out["sys_cores_busy_pct"] = busy
+        if busy:
+            out["sys_core_max_pct"] = max(busy.values())
     return out
 
 
@@ -677,10 +908,12 @@ def module_name(path):
 WAIT_MODULES = ("ntdll.dll", "win32u.dll")
 
 
-def hot_paths(prof, exe=None, nm=None, top=25, run_exe=None):
+def hot_paths(prof, exe=None, nm=None, top=25, run_exe=None, spin_functions=()):
     """The profile by function (the exe's) and by module (everything else),
     overall and for each named thread. exe is the symbol source; run_exe is
-    the name the game ran under, when the symbol copy was renamed."""
+    the name the game ran under, when the symbol copy was renamed.
+    spin_functions are the scene's busy-wait loops: their share of the
+    samples says how much of the profile is waiting dressed as work."""
     mods = prof["modules"]
     bases = {module_name(x).lower() for x in (exe, run_exe) if x}
     main = [i for i, m in mods.items() if exe and module_name(m["path"]).lower() in bases]
@@ -718,7 +951,20 @@ def hot_paths(prof, exe=None, nm=None, top=25, run_exe=None):
     threads = {}
     for tn, d in sorted(by_thread.items(), key=lambda kv: -sum(kv[1].values())):
         threads[tn] = {"samples": sum(d.values()), "top": ranked(d, 8)}
+    spin = None
+    if spin_functions:
+        hits = {f: by_fn.get(f, 0) for f in spin_functions}
+        n = sum(hits.values())
+        nw = sum(no_wait.values())
+        spin = {
+            "functions": hits,
+            # Of the samples outside the wait modules (what ran, in every
+            # mode), and of all of them.
+            "share": round(100.0 * n / nw, 2) if nw else None,
+            "share_all": round(100.0 * n / total, 2),
+        }
     return {
+        "spin": spin,
         "header": prof["header"],
         "samples": total,
         "functions": ranked(by_fn, top),
@@ -778,6 +1024,8 @@ def collect(run_dir, scene=None, exe=None, nm=None):
     # run so analyse needs no scene.
     if scene.get("verdict"):
         out["verdict_rule"] = scene["verdict"]
+    blocks, sites = parse_pacing(log)
+    out["pacing"] = pacing_stats(blocks, sites, t0, sc["duration_s"], warm)
     gpu_t = read(os.path.join(run_dir, "gpu.tsv"))
     gpu_c = read(os.path.join(run_dir, "gpu.csv"))
     if gpu_t:
@@ -813,7 +1061,16 @@ def collect(run_dir, scene=None, exe=None, nm=None):
         col = gpu_clock_for([(x[0], x[1]) for x in s], [f[1] for f in flips])
         if col is not None:
             th = parse_threads_tsv(read(os.path.join(run_dir, "threads.tsv")) or "")
-            out["cpu"] = cpu_stats(s, th, col, t0, sc["duration_s"], warm)
+            cores = parse_cores_tsv(read(os.path.join(run_dir, "cores.tsv")) or "")
+            out["cpu"] = cpu_stats(s, th, col, t0, sc["duration_s"], warm, cores)
+            busy = parse_busy_tsv(read(os.path.join(run_dir, "busy.tsv")) or "")
+            if busy:
+                # [s after the scene's start, %cpu, command], as the Mac's
+                # watch gives them; only those inside the window disturb it.
+                end = t0 + sc["duration_s"] * 1e6
+                out["busy_during"] = (out.get("busy_during") or []) + [
+                    [round((b[col] - t0) / 1e6, 1), b[2], b[3]] for b in busy if t0 <= b[col] < end
+                ]
         else:
             out["cpu"] = {"error": "clock does not match the flips"}
     prof_t = read(os.path.join(run_dir, "prof.txt"))
@@ -826,6 +1083,7 @@ def collect(run_dir, scene=None, exe=None, nm=None):
                 exe if exe and os.path.isfile(exe) else None,
                 nm,
                 run_exe=run_exe,
+                spin_functions=tuple((scene.get("profile") or {}).get("spin_functions", ())),
             )
         except MatrixError as e:
             out["profile"] = {"error": str(e)}
@@ -882,9 +1140,18 @@ COLUMNS = [
     "cpu_cores_steady",
     "cpu_hot_threads",
     "cpu_shared_share",
+    "cpu_process_cores",
+    "cpu_core_max_pct",
+    "cpu_sys_core_max_pct",
+    "spin_share",
+    "spin_sites",
+    "pacing_mode",
     "top_function",
     "top_share",
     "busy_during",
+    "focus_lost",
+    "busy_at_start",
+    "fullscreen",
 ]
 
 REP_RE = re.compile(r"-r(\d+)$")
@@ -931,6 +1198,7 @@ def summary_row(r, run_dir=None):
     g = r.get("gpu", {})
     c = r.get("cpu", {})
     p = r.get("profile", {})
+    pc = r.get("pacing") or {}
     # Mode "all" samples waiting threads too, and a thread blocked outside
     # ntdll (audio in mmdevapi) still tops the no-wait view; the exe's own
     # hottest function is the useful column there. Windows' "running" mode
@@ -994,14 +1262,36 @@ def summary_row(r, run_dir=None):
         "cpu_cores_steady": c.get("steady", {}).get("cores_mean"),
         "cpu_hot_threads": len(hot) if "hot_threads" in c else None,
         "cpu_shared_share": max((h["shared_share"] for h in hot), default=None),
+        # The process's cores from the runtime's own [PACING] block: every
+        # host has it, the Mac included.
+        "cpu_process_cores": pc.get("cores_steady"),
+        "cpu_core_max_pct": c.get("core_max_pct"),
+        "cpu_sys_core_max_pct": c.get("sys_core_max_pct"),
+        "spin_share": (p.get("spin") or {}).get("share"),
+        # None for a run collected before the count was kept.
+        "spin_sites": len(pc["spin_sites"]) if "spin_sites" in pc else None,
+        "pacing_mode": pc.get("mode"),
         "top_function": top.get("name"),
         "top_share": top.get("share"),
-        # Busy samples of other processes during the run (the Mac only).
+        # Busy samples of other processes during the run (the Mac's watch,
+        # the Deck's sampler, the PC's runner).
         "busy_during": len(r.get("busy_during") or []),
+        # Times another window took the foreground mid-run (the PC's
+        # runner: Windows throttles an unfocused game's presents).
+        "focus_lost": len(r.get("focus_lost") or []),
+        # A quiet wait that gave up: what was still busy, or still
+        # building, when the run started anyway.
+        "busy_at_start": len(r.get("busy_at_start") or []) + len(r.get("builds_at_start") or []),
+        # "1" for a borderless fullscreen run, None for a windowed one
+        # (every run before fullscreen runs were added).
+        "fullscreen": r.get("present_fullscreen") or None,
     }
-    # Another process busy mid-run may have cost frames: such a run stays
-    # in the rows but out of the per-arm figures unless asked for.
-    row["disturbed"] = row["busy_during"] > 0
+    for core, v in (c.get("cores_load_pct") or {}).items():
+        row["cpu_core%s_pct" % core] = v
+    # Another process busy or another window in front mid-run may have cost
+    # frames: such a run stays in the rows but out of the per-arm figures
+    # unless asked for.
+    row["disturbed"] = row["busy_during"] > 0 or row["focus_lost"] > 0 or row["busy_at_start"] > 0
     row["verdict"] = verdict(row, r.get("verdict_rule"))
     for k, v in (r.get("values") or {}).items():
         row["axis_" + k] = v
@@ -1027,6 +1317,10 @@ ARM_STATS = (
     "cpu_mhz_steady",
     "cpu_cores_steady",
     "cpu_shared_share",
+    "cpu_process_cores",
+    "cpu_core_max_pct",
+    "spin_share",
+    "load_gap_ms",
 )
 ARM_SUFFIXES = ("_median", "_min", "_max", "_mad")
 
@@ -1061,6 +1355,7 @@ def arm_rows(rows, include_disturbed=False):
         for k, v in rs[0].items():
             if k.startswith("axis_"):
                 a[k] = v
+        a["fullscreen"] = sorted({str(r.get("fullscreen")) for r in rs})
         out.append(a)
     return out
 
@@ -1093,20 +1388,68 @@ def prof_overhead(rows, include_disturbed=False):
     return out
 
 
-def analyse(root, out_dir=None, include_disturbed=False):
+def run_name(arm_id, prof=True, rep=1):
+    """A run's directory name: the arm, -noprof without the sampler, -rN
+    for a repeat past the first. Every runner names its runs so (the PC's
+    script too), and a run copied back keeps the name."""
+    return arm_id + ("" if prof else "-noprof") + ("-r%d" % rep if rep and rep > 1 else "")
+
+
+def misnamed(rows):
+    """Runs whose directory is not their arm plus -noprof and -rN (a PC run
+    copied back as "noprof-3", or arm a1 in a10-noprof): the rows still group by run.json's arm, but a
+    reader of the tree cannot tell the arm from the name."""
+    out = []
+    for r in rows:
+        base = os.path.basename(os.path.normpath(r["run_dir"] or ""))
+        rest = base[len(r["arm"]) :] if r["arm"] and base.startswith(r["arm"]) else None
+        if r["arm"] and (rest is None or not re.fullmatch(r"(-noprof)?(-r\d+)?", rest)):
+            out.append((r["run_dir"], run_name(r["arm"], r["prof"] != 0, r["rep"])))
+    return out
+
+
+def load_rows(root, recollect=False, scene=None, exe=None):
+    """(run.json dicts, summary rows) for ROOT/<host>/<run>/run.json.
+    recollect runs collect again on each run first (a run collected by an
+    older CLI lacks the newer columns), with scene, when given, in place of
+    the one in run-info.json (a key added since, such as spin_functions)."""
+    runs, rows = [], []
+    for path in sorted(glob.glob(os.path.join(root, "*", "*", "run.json"))):
+        d = os.path.dirname(path)
+        r = None
+        if recollect:
+            try:
+                r = collect(d, scene, exe)
+            except (MatrixError, OSError) as e:
+                # A run kept as run.json alone (its raw logs elsewhere)
+                # stays as collected.
+                print("recollect %s: %s; kept its run.json" % (d, e), file=sys.stderr)
+        if r is None:
+            with open(path) as f:
+                r = json.load(f)
+        runs.append(r)
+        rows.append(summary_row(r, os.path.relpath(d, root)))
+    if not runs:
+        raise MatrixError("no run.json under %s/<host>/<arm>/" % root)
+    return runs, rows
+
+
+def dynamic_columns(rows, prefix):
+    """The axis_* or cpu_core*_pct columns the rows have, in order."""
+    keys = {k for r in rows for k in r if k.startswith(prefix)}
+    return sorted(keys, key=lambda k: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", k)])
+
+
+def analyse(root, out_dir=None, include_disturbed=False, recollect=False, scene=None, exe=None):
     """summary.json (rows, arms, prof_overhead, runs), summary.csv (one row
     per run) and summary-arms.csv (one per arm) from
     ROOT/<host>/<run>/run.json."""
     out_dir = out_dir or root
-    runs, rows = [], []
-    for path in sorted(glob.glob(os.path.join(root, "*", "*", "run.json"))):
-        with open(path) as f:
-            r = json.load(f)
-        runs.append(r)
-        rows.append(summary_row(r, os.path.relpath(os.path.dirname(path), root)))
-    if not runs:
-        raise MatrixError("no run.json under %s/<host>/<arm>/" % root)
-    axes = sorted({k for r in rows for k in r if k.startswith("axis_")})
+    runs, rows = load_rows(root, recollect, scene, exe)
+    axes = dynamic_columns(rows, "axis_")
+    core_cols = [
+        k for k in dynamic_columns(rows, "cpu_core") if re.fullmatch(r"cpu_core\d+_pct", k)
+    ]
     arms_ = arm_rows(rows, include_disturbed)
     overhead = prof_overhead(rows, include_disturbed)
     rules = {json.dumps(r["verdict_rule"], sort_keys=True) for r in runs if r.get("verdict_rule")}
@@ -1119,13 +1462,15 @@ def analyse(root, out_dir=None, include_disturbed=False):
                 "prof_overhead": overhead,
                 "verdict_rules": [json.loads(x) for x in sorted(rules)],
                 "include_disturbed": include_disturbed,
+                # [run dir, the name it should have] (see misnamed).
+                "misnamed": [list(x) for x in misnamed(rows)],
                 "runs": [summary_detail(r) for r in runs],
             },
             f,
             indent=1,
         )
         f.write("\n")
-    cols = COLUMNS[:4] + axes + COLUMNS[4:]
+    cols = COLUMNS[:4] + axes + COLUMNS[4:] + core_cols
     with open(os.path.join(out_dir, "summary.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
@@ -1149,6 +1494,11 @@ def summary_detail(r):
         "fps_per_s": r["frames"]["fps_per_s"],
         "gpu": [s[:3] for s in r.get("gpu", {}).get("samples", [])],
         "hot_threads": r.get("cpu", {}).get("hot_threads"),
+        "threads": r.get("cpu", {}).get("threads"),
+        "cores_load_pct": r.get("cpu", {}).get("cores_load_pct"),
+        "sys_cores_busy_pct": r.get("cpu", {}).get("sys_cores_busy_pct"),
+        "spin": r.get("profile", {}).get("spin"),
+        "spin_sites": (r.get("pacing") or {}).get("spin_sites"),
         "functions": (r.get("profile", {}).get("functions") or [])[:10],
         "modules": (r.get("profile", {}).get("modules") or [])[:6],
     }
@@ -1174,14 +1524,140 @@ def arms_table(arms_):
     return "\n".join(lines)
 
 
+# --- compare -----------------------------------------------------------------
+
+# What compare sets side by side, per (host, arm, prof rate): the arm
+# medians of these. "cores" is the runtime's own process CPU when both
+# sides have it, else the runner's when both have that; with one measure
+# on each side the values show but the change stays blank.
+COMPARE_STATS = (
+    ("fps", "steady_fps"),
+    ("low1_fps", "steady_low1_fps"),
+    ("p99_ms", "steady_p99_ms"),
+    ("cores", "cpu_process_cores"),
+    ("spin_pct", "spin_share"),
+    ("core_max_pct", "cpu_core_max_pct"),
+    ("load_gap_ms", "load_gap_ms"),
+)
+
+
+def compare(before, after, include_disturbed=False, recollect=False, scene=None, exe=None):
+    """Two matrix results (ROOT dirs, e.g. a baseline and its rerun) side
+    by side: one row per (host, arm, prof rate) in either, with n, the good
+    and bad counts, and before, after and the change of each COMPARE_STATS
+    median. An arm on one side only has the other side blank."""
+    sides = []
+    for root in (before, after):
+        _, rows = load_rows(root, recollect, scene, exe)
+        sides.append(
+            {(a["host"], a["arm"], a["prof"]): a for a in arm_rows(rows, include_disturbed)}
+        )
+    out = []
+    for key in sorted(set(sides[0]) | set(sides[1]), key=lambda k: tuple(map(str, k))):
+        b, a = sides[0].get(key, {}), sides[1].get(key, {})
+        row = {"host": key[0], "arm": key[1], "prof": key[2]}
+        for tag, side in (("before", b), ("after", a)):
+            row["n_" + tag] = side.get("n")
+            row["good_" + tag] = side.get("good") if side else None
+            row["bad_" + tag] = side.get("bad") if side else None
+        for name, col in COMPARE_STATS:
+            vb, va = (x.get(col + "_median") for x in (b, a))
+            same = True
+            if name == "cores" and (vb is None or va is None):
+                sb, sa = (x.get("cpu_cores_steady_median") for x in (b, a))
+                if sb is not None and sa is not None:
+                    vb, va = sb, sa
+                else:
+                    vb, va = (vb if vb is not None else sb), (va if va is not None else sa)
+                    same = False
+            row[name + "_before"], row[name + "_after"] = vb, va
+            both = same and vb is not None and va is not None
+            row[name + "_delta"] = round(va - vb, 3) if both else None
+        fb, fa = b.get("fullscreen"), a.get("fullscreen")
+        row["fullscreen_before"] = ",".join(fb) if fb else None
+        row["fullscreen_after"] = ",".join(fa) if fa else None
+        # Windowed and fullscreen present differently (size, compositor),
+        # so their numbers do not compare directly.
+        row["present_differs"] = bool(fb and fa and fb != fa)
+        out.append(row)
+    return out
+
+
+def compare_columns():
+    cols = ["host", "arm", "prof"]
+    for tag in ("before", "after"):
+        cols += ["n_" + tag, "good_" + tag, "bad_" + tag]
+    for name, _ in COMPARE_STATS:
+        cols += [name + "_before", name + "_after", name + "_delta"]
+    return cols + ["fullscreen_before", "fullscreen_after", "present_differs"]
+
+
+def compare_table(rows, before="before", after="after"):
+    """A Markdown table per host: each cell "before -> after (change)"."""
+
+    def num(v):
+        return "-" if v is None else ("%g" % v)
+
+    def cell(r, name):
+        b, a, d = (r[name + x] for x in ("_before", "_after", "_delta"))
+        if b is None and a is None:
+            return ""
+        return "%s -> %s" % (num(b), num(a)) + (" (%+g)" % d if d is not None else "")
+
+    def counts(r, tag):
+        if r["n_" + tag] is None:
+            return "-"
+        return "%s (%s/%s)" % (r["n_" + tag], r["good_" + tag], r["bad_" + tag])
+
+    heads = ["arm", "prof", "n (good/bad)"] + [n for n, _ in COMPARE_STATS]
+    lines = ["before: %s" % before, "after: %s" % after]
+    for host in sorted({str(r["host"]) for r in rows}):
+        lines += ["", "### %s" % host, "", "| " + " | ".join(heads) + " |"]
+        lines.append("|" + "---|" * len(heads))
+        for r in (x for x in rows if str(x["host"]) == host):
+            cells = [
+                r["arm"],
+                str(r["prof"]),
+                "%s -> %s" % (counts(r, "before"), counts(r, "after")),
+            ]
+            cells += [cell(r, n) for n, _ in COMPARE_STATS]
+            lines.append("| " + " | ".join(cells) + " |")
+    differ = [r for r in rows if r.get("present_differs")]
+    if differ:
+        lines += [
+            "",
+            "Windowed against fullscreen (not directly comparable): %s"
+            % ", ".join("%s/%s/%s" % (r["host"], r["arm"], r["prof"]) for r in differ),
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def write_compare(rows, out_dir, before, after):
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "compare.csv"), "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=compare_columns(), extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    with open(os.path.join(out_dir, "compare.md"), "w") as f:
+        f.write(compare_table(rows, before, after))
+
+
 # --- hosts -------------------------------------------------------------------
 
 
-def busy_processes(ps_text, ignore=()):
-    """[(pct, command)] above BUSY_PCT from "ps -Ao pcpu,comm" output."""
+def busy_processes(ps_text, ignore=(), skip_pids=None):
+    """[(pct, command)] above BUSY_PCT from "ps -Ao pcpu,comm" output, or
+    from "ps -Ao pid,pcpu,comm" when skip_pids is given: those (the game
+    itself) are skipped by id, so a second copy of the game still counts."""
     out = []
     for line in ps_text.splitlines()[1:]:
-        p = line.strip().split(None, 1)
+        if skip_pids is not None:
+            p = line.strip().split(None, 2)
+            if len(p) != 3 or p[0] in skip_pids:
+                continue
+            p = p[1:]
+        else:
+            p = line.strip().split(None, 1)
         if len(p) != 2:
             continue
         try:
@@ -1191,6 +1667,122 @@ def busy_processes(ps_text, ignore=()):
         if v >= BUSY_PCT and not any(i in p[1] for i in ignore):
             out.append((v, p[1]))
     return out
+
+
+# Commands that mean a build or another bench is going on this machine,
+# whatever their CPU use at the instant ps looks (a link between compiles,
+# a game waiting on its lock).
+BUILD_COMMANDS = (
+    "ninja",
+    "make",
+    "gmake",
+    "cmake",
+    "clang",
+    "clang++",
+    "cc1",
+    "ld",
+    "ld64",
+    "xcodebuild",
+    "swift-frontend",
+    "go",
+    "cargo",
+    "rustc",
+)
+
+
+def build_jobs(ps_text, own=()):
+    """The BUILD_COMMANDS and own (the game's exe: another bench) running,
+    from "ps -Ao comm" output."""
+    names = set(BUILD_COMMANDS) | set(own)
+    return sorted({os.path.basename(c.strip()) for c in ps_text.splitlines()[1:]} & names)
+
+
+def wait_builds(own=(), limit_s=QUIET_WAIT_S, step_s=30, log=print):
+    """Waits while a build or another bench runs; (waited s, jobs at the end)."""
+    t0 = time.monotonic()
+    while True:
+        r = subprocess.run(["ps", "-Ao", "comm"], capture_output=True, text=True)
+        jobs = build_jobs(r.stdout, own)
+        waited = time.monotonic() - t0
+        if not jobs or waited >= limit_s:
+            return round(waited), jobs
+        log("build or bench running: %s; waiting (%d s so far)" % (jobs[:3], waited))
+        time.sleep(step_s)
+
+
+class Locks:
+    """Locks a measured run holds from before its quiet checks to the
+    game's end, so nothing the checks waited out can start in between."""
+
+    def __init__(self):
+        self.fds, self.holder, self.held = [], None, []
+
+    def take_file(self, path, wait_s=3600, step_s=1.0):
+        """flock(2) on path: what BSD lockf(1) and util-linux flock(1) take,
+        so shell users of the same file queue with this run. lockf(1)
+        removes its file when done, so a lock on a file no longer at path
+        is no lock: look again."""
+        t0 = time.monotonic()
+        while True:
+            fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                try:
+                    same = os.stat(path).st_ino == os.fstat(fd).st_ino
+                except FileNotFoundError:
+                    same = False
+                if same:
+                    self.fds.append(fd)
+                    self.held.append(path)
+                    return
+            except BlockingIOError:
+                pass
+            os.close(fd)
+            if time.monotonic() - t0 >= wait_s:
+                raise MatrixError("lock %s not granted in %d s" % (path, wait_s))
+            time.sleep(step_s)
+
+    def take_wrapper(self, wrapper):
+        """wrapper is a command prefix that runs its command under a lock
+        of its own (a queue such as mac-run-lock.sh, not a lock file): it
+        runs a child that says so and then waits on its stdin, held until
+        release closes that."""
+        cmd = list(wrapper) + ["sh", "-c", "echo held; exec cat >/dev/null"]
+        h = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, start_new_session=True
+        )
+        if h.stdout.readline().strip() != "held":
+            h.stdin.close()
+            raise MatrixError("run wrapper %s: no lock (rc %s)" % (wrapper, h.wait()))
+        self.holder = h
+        self.held.append(" ".join(map(str, wrapper)))
+
+    def release(self):
+        if self.holder:
+            self.holder.stdin.close()
+            try:
+                self.holder.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                kill_group(self.holder)
+            self.holder = None
+        for fd in reversed(self.fds):
+            os.close(fd)
+        self.fds = []
+
+
+def kill_group(proc, grace_s=5):
+    """Ends proc and everything it started (its own session): TERM, then
+    KILL after grace_s, so no child is left running or holding a lock."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            proc.wait(timeout=grace_s)
+            return
+        except subprocess.TimeoutExpired:
+            continue
 
 
 def wait_quiet(ps_cmd, ignore=(), limit_s=QUIET_WAIT_S, step_s=30, log=print):
@@ -1211,9 +1803,10 @@ class BusyWatch(threading.Thread):
     that turns busy mid-run (an IDE indexing, a build) shows in the run's
     numbers, and the quiet check before the start cannot see it."""
 
-    def __init__(self, ps_cmd, ignore=(), step_s=10):
+    def __init__(self, ps_cmd, ignore=(), step_s=10, skip_pids=None):
         super().__init__(daemon=True)
         self.ps_cmd, self.ignore, self.step_s = ps_cmd, ignore, step_s
+        self.skip_pids = skip_pids
         self.hits, self.stop = [], threading.Event()
         self.t0 = time.monotonic()
 
@@ -1221,7 +1814,9 @@ class BusyWatch(threading.Thread):
         while not self.stop.wait(self.step_s):
             r = subprocess.run(self.ps_cmd, capture_output=True, text=True)
             t = round(time.monotonic() - self.t0)
-            self.hits += [[t, v, c] for v, c in busy_processes(r.stdout, self.ignore)]
+            self.hits += [
+                [t, v, c] for v, c in busy_processes(r.stdout, self.ignore, self.skip_pids)
+            ]
 
 
 def benches_line(path, text):
@@ -1243,8 +1838,14 @@ def expand(p):
     return os.path.expanduser(p) if isinstance(p, str) else p
 
 
-def run_local(scene, host, local, arm, out, prof, benches, rep_n=None):
-    """This machine (the Mac): fresh hdd copy, the arm's config, lockf."""
+def run_local(scene, host, local, arm, out, prof, benches, rep_n=None, order=None):
+    """This machine (the Mac): fresh hdd copy, the arm's config, locks.
+    The Mac also collects every host's data, so its runs come last and it
+    must be quiet. The run takes its locks first: the bench lock, the
+    local TOML's quiet_locks (lock files, none by default) and run_wrapper
+    (a command prefix holding a lock of its own, such as a run queue).
+    Inside them it waits out builds and busy processes, then runs the game
+    in its own session, killed whole at the cap."""
     exe = expand(local["exe"])
     seed = expand(local["hdd_seed"])
     os.makedirs(out)
@@ -1271,38 +1872,56 @@ def run_local(scene, host, local, arm, out, prof, benches, rep_n=None):
     full = {k: v for k, v in os.environ.items() if not k.startswith("RECOMP_")}
     full.update(env)
     lock = expand(local.get("lock", "~/.recomp-mac.lock"))
-    cap = scene["scene"]["run_s"] + 120
+    files = [lock] + [x for x in map(expand, local.get("quiet_locks", [])) if x != lock]
+    wrapper = [expand(x) for x in local.get("run_wrapper", [])]
+    cap = scene["scene"]["run_s"] + LOCAL_CAP_EXTRA_S
     os.makedirs(os.path.join(out, "save"))
     ignore = quiet_ignore(scene, host, os.path.basename(exe))
-    waited, busy = wait_quiet(["ps", "-Ao", "pcpu,comm"], ignore=ignore)
-    info = base_info(scene, host, arm, prof, exe, env, waited, busy, rep_n)
-    benches_line(
-        benches,
-        "%s: bench-matrix %s %s run start (measured; host quiet)"
-        % (host["_name"], scene["scene"]["name"], arm["id"]),
-    )
-    info["started"] = datetime.datetime.now().isoformat(timespec="seconds")
-    watch = BusyWatch(["ps", "-Ao", "pcpu,comm"], ignore=ignore)
-    watch.start()
-    with open(os.path.join(out, "game.log"), "w") as log:
-        try:
-            r = subprocess.run(
-                ["lockf", "-t", "3600", lock, exe]
-                if shutil.which("lockf")
-                else ["flock", "-w", "3600", lock, exe],
+    locks = Locks()
+    try:
+        for x in files:
+            locks.take_file(x)
+        if wrapper:
+            locks.take_wrapper(wrapper)
+        waited_b, jobs = wait_builds(own=(os.path.basename(exe),))
+        waited, busy = wait_quiet(["ps", "-Ao", "pcpu,comm"], ignore=ignore)
+        info = base_info(scene, host, arm, prof, exe, env, waited_b + waited, busy, rep_n, order)
+        info["builds_at_start"] = jobs
+        # Only what this run holds, in the order taken.
+        info["locks"] = list(locks.held)
+        benches_line(
+            benches,
+            "%s: bench-matrix %s %s run start (measured; host quiet)"
+            % (host["_name"], scene["scene"]["name"], arm["id"]),
+        )
+        info["started"] = datetime.datetime.now().isoformat(timespec="seconds")
+        with open(os.path.join(out, "game.log"), "w") as log:
+            proc = subprocess.Popen(
+                [exe],
                 cwd=out,
                 env=full,
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                timeout=cap,
+                start_new_session=True,
             )
-            info["rc"] = r.returncode
-        except subprocess.TimeoutExpired:
-            info["rc"] = "killed"
-    watch.stop.set()
-    watch.join()
-    # [s after start, %cpu, command] for each busy sample; the lock wait
-    # counts too, so read it against "started".
+            watch = BusyWatch(
+                ["ps", "-Ao", "pid,pcpu,comm"], ignore=ignore, skip_pids={str(proc.pid)}
+            )
+            watch.start()
+            try:
+                info["rc"] = proc.wait(timeout=cap)
+            except subprocess.TimeoutExpired:
+                kill_group(proc)
+                info["rc"] = "killed"
+            except BaseException:
+                kill_group(proc)
+                raise
+            finally:
+                watch.stop.set()
+                watch.join()
+    finally:
+        locks.release()
+    # [s after start, %cpu, command] for each busy sample.
     info["busy_during"] = watch.hits
     info["ended"] = datetime.datetime.now().isoformat(timespec="seconds")
     benches_line(
@@ -1321,10 +1940,13 @@ def run_local(scene, host, local, arm, out, prof, benches, rep_n=None):
     shutil.rmtree(hdd, ignore_errors=True)
 
 
-def base_info(scene, host, arm, prof, exe, env, waited, busy, rep_n=None):
+def base_info(scene, host, arm, prof, exe, env, waited, busy, rep_n=None, order=None):
     return {
         # Which repeat of the arm this is (run --rep): analyse groups them.
         "rep": rep_n,
+        # Where the run sat in its series (series: index, of, order, the
+        # host order, the run before it); None for a lone `run`.
+        "run_order": order,
         "scene": scene,
         "scene_name": scene["scene"]["name"],
         "host": host["_name"],
@@ -1338,6 +1960,8 @@ def base_info(scene, host, arm, prof, exe, env, waited, busy, rep_n=None):
         "config": arm["config"],
         "quiet_wait_s": waited,
         "busy_at_start": busy,
+        # Borderless desktop fullscreen (run_env), or what the arm set.
+        "present_fullscreen": env.get("RECOMP_PRESENT_FULLSCREEN"),
     }
 
 
@@ -1374,28 +1998,37 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 eval "$(systemctl --user show-environment 2>/dev/null | grep -E '^(DISPLAY|WAYLAND_DISPLAY|XAUTHORITY)=' | sed 's/^/export /')" || true
 export DISPLAY="${DISPLAY:-:0}"
 cd "$R"
+GS=; CS=
+# Whatever ends this script (the run's end, a kill, a signal), the samplers
+# stop with it and flush what they have. ssh runs it without a pty, so a
+# dropped ssh sends no HUP, and bash runs a trap only once the foreground
+# timeout returns: at the latest the cap ends the game and with it this.
+trap 'kill $GS $CS 2>/dev/null' EXIT
+trap 'exit 130' HUP INT TERM
 python3 "$B/gpu_sampler.py" "$R/gpu.tsv" %(period)d & GS=$!
-CS=
-if [ %(cpu_period)d -gt 0 ]; then python3 "$B/cpu_sampler.py" "$R" %(exe_name)s %(cpu_period)d & CS=$!; fi
+if [ %(cpu_period)d -gt 0 ]; then python3 "$B/cpu_sampler.py" "$R" %(exe_name)s %(cpu_period)d %(busy_pct)g %(ignore)s & CS=$!; fi
 date -Is > "$R/started.txt"
 timeout -k 10 -s INT "$CAP" umu-run "$EXE" </dev/null >"$R/umu.log" 2>&1
 echo "rc=$?" > "$R/rc.txt"
 date -Is >> "$R/rc.txt"
-kill $GS $CS 2>/dev/null
+kill $GS $CS 2>/dev/null; GS=; CS=
 sleep 3
 "$PROTONPATH/files/bin/wineserver" -k 2>/dev/null || true
 """
 
 
 def quiet_ignore(scene, host, exe_name):
-    """The processes the quiet check does not count: the scene's and the
-    host's quiet_ignore (the game's own exe when the scene names none),
-    plus what runs the game under Proton."""
-    own = scene["scene"].get("quiet_ignore", [os.path.splitext(exe_name)[0]] if exe_name else [])
-    return tuple(own) + tuple(host.get("quiet_ignore", [])) + ("wineserver", "umu-run")
+    """The processes the quiet checks do not count: the scene's and the
+    host's quiet_ignore, plus what runs the game under Proton. Never the
+    game's own name: the mid-run checks skip the game by id, so a second
+    copy of it (a run left over, another agent's) counts as busy, and
+    one running before the start holds the start."""
+    stem = os.path.splitext(exe_name or "")[0].lower()
+    names = tuple(scene["scene"].get("quiet_ignore", ())) + tuple(host.get("quiet_ignore", ()))
+    return tuple(x for x in names if x.lower() != stem) + ("wineserver", "umu-run")
 
 
-def run_proton(scene, host, local, arm, out, prof, benches, exe_name=None, rep_n=None):
+def run_proton(scene, host, local, arm, out, prof, benches, exe_name=None, rep_n=None, order=None):
     """A SteamOS box over ssh: the Windows exe under umu-run, flock, GPU
     sampled. Only the logs come back; the hdd copy stays there."""
     ssh = local["ssh"]
@@ -1466,7 +2099,16 @@ def run_proton(scene, host, local, arm, out, prof, benches, exe_name=None, rep_n
         print("busy %s: %s; waiting (%d s)" % (ssh, busy[:3], waited))
         time.sleep(30)
     info = base_info(
-        scene, host, arm, prof, expand(local.get("symbols", "")), env, round(waited), busy, rep_n
+        scene,
+        host,
+        arm,
+        prof,
+        expand(local.get("symbols", "")),
+        env,
+        round(waited),
+        busy,
+        rep_n,
+        order,
     )
     info["remote_exe"] = exe
     info["remote_dir"] = rr
@@ -1475,6 +2117,8 @@ def run_proton(scene, host, local, arm, out, prof, benches, exe_name=None, rep_n
         "period": GPU_PERIOD_MS,
         "cpu_period": int(host.get("cpu_period_ms", CPU_PERIOD_MS)),
         "exe_name": shlex.quote(os.path.basename(exe)),
+        "busy_pct": BUSY_PCT,
+        "ignore": shlex.quote(",".join(quiet_ignore(scene, host, os.path.basename(exe))) or "-"),
     }
     cap = scene["scene"]["run_s"] + 60
     lock = local.get("lock", "~/.recomp-run.lock")
@@ -1511,6 +2155,8 @@ def run_proton(scene, host, local, arm, out, prof, benches, exe_name=None, rep_n
         "gpu.tsv",
         "cpu.tsv",
         "threads.tsv",
+        "cores.tsv",
+        "busy.tsv",
         "prof.txt",
         "umu.log",
         "started.txt",
@@ -1529,12 +2175,18 @@ def expand_remote(p, home):
 # --- the Windows runner ------------------------------------------------------
 
 RUN_ARM_PS1 = r"""# bench-matrix: one measured run of an arm on this PC (written by
-# `bench-matrix windows`; scene %(scene)s). Usage, in the logged-on desktop:
-#   powershell -ExecutionPolicy Bypass -File run-arm.ps1 -Arm <id> [-NoProf] [-Rep N]
+# `bench-matrix windows`; scene %(scene)s, host %(host)s). Usage, in the
+# logged-on desktop:
+#   powershell -ExecutionPolicy Bypass -File run-arm.ps1 -Arm <id> [-NoProf] [-Rep N] [-SkipDone]
+# -SkipDone (what run-series.ps1 passes) keeps a run that has its
+# run-info.json, so a series restarted after a stop resumes; without it the
+# run is redone.
 # Results in %(dir)s\runs\<id>[-noprof][-rN]\ (N above 1): game-stdio.log, prof.txt,
 # gpu.csv (nvidia-smi, when present), cpu.csv, run-info.json. Copy that
-# folder back as runs/<scene>/windows/<id>/ and run `bench-matrix collect`.
-param([Parameter(Mandatory)][string]$Arm, [switch]$NoProf, [int]$Rep = 1)
+# folder back under runs/<scene>/%(host)s/ keeping its name (the arm leads
+# it, so the tree reads without opening run.json) and run `bench-matrix collect`.
+# A run another process or window disturbed prints DISTURBED: run it again.
+param([Parameter(Mandatory)][string]$Arm, [switch]$NoProf, [int]$Rep = 1, [switch]$SkipDone)
 $S = '%(dir)s'
 # PowerShell names are case-blind: $ArmDir must not share a name with any
 # later variable (a quiet-loop "a" once overwrote the arm dir "A", and every
@@ -1543,30 +2195,58 @@ $ArmDir = "$S\arms\$Arm"
 if (-not (Test-Path "$ArmDir\env.txt") -or -not (Test-Path "$ArmDir\config.toml")) {
     Write-Host "no arm $Arm in $S\arms (env.txt and config.toml)"; exit 2
 }
-# The present rate follows the display's refresh; refuse below 60 Hz.
-$hz = (Get-CimInstance Win32_VideoController | Measure-Object CurrentRefreshRate -Minimum).Minimum
-if ($hz -lt 60) { Write-Host "display at $hz Hz: set 60 Hz or more first"; exit 1 }
+# The present rate follows the display's refresh; refuse below 60 Hz. An
+# adapter with no display (a virtual one) reports 0 Hz and does not count.
+$hz = (Get-CimInstance Win32_VideoController | Where-Object CurrentRefreshRate -gt 0 | Measure-Object CurrentRefreshRate -Minimum).Minimum
+if (-not $hz -or $hz -lt 60) { Write-Host "display at $hz Hz: set 60 Hz or more first"; exit 1 }
+# CPU use per process from the raw performance counters: Get-Process gives
+# no CPU time for SYSTEM's or elevated processes (Defender, the indexer)
+# unless this shell is elevated, so those never counted. Process time over
+# the counter's own clock, both in 100 ns ticks, is cores in use.
+$Ign = @('Idle', 'System', 'powershell', 'pwsh', 'WmiPrvSE'%(ignore)s)
+function Get-CpuTicks {
+    $ticks = @{}
+    foreach ($c in Get-CimInstance Win32_PerfRawData_PerfProc_Process -ErrorAction SilentlyContinue) {
+        if ($c.Name -eq '_Total' -or $c.IDProcess -eq 0) { continue }
+        $ticks[[int]$c.IDProcess] = @([double]$c.PercentProcessorTime, [double]$c.Timestamp_Sys100NS, ($c.Name -replace '#\d+$', ''))
+    }
+    $ticks
+}
+# (name, percent of one core) for each process using more than %(busy_cores)g cores
+# between two snapshots, by process id: a second copy of the game counts.
+function Get-Busy($From, $To, $SkipId) {
+    foreach ($id in $To.Keys) {
+        $x = $From[$id]; $y = $To[$id]
+        if (-not $x -or $id -eq $SkipId -or $y[2] -in $Ign) { continue }
+        $span = $y[1] - $x[1]
+        if ($span -le 0) { continue }
+        $use = ($y[0] - $x[0]) / $span
+        if ($use -gt %(busy_cores)g) { ,@($y[2], [math]::Round($use * 100, 1)) }
+    }
+}
 # A measured run needs the PC quiet: wait (30 min at most) while another
-# process uses more than half a core. Get-Process .CPU is CPU seconds, so
-# its rise over the 5 s sleep, divided by 5, is cores in use.
+# process is busy.
 $waited = 0
 while ($true) {
-    $before = Get-Process | Select-Object Id, ProcessName, CPU
+    $snap0 = Get-CpuTicks
     Start-Sleep -Seconds 5
-    $after = Get-Process | Select-Object Id, ProcessName, CPU
-    $busy = @(foreach ($p in $after) {
-        $q = $before | Where-Object Id -eq $p.Id
-        if ($q -and $p.CPU -and $q.CPU -and (($p.CPU - $q.CPU) / 5) -gt %(busy_cores)g -and $p.ProcessName -notin 'Idle', 'System', 'powershell', 'pwsh') { "$($p.ProcessName)" }
-    })
+    $busy = @(Get-Busy $snap0 (Get-CpuTicks) 0)
     if ($busy.Count -eq 0 -or $waited -ge 1800) { break }
-    Write-Host "busy: $($busy -join ', '); waiting"; Start-Sleep -Seconds 25; $waited += 30
+    Write-Host "busy: $(($busy | ForEach-Object { $_[0] }) -join ', '); waiting"; Start-Sleep -Seconds 25; $waited += 30
 }
-$I = "$env:LOCALAPPDATA\Programs\%(app)s"; $v = (Get-Content "$I\current.txt").Trim()
-$exe = "$I\versions\$v\%(exe)s"
+# Windows throttles the presents of a window not in front to about one a
+# second, so another window taking the foreground mid-run spoils it.
+Add-Type -Namespace BenchMatrix -Name Win -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+'@
+$I = Join-Path $env:LOCALAPPDATA 'Programs\%(app)s'; $v = (Get-Content -Raw "$I\current.txt").Trim()
+$exe = Join-Path "$I\versions\$v" '%(exe)s'
 $name = if ($NoProf) { "$Arm-noprof" } else { $Arm }
 $R = if ($Rep -gt 1) { "$S\runs\$name-r$Rep" } else { "$S\runs\$name" }
-Remove-Item -Recurse -Force $R -ErrorAction SilentlyContinue
-New-Item -ItemType Directory "$R\save" | Out-Null
+if ($SkipDone -and (Test-Path "$R\run-info.json")) { Write-Host "$R done, skipped"; exit 0 }
+if (Test-Path $R) { Remove-Item -Recurse -Force $R -ErrorAction Stop }
+New-Item -ItemType Directory "$R\save" -ErrorAction Stop | Out-Null
 # The hdd seed holds sparse partition images (about 100 MB used of 5.3 GB)
 # that NTFS copies stored in full. One work copy serves every arm: robocopy
 # /MIR copies only what a run changed or added since, so the first arm pays
@@ -1576,10 +2256,14 @@ $H = "$S\hdd-work"
 if ($LASTEXITCODE -ge 8) { Write-Host "hdd copy failed: robocopy $LASTEXITCODE"; exit 1 }
 Copy-Item "$ArmDir\config.toml" "$R\config.toml" -ErrorAction Stop
 Get-ChildItem env: | Where-Object { $_.Name -like 'RECOMP_*' } | ForEach-Object { Remove-Item "env:$($_.Name)" }
+# An empty value cannot be set (Set-Item removes the variable), so it is
+# neither set nor checked; @R is the run dir, replaced as text, not a regex.
 $want = @{}
 foreach ($kv in Get-Content "$ArmDir\env.txt" -ErrorAction Stop) {
     if (-not $kv.Trim()) { continue }
-    $k, $val = $kv -split '=', 2; $want[$k] = $val -replace '@R', $R; Set-Item "env:$k" $want[$k]
+    $k, $val = $kv -split '=', 2
+    if (-not $val) { continue }
+    $want[$k] = $val.Replace('@R', $R); Set-Item "env:$k" $want[$k]
 }
 if ($NoProf) { $env:RECOMP_TRACE = ($env:RECOMP_TRACE -split ',' | Where-Object { $_ -notlike 'prof*' }) -join ',' }
 # Refuse to measure a run that did not get its arm: the config copied
@@ -1589,7 +2273,7 @@ $bad = @()
 if ((Get-FileHash "$ArmDir\config.toml").Hash -ne (Get-FileHash "$R\config.toml").Hash) { $bad += 'config.toml' }
 foreach ($k in $want.Keys) {
     if ($NoProf -and $k -eq 'RECOMP_TRACE') { continue }
-    if ((Get-Item "env:$k" -ErrorAction SilentlyContinue).Value -ne $want[$k]) { $bad += $k }
+    if ((Get-Item "env:$k" -ErrorAction SilentlyContinue).Value -cne $want[$k]) { $bad += $k }
 }
 if (-not $want.ContainsKey('RECOMP_WINDOW_QUIT_AFTER') -or -not $env:RECOMP_WINDOW_QUIT_AFTER) { $bad += 'RECOMP_WINDOW_QUIT_AFTER' }
 if ($bad.Count) { Write-Host "arm $Arm not applied ($($bad -join ', ')): not running"; exit 3 }
@@ -1613,28 +2297,82 @@ $proc = Start-Process $exe -WorkingDirectory $R -PassThru
 $null = $proc.Handle
 $cpu = [System.Collections.Generic.List[string]]::new()
 $cpu.Add('t,total_ms')
+# [s after start, percent of one core, name] per busy process every 10 s, the
+# game skipped by its id; [s after start, name] each time another window
+# took the front after the game first had it.
+$busyRun = [System.Collections.Generic.List[object]]::new()
+$focusLost = [System.Collections.Generic.List[object]]::new()
+$hadFocus = $false; $away = $false; $tick = 0; $snapPrev = Get-CpuTicks
 $killed = $false
 while (-not $proc.HasExited) {
-    try { $proc.Refresh(); $cpu.Add("$([math]::Round(((Get-Date) - $t0).TotalSeconds, 1)),$([int]$proc.TotalProcessorTime.TotalMilliseconds)") } catch {}
-    if (((Get-Date) - $t0).TotalSeconds -gt %(cap)d) { $killed = $true; & taskkill /F /T /PID $proc.Id | Out-Null; Start-Sleep 3; break }
+    $el = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
+    try { $proc.Refresh(); $cpu.Add("$el,$([int]$proc.TotalProcessorTime.TotalMilliseconds)") } catch {}
+    $fg = [uint32]0
+    $null = [BenchMatrix.Win]::GetWindowThreadProcessId([BenchMatrix.Win]::GetForegroundWindow(), [ref]$fg)
+    if ($fg -eq $proc.Id) { $hadFocus = $true; $away = $false }
+    elseif ($hadFocus -and -not $away) {
+        $away = $true; $focusLost.Add(@($el, "$((Get-Process -Id $fg -ErrorAction SilentlyContinue).ProcessName)"))
+    }
+    $tick += 1
+    if ($tick %% 10 -eq 0) {
+        $snapNow = Get-CpuTicks
+        foreach ($b in @(Get-Busy $snapPrev $snapNow $proc.Id)) { $busyRun.Add(@($el, $b[1], $b[0])) }
+        $snapPrev = $snapNow
+    }
+    if ($el -gt %(cap)d) { $killed = $true; & taskkill /F /T /PID $proc.Id | Out-Null; Start-Sleep 3; break }
     Start-Sleep -Milliseconds 1000
 }
+if (-not $hadFocus) { $focusLost.Add(@(0, 'never in front')) }
 if ($gpu) { Stop-Process -Id $gpu.Id -ErrorAction SilentlyContinue }
 $cpu | Set-Content "$R\cpu.csv"
 $rc = if ($killed) { 'killed' } else { "$($proc.ExitCode)" }
 $envs = @{}; Get-ChildItem env: | Where-Object { $_.Name -like 'RECOMP_*' } | ForEach-Object { $envs[$_.Name] = $_.Value }
-@{ host = 'windows'; backend = '%(backend)s'; arm = $name; rep = $Rep; prof = (-not $NoProf); version = $v; rc = $rc;
-   refresh_hz = $hz; quiet_wait_s = $waited; busy_at_start = $busy; qpc_us = $qpc_us; unix_us = $wall * 1000; exe = (Split-Path -Leaf $exe);
-   started = $t0.ToString('s'); ended = (Get-Date).ToString('s'); env = $envs } | ConvertTo-Json -Depth 4 | Set-Content "$R\run-info.json"
+@{ host = '%(host)s'; backend = '%(backend)s'; arm = $name; rep = $Rep; prof = (-not $NoProf); version = $v; rc = $rc;
+   refresh_hz = $hz; present_fullscreen = $env:RECOMP_PRESENT_FULLSCREEN; quiet_wait_s = $waited; busy_at_start = $busy; busy_during = $busyRun; focus_lost = $focusLost;
+   qpc_us = $qpc_us; unix_us = $wall * 1000; exe = (Split-Path -Leaf $exe);
+   started = $t0.ToString('s'); ended = (Get-Date).ToString('s'); env = $envs } | ConvertTo-Json -Depth 5 | Set-Content "$R\run-info.json"
 Write-Host "$name (rep $Rep) rc=$rc -> $R"
+if ($busyRun.Count -or $focusLost.Count) {
+    Write-Host "DISTURBED: $($busyRun.Count) busy samples, focus lost $($focusLost.Count) times: run it again"
+}
+exit 0
+"""
+
+RUN_SERIES_PS1 = r"""# bench-matrix: a series of runs on this PC in order (written by
+# `bench-matrix windows --series`; scene %(scene)s, order %(order)s). Each
+# line is one run-arm.ps1 run; a setup error stops the series, and a
+# restart skips the runs already done.
+%(lines)s
+Write-Host "series done"
 """
 
 
-def write_windows(scene, local, out, exe_name=None):
-    """run-arm.ps1 and arms/<id>/{config.toml,env.txt} for the PC."""
-    host = dict(scene["hosts"]["windows"], _name="windows")
+def ps_quote(s):
+    """s inside a single-quoted PowerShell string."""
+    return str(s).replace("'", "''")
+
+
+def windows_host(scene, name=None):
+    """The scene's PC host: the one named, else its only kind "windows"
+    host, else the host called "windows"."""
+    if name:
+        return host_of(scene, name)
+    pcs = [n for n, h in scene["hosts"].items() if h.get("kind") == "windows"]
+    if len(pcs) == 1:
+        return host_of(scene, pcs[0])
+    if "windows" in scene["hosts"]:
+        return host_of(scene, "windows")
+    raise MatrixError("pass --host: the scene has %s kind windows hosts" % (len(pcs) or "no"))
+
+
+def write_windows(
+    scene, local, out, exe_name=None, host_name=None, series=None, order="interleave"
+):
+    """run-arm.ps1 and arms/<id>/{config.toml,env.txt} for the PC; with
+    series (series_plan's list), run-series.ps1 too."""
+    host = windows_host(scene, host_name)
     os.makedirs(os.path.join(out, "arms"), exist_ok=True)
-    for arm in arms(scene, "windows"):
+    for arm in arms(scene, host["_name"]):
         d = os.path.join(out, "arms", arm["id"])
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, "config.toml"), "w") as f:
@@ -1646,12 +2384,25 @@ def write_windows(scene, local, out, exe_name=None):
     exe = local.get("exe_name") or (exe_name + ".exe" if exe_name else None)
     if not exe:
         raise MatrixError("no exe: set exe_name in the local TOML's [windows] table")
+    # The quiet check before the start ignores these; the game's own name is
+    # not among them, so a copy of it still running holds the start.
+    stem = os.path.splitext(exe)[0].lower()
+    ign = [
+        x
+        for x in tuple(scene["scene"].get("quiet_ignore", ())) + tuple(host.get("quiet_ignore", ()))
+        if x.lower() != stem
+    ]
     ps1 = RUN_ARM_PS1 % {
         "scene": scene["scene"]["name"],
-        "dir": local["dir"],
-        "app": local["app"],
-        "exe": exe,
-        "backend": host["backend"],
+        "host": ps_quote(host["_name"]),
+        "dir": ps_quote(local["dir"]),
+        "app": ps_quote(local["app"]),
+        "exe": ps_quote(exe),
+        "backend": ps_quote(host["backend"]),
+        # Perf counter instances are named without .exe.
+        "ignore": "".join(
+            ", '%s'" % ps_quote(x[:-4] if x.lower().endswith(".exe") else x) for x in ign
+        ),
         # BUSY_PCT is a share of one core; the script measures cores.
         "busy_cores": BUSY_PCT / 100,
         "period": GPU_PERIOD_MS,
@@ -1659,7 +2410,27 @@ def write_windows(scene, local, out, exe_name=None):
     }
     with open(os.path.join(out, "run-arm.ps1"), "w", newline="\r\n") as f:
         f.write(ps1)
-    return [a["id"] for a in arms(scene, "windows")]
+    ids = [a["id"] for a in arms(scene, host["_name"])]
+    if series is not None:
+        unknown = sorted({a for a, _, _ in series} - set(ids))
+        if unknown:
+            raise MatrixError("no arm %s on %s" % (", ".join(unknown), host["_name"]))
+        lines = [
+            "& \"$PSScriptRoot\\run-arm.ps1\" -Arm '%s'%s -Rep %d -SkipDone; "
+            "if ($LASTEXITCODE -in 1, 2) { exit $LASTEXITCODE }"
+            % (ps_quote(a), "" if p else " -NoProf", rep)
+            for a, p, rep in series
+        ]
+        with open(os.path.join(out, "run-series.ps1"), "w", newline="\r\n") as f:
+            f.write(
+                RUN_SERIES_PS1
+                % {
+                    "scene": scene["scene"]["name"],
+                    "order": order,
+                    "lines": "\n".join(lines),
+                }
+            )
+    return ids
 
 
 def windows_info(run_dir, scene, symbols_exe):
@@ -1670,13 +2441,33 @@ def windows_info(run_dir, scene, symbols_exe):
         raise MatrixError("%s: no run-info.json" % run_dir)
     info = json.loads(raw.lstrip("﻿"))
     arm_id = info.get("arm", os.path.basename(run_dir)).removesuffix("-noprof")
-    a = find_arm(scene, "windows", arm_id)
+    host = info.get("host") or windows_host(scene)["_name"]
+    a = find_arm(scene, host, arm_id)
     info.update(
         scene=scene, scene_name=scene["scene"]["name"], values=a["values"], config=a["config"]
     )
     if symbols_exe:
         info["symbols"] = symbols_exe
     write_info(run_dir, info)
+
+
+# --- series ------------------------------------------------------------------
+
+
+def series_plan(arm_ids, reps, first_rep=1, prof="both", order="interleave"):
+    """[(arm, prof, rep)] in run order. blocks: every sampled run, then
+    every unsampled one (as the first matrix ran). interleave: each arm's
+    sampled and unsampled runs back to back, the side that goes first
+    alternating, so a drift over the series (heat, a background job) falls
+    on both sides alike."""
+    sides = {"on": [True], "off": [False], "both": [True, False]}[prof]
+    rep_range = range(first_rep, first_rep + reps)
+    if order == "blocks":
+        return [(a, p, r) for p in sides for r in rep_range for a in arm_ids]
+    out = []
+    for k, (r, a) in enumerate((r, a) for r in rep_range for a in arm_ids):
+        out += [(a, p, r) for p in (sides if k % 2 == 0 else sides[::-1])]
+    return out
 
 
 # --- the command line --------------------------------------------------------
@@ -1688,13 +2479,58 @@ def host_of(scene, name):
     return dict(scene["hosts"][name], _name=name)
 
 
+# The machine that runs this CLI (kind "local") also pulls and analyses
+# every host's data, so its arms go last, once the remote hosts are done;
+# the remote hosts (the Deck, the PC) are separate machines and may overlap.
+REMOTE_KINDS = ("proton", "windows")
+
+
+def host_order(scene, names=None):
+    """The hosts in run order: the remote ones as the scene lists them,
+    then the local ones."""
+    names = list(names or scene["hosts"])
+    for n in names:
+        host_of(scene, n)
+    return sorted(names, key=lambda n: scene["hosts"][n].get("kind") not in REMOTE_KINDS)
+
+
+def run_one(a, scene, host, local, arm, out, prof, rep, order=None):
+    kind = host.get("kind")
+    if kind == "local":
+        run_local(scene, host, local, arm, out, prof, a.benches, rep, order)
+    elif kind == "proton":
+        run_proton(scene, host, local, arm, out, prof, a.benches, a.exe_name, rep, order)
+    else:
+        raise MatrixError(
+            "host %s (kind %s) is not run from here; see `windows`" % (host["_name"], kind)
+        )
+
+
+def arm_list(scene, host, spec):
+    ids = [x["id"] for x in arms(scene, host)]
+    if not spec or spec == "all":
+        return ids
+    want = [x for x in spec.split(",") if x]
+    for x in want:
+        find_arm(scene, host, x)
+    return want
+
+
+def series_args(p):
+    p.add_argument("--arms", help="comma-separated arm ids (default: all of the host's)")
+    p.add_argument("--reps", type=int, default=1, help="repeats per arm and side")
+    p.add_argument("--first-rep", type=int, default=1, help="the first repeat's number")
+    p.add_argument("--prof", choices=("on", "off", "both"), default="both")
+    p.add_argument("--order", choices=("interleave", "blocks"), default="interleave")
+
+
 def main(argv=None, prog="bench-matrix", exe_name=None):
     """exe_name: the game's executable without extension (game.toml's
     build.exe), which the CLI passes; the scene and the local TOML can
     name others."""
     ap = argparse.ArgumentParser(prog=prog, description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("plan", help="list the arms, in leg order")
+    p = sub.add_parser("plan", help="list the arms, hosts in run order (the local one last)")
     p.add_argument("scene")
     p.add_argument("--host")
     p.add_argument("--json", action="store_true")
@@ -1711,6 +2547,16 @@ def main(argv=None, prog="bench-matrix", exe_name=None):
     p.add_argument(
         "--rep", type=int, help="which repeat of the arm this is (else a -rN dir suffix, else 1)"
     )
+    p = sub.add_parser(
+        "series", help="many runs in order into ROOT/<host>/<run>/, each collected; skips done ones"
+    )
+    p.add_argument("scene")
+    p.add_argument("--host", required=True, help="comma-separated; run remote hosts first")
+    p.add_argument("--root", required=True, help="the matrix's result dir")
+    p.add_argument("--local", required=True)
+    p.add_argument("--benches")
+    p.add_argument("--dry-run", action="store_true", help="print the runs, run none")
+    series_args(p)
     p = sub.add_parser("collect", help="run.json for a run directory")
     p.add_argument("run_dir")
     p.add_argument("--scene", help="for a run whose run-info.json has none (the PC's)")
@@ -1724,10 +2570,24 @@ def main(argv=None, prog="bench-matrix", exe_name=None):
         action="store_true",
         help="count runs another process disturbed in the per-arm figures",
     )
+    p.add_argument("--recollect", action="store_true", help="run collect again on every run first")
+    p.add_argument("--scene", help="with --recollect: this scene in place of each run's")
+    p.add_argument("--exe", help="with --recollect: the exe to symbolise the profiles with")
+    p = sub.add_parser("compare", help="two matrix results side by side, per host and arm")
+    p.add_argument("before")
+    p.add_argument("after")
+    p.add_argument("--out", help="write compare.csv and compare.md here")
+    p.add_argument("--include-disturbed", action="store_true")
+    p.add_argument("--recollect", action="store_true")
+    p.add_argument("--scene")
+    p.add_argument("--exe")
     p = sub.add_parser("windows", help="run-arm.ps1 and the arms for a Windows PC")
     p.add_argument("scene")
     p.add_argument("--local", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--host", help="the PC's host in the scene (default: its kind windows one)")
+    p.add_argument("--series", action="store_true", help="also run-series.ps1, in order")
+    series_args(p)
     a = ap.parse_args(argv)
     a.exe_name = exe_name
     try:
@@ -1737,10 +2597,17 @@ def main(argv=None, prog="bench-matrix", exe_name=None):
         return 2
 
 
+def local_table(path, host):
+    local = load_toml(path).get(host)
+    if not local:
+        raise MatrixError("%s: no [%s] table" % (path, host))
+    return local
+
+
 def dispatch(a):
     if a.cmd == "plan":
         scene = load_scene(a.scene)
-        hosts = [a.host] if a.host else list(scene["hosts"])
+        hosts = host_order(scene, [a.host] if a.host else None)
         plan = {h: [x["id"] for x in arms(scene, h)] for h in hosts}
         if a.json:
             print(json.dumps(plan, indent=1))
@@ -1751,23 +2618,72 @@ def dispatch(a):
     if a.cmd == "run":
         scene = load_scene(a.scene)
         host = host_of(scene, a.host)
-        local = load_toml(a.local).get(a.host)
-        if not local:
-            raise MatrixError("%s: no [%s] table" % (a.local, a.host))
+        local = local_table(a.local, a.host)
         arm = find_arm(scene, a.host, a.arm)
         if os.path.exists(a.out):
             raise MatrixError("%s exists" % a.out)
-        kind = host.get("kind")
-        if kind == "local":
-            run_local(scene, host, local, arm, a.out, not a.no_prof, a.benches, a.rep)
-        elif kind == "proton":
-            run_proton(scene, host, local, arm, a.out, not a.no_prof, a.benches, a.exe_name, a.rep)
-        else:
-            raise MatrixError(
-                "host %s (kind %s) is not run from here; see `windows`" % (a.host, kind)
-            )
+        run_one(a, scene, host, local, arm, a.out, not a.no_prof, a.rep)
         r = collect(a.out)
         print(table([summary_row(r, a.out)]))
+        return 0
+    if a.cmd == "series":
+        scene = load_scene(a.scene)
+        hosts = host_order(scene, [h for h in a.host.split(",") if h])
+        for h in hosts:
+            if scene["hosts"][h].get("kind") == "windows":
+                raise MatrixError("host %s is not run from here; see `windows --series`" % h)
+        todo = []
+        for h in hosts:
+            plan = series_plan(arm_list(scene, h, a.arms), a.reps, a.first_rep, a.prof, a.order)
+            todo += [(h, arm, p, rep) for arm, p, rep in plan]
+        prev, failed = None, []
+        for i, (h, arm_id, p, rep) in enumerate(todo):
+            out = os.path.join(a.root, h, run_name(arm_id, p, rep))
+            # Done means collected: a run that died (ssh, a lock not
+            # granted, Ctrl-C) leaves its folder without run.json, and is
+            # moved aside and run again.
+            if os.path.exists(os.path.join(out, "run.json")):
+                print("%d/%d %s: done, skipped" % (i + 1, len(todo), out))
+                continue
+            if os.path.exists(out):
+                aside = "%s.failed-%s" % (out, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+                print("%d/%d %s: not collected; %s" % (i + 1, len(todo), out, aside))
+                if a.dry_run:
+                    continue
+                os.rename(out, aside)
+            else:
+                print("%d/%d %s" % (i + 1, len(todo), out))
+            if a.dry_run:
+                continue
+            order = {
+                "index": i + 1,
+                "of": len(todo),
+                "order": a.order,
+                "hosts": hosts,
+                "previous": prev,
+            }
+            try:
+                run_one(
+                    a,
+                    scene,
+                    host_of(scene, h),
+                    local_table(a.local, h),
+                    find_arm(scene, h, arm_id),
+                    out,
+                    p,
+                    rep,
+                    order,
+                )
+                prev = os.path.join(h, os.path.basename(out))
+                print(table([summary_row(collect(out), out)]))
+            except (MatrixError, OSError, subprocess.SubprocessError) as e:
+                # One failed run does not end the series; the next series
+                # runs it again.
+                print("%s: failed: %s" % (out, e))
+                failed.append(out)
+        if failed:
+            print("%d run(s) failed, run the series again: %s" % (len(failed), failed))
+            return 1
         return 0
     if a.cmd == "collect":
         scene = load_scene(a.scene) if a.scene else None
@@ -1780,7 +2696,12 @@ def dispatch(a):
         print(table([summary_row(r, a.run_dir)]))
         return 0
     if a.cmd == "analyse":
-        rows, overhead, arms_ = analyse(a.root, a.out, a.include_disturbed)
+        if (a.scene or a.exe) and not a.recollect:
+            print("--scene and --exe apply with --recollect only; ignored", file=sys.stderr)
+        scene = load_scene(a.scene) if a.scene else None
+        rows, overhead, arms_ = analyse(
+            a.root, a.out, a.include_disturbed, a.recollect, scene, a.exe
+        )
         print(table(rows))
         print()
         print(arms_table(arms_))
@@ -1790,14 +2711,32 @@ def dispatch(a):
             if "cost_pct_good" in o:
                 line += "; good runs only %s%%" % o["cost_pct_good"]
             print(line)
+        for d, want in misnamed(rows):
+            print("misnamed: %s holds %s (rename it so the tree reads)" % (d, want))
+        return 0
+    if a.cmd == "compare":
+        if (a.scene or a.exe) and not a.recollect:
+            print("--scene and --exe apply with --recollect only; ignored", file=sys.stderr)
+        scene = load_scene(a.scene) if a.scene else None
+        rows = compare(a.before, a.after, a.include_disturbed, a.recollect, scene, a.exe)
+        if a.out:
+            write_compare(rows, a.out, a.before, a.after)
+        print(compare_table(rows, a.before, a.after), end="")
         return 0
     if a.cmd == "windows":
         scene = load_scene(a.scene)
-        local = load_toml(a.local).get("windows")
-        if not local:
-            raise MatrixError("%s: no [windows] table" % a.local)
-        ids = write_windows(scene, local, a.out, a.exe_name)
-        print("%s: run-arm.ps1 and %d arms" % (a.out, len(ids)))
+        host = windows_host(scene, a.host)
+        local = local_table(a.local, host["_name"])
+        series = None
+        if a.series:
+            series = series_plan(
+                arm_list(scene, host["_name"], a.arms), a.reps, a.first_rep, a.prof, a.order
+            )
+        ids = write_windows(scene, local, a.out, a.exe_name, host["_name"], series, a.order)
+        print(
+            "%s: run-arm.ps1 and %d arms%s"
+            % (a.out, len(ids), ", run-series.ps1 (%d runs)" % len(series) if series else "")
+        )
         return 0
     raise AssertionError(a.cmd)
 
