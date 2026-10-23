@@ -474,10 +474,25 @@ arguments; `mygame <tool> --help` prints them.
 |---|---|
 | `mygame golden <subcommand>` | the golden-frame compare: `plan`, `frames`, `diff`, `check`, `prune`, `record`, `reference`, `dumpat`, `anchors`, `pulls`, `refs`, and `run` |
 | `mygame pacing-stats LOG...` | frame-pacing statistics from run logs (`RECOMP_TRACE=flip,pacing=all`): interval percentiles, flips/s, an A/B with `--arm` |
+| `mygame bench-matrix <command>` | settings matrices: `plan`, `run`, `series`, `collect`, `analyse`, `compare`, `windows`, and `report` |
 | `mygame benchlog-retention` | retention for the `bench-logs/` store; a dry run unless `--apply` |
 | `mygame audio-check WAV` | checks on an audio dump or an xemu reference capture; runs in the game's `.venv` (needs numpy) |
 | `mygame wrapper --check` / `--print` | compare the game's bootstrap with this CLI's template, or print the template |
 | `mygame workflow --check` / `--print` | compare `release-wizard.yml` (with `[wizard]`) and `checks.yml` (with `[public]`) with this CLI's templates, or print them |
+
+`bench-matrix report RESULT [--scene TOML] [--baseline RESULT] [--out DIR]
+[--public REPO]` renders an analysed result as `index.html` and
+`report.json` (default `RESULT/report/`): per host the figures of its
+sampler group, a radar per split value, the best settings by the scene's
+`[report]` table and the hardware, run and build blocks. `--public` also
+writes the radar SVGs and the README part between `<!-- xbr:bench SCENE
+begin -->` and `<!-- xbr:bench SCENE end -->` into the game repo, from an
+allow-list of fields, after a leak check with the repo's `audit-private`
+patterns and the scene's host keys. It exits 1 and writes nothing when the
+check finds a leak or the README has no markers (it prints the part then),
+and 2 when no `audit-private` file exists. `run` and `series` take the
+build from the exe's `manifest.json`, else `--build-version`,
+`--game-sha` and `--toolkit-sha`, and refuse without one.
 
 `golden check` fails a run whose `[ENHANCE]` line shows a non-stock value
 for a toolkit key or one of the game's (`golden.enhance_stock`); `golden

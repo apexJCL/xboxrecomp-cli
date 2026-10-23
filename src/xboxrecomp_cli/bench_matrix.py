@@ -110,6 +110,9 @@ import threading
 import time
 import tomllib
 
+from . import bench_hw
+from .host import CliError
+
 PACING_FLIP_RE = re.compile(r"^\[PACING\] flip (\d+) t_us (\d+) batches (\d+)")
 
 # A process above this share of one core makes the host busy for a
@@ -153,6 +156,15 @@ def load_scene(path):
             raise MatrixError("%s: axis %s needs one of config or env" % (path, a["name"]))
         if "labels" in a and len(a["labels"]) != len(a["values"]):
             raise MatrixError("%s: axis %s: labels and values differ in length" % (path, a["name"]))
+        if "display" in a and len(a["display"]) != len(a["values"]):
+            raise MatrixError(
+                "%s: axis %s: display and values differ in length" % (path, a["name"])
+            )
+    if "report" in s:
+        # bench_report imports this module: imported here, not at the top.
+        from .bench_report import check_report
+
+        check_report(s, path)
     return s
 
 
@@ -316,6 +328,14 @@ def part_stats(ft, med, span_s, nflips, slow_ms):
         "stutters": sum(1 for x in ft if x > STUTTER_X * med),
         "slow_share": round(sum(1 for x in ft if x > slow_ms) / len(ft), 4),
     }
+
+
+def worst_second(fps_per_s, warmup_s):
+    """The lowest whole 1-second bucket of the steady part (bench-report
+    D2): bucket k covers [k, k+1) s, so the first steady one starts at or
+    after the warm-up."""
+    steady = (fps_per_s or [])[math.ceil(warmup_s or 0) :]
+    return min(steady) if steady else None
 
 
 def frame_stats(times_us, t0, duration_s, warmup_s, slow_fps=50):
@@ -1026,6 +1046,25 @@ def collect(run_dir, scene=None, exe=None, nm=None):
         out["verdict_rule"] = scene["verdict"]
     blocks, sites = parse_pacing(log)
     out["pacing"] = pacing_stats(blocks, sites, t0, sc["duration_s"], warm)
+    # How the run was taken, and what on (bench-report D5): the hardware
+    # block is cleaned again field by field, whoever wrote it (the PC's
+    # script among them), and Proton's log names the DXVK it ran.
+    out["run"] = bench_hw.run_block(info, log, out["prof_hz"], out["pacing"].get("mode"))
+    if info.get("hw"):
+        hw = bench_hw.sanitize_hw(info["hw"])
+        dx = bench_hw.dxvk_version(read(os.path.join(run_dir, "umu.log")))
+        if dx and not hw["backend"]["translation_version"]:
+            hw["backend"]["translation"] = hw["backend"]["translation"] or "DXVK"
+            hw["backend"]["translation_version"] = dx
+        out["hw"] = hw
+    b = info.get("build")
+    if isinstance(b, dict) and b.get("version") and not b.get("version_public"):
+        out["build"] = bench_hw.build_block(
+            version=b["version"],
+            game_sha=b.get("game_sha"),
+            toolkit_sha=b.get("toolkit_sha"),
+            exe_sha256=b.get("exe_sha256"),
+        )
     gpu_t = read(os.path.join(run_dir, "gpu.tsv"))
     gpu_c = read(os.path.join(run_dir, "gpu.csv"))
     if gpu_t:
@@ -1112,6 +1151,7 @@ COLUMNS = [
     "flips",
     "steady_fps",
     "steady_low1_fps",
+    "steady_worst_s_fps",
     "steady_p99_ms",
     "steady_hitches",
     "steady_stutters",
@@ -1234,6 +1274,7 @@ def summary_row(r, run_dir=None):
         "flips": fr["flips"],
         "steady_fps": fr["steady_fps"],
         "steady_low1_fps": st.get("low1_fps"),
+        "steady_worst_s_fps": worst_second(fr.get("fps_per_s"), fr.get("warmup_s")),
         "steady_p99_ms": st.get("p99_ms"),
         "steady_hitches": st.get("hitches"),
         "steady_stutters": st.get("stutters"),
@@ -1305,6 +1346,7 @@ ARM_STATS = (
     "steady_fps",
     "warmup_fps",
     "steady_low1_fps",
+    "steady_worst_s_fps",
     "steady_p99_ms",
     "steady_hitches",
     "steady_stutters",
@@ -1838,7 +1880,7 @@ def expand(p):
     return os.path.expanduser(p) if isinstance(p, str) else p
 
 
-def run_local(scene, host, local, arm, out, prof, benches, rep_n=None, order=None):
+def run_local(scene, host, local, arm, out, prof, benches, rep_n=None, order=None, extra=None):
     """This machine (the Mac): fresh hdd copy, the arm's config, locks.
     The Mac also collects every host's data, so its runs come last and it
     must be quiet. The run takes its locks first: the bench lock, the
@@ -1877,6 +1919,8 @@ def run_local(scene, host, local, arm, out, prof, benches, rep_n=None, order=Non
     cap = scene["scene"]["run_s"] + LOCAL_CAP_EXTRA_S
     os.makedirs(os.path.join(out, "save"))
     ignore = quiet_ignore(scene, host, os.path.basename(exe))
+    # Before the locks and the quiet wait: none of it is measured.
+    hw = capture_hw_local(host)
     locks = Locks()
     try:
         for x in files:
@@ -1887,6 +1931,8 @@ def run_local(scene, host, local, arm, out, prof, benches, rep_n=None, order=Non
         waited, busy = wait_quiet(["ps", "-Ao", "pcpu,comm"], ignore=ignore)
         info = base_info(scene, host, arm, prof, exe, env, waited_b + waited, busy, rep_n, order)
         info["builds_at_start"] = jobs
+        info["hw"] = hw
+        info.update(extra or {})
         # Only what this run holds, in the order taken.
         info["locks"] = list(locks.held)
         benches_line(
@@ -1938,6 +1984,64 @@ def run_local(scene, host, local, arm, out, prof, benches, rep_n=None, order=Non
     info["symbols"] = expand(local.get("symbols", exe))
     write_info(out, info)
     shutil.rmtree(hdd, ignore_errors=True)
+
+
+def capture_hw_local(host):
+    """This machine's hw block; a failed capture leaves it out, never the
+    run."""
+    try:
+        if sys.platform == "darwin":
+            return bench_hw.capture_macos(backend=host.get("backend"))
+        return bench_hw.capture_linux(
+            lambda script: bench_hw.local_run(["sh", "-c", script]), host.get("backend")
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def capture_hw_ssh(ssh, host, proton=None):
+    def run(script):
+        try:
+            r = subprocess.run(
+                ["ssh", ssh, "sh -s"], input=script, capture_output=True, text=True, timeout=60
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return r.stdout if r.returncode == 0 else ""
+
+    try:
+        return bench_hw.capture_linux(run, host.get("backend"), proton=proton)
+    except (OSError, ValueError):
+        return None
+
+
+def run_build(a, host, local):
+    """The build block of the exe a run uses: its payload manifest, else
+    the flags. None refuses the run: a result must say what it measured."""
+    if host.get("kind") == "local":
+        exe = expand(local.get("exe", ""))
+    else:
+        # The remote exe is a copy of the local one the profile is
+        # symbolised with.
+        exe = expand(local.get("symbols", ""))
+    b = bench_hw.build_block(
+        bench_hw.find_manifest(exe) if exe else None,
+        a.build_version,
+        a.game_sha,
+        a.toolkit_sha,
+        sha256(exe) if exe and os.path.isfile(exe) else None,
+    )
+    if not b:
+        raise MatrixError(
+            "%s: no manifest.json beside the exe (%s): pass --build-version, and "
+            "--game-sha and --toolkit-sha" % (host["_name"], exe or "none set")
+        )
+    if not b.get("game_sha") or not b.get("toolkit_sha"):
+        raise MatrixError(
+            "%s: the build has no game or toolkit sha: pass --game-sha and --toolkit-sha"
+            % host["_name"]
+        )
+    return b
 
 
 def base_info(scene, host, arm, prof, exe, env, waited, busy, rep_n=None, order=None):
@@ -2028,7 +2132,9 @@ def quiet_ignore(scene, host, exe_name):
     return tuple(x for x in names if x.lower() != stem) + ("wineserver", "umu-run")
 
 
-def run_proton(scene, host, local, arm, out, prof, benches, exe_name=None, rep_n=None, order=None):
+def run_proton(
+    scene, host, local, arm, out, prof, benches, exe_name=None, rep_n=None, order=None, extra=None
+):
     """A SteamOS box over ssh: the Windows exe under umu-run, flock, GPU
     sampled. Only the logs come back; the hdd copy stays there."""
     ssh = local["ssh"]
@@ -2087,6 +2193,8 @@ def run_proton(scene, host, local, arm, out, prof, benches, exe_name=None, rep_n
     )
     if r.returncode:
         raise MatrixError("ssh %s: hdd copy failed: %s" % (ssh, r.stderr.strip()))
+    # The Proton build's folder name (GE-Proton10-25) names the translation.
+    hw = capture_hw_ssh(ssh, host, local.get("proton"))
     t0 = time.monotonic()
     while True:
         busy = busy_processes(
@@ -2112,6 +2220,8 @@ def run_proton(scene, host, local, arm, out, prof, benches, exe_name=None, rep_n
     )
     info["remote_exe"] = exe
     info["remote_dir"] = rr
+    info["hw"] = hw
+    info.update(extra or {})
     script = "".join("export %s=%s\n" % (k, shlex.quote(v)) for k, v in env.items())
     script += DECK_RUN % {
         "period": GPU_PERIOD_MS,
@@ -2327,10 +2437,39 @@ if ($gpu) { Stop-Process -Id $gpu.Id -ErrorAction SilentlyContinue }
 $cpu | Set-Content "$R\cpu.csv"
 $rc = if ($killed) { 'killed' } else { "$($proc.ExitCode)" }
 $envs = @{}; Get-ChildItem env: | Where-Object { $_.Name -like 'RECOMP_*' } | ForEach-Object { $envs[$_.Name] = $_.Value }
+# The hardware and build blocks (bench-report D5): named fields only, never
+# the computer's name, a serial or a UUID; collect cleans the text again.
+$cs = Get-CimInstance Win32_ComputerSystem; $os = Get-CimInstance Win32_OperatingSystem
+$cpuI = Get-CimInstance Win32_Processor | Select-Object -First 1
+$vc = @(Get-CimInstance Win32_VideoController | Where-Object CurrentRefreshRate -gt 0)
+$nv = @(); if ($smi) { $nv = @((& $smi.Source --query-gpu=driver_version,clocks.max.gr --format=csv,noheader,nounits 2>$null | Select-Object -First 1) -split ',\s*') }
+$scheme = $null; if ((powercfg /getactivescheme | Out-String) -match '\(([^)]*)\)') { $scheme = $Matches[1] }
+$hwInfo = @{ schema = 1
+  os = @{ name = $os.Caption; version = $os.Version; build = $os.BuildNumber }
+  device = @{ model = "$($cs.Manufacturer) $($cs.Model)" }
+  cpu = @{ model = $cpuI.Name; cores = $cpuI.NumberOfCores; threads = $cpuI.NumberOfLogicalProcessors; max_mhz = $cpuI.MaxClockSpeed }
+  gpu = @($vc | ForEach-Object {
+    $isNv = $nv.Count -ge 2 -and $_.Name -like '*NVIDIA*'
+    @{ model = $_.Name; vendor = $_.AdapterCompatibility; driver = $(if ($isNv) { $nv[0] } else { $_.DriverVersion }); max_mhz = $(if ($isNv) { $nv[1] } else { $null }) } })
+  ram_gb = [math]::Round($cs.TotalPhysicalMemory / 1GB, 1)
+  display = @{ refresh_hz = $hz; width = $vc[0].CurrentHorizontalResolution; height = $vc[0].CurrentVerticalResolution }
+  power = @{ source = $(if (Get-CimInstance Win32_Battery) { $null } else { 'ac' }); profile = $scheme }
+  backend = @{ name = '%(backend)s' } }
+# The build: the version folder's payload manifest names the shas.
+$build = @{ version = $v }
+$man = "$I\versions\$v\manifest.json"
+if (Test-Path $man) {
+    $mj = Get-Content -Raw $man | ConvertFrom-Json
+    foreach ($p in $mj.sources.PSObject.Properties) {
+        if ($p.Name -eq 'toolkit') { $build.toolkit_sha = $p.Value.commit }
+        elseif ($p.Name -ne 'cli' -and -not $build.game_sha) { $build.game_sha = $p.Value.commit }
+    }
+}
 @{ host = '%(host)s'; backend = '%(backend)s'; arm = $name; rep = $Rep; prof = (-not $NoProf); version = $v; rc = $rc;
    refresh_hz = $hz; present_fullscreen = $env:RECOMP_PRESENT_FULLSCREEN; quiet_wait_s = $waited; busy_at_start = $busy; busy_during = $busyRun; focus_lost = $focusLost;
    qpc_us = $qpc_us; unix_us = $wall * 1000; exe = (Split-Path -Leaf $exe);
-   started = $t0.ToString('s'); ended = (Get-Date).ToString('s'); env = $envs } | ConvertTo-Json -Depth 5 | Set-Content "$R\run-info.json"
+   hw = $hwInfo; build = $build;
+   started = $t0.ToString('s'); ended = (Get-Date).ToString('s'); env = $envs } | ConvertTo-Json -Depth 6 | Set-Content "$R\run-info.json"
 Write-Host "$name (rep $Rep) rc=$rc -> $R"
 if ($busyRun.Count -or $focusLost.Count) {
     Write-Host "DISTURBED: $($busyRun.Count) busy samples, focus lost $($focusLost.Count) times: run it again"
@@ -2496,10 +2635,11 @@ def host_order(scene, names=None):
 
 def run_one(a, scene, host, local, arm, out, prof, rep, order=None):
     kind = host.get("kind")
+    extra = {"build": run_build(a, host, local)} if kind in ("local", "proton") else None
     if kind == "local":
-        run_local(scene, host, local, arm, out, prof, a.benches, rep, order)
+        run_local(scene, host, local, arm, out, prof, a.benches, rep, order, extra)
     elif kind == "proton":
-        run_proton(scene, host, local, arm, out, prof, a.benches, a.exe_name, rep, order)
+        run_proton(scene, host, local, arm, out, prof, a.benches, a.exe_name, rep, order, extra)
     else:
         raise MatrixError(
             "host %s (kind %s) is not run from here; see `windows`" % (host["_name"], kind)
@@ -2514,6 +2654,15 @@ def arm_list(scene, host, spec):
     for x in want:
         find_arm(scene, host, x)
     return want
+
+
+def build_args(p):
+    # A run says which build it measured (bench-report D5): the payload's
+    # manifest.json beside the exe names it; these stand in for a build
+    # without one (a dev build).
+    p.add_argument("--build-version", help="the build's version, without a manifest.json")
+    p.add_argument("--game-sha", help="the game repo's commit, without a manifest.json")
+    p.add_argument("--toolkit-sha", help="the toolkit's commit, without a manifest.json")
 
 
 def series_args(p):
@@ -2547,6 +2696,7 @@ def main(argv=None, prog="bench-matrix", exe_name=None):
     p.add_argument(
         "--rep", type=int, help="which repeat of the arm this is (else a -rN dir suffix, else 1)"
     )
+    build_args(p)
     p = sub.add_parser(
         "series", help="many runs in order into ROOT/<host>/<run>/, each collected; skips done ones"
     )
@@ -2557,6 +2707,7 @@ def main(argv=None, prog="bench-matrix", exe_name=None):
     p.add_argument("--benches")
     p.add_argument("--dry-run", action="store_true", help="print the runs, run none")
     series_args(p)
+    build_args(p)
     p = sub.add_parser("collect", help="run.json for a run directory")
     p.add_argument("run_dir")
     p.add_argument("--scene", help="for a run whose run-info.json has none (the PC's)")
@@ -2588,13 +2739,57 @@ def main(argv=None, prog="bench-matrix", exe_name=None):
     p.add_argument("--host", help="the PC's host in the scene (default: its kind windows one)")
     p.add_argument("--series", action="store_true", help="also run-series.ps1, in order")
     series_args(p)
+    p = sub.add_parser("report", help="the result's HTML report; --public: its README part")
+    p.add_argument("result", help="the matrix's result dir (analysed)")
+    p.add_argument("--scene", help="the scene (default: the newest run's)")
+    p.add_argument("--baseline", help="an earlier result to compare with")
+    p.add_argument("--out", help="the report's dir (default: RESULT/report)")
+    p.add_argument(
+        "--public",
+        metavar="REPO",
+        help="write the SVGs and the README part into this game repo, after the leak check",
+    )
     a = ap.parse_args(argv)
     a.exe_name = exe_name
+    a.prog = prog
     try:
         return dispatch(a)
     except MatrixError as e:
         print("%s: %s" % (prog, e), file=sys.stderr)
         return 2
+    except CliError as e:
+        # public.Cannot: no audit-private patterns, so the leak check
+        # cannot run.
+        print("%s: %s" % (prog, e), file=sys.stderr)
+        return 2
+
+
+def report_cmd(a):
+    from . import bench_report as R
+    from . import bench_report_html as HTML
+
+    scene = R.find_scene(a.result, a.scene)
+    model, s = R.build_model(a.result, scene, a.baseline)
+    out = a.out or os.path.join(a.result, "report")
+    R.write_json(os.path.join(out, "report.json"), model)
+    page = os.path.join(out, "index.html")
+    with open(page, "w", encoding="utf-8") as f:
+        f.write(HTML.render(model, scene, s, a.result, game=a.prog.split()[0]))
+    print(page)
+    if not a.public:
+        return 0
+    from . import bench_report_public as P
+
+    try:
+        code, written = P.export(model, scene, a.public)
+    except P.Refused as e:
+        # A leak or a host without hw: refused like missing README markers
+        # (1); 2 stays for a check that cannot run.
+        print("%s: %s" % (a.prog, e), file=sys.stderr)
+        return 1
+    for w in written:
+        print(w)
+    return code
 
 
 def local_table(path, host):
@@ -2605,6 +2800,8 @@ def local_table(path, host):
 
 
 def dispatch(a):
+    if a.cmd == "report":
+        return report_cmd(a)
     if a.cmd == "plan":
         scene = load_scene(a.scene)
         hosts = host_order(scene, [a.host] if a.host else None)
