@@ -12,7 +12,7 @@ import os
 import shutil
 import subprocess
 
-from xboxrecomp_cli import build, host, main, manifest, pipeline, wizard
+from xboxrecomp_cli import build, host, main, manifest, pipeline, toolkit, wizard
 from xboxrecomp_cli import package as pkg
 from xboxrecomp_cli.bench import sync
 from xboxrecomp_cli.package import lib as pl
@@ -205,6 +205,7 @@ def test_notice_optional(d, monkeypatch):
         write(G.path("LICENSE"), "MIT\n")
         monkeypatch.setattr(pkg, "readme", lambda *a: None)
         monkeypatch.setattr(pl, "stage_game_files", lambda src, dst: 0)
+        monkeypatch.setattr(toolkit, "toolkit_dir", lambda: os.path.join(d, "no-toolkit"))
         payload = os.path.join(d, "payload")
         os.makedirs(payload)
         pkg.write_common(payload, "windows", "v", pl)
@@ -218,6 +219,38 @@ def test_notice_optional(d, monkeypatch):
         assert "NOTICE" in os.listdir(payload)
 
 
+def test_toolkit_licenses_staged(d, monkeypatch):
+    """A game NOTICE that names the toolkit's licence texts (LGPL, the
+    dsp56300 library and its crates) needs them in every dist."""
+    with game2_tree(d) as (G, _):
+        host.g().m["package"] = {"content": "packaging"}
+        G.content = G.path("packaging")
+        write(os.path.join(G.content, "launch.env.default.windows"), "LOG_KEEP=10\n")
+        write(os.path.join(G.content, "config.default.toml"), "# none\n")
+        write(G.path("LICENSE"), "MIT\n")
+        tk = os.path.join(d, "tk")
+        write(os.path.join(tk, "LICENSE"), "MIT toolkit\n")
+        write(os.path.join(tk, "NOTICE"), "LGPL parts\r\n")
+        write(os.path.join(tk, "LICENSES", "LGPL-2.1.txt"), "lgpl\n")
+        write(os.path.join(tk, "LICENSES", "MIT-dsp56300.txt"), "mit\n")
+        write(os.path.join(tk, "LICENSES", "THIRDPARTY-dsp56300-emu.txt"), "crates\n")
+        monkeypatch.setattr(toolkit, "toolkit_dir", lambda: tk)
+        monkeypatch.setattr(pkg, "readme", lambda *a: None)
+        monkeypatch.setattr(pl, "stage_game_files", lambda src, dst: 0)
+        payload = os.path.join(d, "payload")
+        os.makedirs(payload)
+        pkg.write_common(payload, "windows", "v", pl)
+        assert sorted(os.listdir(os.path.join(payload, "LICENSES"))) == [
+            "LGPL-2.1.txt",
+            "MIT-dsp56300.txt",
+            "THIRDPARTY-dsp56300-emu.txt",
+            "xboxrecomp-LICENSE",
+            "xboxrecomp-NOTICE",
+        ]
+        with open(os.path.join(payload, "LICENSES", "xboxrecomp-NOTICE"), "rb") as f:
+            assert f.read() == b"LGPL parts\n"
+
+
 def test_upstream_pin_stages_no_defaults(d, monkeypatch):
     """A toolkit with no enhancements layer reads no config file: the
     payload has no config.default.toml (the game need not have one), and
@@ -229,6 +262,7 @@ def test_upstream_pin_stages_no_defaults(d, monkeypatch):
         write(G.path("LICENSE"), "MIT\n")
         told = []
         monkeypatch.setattr(pkg, "readme", lambda *a: told.append(a[-1]))
+        monkeypatch.setattr(toolkit, "toolkit_dir", lambda: os.path.join(d, "no-toolkit"))
         monkeypatch.setattr(pl, "stage_game_files", lambda src, dst: 0)
         payload = os.path.join(d, "payload")
         os.makedirs(payload)

@@ -51,6 +51,12 @@ THIRD_PARTY = (
         "LGPL-2.1-or-later",
         "https://github.com/xemu-project/xemu",
     ),
+    _c(
+        "dsp56300",
+        "the APU's DSP, in games built with XBOXRECOMP_APU_DSP",
+        "MIT",
+        "https://github.com/xemu-project/dsp56300",
+    ),
     _c("SDL", "window, input and sound on macOS", "Zlib", "https://github.com/libsdl-org/SDL"),
     _c(
         "OpenSSL",

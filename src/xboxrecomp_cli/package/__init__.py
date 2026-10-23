@@ -772,11 +772,39 @@ def write_common(
     for n in ("LICENSE", "NOTICE"):
         if n == "LICENSE" or os.path.isfile(os.path.join(G.root, n)):
             copy_lf(os.path.join(G.root, n), os.path.join(payload, n))
+    stage_toolkit_licenses(payload)
     pacing = readme(target, version, lib, os.path.join(payload, "README.txt"), enhance)
     if game_files:
         n = lib.stage_game_files(G.game_files, os.path.join(payload, "game_files"))
         host.say("game files: %d entries staged" % n)
     return pacing
+
+
+def stage_toolkit_licenses(payload):
+    """The toolkit's licence texts into LICENSES/: every build links the
+    toolkit statically, and its LGPL and third-party parts (the xemu APU
+    code, the dsp56300 library and its crates) require their texts beside
+    any binary. The toolkit's LICENSE and NOTICE go in as
+    xboxrecomp-LICENSE and xboxrecomp-NOTICE, since a game's NOTICE points
+    at the toolkit's. Nothing when the toolkit has no such files."""
+    tk = toolkit.toolkit_dir()
+    src = os.path.join(tk, "LICENSES")
+    files = [
+        (os.path.join(src, n), n)
+        for n in (sorted(os.listdir(src)) if os.path.isdir(src) else [])
+        if os.path.isfile(os.path.join(src, n))
+    ]
+    files += [
+        (os.path.join(tk, n), "xboxrecomp-" + n)
+        for n in ("LICENSE", "NOTICE")
+        if os.path.isfile(os.path.join(tk, n))
+    ]
+    if not files:
+        return
+    dst = os.path.join(payload, "LICENSES")
+    os.makedirs(dst, exist_ok=True)
+    for path, n in files:
+        copy_lf(path, os.path.join(dst, n))
 
 
 def stamp_launch_env(path):

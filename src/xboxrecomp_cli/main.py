@@ -7,9 +7,9 @@ the game's single-file CLI did. The commands and their help are below; the
 top-level help is helptext.py's.
 
 Developer tools outside the help's command list (the game's former
-scripts): `golden`, `pacing-stats`, `benchlog-retention`, `audio-check`
-(each passes the game's paths from game.toml and takes the script's own
-arguments), and `wrapper --check` (the game's bootstrap against this CLI's
+scripts): `golden`, `pacing-stats`, `bench-matrix`, `benchlog-retention`,
+`audio-check` (each passes the game's paths from game.toml and takes the
+script's own arguments), and `wrapper --check` (the game's bootstrap against this CLI's
 template).
 """
 
@@ -631,6 +631,10 @@ def tool_argv(name, argv):
         from . import pacing_stats as mod
 
         return mod.main(golden + argv)
+    if name == "bench-matrix":
+        from . import bench_matrix as mod
+
+        return mod.main(argv, prog="%s bench-matrix" % G.slug, exe_name=G.exe_name)
     if name == "benchlog-retention":
         from . import benchlog_retention as mod
 
@@ -659,7 +663,15 @@ def tool_argv(name, argv):
     raise AssertionError(name)
 
 
-TOOLS = ("golden", "pacing-stats", "benchlog-retention", "audio-check", "wrapper", "workflow")
+TOOLS = (
+    "golden",
+    "pacing-stats",
+    "bench-matrix",
+    "benchlog-retention",
+    "audio-check",
+    "wrapper",
+    "workflow",
+)
 
 
 def clean_environ():
