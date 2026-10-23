@@ -14,6 +14,10 @@ import re
 from .. import manifest
 
 KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# BENCH_BUILD: local (this machine builds, the host only runs: bench/ship.py)
+# or host (the host compiles a synced tree).
+BUILD_MODES = ("local", "host")
+RUN_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 class ConfigError(Exception):
@@ -122,12 +126,34 @@ class Config:
         default("PROTONPATH", "GE-Proton")
         default("BENCH_PREFIX", env["BENCH_DIR"] + "/prefix")
         default("BENCH_ENV", "")
+        default("BENCH_BUILD", "local")
+        if env["BENCH_BUILD"] not in BUILD_MODES:
+            raise ConfigError(
+                "BENCH_BUILD=%s: use one of %s" % (env["BENCH_BUILD"], ", ".join(BUILD_MODES))
+            )
+        # The game's directory on the host. With BENCH_BUILD=local the host
+        # scripts run in one of its runs/<id>/ (ship.resolve, ship.ship),
+        # and it is named after the game, not the checkout, so every
+        # worktree of a game shares one base there.
+        base_name = self.game_name
+        if env["BENCH_BUILD"] == "local":
+            base_name = m["bench"]["remote_name"] or m["game"]["slug"]
+        self.base = env["BENCH_DIR"] + "/" + base_name
+        # The host's single game files copy: in local mode the base owns it,
+        # so `sync --game-files` fills it on a fresh host.
         default(
             "BENCH_GAME_FILES",
-            "~/xbox-recomp/%s/%s" % (self.game_name, m["data"]["game_files"]),
+            "%s/%s"
+            % (
+                self.base if env["BENCH_BUILD"] == "local" else "~/xbox-recomp/" + self.game_name,
+                m["data"]["game_files"],
+            ),
         )
+        run = env.get("BENCH_RUN", "")
+        if run and (not RUN_ID.match(run) or run in (".", "..")):
+            raise ConfigError("BENCH_RUN=%s: letters, digits, '.', '_' and '-' only" % run)
         self.env = env
-        self.remote_game = env["BENCH_DIR"] + "/" + self.game_name
+        self.remote_game = self.base
         self.regen_marker = self.game.regen_marker
 
     HOST_PATHS = ("BENCH_DIR", "BENCH_PREFIX", "LLVM_MINGW_ROOT", "BENCH_GAME_FILES")
@@ -151,6 +177,10 @@ class Config:
 
     def get(self, k, default=""):
         return self.env.get(k, default)
+
+    @property
+    def local_build(self):
+        return self.env.get("BENCH_BUILD") == "local"
 
     @property
     def host(self):

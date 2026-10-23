@@ -1,6 +1,8 @@
 #@ bench/host/tests.sh: a host script `<game> bench` ships over ssh, first
 #@ moved from a blinx2-recomp scripts/bench.sh heredoc. The #@ lines this file starts
 #@ with are this note and are not sent. Runs as: in_box_locked -x tests (tests). After the prologue and PROTONPATH.
+# The ctests compile here: not on a no-build host (exit 78).
+[ ! -e "$HOME/.recomp-no-build" ] || { echo "tests: refused: $HOME/.recomp-no-build (this host never builds)" >&2; exit 78; }
 cd "$REMOTE_GAME"
 [ -f "$TOOLCHAIN" ] || { echo "$TOOLCHAIN missing -- not synced yet?" >&2; exit 1; }
 export PATH="$LLVM_MINGW_ROOT/bin:$PATH"

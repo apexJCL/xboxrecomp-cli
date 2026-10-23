@@ -401,25 +401,42 @@ mygame`); the no-pipe way is a clone and `uv run xbr new ../mygame`.
 ### `mygame bench <command>`
 
 Drive the Proton bench host: a Linux x86-64 machine reached over ssh that
-builds the Windows build in a distrobox and runs it under Proton. `mygame
-bench --help` is the full text; the commands:
+runs the Windows build under Proton. By default (`BENCH_BUILD=local`) this
+machine builds the exe, as `mygame build windows` does, and ships it with
+the files beside it (PDB, `config.default.toml`, DLLs) to a run directory
+of its own on the host, `$BENCH_DIR/<game>/runs/<id>/` (`<id>`: `BENCH_RUN`,
+else the exe's sha256, 12 hex). A new run directory is seeded on the host
+from the newest one, so rsync sends only the changed blocks; the ship
+then deletes what this build lacks, so the exe's directory holds exactly
+the files shipped. `run`, `golden` and `pacing` build nothing: they ship
+the exe already built here (a snapshot of it, hashed) and the host checks
+that sha256 again under the run lock, so a run never starts another ship's
+exe (exit 76 there, an error here); one command runs one exe, so a
+`build-win/` rebuilt during a `golden` stops it. Ships take no host lock:
+keep a `BENCH_RUN` to one worktree. The shipped set is the exe and the
+files beside it only, so a texture pack placed by hand beside the exe on
+the host is deleted by the next ship. With
+`BENCH_BUILD=host` the host compiles a synced tree in a distrobox, as
+before. A host with `~/.recomp-no-build` refuses `build` and `tests`
+(exit 78) whatever the controller asks. `mygame bench --help` is the full
+text; the commands:
 
 | Command | What it does |
 |---|---|
-| `setup` | once per host: the build distrobox, cmake, ninja, umu-launcher, llvm-mingw |
-| `sync [--game-files[=reflink]]` | rsync the toolkit and the game to the host; `--game-files` sets up the host's one `game_files/` copy |
-| `build [-- CMAKE ARGS]` | configure and compile `build-win/` on the host (shared run lock) |
-| `run [GAME ARGS]` | launch the game under Proton, log to `bench-logs/<stamp>/`, pull the logs; fails on a crash or a present mismatch. The game starts from the Windows package's `launch.env.default` (`BENCH_ENV` wins), as do `pacing` and `all`; `golden` keeps its scenarios' own env |
+| `setup` | once per host: umu-launcher and llvm-mingw (for symbolize); host mode also the build distrobox, cmake and ninja, which a no-build host refuses (exit 78) |
+| `sync [--game-files[=reflink]]` | local: ship the exe built here. host: rsync the toolkit and the game to the host. `--game-files` sets up the host's one `game_files/` copy |
+| `build [-- CMAKE ARGS]` | local: build here, then ship. host: configure and compile `build-win/` on the host (shared run lock) |
+| `run [GAME ARGS]` | (local: ship first when the host lacks this exe) launch the game under Proton, log to `bench-logs/<stamp>/`, pull the logs; fails on a crash or a present mismatch. The game starts from the Windows package's `launch.env.default` (`BENCH_ENV` wins), as do `pacing` and `all`; `golden` keeps its scenarios' own env |
 | `golden [--record] [--only SCEN,...] [--tests]` | the golden-frame scenarios from `golden.json`, after `tests`; exit 1 on a regression, 3 when the host was busy (INCONCLUSIVE) |
-| `tests` | build and ctest the toolkit's Proton tests in `build-win/` under `PROTONPATH` (exclusive run lock); first restarts a box whose `/etc/resolv.conf` went stale |
+| `tests` | host only (local refuses: they compile on the host): build and ctest the toolkit's Proton tests in `build-win/` under `PROTONPATH` (exclusive run lock); first restarts a box whose `/etc/resolv.conf` went stale |
 | `pacing [--scen S] [--runs N] [--gate clock\|sleep] ["A env" "B env"]` | a frame-pacing A/B of one scenario under two environments |
 | `logs [STAMP]` | symbolize a run's crash reports, then pull `bench-logs/` from the host |
 | `symbolize [STAMP]` | name the native addresses in a run's crash reports, into `bench-logs/<stamp>/crash-symbols.txt` (default: the newest run) |
 | `gc [--apply] [--host] ...` | list, then remove, the bench runs nothing names any more |
 | `shell` | an ssh shell in the host's project directory |
-| `all` | `sync`, `build`, `run` |
-| `integrate [--golden] [--dirty] [--stale-gen-ok]` | sync and build the integration heads, then optionally `golden` |
-| `doctor` | check ssh, rsync, the host's umu-run and distrobox, a running box's `/etc/resolv.conf` (the `resolv:` line), the run lock's holder |
+| `all` | `sync`, `build`, `run` (local: build here, ship, run) |
+| `integrate [--golden] [--dirty] [--stale-gen-ok]` | build the integration heads (local: here, with `gen/`'s digest the same before and after, then ship and check the host's exe sha256; host: sync and build there), then optionally `golden` |
+| `doctor` | check ssh, rsync, the build mode and the host's `no-build:` marker, the host's umu-run and distrobox, a running box's `/etc/resolv.conf` (the `resolv:` line), the run lock's holder |
 
 Flags shared by the commands that run the game: `--kill-game`
 (`BENCH_KILL_GAME=1`) ends a game running outside the bench once the lock is
@@ -435,11 +452,14 @@ environment). Quote a host path that starts with `~`.
 |---|---|
 | `BENCH_HOST` | ssh target, `user@host` (required) |
 | `BENCH_DIR` | project root on the host (`~/xbox-recomp`) |
+| `BENCH_BUILD` | `local`: build here and ship the exe; `host`: the host compiles a synced tree (`local`) |
+| `BENCH_RUN` | the run directory's name instead of the exe's sha256 (letters, digits, `.`, `_`, `-`) |
+| `BENCH_JOBS` | local builds: compile jobs (`0`, as the free memory allows) |
 | `BENCH_BOX`, `BENCH_IMAGE` | distrobox name and image (`xbr-build`, `fedora:42`) |
 | `LLVM_MINGW_ROOT`, `LLVM_MINGW_TAG` | llvm-mingw on the host (`$BENCH_DIR/llvm-mingw`; the tag from `game.toml`) |
 | `PROTONPATH` | Proton for umu-run (`GE-Proton`, the latest GE) |
 | `BENCH_PREFIX` | Wine prefix on the host (`$BENCH_DIR/prefix`) |
-| `BENCH_GAME_FILES` | the host's single `game_files/` copy; every other tree links to it |
+| `BENCH_GAME_FILES` | the host's single `game_files/` copy; every run directory (local) or other tree (host) links to it (local: `$BENCH_DIR/<game>/<game_files>`; host: `~/xbox-recomp/<checkout>/<game_files>`) |
 | `BENCH_ENV` | `VAR=value` pairs for the game; `RECOMP_TRACE`/`RECOMP_DEBUG` entries add up with a scenario's; a key here replaces `launch.env.default`'s |
 | `BENCH_TIMEOUT` | stop the game with SIGINT after this many seconds |
 | `BENCH_FRAMES` | `1`: frame dumps into `bench-logs/<stamp>/frames/` on the host |
@@ -449,10 +469,21 @@ environment). Quote a host path that starts with `~`.
 
 The run lock (`~/.recomp-run.lock` on the host) is taken by the host-side
 scripts themselves: shared for builds, exclusive for runs and tests, waiting
-up to an hour (exit 75). Never wrap `bench` in an outer `flock`. The host
-keeps the toolkit at `$BENCH_DIR/xboxrecomp` and the game at
-`$BENCH_DIR/<game>`; `run-info.txt` records the exe's sha256 and the
-commits it was built from.
+up to an hour (exit 75). Never wrap `bench` in an outer `flock`. With
+`BENCH_BUILD=local` the host keeps one base, shared by every tree:
+`$BENCH_DIR/prefix`, `llvm-mingw` (for symbolize), `xboxrecomp-cli` (only
+`running_game.py`) and `$BENCH_DIR/<game>/runs/`, where `<game>` is
+`[bench] remote_name`, else the game's slug, so every worktree of a game
+shares it; each run directory links `game_files` to `BENCH_GAME_FILES`.
+`sync --game-files` fills that copy from this tree's `game_files/` and
+leaves it read-only: every run reads it, and the runtime keeps saves in
+the game directory when `UDATA` or `TDATA` is there, so a ship refuses a
+copy that holds either (saves then go to the save directory in the prefix).
+With `BENCH_BUILD=host` the host keeps the toolkit at `$BENCH_DIR/xboxrecomp`
+and the game at `$BENCH_DIR/<game>` (`remote_name`, else the checkout's
+basename).
+`run-info.txt` records the exe's sha256 and the commits it was built from;
+a shipped exe's `provenance.txt` also names the `gen/` digest.
 
 `bench golden` keeps, for a passing scenario, only the frames its check
 read; each scenario's verdict is in its run's `golden.txt`, and every pass
@@ -461,7 +492,8 @@ are skipped when the host's toolkit, the CLI, the toolchain and the Proton
 and prefix versions are those of their last pass (`--tests` runs them
 anyway), and when the host tree has no configured `build-win/` (a tree
 synced for goldens only, with its exe copied in), since `sync` never ships
-build trees; there `--tests` fails. `bench gc` spares runs named in `golden.json`, `TASKS.md`,
+build trees, and with `BENCH_BUILD=local` (`tests=nobuild`); there `--tests`
+fails. `bench gc` spares runs named in `golden.json`, `TASKS.md`,
 `RESUME*.md`, `openspec/` or `[bench.gc] refs` in any worktree, other games'
 runs, young runs and the newest per scenario.
 

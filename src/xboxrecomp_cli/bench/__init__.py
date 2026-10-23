@@ -19,6 +19,7 @@ import sys
 import time
 
 from . import checks, tests_skip
+from . import ship as ship_mod
 from .config import Config, ConfigError
 from .gc import cmd_gc
 from .gc import parse_args as gc_parse_args
@@ -34,18 +35,32 @@ usage: @SLUG@ bench <command> [args]
 Build and run the Windows x86-64 build of this game under Proton on a remote
 x86-64 Linux host (the bench host), driven from this machine over ssh.
 
+By default (BENCH_BUILD=local) this machine builds the exe, as `@SLUG@ build
+windows` does, and the host only runs it: each exe ships, with its PDB,
+config.default.toml and DLLs, to a run directory of its own,
+$BENCH_DIR/<game>/runs/<id>/ (id: BENCH_RUN, else the exe's sha256, 12 hex),
+seeded on the host from the newest one so only changed blocks move; the
+ship then deletes what this build lacks, so the exe's directory holds exactly
+the files shipped. run, golden and pacing never build: they ship the exe
+built here, and the host checks its sha256 again under the run lock (exit 76
+when another ship replaced it). A host with ~/.recomp-no-build refuses build,
+tests and the build box whatever the controller asks.
+
 Commands:
-  setup     create the build distrobox, install cmake/ninja/umu-launcher,
-            download llvm-mingw                                (once per host)
-  sync      rsync the toolkit (see XBOXRECOMP_DIR) and this project to the host
+  setup     check umu-launcher, download llvm-mingw (symbolize); host mode
+            also creates the build distrobox with cmake/ninja  (once per host)
+  sync      local: ship the exe already built here. host: rsync the toolkit
+            (see XBOXRECOMP_DIR) and this project to the host
             --game-files  also set up @GAME_FILES@/ (your own host only): the
                       host keeps ONE copy, BENCH_GAME_FILES. A sync from the
                       tree that owns it copies this machine's @GAME_FILES@/ into
                       it; any other tree gets a symlink to it (nothing copied)
             --game-files=reflink  a btrfs reflink copy instead of the symlink
-  build     configure + compile build-win/ on the host     [extra cmake args]
-            (holds the host's run lock, shared, so no game runs during a build)
-  run       launch @WINDOWS_EXE@ under Proton, log to
+  build     local: build here, then ship               [extra cmake args]
+            host: configure + compile build-win/ on the host (holds the
+            host's run lock, shared, so no game runs during a build)
+  run       (local: ship first, when the host lacks this exe)
+            launch @WINDOWS_EXE@ under Proton, log to
             bench-logs/<timestamp>/ on the host, then pull logs   [game args];
             fails if any D3D11 flip presented a surface other than the one the
             walker drew, or on @CRASH_TAG@, or (with a limit) an early exit.
@@ -72,8 +87,10 @@ Commands:
             toolchain and the Proton and prefix versions are those of their
             last pass on this host tree (bench-logs/tests-pass/), and when
             the tree has no configured build-win/ (synced for goldens only,
-            its exe copied in; --tests then fails)
-  tests     build and ctest the toolkit's Proton tests in build-win/,
+            its exe copied in), and always with BENCH_BUILD=local (tests=
+            nobuild; --tests then fails)
+  tests     (host only; local refuses) build and ctest the toolkit's
+            Proton tests in build-win/,
             holding the run lock exclusively, under PROTONPATH; a pass is
             recorded for golden's skip. A box whose /etc/resolv.conf went
             stale (the host replaced it) is restarted first
@@ -98,8 +115,9 @@ Commands:
             [--apply] [--host] [--keep N] [--days D] [--include-unowned]
             [--refs PATH]... [--quiet]
   shell     open an ssh shell in the host's project directory
-  all       sync, build, run
-  integrate sync + build the integration heads into BENCH_DIR; run from the
+  all       sync, build, run (local: build here, ship, run)
+  integrate build the integration heads (local: here, then ship and check
+            the host's exe sha256; host: sync + build there); run from the
             integration checkout (@GAME_NAME@ @MAIN_BRANCH@@TOOLKIT_BRANCH@), clean trees only
             --golden  then run golden once (--only SCEN[,SCEN] and --tests
                       as for golden)
@@ -140,14 +158,22 @@ this machine's home, as it did when bench.sh sourced the file:
 
   BENCH_HOST       ssh target, e.g. user@host                    (required)
   BENCH_DIR        project root on the host          (~/xbox-recomp)
+  BENCH_BUILD      local (build here, ship the exe) or host (the host
+                   compiles a synced tree)            (local)
+  BENCH_RUN        the run directory's name, instead of the exe's sha256
+  BENCH_JOBS       local builds: compile jobs        (0: as memory allows)
   BENCH_BOX        distrobox name                    (xbr-build)
   BENCH_IMAGE      distrobox image                   (fedora:42)
   LLVM_MINGW_ROOT  llvm-mingw install on the host    ($BENCH_DIR/llvm-mingw)
   LLVM_MINGW_TAG   llvm-mingw release to install     (game.toml)
   PROTONPATH       Proton for umu-run                (GE-Proton = latest GE)
   BENCH_PREFIX     Wine prefix on the host           ($BENCH_DIR/prefix)
-  BENCH_GAME_FILES the host's single @GAME_FILES@ copy (~/xbox-recomp/<game>/@GAME_FILES@);
-                   every other tree links to it; it may be read-only
+  BENCH_GAME_FILES the host's single @GAME_FILES@ copy; every run directory
+                   (local) or other tree (host) links to it. local:
+                   $BENCH_DIR/<game>/@GAME_FILES@, which sync --game-files
+                   leaves read-only and a ship refuses with UDATA/TDATA in
+                   it (the runtime would keep saves there); host:
+                   ~/xbox-recomp/<game>/@GAME_FILES@, may be read-only
   BENCH_ENV        space-separated VAR=value pairs for the game, e.g.
                    "RECOMP_AC97_READY=0 WINEDEBUG=+seh"; RECOMP_SAVE_DIR=@run
                    gives the run an empty save dir, bench-logs/<stamp>/save/.
@@ -173,8 +199,15 @@ run-info.txt records the exe's sha256 and, from build-win/provenance.txt, the
 @TREE@ and toolkit commits it was built from and whether either tree was dirty
 at sync time.
 
-The host always gets the toolkit next to the project, so CMakeLists.txt finds
-it at ../xboxrecomp there (external/ is not synced):
+The host's layout. local: one base per host, shared by every tree:
+
+  $BENCH_DIR/prefix, llvm-mingw (symbolize), xboxrecomp-cli (running_game.py)
+  $BENCH_DIR/<game>/runs/<id>  build-win/, game_files -> BENCH_GAME_FILES,
+                               bench-logs/
+  (<game>: [bench] remote_name, else the game's slug)
+
+host: the toolkit next to the project, so CMakeLists.txt finds it at
+../xboxrecomp there (external/ is not synced):
 
   $BENCH_DIR/xboxrecomp   toolkit working tree
   $BENCH_DIR/<game>       this project; build-win/ and bench-logs/ live here
@@ -344,8 +377,20 @@ class Bench:
     def cmd_setup(self, args):
         self.need_host()
         c, r = self.cfg, self.r
+        tag = "TAG=%s\n" % shell_quote(c["LLVM_MINGW_TAG"])
+        if c.local_build:
+            # Nothing compiles there: no build box, no cmake or ninja. The
+            # host keeps umu-run and llvm-mingw (symbolize's llvm-symbolizer
+            # and llvm-readobj), fetched with the host's own curl and tar.
+            self.step("setup: no build box (BENCH_BUILD=local)")
+            self.ok(r.remote(r.ship("check_umu.sh", prologue=False))[0])
+            self.step("setup: llvm-mingw %s -> %s" % (c["LLVM_MINGW_TAG"], c["LLVM_MINGW_ROOT"]))
+            return self.ok(r.remote(r.ship("setup_mingw.sh", tag))[0])
         self.step("setup: distrobox %s (%s)" % (c["BENCH_BOX"], c["BENCH_IMAGE"]))
-        self.ok(r.remote(r.prologue() + fill("setup_box.sh.in", BENCH_IMAGE=c["BENCH_IMAGE"]))[0])
+        rc = r.remote(r.prologue() + fill("setup_box.sh.in", BENCH_IMAGE=c["BENCH_IMAGE"]))[0]
+        if rc == ship_mod.NO_BUILD_RC:
+            raise ship_mod.no_build_error(c, "setup")
+        self.ok(rc)
         self.step("setup: packages")
         # Shared run lock, as builds take it: a tests run (exclusive) may
         # restart the box (box_check.sh.in), which would kill this.
@@ -353,7 +398,6 @@ class Bench:
         # Proton runs from the host, not the box: the host ships umu-run.
         self.ok(r.remote(r.ship("check_umu.sh", prologue=False))[0])
         self.step("setup: llvm-mingw %s -> %s" % (c["LLVM_MINGW_TAG"], c["LLVM_MINGW_ROOT"]))
-        tag = "TAG=%s\n" % shell_quote(c["LLVM_MINGW_TAG"])
         return self.ok(
             setup_locked(r.in_box_locked(r.ship("setup_mingw.sh", tag), what="setup")[0])
         )
@@ -361,6 +405,10 @@ class Bench:
     # build
     def cmd_build(self, args):
         self.need_host()
+        if self.cfg.local_build:
+            exe, sha, _ = ship_mod.build_local(self, args)
+            ship_mod.ship(self, exe, sha)
+            return 0
         self.step("build: %s/build-win" % self.cfg.remote_game)
         # No arguments: an empty array (printf '%q ' with no arguments still
         # prints '', which made every build re-run cmake with an empty one).
@@ -368,6 +416,8 @@ class Bench:
         rc = self.r.in_box_locked(self.r.ship("build.sh", extra))[0]
         if rc == 75:
             raise BenchError("build: the run lock was held for an hour; nothing built")
+        if rc == ship_mod.NO_BUILD_RC:
+            raise ship_mod.no_build_error(self.cfg, "build")
         if rc:
             raise BenchError("build failed (exit %d)" % rc)
         return 0
@@ -381,6 +431,12 @@ class Bench:
         all); golden never does, so its verdicts stay comparable."""
         self.need_host()
         c = self.cfg
+        expect = ""
+        if c.local_build:
+            # The exe this tree built, in its own run directory (sent once
+            # per command; nothing moves when the host has it already).
+            # run_game.sh checks it again under the run lock.
+            expect = "EXPECT_SHA=%s\n" % ship_mod.ship(self)
         if bench_env is None:
             bench_env = c["BENCH_ENV"]
         if defaults:
@@ -403,8 +459,14 @@ class Bench:
                 proton_log_mode(c),
                 PROTON_LOG_CAP,
             )
+            + expect
         )
-        self.r.remote(self.r.ship("run_game.sh", assigns))
+        rc = self.r.remote(self.r.ship("run_game.sh", assigns))[0]
+        if rc == ship_mod.EXE_CHANGED_RC:
+            raise BenchError(
+                "run: the exe in %s is no longer the one this command shipped "
+                "(another ship to the same run directory?); nothing ran" % c.remote_game
+            )
         self.cmd_logs([stamp])
         self.say("local: %s" % os.path.join(c.game_dir, "bench-logs", stamp))
         return stamp
@@ -481,6 +543,14 @@ class Bench:
         if not self.cfg.game.m["bench"]["toolkit_tests"]:
             self.say("tests: skipped (game.toml: bench.toolkit_tests = false)")
             return 0, "off"
+        if self.cfg.local_build:
+            # The ctests compile on the host, and a BENCH_BUILD=local host
+            # only runs what this machine built.
+            if force:
+                self.say("tests: FAIL --tests: %s" % LOCAL_NO_TESTS)
+                return 1, "FAIL"
+            self.say("tests: skipped: %s" % LOCAL_NO_TESTS)
+            return 0, "nobuild"
         key, parts = self.tests_key()
         if parts.get("build_win") == "none" and not force:
             # The ctests compile in the host's build-win/, and only bench
@@ -506,6 +576,8 @@ class Bench:
         if not self.cfg.game.m["bench"]["toolkit_tests"]:
             self.say("tests: skipped (game.toml: bench.toolkit_tests = false)")
             return 0
+        if self.cfg.local_build:
+            raise BenchError("tests: %s" % LOCAL_NO_TESTS)
         key, parts = key or self.tests_key()
         self.step(
             "tests: d3d8_hlsl_split, d3d11_backend_smoke, input_map, input_keyboard, nv2a_zbuf, apu_irq, "
@@ -523,6 +595,8 @@ class Bench:
                 )
         elif rc == 75:
             self.say("tests: FAIL the run lock was held for an hour; nothing run")
+        elif rc == ship_mod.NO_BUILD_RC:
+            self.say("tests: FAIL %s" % ship_mod.no_build_error(self.cfg, "tests"))
         else:
             self.say("tests: FAIL (exit %d)" % rc)
         return rc
@@ -650,6 +724,8 @@ class Bench:
                     "(--stale-gen-ok to integrate anyway)"
                     % (c.game.m["pipeline"]["gen"], ", ".join(why), c.game.slug, c.game.slug)
                 )
+        if c.local_build:
+            return self.integrate_local(golden, golden_args)
         self.ok(cmd_sync(self, []))
         self.step("integrate: gen/ check")
         lg = checks.gen_digest_local(gen)
@@ -665,11 +741,37 @@ class Bench:
             % (c.remote_game, c.game.m["build"]["windows_dir"], c.game.m["build"]["exe"])
         )
         self.ok(self.r.remote(self.r.ship("integrate_show.sh"))[0])
+        return self.integrate_golden(golden, golden_args)
+
+    def integrate_local(self, golden, golden_args):
+        """integrate with BENCH_BUILD=local: build here (gen/'s digest the
+        same before and after), ship the exe, and check the host has the
+        very bytes built."""
+        c = self.cfg
+        # The stale check above already ran (or --stale-gen-ok skipped it).
+        exe, sha, gen = ship_mod.build_local(self, stale_ok=True)
+        self.say("gen: %d files, sha256 %s (unchanged during the build)" % (gen[1], gen[0]))
+        ship_mod.ship(self, exe, sha)
+        self.step(
+            "integrate: shipped %s/%s/%s.exe"
+            % (c.remote_game, ship_mod.exe_rel(c), c.game.m["build"]["exe"])
+        )
+        rc, out = self.r.remote(self.r.ship("integrate_show.sh"), capture=True)
+        self.say(out, end="")
+        self.ok(rc)
+        host_sha = (out.split() or [""])[0]
+        if host_sha != sha:
+            raise BenchError(
+                "integrate: the host's exe is %s, not the one built here (%s)" % (host_sha, sha)
+            )
+        return self.integrate_golden(golden, golden_args)
+
+    def integrate_golden(self, golden, golden_args):
         if not golden:
             return 0
         # Integration runs see no host pad, keyboard or mouse and fail on a
         # bad script, as golden.json's env pins for golden.
-        env = c["BENCH_ENV"]
+        env = self.cfg["BENCH_ENV"]
         env = (
             env + " " if env else ""
         ) + "RECOMP_HOST_PAD=0 RECOMP_KEYBOARD=0 RECOMP_MOUSE=0 RECOMP_INPUT_STRICT=1"
@@ -684,6 +786,13 @@ class Bench:
             self.say("host:     BENCH_HOST is not set (scripts/bench.env)")
             return 1
         self.say("host:     %s (BENCH_DIR %s, box %s)" % (c.host, c["BENCH_DIR"], c["BENCH_BOX"]))
+        if c.local_build:
+            self.say(
+                "build:    local (built here, shipped to %s/runs/<id>; run dir %s)"
+                % (c.base, c.remote_game if c.remote_game != c.base else "none yet")
+            )
+        else:
+            self.say("build:    host (BENCH_BUILD=host: the host compiles a synced tree)")
         self.say("rsync:    %s" % (shutil.which("rsync") or "MISSING on this machine"))
         ok &= bool(shutil.which("rsync"))
         if shutil.which("rsync") and " " in c.game.m["data"]["game_files"]:
@@ -708,6 +817,12 @@ class Bench:
         return 0 if ok and rc == 0 else 1
 
 
+LOCAL_NO_TESTS = (
+    "BENCH_BUILD=local: the toolkit's Proton ctests compile on the host; "
+    "run them on a host that builds (BENCH_BUILD=host)"
+)
+
+
 def setup_locked(rc):
     if rc == 75:
         raise BenchError("setup: the run lock was held for an hour; the box is not set up")
@@ -718,19 +833,10 @@ def gen_stale_reasons(cfg):
     """pipeline.gen_stale_reasons() for the tree and toolkit the bench
     drives (BENCH_GAME_DIR, XBOXRECOMP_DIR), which need not be the CLI's
     current ones."""
-    from .. import manifest, pipeline
+    from .. import pipeline
 
-    saved, saved_tk = manifest.current(), os.environ.get("XBOXRECOMP_DIR")
-    manifest.use(cfg.game)
-    os.environ["XBOXRECOMP_DIR"] = cfg.toolkit
-    try:
+    with ship_mod.driving(cfg):
         return pipeline.gen_stale_reasons(extra=pipeline._load_json(cfg.game.stage_extras, {}))
-    finally:
-        manifest.use(saved)
-        if saved_tk is None:
-            os.environ.pop("XBOXRECOMP_DIR", None)
-        else:
-            os.environ["XBOXRECOMP_DIR"] = saved_tk
 
 
 def rsync_escapes_args(version_text):
@@ -753,7 +859,14 @@ COMMANDS = {
 }
 
 
+# Commands that ship the local exe themselves (or never touch a run dir).
+SHIPPING = ("setup", "sync", "build", "all", "integrate")
+
+
 def dispatch(b, cmd, args):
+    if cmd not in SHIPPING:
+        # logs, symbolize, shell, doctor, gc: this tree's run directory.
+        ship_mod.resolve(b.cfg)
     if cmd == "sync":
         return cmd_sync(b, args)
     if cmd == "golden":
@@ -763,7 +876,8 @@ def dispatch(b, cmd, args):
     if cmd == "pacing":
         return cmd_pacing(b, args)
     if cmd == "all":
-        b.ok(cmd_sync(b, []))
+        if not b.cfg.local_build:
+            b.ok(cmd_sync(b, []))
         b.ok(b.cmd_build([]))
         return b.cmd_run([])
     return COMMANDS[cmd](b, args)

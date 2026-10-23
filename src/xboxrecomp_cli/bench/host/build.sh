@@ -2,6 +2,9 @@
 #@ moved from a blinx2-recomp scripts/bench.sh heredoc. The #@ lines this file starts
 #@ with are this note and are not sent. Runs as: in_box_locked, shared (build). After the prologue and EXTRA_ARGS (an array of
 #@ extra cmake arguments).
+# Nothing compiles on a no-build host: exit 78, which the controller
+# reports with what to do instead.
+[ ! -e "$HOME/.recomp-no-build" ] || { echo "build: refused: $HOME/.recomp-no-build (this host never builds)" >&2; exit 78; }
 cd "$REMOTE_GAME"
 [ -f "$TOOLCHAIN" ] || { echo "$TOOLCHAIN missing -- not synced yet?" >&2; exit 1; }
 export PATH="$LLVM_MINGW_ROOT/bin:$PATH"

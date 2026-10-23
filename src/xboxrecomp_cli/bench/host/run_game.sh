@@ -2,7 +2,8 @@
 #@ moved from a blinx2-recomp scripts/bench.sh heredoc. The #@ lines this file starts
 #@ with are this note and are not sent. Runs as: remote (run, golden, pacing, all). After the prologue and STAMP, PROTONPATH,
 #@ GAME_ARGS (array), GAME_ENV (array, word-split from BENCH_ENV), TIMEOUT, FRAMES,
-#@ KILL_GAME, LOCK_HELD, PROTON_LOG_MODE (cap, full or off), PROTON_LOG_CAP (bytes).
+#@ KILL_GAME, LOCK_HELD, PROTON_LOG_MODE (cap, full or off), PROTON_LOG_CAP (bytes),
+#@ EXPECT_SHA (BENCH_BUILD=local only: the shipped exe's sha256).
 #@ Takes the run lock on fd 9 itself.
 cd "$REMOTE_GAME"
 [ -f "$EXE_REL" ] || { echo "no $EXE_REL -- run build first" >&2; exit 1; }
@@ -51,6 +52,13 @@ elif ! flock -n 9; then
     echo "bench: got the run lock after ${waited}s"
 fi
 [ "$LOCK_HELD" = 1 ] || echo "$(date -Is) $REMOTE_GAME/$LOG (pid $$)" > "$LOCK"
+# BENCH_BUILD=local: the exe this command shipped, checked under the lock.
+# Another ship to the same run directory (a shared BENCH_RUN) may have
+# replaced it while this run waited.
+if [ -n "${EXPECT_SHA:-}" ]; then
+    got=$(sha256sum "$EXE_REL" | cut -d' ' -f1)
+    [ "$got" = "$EXPECT_SHA" ] || { echo "bench: FAIL $EXE_REL is sha256 $got, not the shipped $EXPECT_SHA (another ship replaced it); nothing ran" >&2; exit 76; }
+fi
 # A game started outside the bench (the installed copy, or one by hand)
 # takes no lock, and every bench run holds this one, so any game process now
 # is foreign and would make this run's timings noisy: warn (into the run's
@@ -122,7 +130,7 @@ if [ "$FRAMES" = 1 ]; then
 fi
 
 {
-    echo "host:   $(hostname)  $(date -Is)"
+    echo "host:   $(uname -n)  $(date -Is)"
     echo "proton: $PROTONPATH  prefix: $WINEPREFIX"
     echo "env:    ${GAME_ENV[*]:-(none)}"
     echo "args:   ${GAME_ARGS[*]:-(none)}"

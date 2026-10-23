@@ -39,9 +39,17 @@ if [ -n "$h" ]; then
 else
     echo "run lock: free"
 fi
+if [ -e "$HOME/.recomp-no-build" ]; then
+    echo "no-build: yes ($HOME/.recomp-no-build: build and tests refuse; BENCH_BUILD=local ships)"
+else
+    echo "no-build: no (this host may compile)"
+fi
 if [ -f "$REMOTE_GAME/bench-provenance.txt" ]; then
     # Its first line already says synced:; the tree lines go under it.
     sed '1s/^synced: */synced:   /; 2,$s/^/          /' "$REMOTE_GAME/bench-provenance.txt"
+elif [ -f "$REMOTE_GAME/build-win/provenance.txt" ]; then
+    # A shipped run directory (BENCH_BUILD=local): its exe's provenance.
+    sed '1s/^/shipped:  /; 2,$s/^/          /' "$REMOTE_GAME/build-win/provenance.txt"
 else
     echo "synced:   nothing yet in $REMOTE_GAME ($SLUG bench sync)"
 fi

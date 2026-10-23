@@ -382,7 +382,7 @@ Each pack entry has a kind the runtime switches off on its own (`textures.font`,
 
 | Key | Default | Meaning |
 |---|---|---|
-| `remote_name` | `""` | The project's directory on the bench host. Empty uses the checkout's basename. |
+| `remote_name` | `""` | The project's directory on the bench host. Empty uses the game's slug with `BENCH_BUILD=local` (one base per game) and the checkout's basename with `BENCH_BUILD=host`. |
 | `main_branch` | `"main"` | `integrate` refuses any other branch. |
 | `toolkit_branch` | `""` | `integrate` warns when the toolkit is on another branch. |
 | `toolkit_tests` | `true` | `golden` runs the toolkit's Proton tests first. |

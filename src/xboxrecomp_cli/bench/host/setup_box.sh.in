@@ -1,6 +1,9 @@
 #@ bench/host/setup_box.sh.in: a template `<game> bench` fills, first the text
 #@ blinx2-recomp's scripts/bench.sh expanded. The #@ lines this file starts
 #@ with are this note and are not sent. It is remote (setup). After the prologue; @BENCH_IMAGE@ is the distrobox image.
+# A no-build host gets no build box and no cmake or ninja (BENCH_BUILD=local
+# sets those hosts up without this script).
+[ ! -e "$HOME/.recomp-no-build" ] || { echo "setup: refused: $HOME/.recomp-no-build (this host never builds; set BENCH_BUILD=local)" >&2; exit 78; }
 mkdir -p "$BENCH_DIR"
 if ! distrobox list | awk -F'|' -v box="$BENCH_BOX" 'NR>1 {gsub(/ /,"",$2)} $2 == box {f=1} END {exit !f}'; then
     distrobox create --yes --name "$BENCH_BOX" --image '@BENCH_IMAGE@'

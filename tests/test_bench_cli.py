@@ -221,6 +221,10 @@ def run_side(d, side, argv, extra_env=None):
         FAKE_REC=rec,
         FAKE_GEN_DIGEST=digest,
         LC_ALL="C",
+        # The record is bench.sh's, which compiled on the host: the CLI's
+        # BENCH_BUILD=host path. Local builds have tests of their own
+        # (test_bench_ship.py).
+        BENCH_BUILD="host",
     )
     env.update(extra_env or {})
     cmd = (
@@ -912,8 +916,13 @@ def test_host_path_warning():
             f.write("BENCH_HOST=h\nBENCH_DIR=~/b\nLLVM_MINGW_ROOT='~/m'\n")
         env = {"XBOXRECOMP_DIR": os.path.join(d, "tk"), "HOME": home}
         w = Config(d, env).warnings()
-        # BENCH_DIR, and BENCH_PREFIX which defaults under it; not the quoted one.
-        assert [x.split("=")[0] for x in w] == ["BENCH_DIR", "BENCH_PREFIX"], w
+        # BENCH_DIR, and BENCH_PREFIX and (local mode) BENCH_GAME_FILES which
+        # default under it; not the quoted one.
+        assert sorted(x.split("=")[0] for x in w) == [
+            "BENCH_DIR",
+            "BENCH_GAME_FILES",
+            "BENCH_PREFIX",
+        ], w
         assert w[0].startswith("BENCH_DIR=%s/b is a path on this machine" % home), w
 
 

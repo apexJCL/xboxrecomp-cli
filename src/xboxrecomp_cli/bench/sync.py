@@ -131,6 +131,8 @@ def cmd_sync(b, args):
         else:
             raise BenchError("sync: unknown option %s" % a)
     c = b.cfg
+    if c.local_build:
+        return sync_local(b, game_files)
     if os.path.exists(c.regen_marker):
         raise BenchError(
             "gen/ is mid-regeneration (%s exists); wait for %s recomp"
@@ -193,10 +195,35 @@ def cmd_sync(b, args):
         return sync_game_files(b, game_files)
 
 
+def sync_local(b, game_files):
+    """sync with BENCH_BUILD=local: no sources go to the host; the local
+    exe ships to its run directory. --game-files fills or links the host's
+    game files copy as before, from the game's base directory."""
+    from .ship import local_exe, ship
+
+    c = b.cfg
+    if game_files is not None:
+        c.remote_game = c.base
+        b.ok(b.r.remote("mkdir -p %s\n" % host_path(c.base))[0])
+        with b.no_errexit():
+            rc = sync_game_files(b, game_files)
+        b.ok(rc)
+        # A fresh host's first sync: the game files are the point, and
+        # there may be no exe to ship yet.
+        if not os.path.isfile(local_exe(c)):
+            b.step(
+                "sync: no %s here yet; nothing shipped" % os.path.relpath(local_exe(c), c.game_dir)
+            )
+            return 0
+    ship(b)
+    return 0
+
+
 def sync_game_files(b, mode):
     """game_files/ on the host: one copy, BENCH_GAME_FILES, shared by every
     tree. The tree that owns it gets this machine's game_files/ rsynced in
-    (made writable for the copy if it was read-only, then put back); any
+    (made writable for the copy if it was read-only, then put back; always
+    left read-only with BENCH_BUILD=local, where every run links it); any
     other tree gets a symlink to it, or with MODE reflink a btrfs reflink
     copy. A real directory already in a tree's place is left alone."""
     c = b.cfg
@@ -228,7 +255,11 @@ def sync_game_files(b, mode):
             c.game_dir + "/" + c.game.m["data"]["game_files"] + "/",
             "%s:%s/" % (c.host, gf),
         )
-        if ro != "0":
+        # Read-only afterwards in local mode whatever it was: every run
+        # links this copy, and the runtime keeps saves in the game dir when
+        # UDATA/TDATA are there, so a writable copy lets one run change
+        # what the next one reads.
+        if ro != "0" or c.local_build:
             b.r.command("chmod -R a-w %s" % host_path(gf))
         return rc
     b.step("sync: game_files -> %s of %s" % (mode, gf))
