@@ -143,6 +143,48 @@ case "${RECOMP_HDD_DIR:-}" in
         [ -n "$save_set" ] || GAME_ENV+=("RECOMP_SAVE_DIR=$RECOMP_SAVE_DIR")
         ;;
 esac
+# RECOMP_PAD_SCRIPT=@seed:PATH (bench golden ships PATH, a recorded route
+# too long for one Windows variable, under the base's golden-seeds/): the
+# runtime reads it as @file, through Wine's Z: drive. It is only read.
+case "${RECOMP_PAD_SCRIPT:-}" in
+    @seed:*)
+        pad=${RECOMP_PAD_SCRIPT#@seed:}
+        case "$pad" in "~/"*) pad="$HOME/${pad#\~/}" ;; esac
+        [ -f "$pad" ] || { echo "no pad script $pad -- bench golden ships it" >&2; exit 1; }
+        case "$pad" in /*) ;; *) pad="$PWD/$pad" ;; esac
+        export RECOMP_PAD_SCRIPT="@Z:$pad"
+        for i in "${!GAME_ENV[@]}"; do
+            case "${GAME_ENV[$i]}" in
+                RECOMP_PAD_SCRIPT=@seed:*) GAME_ENV[$i]="RECOMP_PAD_SCRIPT=$RECOMP_PAD_SCRIPT" ;;
+            esac
+        done
+        ;;
+esac
+# The same in RECOMP_DEBUG's list, pad_script=@seed:PATH: the path ends at
+# the next comma, where the list's next key starts.
+case ",${RECOMP_DEBUG:-}" in
+    *,pad_script=@seed:*)
+        raw=",$RECOMP_DEBUG"; raw=${raw#*,pad_script=@seed:}; raw=${raw%%,*}
+        pad=$raw
+        case "$pad" in "~/"*) pad="$HOME/${pad#\~/}" ;; esac
+        [ -f "$pad" ] || { echo "no pad script $pad -- bench golden ships it" >&2; exit 1; }
+        case "$pad" in /*) ;; *) pad="$PWD/$pad" ;; esac
+        # Spliced around the key, not ${v/pat/rep}: a path's glob characters
+        # would be a pattern there, and bash 5.2 reads & in the replacement
+        # as the matched text.
+        v=",$RECOMP_DEBUG"
+        v="${v%%,pad_script=@seed:*},pad_script=@Z:$pad${v#*,pad_script=@seed:"$raw"}"
+        export RECOMP_DEBUG="${v#,}"
+        for i in "${!GAME_ENV[@]}"; do
+            case "${GAME_ENV[$i]}" in
+                RECOMP_DEBUG=*pad_script=@seed:*)
+                    v=",${GAME_ENV[$i]#RECOMP_DEBUG=}"
+                    v="${v%%,pad_script=@seed:*},pad_script=@Z:$pad${v#*,pad_script=@seed:"$raw"}"
+                    GAME_ENV[$i]="RECOMP_DEBUG=${v#,}" ;;
+            esac
+        done
+        ;;
+esac
 # RECOMP_FB_DUMP=@run: the CPU backend's frame dumps (RECOMP_DEBUG=fb_dump)
 # go to this run's frames/ (a Z: path for Wine), as d3d11_dump's do below;
 # not pulled by logs.

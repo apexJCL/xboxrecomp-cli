@@ -883,7 +883,7 @@ def test_verdict_window_widens_dumps_and_needs():
 
 
 def test_pace_judged_against_own_backend():
-    # JSRF's garage idle paces 60 fps on D3D11 and 50 on Metal: a run is off
+    # An idle scene that paces 60 fps on D3D11 and 50 on Metal: a run is off
     # only when it is off from its own backend's reference, or, with none of
     # those, from every reference; never for missing the other backend's.
     fr = {
@@ -921,7 +921,7 @@ def test_pace_judged_against_own_backend():
 
 def test_dump_slack_before_after():
     # dump_slack [before, after]: a host that only runs early of the
-    # reference (the Deck's garage) dumps that far before, not as far after.
+    # reference (a slower host's) dumps that far before, not as far after.
     fr = {"name": "f", "dump": 1, "anchor": {"event": "e", "ref_flip": 10}}
     plain = {"name": "p", "dump": 2}
     sc = {"frames": [fr], "anchors": ANCHORS, "dump_slack": [20, 5]}
@@ -951,3 +951,94 @@ if __name__ == "__main__":
                 fails += 1
                 print("FAIL " + name + ": " + str(e)[:400])
     sys.exit(1 if fails else 0)
+
+
+def test_frame_without_reference_is_noref():
+    # A frame just added to golden.json, before golden reference records it:
+    # check says NOREF (INCOMPLETE, never a pass), refs does not warn, and
+    # the run still dumps it so the reference can be recorded.
+    with tempfile.TemporaryDirectory() as tmp:
+        frame = {"name": "new", "dump": 1}
+        gj = make_golden(tmp, frame)
+        d = setup_run(tmp, metal_log({f: 1 for f in range(1, 80)}), {61: flat(100)})
+        rc, out = run_check(tmp, gj, d)
+        assert rc == 2 and "NOREF    s/new" in out and "golden: INCOMPLETE" in out, out
+        assert G.frame_refs(frame)[0][1] is None
+        assert "no reference yet" in G.missing_ref_hint(frame)
+        G.GOLDEN_JSON, repo, G.REPO = gj, G.REPO, tmp
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                G.cmd_refs([])
+        finally:
+            G.REPO = repo
+        assert "WARNING" not in buf.getvalue(), buf.getvalue()
+        assert G.dumpat_ranges(G.load_golden()["scenarios"]["s"]) == "59-63"
+
+
+def test_skipped_frames_are_not_planned_on_their_backend():
+    # A frame skipped on d3d11 is neither dumped nor pulled nor listed for
+    # a d3d11 run, and still is for every other backend.
+    sc = {
+        "frames": [
+            {"name": "a", "dump": 1},
+            {"name": "b", "dump": 2, "skip_backends": ["d3d11"]},
+        ]
+    }
+    assert G.dumpat_ranges(sc) == "59-63,119-123"
+    assert G.dumpat_ranges(sc, backend="metal") == "59-63,119-123"
+    assert G.dumpat_ranges(sc, backend="d3d11") == "59-63"
+    assert [fr["name"] for fr in G.backend_frames(sc, "d3d11")] == ["a"]
+    # The scenario's list applies to frames without their own.
+    sc2 = {"skip_backends": ["cpu"], "frames": [{"name": "a", "dump": 1}]}
+    assert G.dumpat_ranges(sc2, backend="cpu") == ""
+    with tempfile.TemporaryDirectory() as tmp:
+        G.GOLDEN_JSON = os.path.join(tmp, "golden.json")
+        with open(G.GOLDEN_JSON, "w") as f:
+            json.dump({"compare": {}, "scenarios": {"s": dict(sc, seconds=1)}}, f)
+        log = os.path.join(tmp, "log")
+        with open(log, "w") as f:
+            f.write("\n".join(metal_log({n: 1 for n in range(1, 130)})) + "\n")
+
+        def out(fn, args):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                fn(args)
+            return buf.getvalue().split()
+
+        assert out(G.cmd_dumpat, ["s", "--backend", "d3d11"]) == ["59-63"]
+        assert out(G.cmd_frames, ["s"]) == ["0001", "0002"]
+        assert out(G.cmd_frames, ["s", "--backend", "d3d11"]) == ["0001"]
+        pulls = out(G.cmd_pulls, ["s", log, "--backend", "d3d11"])
+        assert pulls == ["flip_%05d.bmp" % n for n in range(59, 64)]
+        assert len(out(G.cmd_pulls, ["s", log])) == 10
+
+
+def test_pad_step_count_cross_checked():
+    # The runtime's "PAD: script of N step(s)" must equal the CLI's parse of
+    # the scenario's script: an older toolkit that stops at the first f-step
+    # (0 steps) would idle through the route and never match.
+    with tempfile.TemporaryDirectory() as tmp:
+        img = flat(100)
+        sha = ref_png(tmp, "f", img)
+        frame = {"name": "f", "dump": 1, "sha256": sha, "size": [W, H]}
+        env = {"env": {"RECOMP_DEBUG": "pad_script=f1:a,f5:b:3"}}
+        gj = make_golden(tmp, frame, extra=env)
+        flips = metal_log({f: 1 for f in range(1, 80)})
+        for line, rc, word in (
+            ("  PAD: script of 2 step(s)", 0, "golden: pass"),
+            ("  PAD: script of 0 step(s)", 1, "the runtime loaded 0 pad script step(s)"),
+            (None, 2, "no 'PAD: script of N step(s)'"),
+        ):
+            d = setup_run(tmp, ([line] if line else []) + flips, {61: img})
+            got, out = run_check(tmp, gj, d)
+            assert got == rc and word in out, out
+        # An @file script is counted from the file under the game root.
+        os.makedirs(os.path.join(tmp, "fx"))
+        with open(os.path.join(tmp, "fx", "r.pad"), "w") as f:
+            f.write("# rec\nf1:a\nf2:b\nf3:lx=10:4\n")
+        assert G.pad_steps_expected({"RECOMP_DEBUG": "pad_script=@fx/r.pad"}, tmp) == 3
+        assert G.pad_steps_expected({"RECOMP_PAD_SCRIPT": "@fx/r.pad"}, tmp) == 3
+        assert G.pad_steps_expected({"RECOMP_PAD_SCRIPT": "@fx/gone.pad"}, tmp) is None
+        assert G.pad_steps_expected({"RECOMP_DEBUG": "pad_script=@seed:x/r.pad"}, tmp) is None
+        assert G.pad_steps_expected({}, tmp) is None

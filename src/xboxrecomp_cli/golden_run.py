@@ -72,17 +72,18 @@ class RunError(Exception):
 # ---- what a scenario needs ---------------------------------------------------
 
 
-def frame_needs(sc, batches, window=WINDOW, slack=None):
+def frame_needs(sc, batches, window=WINDOW, slack=None, backend=None):
     """[(frame name, last flip it needs, settled)] for scenario sc given the
-    run's flip log so far ({flip: batches}). settled: the need cannot move
-    any more (an unanchored frame, or an anchored one whose anchor is in
-    the log). Before its anchor shows, an anchored frame needs the end of
-    its dumped range: past that nothing more of it is dumped."""
+    run's flip log so far ({flip: batches}), for the frames a run on backend
+    checks. settled: the need cannot move any more (an unanchored frame, or
+    an anchored one whose anchor is in the log). Before its anchor shows, an
+    anchored frame needs the end of its dumped range: past that nothing more
+    of it is dumped."""
     from . import golden as G
 
     _, after = G.dump_slack(sc, slack)
     out = []
-    for fr in sc["frames"]:
+    for fr in G.backend_frames(sc, backend):
         f = 60 * fr["dump"] + 1
         w = max(window, G.verdict_window(fr))
         if "anchor" not in fr:
@@ -101,9 +102,11 @@ def frame_needs(sc, batches, window=WINDOW, slack=None):
     return out
 
 
-def stop_flip(sc, batches, window=WINDOW, slack=None):
-    """The flip after which the run can stop: STOP_AFTER past the last need."""
-    return max(n for _, n, _ in frame_needs(sc, batches, window, slack)) + STOP_AFTER
+def stop_flip(sc, batches, window=WINDOW, slack=None, backend=None):
+    """The flip after which the run can stop: STOP_AFTER past the last need
+    of the frames backend checks (STOP_AFTER when it skips them all)."""
+    needs = frame_needs(sc, batches, window, slack, backend)
+    return max((n for _, n, _ in needs), default=0) + STOP_AFTER
 
 
 class FlipLog:
@@ -347,7 +350,7 @@ def run_one(o, scen, sc, scen_env, secs, say):
     stamp = time.strftime("%Y%m%d-%H%M%S")
     d = os.path.join(o["out"], "%s-%s-%s" % (stamp, o["backend"], scen))
     os.makedirs(os.path.join(d, "frames"))
-    dumpat = G.dumpat_ranges(sc)
+    dumpat = G.dumpat_ranges(sc, backend=o["backend"])
     env = run_env(os.environ, scen_env, o["backend"], d, dumpat, o["extra"])
     hdd = seed_hdd(env, o["root"], d, o.get("game_files"))
     if hdd is None:
@@ -409,7 +412,7 @@ def run_game(o, sc, d, env, secs, say):
                     break
                 time.sleep(POLL)
                 flog.poll()
-                if flog.last and flog.last >= stop_flip(sc, flog.batches):
+                if flog.last and flog.last >= stop_flip(sc, flog.batches, backend=o["backend"]):
                     why = "done"
                     break
                 ld = host_load()[0]
@@ -627,3 +630,271 @@ def check_and_prune(d, scen, erc, lines, keep):
                 % (scen, n, size / 1e6, kept)
             )
     return word, r.returncode
+
+
+# ---- golden play: a person plays a scenario's boot, the pads recorded ----------------
+
+PLAY_SECS = 1800
+# The toolkit's pin a golden env sets that would keep a person from playing;
+# a game's own input pins come from game.toml's [input] play_unset.
+PLAY_UNPIN = ("RECOMP_HEADLESS",)
+
+
+def play_env(
+    base, scen_env, backend, run_dir, record, script=True, extra=(), unset=(), script_env=None
+):
+    """The game's environment for golden play: the scenario's, in a window
+    with the host's sound (a person plays it), the keyboard on as pad 1
+    beside any host pad, no frame dumps, the flip trace on, and
+    pad_record=RECORD. unset: the game's input pins to drop as well
+    (game.toml [input] play_unset). script False drops every script the
+    scenario names, the pad_script in RECOMP_DEBUG, RECOMP_PAD_SCRIPT and
+    the game's own input script (script_env): the person starts at the
+    title."""
+    from .pad_script import script_of
+
+    env = {k: v for k, v in base.items() if not k.startswith("RECOMP_")}
+    # A golden run's dummy audio, if the caller's shell carries it, is
+    # theirs to keep; play adds none.
+    env.update(scen_env)
+    # A golden env pins the person's input off (no host pad, no keyboard)
+    # so a stray key cannot change a run: play is the run where it counts.
+    for k in PLAY_UNPIN + tuple(unset):
+        env.pop(k, None)
+    env.update(RECOMP_PB_BACKEND=backend, RECOMP_KEYBOARD="1")
+    env["RECOMP_SAVE_DIR"] = os.path.join(run_dir, "save")
+    debug = env.get("RECOMP_DEBUG", "")
+    if not script:
+        old = script_of(debug)
+        if old is not None:
+            debug = debug.replace("pad_script=" + old, "").replace(",,", ",").strip(",")
+        env.pop("RECOMP_PAD_SCRIPT", None)
+        if script_env:
+            env.pop(script_env, None)
+    env["RECOMP_DEBUG"] = debug
+    add_list(env, "RECOMP_DEBUG", "pad_record=%s" % record)
+    # The flips the run-info's stop line and the recording are matched on.
+    if "flip" not in env.get("RECOMP_TRACE", "").split(","):
+        add_list(env, "RECOMP_TRACE", "flip")
+    for k, v in extra:
+        if k in ("RECOMP_TRACE", "RECOMP_DEBUG"):
+            add_list(env, k, v)
+        else:
+            env[k] = v
+    if not env["RECOMP_DEBUG"]:
+        env.pop("RECOMP_DEBUG")
+    return env
+
+
+def parse_play(args):
+    o = {
+        "scen": None,
+        "record": None,
+        "backend": "metal",
+        "secs": PLAY_SECS,
+        "exe": None,
+        "out": None,
+        "script": True,
+        "lock_wait": 60,
+        "extra": [],
+    }
+    it = iter(args)
+    for a in it:
+        if a in ("--record", "--secs", "--exe", "--out", "--lock-wait", "--backend"):
+            v = next(it, None)
+            if v is None:
+                raise RunError("golden play: %s takes a value" % a)
+            if a in ("--secs", "--lock-wait"):
+                try:
+                    o["secs" if a == "--secs" else "lock_wait"] = int(v)
+                except ValueError:
+                    raise RunError("golden play: %s takes seconds, not %r" % (a, v)) from None
+            elif a == "--backend":
+                if v not in BACKENDS:
+                    raise RunError("golden play: --backend is one of %s" % ", ".join(BACKENDS))
+                o["backend"] = v
+            else:
+                o[a[2:]] = os.path.abspath(v)
+                # RECOMP_DEBUG is a comma list: pad_record= would stop at
+                # the comma and write some other file than the one checked.
+                if a == "--record" and "," in o["record"]:
+                    raise RunError("golden play: the --record path cannot hold a ','")
+        elif a == "--no-script":
+            o["script"] = False
+        elif a.startswith("-"):
+            raise RunError("golden play: unknown option %s" % a)
+        elif "=" in a:
+            k, v = a.split("=", 1)
+            o["extra"].append((k, v))
+        elif o["scen"] is None:
+            o["scen"] = a
+        else:
+            raise RunError("golden play: one scenario, not %s too" % a)
+    if not o["scen"] or not o["record"]:
+        raise RunError("golden play: usage: golden play SCEN --record FILE [options]", 2)
+    return o
+
+
+def cmd_play(args):
+    """golden play SCEN --record FILE: SCEN's boot in a window, with sound,
+    its hdd seed copied (never anyone's own saves), for a person to play
+    while the pads are recorded to FILE as a flip-timed pad_script (golden
+    pad turns it into a scenario's). Starts where the scenario's own
+    script leaves the game, or at the title with --no-script. Ends when the
+    game is closed, on Ctrl-C, SIGTERM or SIGHUP, or at --secs (default
+    1800); the game is stopped with it, never left running. Plays the
+    Mac's sound (it is a person's run): an agent runs it headless with
+    SDL_AUDIODRIVER=dummy and SDL_AUDIO_DRIVER=dummy in its env. Takes the Mac
+    run lock (waits --lock-wait, default 60 s), so no golden run overlaps
+    it. The run dir (--out, default bench-logs/) keeps run-info.txt and
+    game-stdio.log, the flip log the recording is matched against."""
+    from . import golden as G
+    from . import manifest
+
+    try:
+        o = parse_play(args)
+    except RunError as e:
+        print(e, file=sys.stderr)
+        return e.rc
+    if sys.platform != "darwin":
+        print("golden play: macOS only", file=sys.stderr)
+        return 1
+    game = manifest.load(G.REPO)
+    exe = o["exe"] or game.exe(game.build_dir("macos"), "macos")
+    out = o["out"] or os.path.join(game.root, "bench-logs")
+    if not os.path.isfile(exe):
+        print("golden play: no %s (build it, or --exe PATH)" % exe, file=sys.stderr)
+        return 1
+    g = G.load_golden()
+    if o["scen"] not in g["scenarios"]:
+        print(
+            "golden play: no scenario %s (golden.json has %s)"
+            % (o["scen"], ", ".join(g["scenarios"])),
+            file=sys.stderr,
+        )
+        return 1
+    if G.seeds_missing(dict(g, scenarios={o["scen"]: g["scenarios"][o["scen"]]}), game.game_files):
+        return 1
+    if os.path.exists(o["record"]):
+        print("golden play: %s exists; record to a new file" % o["record"], file=sys.stderr)
+        return 1
+    os.makedirs(os.path.dirname(o["record"]), exist_ok=True)
+    d = os.path.join(out, "%s-play-%s" % (time.strftime("%Y%m%d-%H%M%S"), o["scen"]))
+    os.makedirs(d)
+    env = play_env(
+        os.environ,
+        G.scenario_env(g, o["scen"]),
+        o["backend"],
+        d,
+        o["record"],
+        o["script"],
+        o["extra"],
+        game.m["input"]["play_unset"],
+        game.m["input"]["script_env"],
+    )
+    try:
+        hdd = seed_hdd(env, game.root, d, game.game_files)
+    except RunError as e:
+        print(e, file=sys.stderr)
+        return e.rc
+    if hdd is None:
+        os.makedirs(os.path.join(d, "save"))
+    logp = os.path.join(d, "game-stdio.log")
+    seed = G.hdd_seed(G.scenario_env(g, o["scen"]))
+    info = [
+        "host:   %s  %s" % (platform.node(), time.strftime("%Y-%m-%dT%H:%M:%S%z")),
+        "play:   %s (%s), %s"
+        % (o["scen"], o["backend"], "from its pad_script" if o["script"] else "from the title"),
+        "exe:    %s  %s" % (sha256_file(exe), exe),
+        "tree:   %s %s" % (game.root, git_state(game.root)),
+        "seed:   %s (copied to %s)" % (seed, hdd)
+        if seed
+        else "seed:   none (an empty %s)" % hdd
+        if hdd
+        else "seed:   none (RECOMP_HDD_DIR=%s)" % env.get("RECOMP_HDD_DIR"),
+        "record: %s" % o["record"],
+        "env:    %s"
+        % " ".join("%s=%s" % (k, v) for k, v in sorted(env.items()) if k.startswith("RECOMP_")),
+    ]
+    rc, why = None, "closed"
+
+    def ended(signum, frame):
+        raise KeyboardInterrupt
+
+    # SIGTERM or SIGHUP (a closed terminal) would skip the cleanup below and
+    # leave the game running on a deleted hdd copy: end as Ctrl-C does.
+    old = {n: signal.signal(n, ended) for n in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        with mac_lock("golden play " + o["scen"], o["lock_wait"]):
+            print("golden play: %s -> %s (the run: %s)" % (o["scen"], o["record"], d))
+            sys.stdout.flush()
+            t0 = time.time()
+            with open(logp, "wb") as log:
+                p = subprocess.Popen(
+                    [exe],
+                    cwd=game.root,
+                    env=env,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                )
+                try:
+                    while p.poll() is None:
+                        if time.time() - t0 > o["secs"]:
+                            why = "limit"
+                            break
+                        time.sleep(POLL)
+                except KeyboardInterrupt:
+                    why = "ctrl-c"
+                finally:
+                    # A second Ctrl-C (or a signal) while the game winds
+                    # down must not skip the kill: ignore them meanwhile.
+                    held = {
+                        n: signal.signal(n, signal.SIG_IGN)
+                        for n in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+                    }
+                    try:
+                        if p.poll() is None:
+                            p.send_signal(signal.SIGINT)
+                            try:
+                                p.wait(15)
+                            except subprocess.TimeoutExpired:
+                                p.kill()
+                                p.wait()
+                    finally:
+                        for n, h in held.items():
+                            signal.signal(n, h)
+                    rc = p.returncode
+            wall = time.time() - t0
+    except RunError as e:
+        print(e, file=sys.stderr)
+        return e.rc
+    finally:
+        for n, h in old.items():
+            signal.signal(n, h)
+        # The copy holds the save the person made and the partition images:
+        # never kept, however the play ends.
+        if hdd:
+            shutil.rmtree(hdd, ignore_errors=True)
+    flog = FlipLog(logp)
+    flog.poll()
+    info.append("stop:   %s at flip %d after %.1f s, exit %s" % (why, flog.last, wall, rc))
+    with open(os.path.join(d, "run-info.txt"), "w") as f:
+        f.write("\n".join(info) + "\n")
+    try:
+        with open(o["record"]) as f:
+            n = sum(1 for x in f if x.strip() and not x.startswith("#"))
+    except OSError:
+        n = -1
+    print(
+        "golden play: %s at flip %d after %.0f s; %s"
+        % (
+            why,
+            flog.last,
+            wall,
+            "%d steps in %s" % (n, o["record"])
+            if n >= 0
+            else "no recording written (%s)" % o["record"],
+        )
+    )
+    return 0 if n >= 0 else 1

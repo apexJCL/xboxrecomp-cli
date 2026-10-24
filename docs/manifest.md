@@ -163,6 +163,7 @@ do `game_files`.
 |---|---|---|
 | `script_env` | `"RECOMP_INPUT_SCRIPT"` | The variable that holds a golden scenario's input script. |
 | `presets` | `[]` | The `@name` presets the game compiles in. `bench golden` refuses a scenario that names any other. |
+| `play_unset` | `[]` | The game's own input pins (a golden env's pad or keyboard off) that `golden play` drops, so a person can play. |
 
 ## [golden]
 

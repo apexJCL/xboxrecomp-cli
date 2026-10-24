@@ -131,6 +131,10 @@ SPEC = {
     "input": {
         "script_env": (STR, "RECOMP_INPUT_SCRIPT"),
         "presets": (STRS, []),
+        # Env keys a golden scenario may set to pin the person's input off
+        # (a game's own host-pad or strict-input keys): golden play drops
+        # them, since that run is a person's.
+        "play_unset": (STRS, []),
     },
     "golden": {
         "json": (STR, ""),

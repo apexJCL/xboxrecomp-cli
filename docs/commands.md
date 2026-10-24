@@ -563,3 +563,38 @@ anchored frame's dumps reach either side of its reference flip; the
 pair suits a host that only ever runs early (or late) of the reference.
 The pace check judges a run against its own backend's references (a label
 `metal`, or `d3d11-b` for `d3d11`), or against all of them when it has none.
+
+A scenario's input is the toolkit's scripted pad (`RECOMP_DEBUG=pad_script=`):
+steps `<ms>:btn[+btn][:hold ms]`, timed from the first pad report, or
+`f<flip>:btn[+btn][:hold flips]`, timed by the executor's flip count, in
+decimal. A flip-timed step lands within about 1-2 flips of the same point on
+a steady screen; loading screens and movies take a different number of flips
+per host, so hold presses that wait on a screen generously. A stick can be set
+to a value, `lx=-12000` (`ly`, `rx`, `ry`). `golden` checks every scenario's
+script before a run. A recorded route is too long for one variable (Windows
+allows 32767 characters), so a scenario names its file:
+`RECOMP_DEBUG=pad_script=@PATH` (or the older `RECOMP_PAD_SCRIPT=@PATH`),
+PATH relative to the game root, private and checked like an hdd seed (an
+absolute or `~` PATH is refused). A check compares the runtime's
+`PAD: script of N step(s)` with the CLI's own count of the script: a
+different count is FAIL (the route did not play as written), no such line
+INCOMPLETE. A frame with no reference yet is NOREF (INCOMPLETE), and a frame
+a backend skips (`skip_backends`) gets no dumps on it and no wait for it.
+`golden run` starts the game in the root, and
+`bench golden` ships the file to the host's `golden-seeds/PATH`, where
+`run_game.sh` hands it to Wine as a `Z:` path. `golden play SCEN --record FILE [--no-script]
+[--secs S] [--backend metal|cpu] [--exe PATH] [--out DIR] [--lock-wait S]`
+boots SCEN in a window with the host's sound (an agent sets
+`SDL_AUDIODRIVER=dummy` and `SDL_AUDIO_DRIVER=dummy`) and the keyboard on, on
+a copy of its hdd seed or an empty hdd of the run's own (never the player's),
+under the Mac run lock, for a person to play while
+`RECOMP_DEBUG=pad_record=FILE` writes the pads (script and person both) as
+flip-timed steps, the sticks at their values. FILE cannot hold a comma.
+`--no-script` drops every script the scenario names and starts at the title;
+without it the recording holds the scenario's own presses too, so cut them
+with `--from` before the recording goes after that script. Closing the game,
+Ctrl-C, SIGTERM and SIGHUP all stop the game and remove the hdd copy. The
+game's `[input] play_unset` in `game.toml` lists its own input pins that play
+drops. `golden pad FILE [--from F] [--to F] [--shift N]` prints a recording's
+steps, cut to flips `[F, T)` and moved by N flips, as the comma list a
+scenario's `pad_script=` takes.

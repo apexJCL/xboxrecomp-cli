@@ -165,3 +165,16 @@ def test_misspelt_hosts_are_refused(tmp_path):
     # On every host, the Deck's too: the marking would silently never match.
     with pytest.raises(SystemExit):
         check(tmp, gj, d)
+
+
+def test_marked_frame_without_reference_stays_noref(tmp_path):
+    # NOREF is unjudged like INCOMPLETE: a known marking never turns a frame
+    # with no reference yet into KNOWN or a pass.
+    tmp = str(tmp_path)
+    f = frame_def(None, known_divergence=KNOWN)
+    del f["sha256"]
+    gj = make_golden(tmp, f, ANCHOR)
+    d = scenario_run(tmp, OFF)
+    rc, out = check(tmp, gj, d, "--host-os", "windows")
+    assert rc == 2 and "NOREF    s/f" in out, out
+    assert "marked as known on windows: TRACK-42" in out and "golden: KNOWN" not in out, out

@@ -289,6 +289,135 @@ def test_golden_ship_seeds(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
+def test_golden_ship_pad_scripts(tmp_path, monkeypatch):
+    # A pad script file goes to the base's golden-seeds/ once and the row
+    # names it @seed:<host path>; an absolute @file is left as it is.
+    from types import SimpleNamespace
+
+    (tmp_path / "fx").mkdir()
+    (tmp_path / "fx" / "route.pad").write_text("f10:a\n")
+    calls = []
+    monkeypatch.setattr(bg, "rsync", lambda *a: calls.append(a) or 0)
+    cfg = SimpleNamespace(
+        game=SimpleNamespace(root=str(tmp_path), game_files=str(tmp_path / "game_files")),
+        base="~/g-bench/skates",
+        host="deck",
+    )
+    b = SimpleNamespace(cfg=cfg, step=lambda m: None)
+    rows = [
+        "a\t60\t0\tRECOMP_TRACE=flip RECOMP_PAD_SCRIPT=@fx/route.pad",
+        "b\t60\t0\tRECOMP_PAD_SCRIPT=@fx/route.pad",
+        "c\t30\t0\tRECOMP_PAD_SCRIPT=@/abs/route.pad",
+        "e\t60\t0\tRECOMP_DEBUG=fb_dump_at=60,pad_script=@fx/route.pad,pad_record=r.pad",
+    ]
+    out = bg.ship_seeds(b, rows)
+    dst = "~/g-bench/skates/golden-seeds/fx/route.pad"
+    assert out == [
+        "a\t60\t0\tRECOMP_TRACE=flip RECOMP_PAD_SCRIPT=@seed:" + dst,
+        "b\t60\t0\tRECOMP_PAD_SCRIPT=@seed:" + dst,
+        rows[2],
+        "e\t60\t0\tRECOMP_DEBUG=fb_dump_at=60,pad_script=@seed:%s,pad_record=r.pad" % dst,
+    ]
+    assert len(calls) == 1 and calls[0][-2:] == (str(tmp_path / "fx" / "route.pad"), "deck:" + dst)
+    assert "--rsync-path=mkdir -p ~/g-bench/skates/golden-seeds/fx && rsync" in calls[0]
+    for pad in ("fx/gone.pad", "../x.pad", "fx"):
+        try:
+            bg.ship_seeds(b, ["d\t1\t0\tRECOMP_PAD_SCRIPT=@" + pad])
+        except bg.BenchError:
+            pass
+        else:
+            raise AssertionError("pad %r was not refused" % pad)
+    assert len(calls) == 1
+
+
+def pad_block():
+    """run_game.sh's RECOMP_PAD_SCRIPT=@seed: block, to run on its own."""
+    import re
+
+    with open(os.path.join(HOST, "run_game.sh")) as f:
+        m = re.search(r"^case \"\$\{RECOMP_PAD_SCRIPT:-\}\" in\n.*?^esac\n", f.read(), re.S | re.M)
+    assert m, "no pad block in run_game.sh"
+    return m.group(0)
+
+
+def test_host_pad_script(tmp_path):
+    """run_game.sh hands Wine a shipped pad script as a Z: path, in both the
+    exported variable and GAME_ENV, and refuses one that is not there."""
+    (tmp_path / "seeds").mkdir()
+    pad = tmp_path / "seeds" / "route.pad"
+    pad.write_text("f10:a\n")
+
+    def go(path):
+        script = (
+            "set -u\nGAME_ENV=(X=1 RECOMP_PAD_SCRIPT=@seed:%s)\nexport RECOMP_PAD_SCRIPT=@seed:%s\n%s"
+            'printf "%%s\\n" "${GAME_ENV[@]}"\necho "PAD=$RECOMP_PAD_SCRIPT"\n'
+        ) % (path, path, pad_block())
+        return subprocess.run(["bash", "-c", script], cwd=tmp_path, capture_output=True, text=True)
+
+    r = go(pad)
+    assert r.returncode == 0, r.stderr
+    z = "@Z:%s" % pad
+    assert r.stdout.split() == ["X=1", "RECOMP_PAD_SCRIPT=" + z, "PAD=" + z]
+    r = go("seeds/route.pad")
+    assert (
+        r.returncode == 0 and "PAD=@Z:%s/seeds/route.pad" % os.path.realpath(tmp_path) in r.stdout
+    )
+    r = go(tmp_path / "gone.pad")
+    assert r.returncode == 1 and "no pad script" in r.stderr
+
+
+def debug_pad_block():
+    """run_game.sh's RECOMP_DEBUG pad_script=@seed: block, to run on its own."""
+    import re
+
+    with open(os.path.join(HOST, "run_game.sh")) as f:
+        m = re.search(r'^case ",\$\{RECOMP_DEBUG:-\}" in\n.*?^esac\n', f.read(), re.S | re.M)
+    assert m, "no RECOMP_DEBUG pad block in run_game.sh"
+    return m.group(0)
+
+
+def test_host_debug_pad_script(tmp_path):
+    """The same for RECOMP_DEBUG's pad_script=@seed:PATH, in the merged list
+    and in GAME_ENV, leaving the list's other keys alone."""
+    (tmp_path / "seeds").mkdir()
+    pad = tmp_path / "seeds" / "route.pad"
+    pad.write_text("f10:a\n")
+
+    def go(path):
+        dbg = "fb_dump_at=60,pad_script=@seed:%s" % path
+        script = (
+            "set -u\nGAME_ENV=(X=1 RECOMP_DEBUG=%s)\n"
+            "export RECOMP_DEBUG=%s,d3d11_dump=Z:/f/\n%s"
+            'printf "%%s\\n" "${GAME_ENV[@]}"\necho "DBG=$RECOMP_DEBUG"\n'
+        ) % (dbg, dbg, debug_pad_block())
+        return subprocess.run(["bash", "-c", script], cwd=tmp_path, capture_output=True, text=True)
+
+    r = go(pad)
+    assert r.returncode == 0, r.stderr
+    z = "fb_dump_at=60,pad_script=@Z:%s" % pad
+    assert r.stdout.split() == ["X=1", "RECOMP_DEBUG=" + z, "DBG=%s,d3d11_dump=Z:/f/" % z]
+    r = go(tmp_path / "gone.pad")
+    assert r.returncode == 1 and "no pad script" in r.stderr
+    # A path with glob characters and an & is spliced in as it is (bash 5.2
+    # reads & in a ${v/pat/rep} replacement as the match), at the list's start.
+    odd = tmp_path / "seeds" / "r[1]&*.pad"
+    odd.write_text("f10:a\n")
+    script = (
+        "set -u\nshopt -s patsub_replacement 2>/dev/null\n"
+        "GAME_ENV=(RECOMP_DEBUG='pad_script=@seed:%s,peek=1')\n"
+        "export RECOMP_DEBUG='pad_script=@seed:%s,peek=1'\n%s"
+        'printf "%%s\\n" "${GAME_ENV[@]}"\necho "DBG=$RECOMP_DEBUG"\n'
+    ) % (odd, odd, debug_pad_block())
+    r = subprocess.run(["bash", "-c", script], cwd=tmp_path, capture_output=True, text=True)
+    z = "pad_script=@Z:%s,peek=1" % odd
+    assert r.returncode == 0 and r.stdout.splitlines() == ["RECOMP_DEBUG=" + z, "DBG=" + z], (
+        r.stdout + r.stderr
+    )
+    script = 'set -u\nGAME_ENV=()\nexport RECOMP_DEBUG=pad_script=f1:a\n%secho "$RECOMP_DEBUG"\n'
+    r = subprocess.run(["bash", "-c", script % debug_pad_block()], capture_output=True, text=True)
+    assert r.returncode == 0 and r.stdout.strip() == "pad_script=f1:a"
+
+
 def seed_block():
     """run_game.sh's RECOMP_HDD_DIR=@seed: block, to run on its own."""
     import re

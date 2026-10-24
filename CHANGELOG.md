@@ -19,11 +19,37 @@ a release by its tag in `game.toml`'s `[cli]` table.
   game files, with a `UDATA/` and no symlinks.
 - `dump_slack` takes `[before, after]` as well as one flip count, for a
   host that reaches an anchored frame only early or only late.
+- Flip-timed pad scripts in golden scenarios (`f<flip>` steps, from the
+  toolkit's pad recorder). `load_golden` parses every scenario's script
+  with the runtime's grammar (decimal only, stick values `lx=<v>` and the
+  like) and refuses an unknown button.
+- `golden play SCEN --record FILE`: plays the scenario's boot in a window,
+  with the keyboard and the host's sound, on a copy of its hdd seed (never
+  the player's own saves) under the Mac run lock, and records the pads.
+  `--no-script` starts at the title.
+- `golden pad FILE [--from F] [--to F] [--shift N]`: turns a recording
+  into a scenario's pad script.
+- A scenario can name its script as a file, `RECOMP_DEBUG=pad_script=@PATH`
+  (or the older `RECOMP_PAD_SCRIPT=@PATH`), with PATH under the game root
+  and kept private like a seed. `bench golden` ships it to the host's
+  `golden-seeds/PATH`, and `run_game.sh` hands Wine the copy as a `Z:`
+  path. A path that is absolute, starts with `~` or leaves the root is
+  refused at load.
+- `NOREF`: a frame with no reference yet is INCOMPLETE, never a pass, and
+  the run still dumps it so `golden reference` can record one.
+- `golden check` compares the runtime's `PAD: script of N step(s)` with
+  the CLI's count of the scenario's script. A different count FAILs, and
+  a missing line is INCOMPLETE.
+- `--backend` on `golden dumpat`, `frames` and `pulls`: frames that
+  `skip_backends` leaves out are no longer dumped, pulled or waited for.
+  `golden run` and `bench golden` (d3d11) plan per backend.
 
 ### Changed
 - A golden run with no seed gets an empty `hdd/` of its own, removed after,
   instead of the runtime's default hdd root (the player's own disk), unless
-  the scenario sets a plain `RECOMP_HDD_DIR`.
+  the scenario sets a plain `RECOMP_HDD_DIR`. `golden play` does the same.
+- The input pins that `golden play` drops come from `game.toml`
+  (`[input] play_unset`). The CLI keeps only `RECOMP_HEADLESS`.
 - The pace check judges a run against the references of its own backend
   (a label of `metal` or `metal-...`), or all of them when none of those is
   paced. A frame that paces differently per backend is no longer a

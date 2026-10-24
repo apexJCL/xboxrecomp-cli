@@ -39,6 +39,9 @@ def golden_args(game):
 
 
 SEEDS = "golden-seeds"
+# The bench host's runs are D3D11 ones (the scenario env pins it), so its
+# dump plan and pulls leave out the frames a scenario skips there.
+BENCH_BACKEND = "d3d11"
 
 
 def ship_seeds(b, rows):
@@ -47,8 +50,11 @@ def ship_seeds(b, rows):
     golden-seeds/PATH, and the rows' env rewritten to that host path:
     run_game.sh copies it into the run's log dir, so each run boots on the
     same disk and save and none writes to the seed or to the host's own
-    saves. Returns the rows."""
-    from ..golden import HDD_SEED, SeedError, seed_dir
+    saves. A pad script file (RECOMP_DEBUG's pad_script=@PATH or
+    RECOMP_PAD_SCRIPT=@PATH, PATH under the game root) goes the same way, to
+    golden-seeds/PATH, and the row names it @seed:<host path>, which
+    run_game.sh hands Wine as a Z: path. Returns the rows."""
+    from ..golden import HDD_SEED, SeedError, pad_file, pad_seed, seed_dir
 
     c = b.cfg
     out, sent = [], set()
@@ -56,6 +62,38 @@ def ship_seeds(b, rows):
         f = (row.split("\t", 3) + ["", "", "", ""])[:4]
         words = f[3].split()
         for i, w in enumerate(words):
+            k, _, v = w.partition("=")
+            pad = pad_seed({k: v}) if k in ("RECOMP_PAD_SCRIPT", "RECOMP_DEBUG") else None
+            if pad is not None:
+                try:
+                    src = pad_file(pad, c.game.root, c.game.game_files)
+                except SeedError as e:
+                    raise BenchError(
+                        "golden: %s (golden.json's notes say where from)" % e
+                    ) from None
+                dst = "%s/%s/%s" % (c.base, SEEDS, pad.rstrip("/"))
+                if dst not in sent:
+                    b.step("golden: pad script %s -> %s:%s" % (pad, c.host, dst))
+                    parent = host_path(dst.rsplit("/", 1)[0])
+                    if (
+                        rsync(
+                            "-a",
+                            "--chmod=Fu+w",
+                            "--rsync-path=mkdir -p %s && rsync" % parent,
+                            src,
+                            "%s:%s" % (c.host, dst),
+                        )
+                        != 0
+                    ):
+                        raise BenchError("golden: shipping the pad script %s failed" % pad)
+                    sent.add(dst)
+                if k == "RECOMP_PAD_SCRIPT":
+                    words[i] = "RECOMP_PAD_SCRIPT=%s%s" % (HDD_SEED, dst)
+                else:
+                    words[i] = w.replace(
+                        "pad_script=@" + pad, "pad_script=%s%s" % (HDD_SEED, dst), 1
+                    )
+                continue
             if not w.startswith("RECOMP_HDD_DIR=" + HDD_SEED):
                 continue
             seed = w.split("=", 1)[1][len(HDD_SEED) :].rstrip("/")
@@ -332,7 +370,7 @@ def cmd_golden(b, args, bench_env=None, kind="golden"):
         # references are D3D11 ones whatever the caller exported. The flips
         # around each frame (golden.py dumpat) are dumped too, so an anchored
         # frame is checked at the same distance from its event as the reference.
-        rc, dumpat = golden_py(b, "dumpat", scen, capture=True)
+        rc, dumpat = golden_py(b, "dumpat", scen, "--backend", BENCH_BACKEND, capture=True)
         if rc != 0:
             raise BenchError("golden: no dumpat list for %s" % scen)
         dumpat = dumpat.rstrip("\n")
@@ -361,7 +399,7 @@ def cmd_golden(b, args, bench_env=None, kind="golden"):
         if pm != 0:
             prc = 1
         os.makedirs(os.path.join(log, "frames"), exist_ok=True)
-        _, idxs = golden_py(b, "frames", scen, capture=True)
+        _, idxs = golden_py(b, "frames", scen, "--backend", BENCH_BACKEND, capture=True)
         c = b.cfg
         if c.windows:
             pull_windows(b, scen, stamp, log, idxs.split())
@@ -383,7 +421,15 @@ def cmd_golden(b, args, bench_env=None, kind="golden"):
         # anchors), not all of dumpat's window (150-230 MB a scenario).
         pulls = os.path.join(log, "frames", "pulls.txt")
         with open(pulls, "w") as f:
-            rc, _ = golden_py(b, "pulls", scen, os.path.join(log, "game-stdio.log"), stdout=f)
+            rc, _ = golden_py(
+                b,
+                "pulls",
+                scen,
+                os.path.join(log, "game-stdio.log"),
+                "--backend",
+                BENCH_BACKEND,
+                stdout=f,
+            )
         if rc != 0:
             open(pulls, "w").close()
         # A directory source with --files-from does not get its leading ~

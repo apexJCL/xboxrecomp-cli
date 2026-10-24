@@ -345,3 +345,21 @@ def test_run_one_removes_the_hdd_copy(tmp_path, monkeypatch):
     d, rc, *_ = R.run_one(o, "t", sc, {}, 10, lambda m: None)
     assert seen["RECOMP_HDD_DIR"] == seen["RECOMP_SAVE_DIR"] == os.path.join(d, "hdd")
     assert not os.path.exists(os.path.join(d, "hdd"))
+
+
+def test_stop_flip_ignores_frames_skipped_on_the_backend():
+    # A D3D11 run of a scenario whose late frames skip d3d11 stops after
+    # the last frame it checks, not at the time limit waiting for the rest.
+    sc = {
+        "frames": [
+            {"name": "early", "dump": 2},
+            {"name": "late", "dump": 50, "skip_backends": ["d3d11"]},
+        ]
+    }
+    assert R.stop_flip(sc, {}) == 60 * 50 + 1 + R.WINDOW + R.STOP_AFTER
+    assert R.stop_flip(sc, {}, backend="metal") == 60 * 50 + 1 + R.WINDOW + R.STOP_AFTER
+    assert R.stop_flip(sc, {}, backend="d3d11") == 121 + R.WINDOW + R.STOP_AFTER
+    assert [n for n, _, _ in R.frame_needs(sc, {}, backend="d3d11")] == ["early"]
+    # Every frame skipped: nothing to wait for.
+    sc["frames"][0]["skip_backends"] = ["d3d11"]
+    assert R.stop_flip(sc, {}, backend="d3d11") == R.STOP_AFTER

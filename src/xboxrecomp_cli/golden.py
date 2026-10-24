@@ -47,6 +47,18 @@ directory). Below, golden.json and frames/ are the game's.
                                   run lock, each stopped once its last
                                   checked frame is dumped, then check them
                                   (golden_run.py has the details)
+  golden.py play SCEN --record FILE [--secs S] [--no-script] [--exe PATH]
+                [--out DIR] [--lock-wait S] [VAR=val...]
+                                  macOS: SCEN's boot (its env, its hdd seed
+                                  copied, its pad_script unless --no-script)
+                                  in a window, with sound, for a person to
+                                  play; the pads' presses are recorded to
+                                  FILE as a flip-timed pad_script
+                                  (golden_run.py has the details)
+  golden.py pad REC [--from F] [--to F] [--shift N]
+                                  a pad_record file as the comma-joined
+                                  pad_script a scenario's RECOMP_DEBUG takes
+                                  (steps starting at flips [F, T), moved by N)
   golden.py refs                  name each frame whose reference PNG is
                                   missing, and a worktree that has it
                                   (exit 2 if any)
@@ -72,6 +84,13 @@ Skips. A scenario's (or frame's) "skip_backends" list, e.g. ["cpu"], with
 "skip_why", leaves its frames unchecked on a run whose flip log shows that
 backend (D3D11 or METAL flip lines, else cpu): SKIP, which neither passes
 nor fails. For a scenario whose timeline a slow backend cannot follow.
+A run on that backend (golden run's stop, bench golden's dumpat, frames
+and pulls with --backend) plans no dumps for those frames and does not
+wait for them.
+
+No reference. A frame with neither "sha256" nor "references" (added
+before golden reference recorded it) is NOREF, which counts as
+INCOMPLETE; the run still dumps it, so the reference can be recorded.
 
 Masks. A frame's "masks" list ({"rect": [x, y, w, h], "why": ...}) takes
 those pixels out of the compare: the run's pixels there are replaced by
@@ -760,8 +779,11 @@ def check_split(tag, fr, th, refs, have, imgs):
 
 def frame_refs(fr):
     """(label, sha256, PNG path) of each reference of a frame: its
-    `references`, or its one sha256 (label None) at frames/<name>.png."""
-    if "references" in fr:
+    `references`, or its one sha256 (label None) at frames/<name>.png. A
+    frame with neither (just added, before golden reference records it) has
+    one entry with sha256 None: check says NOREF, refs skips it, and the
+    run still dumps it so it can be recorded."""
+    if fr.get("references"):
         return [
             (
                 r["label"],
@@ -770,7 +792,7 @@ def frame_refs(fr):
             )
             for r in fr["references"]
         ]
-    return [(None, fr["sha256"], os.path.join(FRAMES_DIR, fr["name"] + ".png"))]
+    return [(None, fr.get("sha256"), os.path.join(FRAMES_DIR, fr["name"] + ".png"))]
 
 
 def missing_ref_hint(fr, ref=None):
@@ -779,6 +801,8 @@ def missing_ref_hint(fr, ref=None):
     so a merge carries the hash but not the picture. ref: one of
     frame_refs(fr), default the first."""
     _, sha, path = ref or frame_refs(fr)[0]
+    if sha is None:
+        return "no reference yet (golden reference records one)"
     rel = os.path.relpath(path, REPO)
     found = []
     try:
@@ -820,7 +844,7 @@ def cmd_refs(args):
     for scen, sc in g["scenarios"].items():
         for fr in sc["frames"]:
             for ref in frame_refs(fr):
-                if not os.path.exists(ref[2]):
+                if ref[1] is not None and not os.path.exists(ref[2]):
                     lab = f" ({ref[0]})" if ref[0] else ""
                     print(f"golden: WARNING {scen}/{fr['name']}{lab}: " + missing_ref_hint(fr, ref))
                     miss += 1
@@ -851,7 +875,19 @@ def load_golden():
     with open(GOLDEN_JSON) as f:
         g = json.load(f)
     check_anchor_chains(g)
+    check_pad_scripts(g)
     return g
+
+
+def check_pad_scripts(g):
+    """Exit on a scenario pad_script the runtime would misread (an unknown
+    button presses nothing, a bad entry ends the script): found at load,
+    not minutes into a run whose route never happens."""
+    from .pad_script import scenario_errors
+
+    for scen in g.get("scenarios", {}):
+        for e in scenario_errors(scenario_env(g, scen), REPO):
+            sys.exit(f"golden: {scen}: {e}")
 
 
 def check_anchor_chains(g):
@@ -970,7 +1006,7 @@ def pace_report(fr, sc, th, batches, times, backend=None):
     ref Y fps)", or None: the run is off past max_pace_diff from every
     reference of its own backend (a label of backend or backend-...), or,
     with none of those paced, from every reference. Backends pace a frame
-    differently (JSRF's garage idle: D3D11 60 fps, Metal 50), so one off
+    differently (one game's idle scene: D3D11 60 fps, Metal 50), so one off
     from the other backend's reference is no mismatch: that one would turn
     every regression on both into an INCOMPLETE. An unknown pace on either
     side is no check."""
@@ -1500,6 +1536,11 @@ def check_scenario(scen, d, sc, g, th, window, logs, allow, rcs, keep, host_os=N
             f"NOTE     {scen}: evaluation run with {kv} (--allow-enhance);"
             " not a stock run, never recorded"
         )
+    pad = check_pad_steps(scen, scenario_env(g, scen), log)
+    if pad:
+        print(pad[1])
+        rcs.append(pad[0])
+        return
     for fr in sc["frames"]:
         known = known_divergence(fr, host_os)
         if not known:
@@ -1593,15 +1634,20 @@ def check_frame(scen, d, fr, sc, th, window, batches, times, backend, keep, info
     if info is None:
         info = {}
     tag = f"{scen}/{fr['name']} (dump {fr['dump']}, present {fr['dump'] * 60 + 1})"
-    skip = fr.get("skip_backends", sc.get("skip_backends", []))
-    if backend in skip:
+    if skipped_on(fr, sc, backend):
         print(
             f"SKIP     {tag}: not checked on the {backend} backend "
             f"({fr.get('skip_why', sc.get('skip_why', 'see golden.json'))})"
         )
         return None
-    targets = frame_targets(d, fr, sc, batches)
     refs = frame_refs(fr)
+    if refs[0][1] is None:
+        print(
+            f"NOREF    {tag}: no reference yet; record one with golden reference"
+            f" {scen} {fr['name']} LABEL DIR"
+        )
+        return 2
+    targets = frame_targets(d, fr, sc, batches)
     multi = len(refs) > 1 or refs[0][0] is not None
     notes = sorted({n for _, n in targets.values() if n})
     if any(p is None for p, _ in targets.values()):
@@ -1824,30 +1870,45 @@ def cmd_dumpat(args):
     """The RECOMP_DEBUG=fb_dump_at= list for SCEN: each frame's flip (60*dump + 1),
     widened by --slack W (default the scenario's dump_slack, else 12; an
     anchored frame's run anchor may sit a few flips from the reference's)
-    plus --window K (default 2)."""
+    plus --window K (default 2). --backend B leaves out the frames B skips."""
     if not args:
-        sys.exit("golden: dumpat SCEN [--slack W] [--window K]")
-    scen, slack, window = args[0], None, 2
+        sys.exit("golden: dumpat SCEN [--slack W] [--window K] [--backend B]")
+    scen, slack, window, backend = args[0], None, 2, None
     it = iter(args[1:])
     for a in it:
         if a == "--slack":
             slack = int(next(it))
         elif a == "--window":
             window = int(next(it))
+        elif a == "--backend":
+            backend = next(it)
         else:
             sys.exit(f"golden: dumpat: unknown option {a}")
     sc = load_golden()["scenarios"].get(scen)
     if sc is None:
         sys.exit(f"golden: no scenario {scen} in {GOLDEN_JSON}")
-    print(dumpat_ranges(sc, slack, window))
+    print(dumpat_ranges(sc, slack, window, backend))
     return 0
+
+
+def skipped_on(fr, sc, backend):
+    """Whether frame fr of scenario sc is left unchecked on backend
+    (skip_backends, the frame's else the scenario's). None skips nothing."""
+    return backend is not None and backend in fr.get("skip_backends", sc.get("skip_backends", []))
+
+
+def backend_frames(sc, backend=None):
+    """sc's frames a run on backend checks: a run plans its dumps and its
+    stop only for these, so a frame skipped there neither keeps the run
+    going to the time limit nor costs dumps."""
+    return [fr for fr in sc["frames"] if not skipped_on(fr, sc, backend)]
 
 
 def dump_slack(sc, slack=None):
     """(before, after): how far an anchored frame's dumps reach either side
     of its reference flip. dump_slack is a count, or [before, after] when a
-    host runs early or late of the reference only: the Deck reaches the
-    garage's screens hundreds of flips before the Mac, never after, and a
+    host runs early or late of the reference only: a slower host can reach
+    a game's screens hundreds of flips before the Mac, never after, and a
     symmetric slack wide enough for it dumps as many flips that no check
     reads."""
     if slack is None:
@@ -1859,11 +1920,12 @@ def dump_slack(sc, slack=None):
     return slack, slack
 
 
-def dumpat_ranges(sc, slack=None, window=2):
-    """dumpat's list for scenario sc, as the string fb_dump_at takes."""
+def dumpat_ranges(sc, slack=None, window=2, backend=None):
+    """dumpat's list for scenario sc, as the string fb_dump_at takes: the
+    frames a run on backend checks (all of them for None)."""
     before, after = dump_slack(sc, slack)
     ranges = []
-    for fr in sc["frames"]:
+    for fr in backend_frames(sc, backend):
         f = 60 * fr["dump"] + 1
         w = max(window, verdict_window(fr))
         a = "anchor" in fr
@@ -1879,25 +1941,32 @@ def dumpat_ranges(sc, slack=None, window=2):
 
 
 def cmd_pulls(args):
-    """pulls SCEN LOG [--window K]: the flip_NNNNN.bmp names a check of SCEN
-    reads from a run with this flip log: each anchored frame's target flip
-    per reference, +-K (default 2, as check's --window), and flip 60*dump+1
-    +-K for the others. For pulling only those from the bench host."""
+    """pulls SCEN LOG [--window K] [--backend B]: the flip_NNNNN.bmp names a
+    check of SCEN reads from a run with this flip log: each anchored frame's
+    target flip per reference, +-K (default 2, as check's --window), and
+    flip 60*dump+1 +-K for the others, leaving out the frames B skips. For
+    pulling only those from the bench host."""
     if len(args) < 2:
-        sys.exit("golden: pulls SCEN LOG [--window K]")
-    scen, log, window = args[0], args[1], 2
-    if args[2:4] and args[2] == "--window":
-        window = int(args[3])
+        sys.exit("golden: pulls SCEN LOG [--window K] [--backend B]")
+    scen, log, window, backend = args[0], args[1], 2, None
+    it = iter(args[2:])
+    for a in it:
+        if a == "--window":
+            window = int(next(it))
+        elif a == "--backend":
+            backend = next(it)
+        else:
+            sys.exit(f"golden: pulls: unknown option {a}")
     sc = load_golden()["scenarios"].get(scen)
     if sc is None:
         sys.exit(f"golden: no scenario {scen} in {GOLDEN_JSON}")
     batches = flip_batches(log)
     want = set()
     dumped = []
-    for part in dumpat_ranges(sc).split(","):
+    for part in filter(None, dumpat_ranges(sc, backend=backend).split(",")):
         a, _, b = part.partition("-")
         dumped.append((int(a), int(b or a)))
-    for fr in sc["frames"]:
+    for fr in backend_frames(sc, backend):
         centres = [60 * fr["dump"] + 1]
         if "anchor" in fr and batches:
             ev = sc.get("anchors", {}).get(fr["anchor"]["event"])
@@ -2151,25 +2220,156 @@ def seed_dir(seed, root=None, game_files=None):
 
 
 def seeds_missing(g, game_files=None):
-    """Name every scenario whose hdd seed is not on disk or not a safe seed
-    (seed_dir); True if any."""
+    """Name every scenario whose hdd seed or pad script file is not on disk
+    or not a safe one (seed_dir, pad_file); True if any."""
     miss = False
     for scen in g["scenarios"]:
-        seed = hdd_seed(scenario_env(g, scen))
-        if seed is None:
-            continue
-        try:
-            seed_dir(seed, REPO, game_files)
-        except SeedMissing:
-            print(
-                f"golden: {scen}: no hdd seed {seed}/ (RECOMP_HDD_DIR=@seed:; private, "
-                "never in git: copy it in from where golden.json's notes say)"
-            )
-            miss = True
-        except SeedError as e:
-            print(f"golden: {scen}: {e}")
-            miss = True
+        env = scenario_env(g, scen)
+        seed = hdd_seed(env)
+        if seed is not None:
+            try:
+                seed_dir(seed, REPO, game_files)
+            except SeedMissing:
+                print(
+                    f"golden: {scen}: no hdd seed {seed}/ (RECOMP_HDD_DIR=@seed:; private, "
+                    "never in git: copy it in from where golden.json's notes say)"
+                )
+                miss = True
+            except SeedError as e:
+                print(f"golden: {scen}: {e}")
+                miss = True
+        pad = pad_seed(env)
+        if pad is not None:
+            try:
+                pad_file(pad, REPO, game_files)
+            except SeedMissing:
+                print(
+                    f"golden: {scen}: no pad script {pad} (RECOMP_PAD_SCRIPT=@; private, "
+                    "never in git: copy it in from where golden.json's notes say)"
+                )
+                miss = True
+            except SeedError as e:
+                print(f"golden: {scen}: {e}")
+                miss = True
     return miss
+
+
+# RECOMP_PAD_SCRIPT=@PATH in a scenario's env, PATH relative to the game
+# root: a recorded route (golden play --record) too long to inline. A
+# recording runs to thousands of steps, past the 32767 characters Windows
+# allows one variable, and it is a person's play, kept private beside the
+# hdd seeds. golden run starts the game in the root, so the runtime reads
+# PATH as it is; bench golden ships it as it ships a seed.
+
+
+def pad_seed(env):
+    """The pad script file a scenario env names (RECOMP_DEBUG's
+    pad_script=@PATH, or the older RECOMP_PAD_SCRIPT=@PATH; PATH relative to
+    the game root), or None. An absolute or ~ @path never gets here:
+    load_golden refuses it (check_pad_scripts)."""
+    from .pad_script import script_of
+
+    for v in (script_of(env.get("RECOMP_DEBUG")), env.get("RECOMP_PAD_SCRIPT")):
+        if not v or not v.startswith("@") or v.startswith(HDD_SEED):
+            continue
+        # A path has no commas; what follows one is the list's next key.
+        path = v[1:].split(",", 1)[0]
+        return None if os.path.isabs(path) or path.startswith("~") else path
+    return None
+
+
+_PAD_LOADED = re.compile(r"PAD: script of (\d+) step")
+
+
+def pad_steps_expected(env, root=None):
+    """The step count of the pad script a scenario env names, as the CLI's
+    parser reads it, or None when there is none to count here (no script,
+    an HDD seed's, or a file not on disk: seeds_missing names that)."""
+    from .pad_script import PadScriptError, parse, script_of
+
+    v = script_of(env.get("RECOMP_DEBUG"))
+    if v is None:
+        v = env.get("RECOMP_PAD_SCRIPT")
+    if not v:
+        return None
+    if v.startswith(HDD_SEED):
+        return None
+    if v.startswith("@"):
+        path = v[1:].split(",", 1)[0]
+        try:
+            with open(os.path.join(root or REPO, path)) as f:
+                v = f.read()
+        except OSError:
+            return None
+    try:
+        return len(parse(v))
+    except PadScriptError:
+        return None  # load_golden refuses it before any run
+
+
+def pad_steps_loaded(log):
+    """The step count the runtime printed ("PAD: script of N step(s)") in
+    a run's log, or None without the line."""
+    try:
+        with open(log, errors="replace") as f:
+            for line in f:
+                m = _PAD_LOADED.search(line)
+                if m:
+                    return int(m.group(1))
+    except (OSError, TypeError):
+        pass
+    return None
+
+
+def check_pad_steps(scen, env, log):
+    """None when the run's runtime loaded the scenario's whole pad script,
+    else (rc, line): a run whose route did not play cannot pass or fail on
+    its frames. A different count is an older toolkit's parser, or a step
+    the runtime refuses that the CLI takes: FAIL. No count line at all:
+    INCOMPLETE."""
+    want = pad_steps_expected(env)
+    if want is None or not log:
+        return None
+    got = pad_steps_loaded(log)
+    if got is None:
+        return 2, (
+            f"INCOMPLETE {scen}: the run's log has no 'PAD: script of N step(s)'"
+            f" line; the scenario's pad script has {want} step(s), frames not compared"
+        )
+    if got != want:
+        return 1, (
+            f"FAIL     {scen}: the runtime loaded {got} pad script step(s), the"
+            f" scenario's script has {want} (a toolkit whose parser reads it"
+            " differently, or a step it refuses); frames not compared"
+        )
+    return None
+
+
+def pad_file(path, root=None, game_files=None):
+    """The real path of pad script file `path`, checked as seed_dir checks a
+    seed (relative, no "..", strictly under the root, outside the game
+    files), and a regular file that is no symlink. SeedMissing when the path
+    is fine but not on disk; SeedError for the rest."""
+    root = root or REPO
+    if not path or ".." in path.replace("\\", "/").split("/"):
+        raise SeedError("pad script %r: a path under the game root with no '..', please" % path)
+    real_root = os.path.realpath(root)
+    full = os.path.join(root, path)
+    real = os.path.realpath(full)
+    if real == real_root or os.path.commonpath([real, real_root]) != real_root:
+        raise SeedError(
+            "pad script %r: %s is not inside the game root %s" % (path, real, real_root)
+        )
+    gf = os.path.realpath(game_files or os.path.join(root, "game_files"))
+    if os.path.commonpath([real, gf]) == gf:
+        raise SeedError("pad script %r: inside the game files %s" % (path, gf))
+    if os.path.islink(full):
+        raise SeedError("pad script %r: a symlink; it must be a plain file" % path)
+    if not os.path.exists(real):
+        raise SeedMissing("no pad script %s" % path)
+    if not os.path.isfile(real):
+        raise SeedError("pad script %r: not a file" % path)
+    return real
 
 
 def scenario_env(g, scen):
@@ -2199,8 +2399,52 @@ def cmd_plan(args):
     return 0
 
 
+def cmd_pad(args):
+    """golden pad REC [--from F] [--to F] [--shift N]: print the recording's
+    steps as one comma-joined pad_script, for golden.json."""
+    from .pad_script import PadScriptError, from_record, to_script
+
+    opts, rec = {"--from": None, "--to": None, "--shift": 0}, None
+    it = iter(args)
+    for a in it:
+        if a in opts:
+            try:
+                opts[a] = int(next(it))
+            except (StopIteration, ValueError):
+                print("golden pad: %s takes a flip count" % a, file=sys.stderr)
+                return 2
+        elif rec is None and not a.startswith("-"):
+            rec = a
+        else:
+            print("golden pad: unexpected %s" % a, file=sys.stderr)
+            return 2
+    if rec is None:
+        print("golden pad: usage: golden pad REC [--from F] [--to F] [--shift N]", file=sys.stderr)
+        return 2
+    try:
+        with open(rec) as f:
+            steps = from_record(f.read(), opts["--from"], opts["--to"], opts["--shift"])
+    except OSError as e:
+        print("golden pad: %s" % e, file=sys.stderr)
+        return 1
+    except PadScriptError as e:
+        print("golden pad: %s" % e, file=sys.stderr)
+        return 1
+    print(to_script(steps))
+    if steps:
+        print(
+            "golden pad: %d steps, flips %d..%d"
+            % (len(steps), steps[0].at, max(s.at + s.hold for s in steps)),
+            file=sys.stderr,
+        )
+    return 0
+
+
 def cmd_frames(args):
-    for fr in load_golden()["scenarios"][args[0]]["frames"]:
+    """frames SCEN [--backend B]: the dump indices of SCEN's frames, leaving
+    out the ones B skips."""
+    backend = args[2] if args[1:2] == ["--backend"] and len(args) > 2 else None
+    for fr in backend_frames(load_golden()["scenarios"][args[0]], backend):
         print("%04d" % fr["dump"])
     return 0
 
@@ -2251,6 +2495,10 @@ def main(argv=None):
         from .golden_run import cmd_run
 
         return cmd_run(args)
+    if cmd == "play":
+        from .golden_run import cmd_play
+
+        return cmd_play(args)
     return {
         "check": cmd_check,
         "record": cmd_record,
@@ -2262,6 +2510,7 @@ def main(argv=None):
         "dumpat": cmd_dumpat,
         "anchors": cmd_anchors,
         "pulls": cmd_pulls,
+        "pad": cmd_pad,
         "prune": cmd_prune,
     }.get(cmd, lambda a: (print(__doc__), 2)[1])(args)
 
