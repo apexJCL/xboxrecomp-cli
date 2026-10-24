@@ -223,6 +223,14 @@ def toolkit_has_spin_waits():
     )
 
 
+def toolkit_has_back_edge_yield():
+    """--back-edge-yield came with upstream v0.16.0 (default off). Before it
+    the fork's recomp yielded at every loop back edge with no flag, and
+    upstream's had no yield at all, so a toolkit without the flag needs no
+    note: the commands are what that toolkit always ran."""
+    return _recomp_has("--back-edge-yield", "")
+
+
 def recomp_cmds(extra=()):
     G = g()
     out = G.out
@@ -231,7 +239,10 @@ def recomp_cmds(extra=()):
     # checkout folder's name: recomp writes it into every gen/ file, so a
     # clone in another folder would generate different bytes from the same
     # inputs. --spin-waits: the busy-wait loops recomp lowers, when the
-    # toolkit's recomp has the flag.
+    # toolkit's recomp has the flag. --back-edge-yield: every loop back edge
+    # checks the guest scheduler's preempt flag, so a guest thread that
+    # spins on another's store hands the one guest CPU on. It is how the
+    # fork's toolkit lifted before the flag existed, so gen/ stays the same.
     args = ["--all", "--split", split_size(), "--gen-dir", G.gen]
     if G.recomp_manual:
         args += ["--exclude-manual", G.recomp_manual]
@@ -247,6 +258,8 @@ def recomp_cmds(extra=()):
     ]
     if G.spin_waits and toolkit_has_spin_waits():
         args += ["--spin-waits", G.spin_waits]
+    if toolkit_has_back_edge_yield():
+        args.append("--back-edge-yield")
     # --seeds: the flag-fallback report lists the sites inside seeds marked
     # "observed" (seen at runtime); without it that list is empty. Only the
     # game's own seed files: icall_seeds.json carries no "observed" field.

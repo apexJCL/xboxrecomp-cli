@@ -757,6 +757,34 @@ def test_recomp_spin_waits_probe(d, capsys):
     pipeline._flag_probe.clear()
 
 
+def test_recomp_back_edge_yield_probe(d, capsys):
+    """recomp gets --back-edge-yield only when the toolkit's parser defines
+    it. Neither the fork's older --no-back-edge-yield nor a comment counts,
+    and a toolkit without it gets no warning (it never needed the flag)."""
+    with fake_tree(d) as (root, tk):
+        main_py = os.path.join(tk, "tools", "recomp", "__main__.py")
+        write(
+            main_py,
+            "# --back-edge-yield comes later\n"
+            'parser.add_argument("--no-back-edge-yield", action="store_true")\n',
+        )
+        pipeline._flag_probe.clear()
+        before = pipeline.stage_argv()
+        args = pipeline.recomp_cmds()[0][2]
+        assert "--back-edge-yield" not in args
+        assert "back-edge" not in capsys.readouterr().err
+        assert not pipeline.toolkit_has_back_edge_yield()
+
+        pipeline._flag_probe.clear()
+        write(
+            main_py, SPIN_FLAG + 'parser.add_argument("--back-edge-yield", action="store_true")\n'
+        )
+        args = pipeline.recomp_cmds()[0][2]
+        assert args.index("--spin-waits") < args.index("--back-edge-yield") < args.index("-o")
+        assert pipeline.stage_argv() != before
+    pipeline._flag_probe.clear()
+
+
 def test_recomp_probe_before_setup(d, capsys, monkeypatch):
     """No toolkit yet: no flag, no upstream warning, and nothing cached, so
     the checkout setup then makes answers for itself."""

@@ -7,6 +7,14 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Changed
+- `recomp` passes `--back-edge-yield` when the toolkit's recomp defines it
+  (upstream xboxrecomp v0.16.0 and the fork after its v0.16 merge). There
+  the flag is off by default. Without it a loop back edge no longer checks
+  the guest scheduler, and a guest thread spinning on another's store holds
+  the one guest CPU. The fork's toolkits before that merge yield with no flag
+  and get none, so their `gen/` is unchanged.
+
 ### Fixed
 - `bench run` no longer records `flips: 0` for a run without the flip
   trace. `run-info.txt` falls back to the D3D11 backend's last
