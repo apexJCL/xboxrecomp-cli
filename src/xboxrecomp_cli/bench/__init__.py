@@ -647,12 +647,24 @@ class Bench:
         # Frame dumps stay on the host (golden pulls the ones it needs). Pulls
         # keep -a's times: logs and frames are not build input.
         if proton_log_mode(self.cfg) == "full":
-            return self.ok(rsync("-az", "--exclude", "/*/frames/", src, dst + "/"))
+            return self.ok(
+                rsync("-az", "--exclude", "/*/frames/", "--exclude", "/*/hdd/", src, dst + "/")
+            )
         # Proton's logs apart, and none larger than a capped one: a run from
         # before the cap (or with --proton-log) left gigabytes on the host,
         # which a pull of the whole tree would copy again.
         self.ok(
-            rsync("-az", "--exclude", "/*/frames/", "--exclude", "/*/steam-*.log", src, dst + "/")
+            rsync(
+                "-az",
+                "--exclude",
+                "/*/frames/",
+                "--exclude",
+                "/*/hdd/",
+                "--exclude",
+                "/*/steam-*.log",
+                src,
+                dst + "/",
+            )
         )
         return self.ok(
             rsync(

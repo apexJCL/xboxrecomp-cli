@@ -11,7 +11,9 @@ SCEN: golden.json's scenarios (default: all, in its order). Per scenario:
          then the scenario's (golden plan), RECOMP_PB_BACKEND=BACKEND,
          RECOMP_HEADLESS=1, SDL_AUDIO_DRIVER=dummy (and SDL2's
          SDL_AUDIODRIVER=dummy), a save dir of its own
-         (the run's save/), frame dumps by flip (fb_dump into the run's
+         (the run's save/; with RECOMP_HDD_DIR=@seed:PATH, a copy of the
+         hdd tree PATH, relative to the game root, in the run's hdd/
+         instead, its UDATA the save), frame dumps by flip (fb_dump into the run's
          frames/, fb_dump_at = golden dumpat), then the VAR=val arguments
          (RECOMP_TRACE and RECOMP_DEBUG add up, comma-joined)
   lock   ~/.recomp-mac-run.lock, as the workspace's mac-run-lock.sh takes
@@ -33,8 +35,9 @@ SCEN: golden.json's scenarios (default: all, in its order). Per scenario:
          unread flip dumps pruned unless --keep-frames
 
 Run dirs: DIR/<stamp>-<backend>-<scen>/ (DIR: --out, default the game's
-bench-logs/) with run-info.txt, game-stdio.log, frames/, save/, exit-code
-and golden.txt. The game runs from the game's root (its game files there).
+bench-logs/) with run-info.txt, game-stdio.log, frames/, save/ (or hdd/,
+removed after the run unless --keep-frames), exit-code and golden.txt.
+The game runs from the game's root (its game files there).
 Exit 1 on a FAIL, a crash or an early end, else 2 on an INCOMPLETE, else 0;
 75 when the lock was not free in time.
 
@@ -47,6 +50,7 @@ import platform
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -76,8 +80,7 @@ def frame_needs(sc, batches, window=WINDOW, slack=None):
     its dumped range: past that nothing more of it is dumped."""
     from . import golden as G
 
-    if slack is None:
-        slack = sc.get("dump_slack", 12)
+    _, after = G.dump_slack(sc, slack)
     out = []
     for fr in sc["frames"]:
         f = 60 * fr["dump"] + 1
@@ -85,7 +88,7 @@ def frame_needs(sc, batches, window=WINDOW, slack=None):
         if "anchor" not in fr:
             out.append((fr["name"], f + w, True))
             continue
-        end = f + w + slack
+        end = f + w + after
         ev = sc.get("anchors", {}).get(fr["anchor"]["event"])
         A = G.find_anchor(batches, ev, sc.get("anchors")) if ev and batches else None
         if A is None:
@@ -263,6 +266,48 @@ def run_env(base, scen_env, backend, run_dir, dumpat, extra):
     return env
 
 
+def seed_hdd(env, root, run_dir, game_files=None):
+    """RECOMP_HDD_DIR=@seed:PATH: the hdd tree at PATH (under root, checked
+    by golden's seed_dir) copied to the run's hdd/ (APFS clones on macOS),
+    so every run boots on the same disk and save and none writes to the
+    seed. RECOMP_SAVE_DIR points at the copy too: any save dir set turns off
+    the runtime's fallback to the game dir's UDATA, and a save dir of the
+    run's own would boot on an empty save. With no seed and no
+    RECOMP_HDD_DIR, the run gets an empty hdd/ of its own: the runtime's
+    default hdd root is the player's own disk, partition images and all.
+    Returns the run's hdd dir (removed after the run), or None when the env
+    names a plain RECOMP_HDD_DIR of its own."""
+    from .golden import SeedError, hdd_seed, seed_dir
+
+    seed = hdd_seed(env)
+    dst = os.path.join(run_dir, "hdd")
+    if seed is None:
+        if env.get("RECOMP_HDD_DIR"):
+            return None
+        os.makedirs(dst)
+        env["RECOMP_HDD_DIR"] = dst
+        env["RECOMP_SAVE_DIR"] = dst
+        return dst
+    try:
+        src = seed_dir(seed, root, game_files)
+    except SeedError as e:
+        raise RunError("golden run: %s" % e) from None
+    if sys.platform == "darwin":
+        r = subprocess.run(["cp", "-c", "-R", src + "/", dst])
+        if r.returncode:
+            raise RunError("golden run: copying the hdd seed %s failed" % src)
+    else:
+        shutil.copytree(src, dst, symlinks=True)
+    # A fixture is kept read-only (chmod -R a-w); the game writes its save
+    # and partition images in the copy, and the copy is removed after.
+    for d, _, files in os.walk(dst):
+        for n in [d] + [os.path.join(d, f) for f in files]:
+            os.chmod(n, os.stat(n).st_mode | stat.S_IWUSR)
+    env["RECOMP_HDD_DIR"] = dst
+    env["RECOMP_SAVE_DIR"] = dst
+    return dst
+
+
 def host_load():
     """(1-minute load, CPUs), or (None, CPUs) where there is no load average."""
     try:
@@ -302,9 +347,23 @@ def run_one(o, scen, sc, scen_env, secs, say):
     stamp = time.strftime("%Y%m%d-%H%M%S")
     d = os.path.join(o["out"], "%s-%s-%s" % (stamp, o["backend"], scen))
     os.makedirs(os.path.join(d, "frames"))
-    os.makedirs(os.path.join(d, "save"))
     dumpat = G.dumpat_ranges(sc)
     env = run_env(os.environ, scen_env, o["backend"], d, dumpat, o["extra"])
+    hdd = seed_hdd(env, o["root"], d, o.get("game_files"))
+    if hdd is None:
+        os.makedirs(os.path.join(d, "save"))
+    try:
+        return (d,) + run_game(o, sc, d, env, secs, say)
+    finally:
+        # The copy holds the save and the runtime's partition images: gone
+        # after the run, a failed or interrupted one too, unless kept.
+        if hdd and not o["keep"]:
+            shutil.rmtree(hdd, ignore_errors=True)
+
+
+def run_game(o, sc, d, env, secs, say):
+    """The game's run in d; returns (exit code, why it stopped, wall
+    seconds, last flip)."""
     load, cpus = host_load()
     warn = []
     if loaded(load, cpus):
@@ -379,7 +438,7 @@ def run_one(o, scen, sc, scen_env, secs, say):
         f.write("\n".join(info) + "\n")
     with open(os.path.join(d, "exit-code"), "w") as f:
         f.write("%s\n" % p.returncode)
-    return d, p.returncode, why, wall, flog.last
+    return p.returncode, why, wall, flog.last
 
 
 def foreign_games(exe):
@@ -465,6 +524,7 @@ def cmd_run(args):
         return 1
     game = manifest.load(G.REPO)
     o["root"] = game.root
+    o["game_files"] = game.game_files
     o["exe"] = o["exe"] or game.exe(game.build_dir("macos"), "macos")
     o["out"] = o["out"] or os.path.join(game.root, "bench-logs")
     if not os.path.isfile(o["exe"]):
@@ -492,6 +552,8 @@ def cmd_run(args):
     scens = [s for s in names if s in o["scens"]] if o["scens"] else names
     if G.refs_missing():
         print("golden run: reference PNGs missing (see above)", file=sys.stderr)
+        return 1
+    if G.seeds_missing(g, game.game_files):
         return 1
     os.makedirs(o["out"], exist_ok=True)
 

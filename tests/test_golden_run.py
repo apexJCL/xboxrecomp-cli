@@ -210,3 +210,138 @@ def test_run_refusals(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, "platform", "linux")
     assert G.main(cfg + ["run"]) == 1
     assert "macOS only" in capsys.readouterr().err
+
+
+def test_hdd_seed(tmp_path, monkeypatch):
+    # @seed:PATH, relative to the game root: the run boots on its own copy,
+    # its save dir that copy too (any save dir set turns off the runtime's
+    # fallback to the game dir's UDATA), and the seed, kept read-only, is
+    # left as it was; a scenario without one gets an empty hdd/ of its own.
+    assert G.hdd_seed({"RECOMP_HDD_DIR": "@seed:fixtures/hdd"}) == "fixtures/hdd"
+    assert G.hdd_seed({"RECOMP_HDD_DIR": "/x/hdd"}) is None and G.hdd_seed({}) is None
+    root = tmp_path / "root"
+    seed = root / "fixtures" / "hdd" / "UDATA" / "t"
+    seed.mkdir(parents=True)
+    (seed / "SAVE").write_bytes(b"s")
+    subprocess.run(["chmod", "-R", "a-w", str(root / "fixtures")], check=True)
+    try:
+        run = tmp_path / "run"
+        run.mkdir()
+        env = R.run_env({}, {"RECOMP_HDD_DIR": "@seed:fixtures/hdd"}, "metal", str(run), "61", [])
+        assert env["RECOMP_SAVE_DIR"] == str(run / "save")
+        got = R.seed_hdd(env, str(root), str(run))
+        assert got == env["RECOMP_HDD_DIR"] == env["RECOMP_SAVE_DIR"] == str(run / "hdd")
+        assert (run / "hdd" / "UDATA" / "t" / "SAVE").read_bytes() == b"s"
+        (run / "hdd" / "UDATA" / "t" / "SAVE").write_bytes(b"changed")
+        (run / "hdd" / "UDATA" / "t" / "NEW").write_bytes(b"n")
+        assert (seed / "SAVE").read_bytes() == b"s"
+        shutil.rmtree(run / "hdd")
+        # No seed: an empty hdd/ of the run's own, never the runtime's
+        # default root (the player's disk).
+        env = R.run_env({}, {}, "metal", str(run), "61", [])
+        assert R.seed_hdd(env, str(root), str(run)) == str(run / "hdd")
+        assert env["RECOMP_HDD_DIR"] == env["RECOMP_SAVE_DIR"] == str(run / "hdd")
+        assert not os.listdir(run / "hdd")
+        shutil.rmtree(run / "hdd")
+        # A plain RECOMP_HDD_DIR the env names is its own choice.
+        env = R.run_env({}, {}, "metal", str(run), "61", [("RECOMP_HDD_DIR", "/x/hdd")])
+        assert R.seed_hdd(env, str(root), str(run)) is None
+        assert env["RECOMP_HDD_DIR"] == "/x/hdd"
+        assert env["RECOMP_SAVE_DIR"] == str(run / "save")
+        with pytest.raises(R.RunError):
+            R.seed_hdd({"RECOMP_HDD_DIR": "@seed:nope"}, str(root), str(run))
+        # seeds_missing names a scenario whose seed is not on disk.
+        monkeypatch.setattr(G, "REPO", str(root))
+        g = {"scenarios": {"a": {"env": {"RECOMP_HDD_DIR": "@seed:fixtures/hdd"}}, "b": {}}}
+        assert not G.seeds_missing(g)
+        g["scenarios"]["b"]["env"] = {"RECOMP_HDD_DIR": "@seed:gone"}
+        assert G.seeds_missing(g)
+        g["scenarios"]["b"]["env"] = {"RECOMP_HDD_DIR": "@seed:../root/fixtures/hdd"}
+        assert G.seeds_missing(g)
+    finally:
+        subprocess.run(["chmod", "-R", "u+w", str(root)], check=True)
+
+
+def test_seed_dir_refuses_unsafe_seeds(tmp_path):
+    # Every copy of a seed starts at seed_dir: a seed of "" or ".." would have
+    # bench golden's rsync --delete empty the wrong host directory, and a
+    # symlink in it would let a run save into whatever it points at.
+    root = tmp_path / "game"
+    (root / "fx" / "hdd" / "UDATA").mkdir(parents=True)
+    (root / "fx" / "bare").mkdir()
+    (root / "game_files" / "UDATA").mkdir(parents=True)
+    (tmp_path / "outside" / "UDATA").mkdir(parents=True)
+    os.symlink(str(tmp_path / "outside"), str(root / "fx" / "out"))
+    (root / "fx" / "linked" / "UDATA").mkdir(parents=True)
+    os.symlink(str(tmp_path / "outside" / "UDATA"), str(root / "fx" / "linked" / "UDATA" / "t"))
+    (root / "fx" / "udlink").mkdir()
+    os.symlink(str(tmp_path / "outside" / "UDATA"), str(root / "fx" / "udlink" / "UDATA"))
+    r = str(root)
+    assert G.seed_dir("fx/hdd", r) == os.path.realpath(str(root / "fx" / "hdd"))
+    assert G.seed_dir("./fx/hdd", r) == G.seed_dir("fx/hdd", r)
+    bad = {
+        "": "relative to the game root",
+        "/etc": "relative to the game root",
+        "~/x": "relative to the game root",
+        "..": "no '..'",
+        "fx/../../outside": "no '..'",
+        "fx\\..\\..\\outside": "no '..'",
+        ".": "not inside the game root",
+        "fx/out": "not inside the game root",
+        "game_files": "inside the game files",
+        "game_files/UDATA": "inside the game files",
+        "fx/bare": "no UDATA/",
+        "fx/linked": "is a symlink",
+        "fx/udlink": "is a symlink",
+    }
+    for seed, why in bad.items():
+        with pytest.raises(G.SeedError) as e:
+            G.seed_dir(seed, r)
+        assert why in str(e.value), (seed, str(e.value))
+        assert not isinstance(e.value, G.SeedMissing), seed
+    with pytest.raises(G.SeedMissing):
+        G.seed_dir("fx/gone", r)
+    # game_files elsewhere (game.toml's) is the one refused.
+    assert G.seed_dir("game_files", r, str(tmp_path / "gf")).endswith("game_files")
+    with pytest.raises(G.SeedError):
+        G.seed_dir("fx/hdd", r, str(root / "fx"))
+
+
+def test_run_one_removes_the_hdd_copy(tmp_path, monkeypatch):
+    # The run's hdd copy (save and partition images) goes however the run
+    # ends, a crash in the runner included; --keep-frames keeps it.
+    root = tmp_path / "root"
+    (root / "fx" / "UDATA").mkdir(parents=True)
+
+    def boom(o, sc, d, env, secs, say):
+        assert os.path.isdir(env["RECOMP_HDD_DIR"])
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(R, "run_game", boom)
+    monkeypatch.setattr(R, "run_env", lambda base, env, *a: dict(env))
+    out = tmp_path / "out"
+    o = {"root": str(root), "out": str(out), "keep": False, "game_files": None}
+    o.update(backend="metal", extra=[])
+    sc = {"frames": []}
+    env = {"RECOMP_HDD_DIR": "@seed:fx"}
+    with pytest.raises(KeyboardInterrupt):
+        R.run_one(o, "s", sc, env, 10, lambda m: None)
+    (d,) = out.iterdir()
+    assert not (d / "hdd").exists()
+    shutil.rmtree(d)
+    monkeypatch.setattr(R, "run_game", lambda o, sc, d, env, secs, say: (0, "end", 1.0, 9))
+    o["keep"] = True
+    d, rc, *_ = R.run_one(o, "s", sc, env, 10, lambda m: None)
+    assert rc == 0 and os.path.isdir(os.path.join(d, "hdd", "UDATA"))
+    # No seed: the run still boots on an empty hdd/ of its own, removed after.
+    seen = {}
+
+    def look(o, sc, d, env, secs, say):
+        seen.update(env)
+        return (0, "end", 1.0, 9)
+
+    monkeypatch.setattr(R, "run_game", look)
+    o["keep"] = False
+    d, rc, *_ = R.run_one(o, "t", sc, {}, 10, lambda m: None)
+    assert seen["RECOMP_HDD_DIR"] == seen["RECOMP_SAVE_DIR"] == os.path.join(d, "hdd")
+    assert not os.path.exists(os.path.join(d, "hdd"))

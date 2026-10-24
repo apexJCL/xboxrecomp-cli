@@ -882,6 +882,64 @@ def test_verdict_window_widens_dumps_and_needs():
     assert GR.frame_needs(sc, b) == [("f", 70, True)]  # target 61 + 9
 
 
+def test_pace_judged_against_own_backend():
+    # JSRF's garage idle paces 60 fps on D3D11 and 50 on Metal: a run is off
+    # only when it is off from its own backend's reference, or, with none of
+    # those, from every reference; never for missing the other backend's.
+    fr = {
+        "name": "f",
+        "dump": 1,
+        "anchor": {"event": "e", "ref_flip": 10},
+        "references": [
+            {"label": "metal", "anchor_flip": 10, "pace": 50.0, "sha256": "0", "size": [1, 1]},
+            {"label": "d3d11-b", "anchor_flip": 10, "pace": 60.0, "sha256": "0", "size": [1, 1]},
+        ],
+    }
+    sc = {"anchors": ANCHORS}
+    batches = {f: (5 if f >= 10 else 1) for f in range(1, 80)}
+
+    def at(fps):
+        return {f: f * 1000.0 / fps for f in range(1, 80)}
+
+    def off(fps, backend):
+        return G.pace_report(fr, sc, {}, batches, at(fps), backend)[0]
+
+    assert off(50, "metal") is None and off(60, "d3d11") is None
+    assert "run 60.0 fps vs ref 50.0" in off(60, "metal")
+    assert "run 50.0 fps vs ref 60.0" in off(50, "d3d11")
+    # No reference of its own (cpu): off only when off from both.
+    assert off(50, "cpu") is None and off(60, "cpu") is None and off(56, None) is None
+    assert off(70, "cpu") and off(40, None)
+    # A backend's label is the backend or backend-<variant>, not a prefix.
+    fr["references"][1]["label"] = "d3d11b"
+    assert off(60, "d3d11") is None and off(70, "d3d11")
+    fr["references"][1]["label"] = "d3d11-b"
+    # An own reference without a pace leaves the others to judge.
+    del fr["references"][0]["pace"]
+    assert off(60, "metal") is None and off(70, "metal")
+
+
+def test_dump_slack_before_after():
+    # dump_slack [before, after]: a host that only runs early of the
+    # reference (the Deck's garage) dumps that far before, not as far after.
+    fr = {"name": "f", "dump": 1, "anchor": {"event": "e", "ref_flip": 10}}
+    plain = {"name": "p", "dump": 2}
+    sc = {"frames": [fr], "anchors": ANCHORS, "dump_slack": [20, 5]}
+    assert G.dump_slack(sc) == (20, 5) and G.dump_slack({}) == (12, 12)
+    assert G.dump_slack({"dump_slack": 7}) == (7, 7) and G.dump_slack(sc, 3) == (3, 3)
+    assert G.dumpat_ranges(sc) == "39-68"
+    sc["frames"].append(plain)
+    assert G.dumpat_ranges(sc) == "39-68,119-123"  # an unanchored frame takes none
+    from xboxrecomp_cli import golden_run as GR
+
+    b = {f: (5 if f >= 10 else 1) for f in range(1, 60)}
+    assert GR.frame_needs({"frames": [fr], "anchors": ANCHORS, "dump_slack": [20, 5]}, b) == [
+        ("f", 63, True)
+    ]
+    for bad in ([1], [1, 2, 3], [-1, 2], ["1", 2]):
+        assert exits(lambda bad=bad: G.dump_slack({"dump_slack": bad}))
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):

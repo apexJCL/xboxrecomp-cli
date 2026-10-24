@@ -111,6 +111,38 @@ if [ "${RECOMP_SAVE_DIR:-}" = @run ]; then
         [ "${GAME_ENV[$i]}" != RECOMP_SAVE_DIR=@run ] || GAME_ENV[$i]="RECOMP_SAVE_DIR=$RECOMP_SAVE_DIR"
     done
 fi
+# RECOMP_HDD_DIR=@seed:PATH (bench golden ships PATH, a game's hdd tree with
+# its save, under the base's golden-seeds/): a copy in this run's log dir (a
+# Z: path for Wine) is the run's disk, so every run boots on the same save
+# and nothing writes to the seed. RECOMP_SAVE_DIR points at the copy as well,
+# over a BENCH_ENV's @run: a save dir of the run's own boots on an empty save,
+# and with none set the runtime falls back to the game dir's UDATA. The copy
+# (the save, and the partition images the runtime makes) is removed when this
+# script exits, however it exits.
+SEED_HDD=
+case "${RECOMP_HDD_DIR:-}" in
+    @seed:*)
+        seed=${RECOMP_HDD_DIR#@seed:}
+        case "$seed" in "~/"*) seed="$HOME/${seed#\~/}" ;; esac
+        [ -d "$seed" ] || { echo "no hdd seed $seed -- bench golden ships it" >&2; exit 1; }
+        [ -d "$seed/UDATA" ] || { echo "hdd seed $seed has no UDATA/" >&2; exit 1; }
+        SEED_HDD="$LOG/hdd"
+        trap '[ -z "$SEED_HDD" ] || rm -rf "$SEED_HDD"' EXIT
+        # u+w: a fixture is kept read-only, and the game writes its save here.
+        { mkdir -p "$SEED_HDD" && cp -a --sparse=always "$seed/." "$SEED_HDD/" \
+            && chmod -R u+w "$SEED_HDD"; } \
+            || { echo "copying the hdd seed $seed failed" >&2; exit 1; }
+        export RECOMP_HDD_DIR="Z:$PWD/$SEED_HDD" RECOMP_SAVE_DIR="Z:$PWD/$SEED_HDD"
+        save_set=
+        for i in "${!GAME_ENV[@]}"; do
+            case "${GAME_ENV[$i]}" in
+                RECOMP_HDD_DIR=@seed:*) GAME_ENV[$i]="RECOMP_HDD_DIR=$RECOMP_HDD_DIR" ;;
+                RECOMP_SAVE_DIR=*) GAME_ENV[$i]="RECOMP_SAVE_DIR=$RECOMP_SAVE_DIR"; save_set=1 ;;
+            esac
+        done
+        [ -n "$save_set" ] || GAME_ENV+=("RECOMP_SAVE_DIR=$RECOMP_SAVE_DIR")
+        ;;
+esac
 # RECOMP_FB_DUMP=@run: the CPU backend's frame dumps (RECOMP_DEBUG=fb_dump)
 # go to this run's frames/ (a Z: path for Wine), as d3d11_dump's do below;
 # not pulled by logs.
@@ -218,6 +250,7 @@ sleep 1; kill "$tailpid" 2>/dev/null; wait "$tailpid" 2>/dev/null
 wait "$procpid" 2>/dev/null
 set -e
 echo "$rc" > "$LOG/exit-code"
+[ -z "$SEED_HDD" ] || rm -rf "$SEED_HDD"
 
 # For check_run_end: the guest paces itself at 30 Hz, so a clean run's flip
 # count is pinned and a low one means a slow run. busy says whether the game

@@ -7,6 +7,28 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Added
+- A golden scenario can boot on a seeded hdd: `RECOMP_HDD_DIR=@seed:PATH`
+  in its env names an hdd tree under the game root (private and gitignored,
+  like the reference frames). `golden run` copies it into the run's `hdd/`
+  and points `RECOMP_SAVE_DIR` at the copy's `UDATA/`. `bench golden`
+  rsyncs it once to the host's `<base>/golden-seeds/PATH`, and
+  `run_game.sh` copies it into each run and deletes the copy however the
+  run ends. A missing seed stops both before any run. Every seed path is
+  checked first: relative, no `..`, inside the game root and outside the
+  game files, with a `UDATA/` and no symlinks.
+- `dump_slack` takes `[before, after]` as well as one flip count, for a
+  host that reaches an anchored frame only early or only late.
+
+### Changed
+- A golden run with no seed gets an empty `hdd/` of its own, removed after,
+  instead of the runtime's default hdd root (the player's own disk), unless
+  the scenario sets a plain `RECOMP_HDD_DIR`.
+- The pace check judges a run against the references of its own backend
+  (a label of `metal` or `metal-...`), or all of them when none of those is
+  paced. A frame that paces differently per backend is no longer a
+  mismatch against the other backend's reference.
+
 ## [0.12.0] - 2026-10-24
 
 ### Added

@@ -14,7 +14,7 @@ import tempfile
 import time
 
 from .checks import check_present_mismatch, check_run_end
-from .remote import BenchError, quote_words
+from .remote import BenchError, host_path, quote_words
 from .sync import rsync
 
 
@@ -36,6 +36,59 @@ def golden_args(game):
         "--game-root",
         game.root,
     ] + enhance_args(game.m["golden"]["enhance_stock"])
+
+
+SEEDS = "golden-seeds"
+
+
+def ship_seeds(b, rows):
+    """Each hdd seed the selected scenarios name (RECOMP_HDD_DIR=@seed:PATH,
+    PATH under the game root) rsynced to the host's base, under
+    golden-seeds/PATH, and the rows' env rewritten to that host path:
+    run_game.sh copies it into the run's log dir, so each run boots on the
+    same disk and save and none writes to the seed or to the host's own
+    saves. Returns the rows."""
+    from ..golden import HDD_SEED, SeedError, seed_dir
+
+    c = b.cfg
+    out, sent = [], set()
+    for row in rows:
+        f = (row.split("\t", 3) + ["", "", "", ""])[:4]
+        words = f[3].split()
+        for i, w in enumerate(words):
+            if not w.startswith("RECOMP_HDD_DIR=" + HDD_SEED):
+                continue
+            seed = w.split("=", 1)[1][len(HDD_SEED) :].rstrip("/")
+            try:
+                src = seed_dir(seed, c.game.root, c.game.game_files)
+            except SeedError as e:
+                raise BenchError("golden: %s (golden.json's notes say where from)" % e) from None
+            dst = "%s/%s/%s" % (c.base, SEEDS, seed)
+            if dst not in sent:
+                b.step("golden: hdd seed %s -> %s:%s" % (seed, c.host, dst))
+                # --rsync-path: the seed's parent directories do not exist on a
+                # fresh base, and rsync makes only the last one. --chmod: the
+                # fixture is kept read-only here, and -a would carry that to
+                # the host, where the next --delete of a changed seed, or a
+                # cleanup, then fails on its read-only directories.
+                parent = host_path(dst.rsplit("/", 1)[0])
+                if (
+                    rsync(
+                        "-aS",
+                        "--delete",
+                        "--chmod=Du+w,Fu+w",
+                        "--rsync-path=mkdir -p %s && rsync" % parent,
+                        src + "/",
+                        "%s:%s/" % (c.host, dst),
+                    )
+                    != 0
+                ):
+                    raise BenchError("golden: shipping the hdd seed %s failed" % seed)
+                sent.add(dst)
+            words[i] = "RECOMP_HDD_DIR=%s%s" % (HDD_SEED, dst)
+        f[3] = " ".join(words)
+        out.append("\t".join(f))
+    return out
 
 
 def check_dump(game):
@@ -262,6 +315,7 @@ def cmd_golden(b, args, bench_env=None, kind="golden"):
     # stops here; --record makes them, so there it only warns.
     if golden_py(b, "refs")[0] != 0 and mode != "record":
         raise BenchError("golden: reference PNGs missing (see above)")
+    rows = ship_seeds(b, rows)
     with b.no_errexit():
         trc, tests = b.tests_or_skip(force_tests)
         trc = 1 if trc != 0 else 0

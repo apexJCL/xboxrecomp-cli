@@ -243,5 +243,110 @@ def test_host_prune_script(tmp_path):
     assert not (run / "frames").exists() and (run / "run-info.txt").is_file()
 
 
+def test_golden_ship_seeds(tmp_path, monkeypatch):
+    # bench golden sends each scenario's hdd seed once to the base's
+    # golden-seeds/ and points the run at it there; other rows pass as they are.
+    from types import SimpleNamespace
+
+    (tmp_path / "fx" / "hdd" / "UDATA").mkdir(parents=True)
+    calls = []
+    monkeypatch.setattr(bg, "rsync", lambda *a: calls.append(a) or 0)
+    cfg = SimpleNamespace(
+        game=SimpleNamespace(root=str(tmp_path), game_files=str(tmp_path / "game_files")),
+        base="~/g-bench/skates",
+        host="deck",
+    )
+    b = SimpleNamespace(cfg=cfg, step=lambda m: None)
+    rows = [
+        "a\t60\t100\tRECOMP_TRACE=flip RECOMP_HDD_DIR=@seed:fx/hdd",
+        "b\t60\t0\tRECOMP_HDD_DIR=@seed:fx/hdd/",
+        "c\t30\t0\tRECOMP_TRACE=flip",
+    ]
+    out = bg.ship_seeds(b, rows)
+    dst = "~/g-bench/skates/golden-seeds/fx/hdd"
+    assert out == [
+        "a\t60\t100\tRECOMP_TRACE=flip RECOMP_HDD_DIR=@seed:" + dst,
+        "b\t60\t0\tRECOMP_HDD_DIR=@seed:" + dst,
+        rows[2],
+    ]
+    assert len(calls) == 1 and calls[0][-2:] == (
+        str(tmp_path / "fx" / "hdd") + "/",
+        "deck:" + dst + "/",
+    )
+    assert "--rsync-path=mkdir -p ~/g-bench/skates/golden-seeds/fx && rsync" in calls[0]
+    # The fixture is read-only; the host's copy must stay deletable.
+    assert "--chmod=Du+w,Fu+w" in calls[0]
+    # A seed that is missing or not a safe path is refused before any rsync:
+    # with --delete, "" or ".." would empty the base or what is above it.
+    (tmp_path / "game_files" / "UDATA").mkdir(parents=True)
+    for seed in ("missing", "", "/", "/etc", "..", "fx/../..", ".", "game_files"):
+        try:
+            bg.ship_seeds(b, ["d\t1\t0\tRECOMP_HDD_DIR=@seed:" + seed])
+        except bg.BenchError:
+            pass
+        else:
+            raise AssertionError("seed %r was not refused" % seed)
+    assert len(calls) == 1
+
+
+def seed_block():
+    """run_game.sh's RECOMP_HDD_DIR=@seed: block, to run on its own."""
+    import re
+
+    with open(os.path.join(HOST, "run_game.sh")) as f:
+        m = re.search(r"^SEED_HDD=\n.*?^esac\n", f.read(), re.S | re.M)
+    assert m, "no seed block in run_game.sh"
+    return m.group(0)
+
+
+def test_host_seed_copy(tmp_path):
+    """run_game.sh boots the run on a writable copy of a read-only seed, its
+    save dir the copy too (over BENCH_ENV's @run), requires the seed's
+    UDATA/, and removes the copy when the script exits."""
+    seed = tmp_path / "seeds" / "hdd"
+    (seed / "UDATA" / "t").mkdir(parents=True)
+    (seed / "UDATA" / "t" / "SAVE").write_text("s")
+    (tmp_path / "bare").mkdir()
+    # cp -a --sparse=always is GNU cp (the Deck's); macOS's cp lacks --sparse.
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    (shim / "cp").write_text(
+        '#!/bin/sh\nfor a; do [ "$a" = --sparse=always ] || set -- "$@" "$a"; shift; done\n'
+        'exec /bin/cp "$@"\n'
+    )
+    os.chmod(shim / "cp", 0o755)
+    subprocess.run(["chmod", "-R", "a-w", str(seed)], check=True)
+    work = tmp_path / "work"
+    (work / "log").mkdir(parents=True)
+
+    def go(path, game_env):
+        script = (
+            "set -u\nLOG=log\nGAME_ENV=(%s)\nexport RECOMP_HDD_DIR=@seed:%s\n%s"
+            'printf "%%s\\n" "${GAME_ENV[@]}"\necho "SAVE=$RECOMP_SAVE_DIR"\n'
+            "echo changed > log/hdd/UDATA/t/SAVE && echo WROTE\n"
+        ) % (game_env, path, seed_block())
+        env = dict(os.environ, PATH="%s:%s" % (shim, os.environ["PATH"]))
+        return subprocess.run(
+            ["bash", "-c", script], cwd=work, env=env, capture_output=True, text=True
+        )
+
+    try:
+        r = go(seed, "RECOMP_HDD_DIR=@seed:%s RECOMP_SAVE_DIR=Z:/elsewhere X=1" % seed)
+        assert r.returncode == 0, r.stderr
+        z = "Z:%s/log/hdd" % os.path.realpath(work)
+        lines = r.stdout.split()
+        assert lines[:3] == ["RECOMP_HDD_DIR=" + z, "RECOMP_SAVE_DIR=" + z, "X=1"], lines
+        assert "SAVE=" + z in lines and "WROTE" in lines
+        assert not (work / "log" / "hdd").exists()  # the EXIT trap
+        assert (seed / "UDATA" / "t" / "SAVE").read_text() == "s"
+        r = go(seed, "RECOMP_HDD_DIR=@seed:%s" % seed)
+        assert r.returncode == 0, r.stderr
+        assert "RECOMP_SAVE_DIR=" + z in r.stdout.split()
+        r = go(tmp_path / "bare", "")
+        assert r.returncode == 1 and "has no UDATA/" in r.stderr
+    finally:
+        subprocess.run(["chmod", "-R", "u+w", str(seed)], check=True)
+
+
 if __name__ == "__main__":
     sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", __file__]))

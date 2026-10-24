@@ -540,3 +540,26 @@ run lock (`~/.recomp-mac-run.lock`), dumps its frames by flip, stops once
 the last frame its check reads is dumped, warns when the Mac is loaded (the
 pace check then says INCOMPLETE), then checks and prunes as `bench golden`
 does. Each run is `bench-logs/<stamp>-<backend>-<scen>/` with its `golden.txt`.
+
+A scenario that sets `RECOMP_HDD_DIR=@seed:PATH` in its `golden.json` env
+boots on an hdd tree of its own: `PATH` (relative to the game root, and
+gitignored like the reference frames, since it holds a save game) is copied
+into each run's `hdd/`, and its `UDATA` is the save, so a scenario can start
+from a save game. `golden run` clones it next to the run and removes the copy
+afterwards (kept with `--keep-frames`); `bench golden` rsyncs it once to the
+host's `<base>/golden-seeds/PATH` and each run copies it into its log dir and
+deletes the copy when it exits, however it exits; `bench logs` never pulls an
+`hdd/`. `RECOMP_SAVE_DIR` points at the copy too. A seed is checked before
+any copy: a non-empty relative path with no `..`, inside the game root but
+not the root itself or the game files, holding a `UDATA/`, with no symlink
+in it. A missing or refused seed stops both before any run. Keep a fixture
+read-only (`chmod -R a-w`): the copies, and the host's rsynced seed, are made
+writable. A `golden run` scenario with no seed and no `RECOMP_HDD_DIR` of its
+own boots on an empty `hdd/` of the run's own, never the runtime's default hdd
+root (the player's disk).
+
+A scenario's `dump_slack` is a flip count or `[before, after]`, how far an
+anchored frame's dumps reach either side of its reference flip; the
+pair suits a host that only ever runs early (or late) of the reference.
+The pace check judges a run against its own backend's references (a label
+`metal`, or `d3d11-b` for `d3d11`), or against all of them when it has none.

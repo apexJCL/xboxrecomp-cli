@@ -963,12 +963,17 @@ def ref_pace(fr, label):
     return fr["anchor"].get("ref_pace")
 
 
-def pace_report(fr, sc, th, batches, times):
+def pace_report(fr, sc, th, batches, times, backend=None):
     """For an anchored frame: (mismatch, notes). Each reference with a
     recorded pace is compared with the run's pace over the same span (its
-    anchor to its target flip); mismatch is the first "pace mismatch (run X
-    fps vs ref Y fps)" reason past max_pace_diff, or None. An unknown pace
-    on either side is no check."""
+    anchor to its target flip). mismatch is "pace mismatch (run X fps vs
+    ref Y fps)", or None: the run is off past max_pace_diff from every
+    reference of its own backend (a label of backend or backend-...), or,
+    with none of those paced, from every reference. Backends pace a frame
+    differently (JSRF's garage idle: D3D11 60 fps, Metal 50), so one off
+    from the other backend's reference is no mismatch: that one would turn
+    every regression on both into an INCOMPLETE. An unknown pace on either
+    side is no check."""
     if "anchor" not in fr or not batches:
         return None, []
     ev = sc.get("anchors", {}).get(fr["anchor"]["event"])
@@ -982,7 +987,7 @@ def pace_report(fr, sc, th, batches, times):
             break
     if lim is None:  # the frame follows flips, not wall time: no pace check
         return None, []
-    mismatch, notes = None, []
+    notes, paced = [], []  # paced: (label, run, ref) with both paces known
     for label, _, _ in frame_refs(fr):
         target = A + 60 * fr["dump"] + 1 - ref_anchor_flip(fr, label)
         run = pace(times, A, target)
@@ -1006,9 +1011,18 @@ def pace_report(fr, sc, th, batches, times):
                 "pace%s: run %.1f fps vs ref %.1f fps over flips %d-%d (limit +-%.0f%%)"
                 % (who, run, ref, A, target, 100 * lim)
             )
-            if mismatch is None and abs(run / ref - 1) > lim:
-                mismatch = "pace mismatch (run %.1f fps vs ref %.1f fps)" % (run, ref)
-    return mismatch, notes
+            paced.append((label, run, ref))
+    own = [x for x in paced if backend and own_backend(x[0], backend)]
+    judged = own or paced
+    off = [x for x in judged if abs(x[1] / x[2] - 1) > lim]
+    if judged and len(off) == len(judged):
+        return "pace mismatch (run %.1f fps vs ref %.1f fps)" % off[0][1:], notes
+    return None, notes
+
+
+def own_backend(label, backend):
+    """A reference label recorded on backend: "metal", "d3d11-b"."""
+    return label is not None and (label == backend or label.startswith(backend + "-"))
 
 
 DEFAULT_PACE_FAIL_BAD = 0.5
@@ -1604,7 +1618,7 @@ def check_frame(scen, d, fr, sc, th, window, batches, times, backend, keep, info
         return 2
     imgs = {p: read_image(p) for p in set(have.values())}
     keep.extend(sorted(imgs))
-    mismatch, pnotes = pace_report(fr, sc, th, batches, times)
+    mismatch, pnotes = pace_report(fr, sc, th, batches, times, backend)
     notes += pnotes
     hit = [r for r in refs if r[0] in have and pixel_sha(imgs[have[r[0]]]) == r[1]]
     if hit:
@@ -1829,15 +1843,31 @@ def cmd_dumpat(args):
     return 0
 
 
-def dumpat_ranges(sc, slack=None, window=2):
-    """dumpat's list for scenario sc, as the string fb_dump_at takes."""
+def dump_slack(sc, slack=None):
+    """(before, after): how far an anchored frame's dumps reach either side
+    of its reference flip. dump_slack is a count, or [before, after] when a
+    host runs early or late of the reference only: the Deck reaches the
+    garage's screens hundreds of flips before the Mac, never after, and a
+    symmetric slack wide enough for it dumps as many flips that no check
+    reads."""
     if slack is None:
         slack = sc.get("dump_slack", 12)
+    if isinstance(slack, (list, tuple)):
+        if len(slack) != 2 or any(not isinstance(x, int) or x < 0 for x in slack):
+            sys.exit("golden: dump_slack is a flip count or [before, after], not %r" % (slack,))
+        return slack[0], slack[1]
+    return slack, slack
+
+
+def dumpat_ranges(sc, slack=None, window=2):
+    """dumpat's list for scenario sc, as the string fb_dump_at takes."""
+    before, after = dump_slack(sc, slack)
     ranges = []
     for fr in sc["frames"]:
         f = 60 * fr["dump"] + 1
-        w = max(window, verdict_window(fr)) + (slack if "anchor" in fr else 0)
-        ranges.append((max(1, f - w), f + w))
+        w = max(window, verdict_window(fr))
+        a = "anchor" in fr
+        ranges.append((max(1, f - w - (before if a else 0)), f + w + (after if a else 0)))
     ranges.sort()
     merged = []
     for a, b in ranges:
@@ -2058,6 +2088,88 @@ def cmd_reference(args):
     os.replace(GOLDEN_JSON + ".tmp", GOLDEN_JSON)
     print(f"recorded {scen}/{name} reference {label} dump {fr['dump']} {entry['sha256'][:16]}")
     return 0
+
+
+# RECOMP_HDD_DIR=@seed:PATH in a scenario's env: every run boots on its own
+# copy of the hdd tree at PATH (relative to the game root; gitignored, as the
+# reference frames are: it holds a save game and the title's cache), so a
+# scenario can start from a save without touching anyone's own saves.
+HDD_SEED = "@seed:"
+
+
+def hdd_seed(env):
+    """The hdd seed path a scenario env names (relative to the game root),
+    or None."""
+    v = env.get("RECOMP_HDD_DIR", "")
+    return v[len(HDD_SEED) :] if v.startswith(HDD_SEED) else None
+
+
+class SeedError(ValueError):
+    pass
+
+
+class SeedMissing(SeedError):
+    pass
+
+
+def seed_dir(seed, root=None, game_files=None):
+    """The real path of hdd seed `seed`, checked: a non-empty path relative
+    to the game root, with no ".." part, whose real path sits strictly
+    under the root's and is neither it nor the game files (game_files,
+    default root/game_files), a directory with a UDATA/ (the save the
+    scenario boots on: without one the runtime falls back to the game
+    dir's) and no symlink anywhere in it. Every copy of a seed (golden run,
+    bench golden's rsync to the host, run_game.sh's copy there) starts
+    here: a seed of "" or "../x" would have rsync --delete empty the wrong
+    host directory, and a symlinked UDATA would let a run save into
+    whatever it points at, a player's own saves included. SeedMissing when
+    the path is fine but not on disk; SeedError for the rest."""
+    root = root or REPO
+    if not seed or os.path.isabs(seed) or seed.startswith("~"):
+        raise SeedError("hdd seed %r: a path relative to the game root, please" % seed)
+    if ".." in seed.replace("\\", "/").split("/"):
+        raise SeedError("hdd seed %r: no '..' in a seed path" % seed)
+    real_root = os.path.realpath(root)
+    real = os.path.realpath(os.path.join(root, seed))
+    if real == real_root or os.path.commonpath([real, real_root]) != real_root:
+        raise SeedError("hdd seed %r: %s is not inside the game root %s" % (seed, real, real_root))
+    gf = os.path.realpath(game_files or os.path.join(root, "game_files"))
+    if real == gf or os.path.commonpath([real, gf]) == gf:
+        raise SeedError("hdd seed %r: inside the game files %s" % (seed, gf))
+    if not os.path.isdir(real):
+        raise SeedMissing("no hdd seed %s/" % seed)
+    if not os.path.isdir(os.path.join(real, "UDATA")):
+        raise SeedError("hdd seed %r: no UDATA/ in it (the save it boots on)" % seed)
+    for d, dirs, files in os.walk(real):
+        for n in dirs + files:
+            if os.path.islink(os.path.join(d, n)):
+                raise SeedError(
+                    "hdd seed %r: %s is a symlink; a seed holds plain files only"
+                    % (seed, os.path.relpath(os.path.join(d, n), real))
+                )
+    return real
+
+
+def seeds_missing(g, game_files=None):
+    """Name every scenario whose hdd seed is not on disk or not a safe seed
+    (seed_dir); True if any."""
+    miss = False
+    for scen in g["scenarios"]:
+        seed = hdd_seed(scenario_env(g, scen))
+        if seed is None:
+            continue
+        try:
+            seed_dir(seed, REPO, game_files)
+        except SeedMissing:
+            print(
+                f"golden: {scen}: no hdd seed {seed}/ (RECOMP_HDD_DIR=@seed:; private, "
+                "never in git: copy it in from where golden.json's notes say)"
+            )
+            miss = True
+        except SeedError as e:
+            print(f"golden: {scen}: {e}")
+            miss = True
+    return miss
 
 
 def scenario_env(g, scen):
