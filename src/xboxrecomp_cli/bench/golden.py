@@ -124,11 +124,35 @@ def prune(b, runs, res):
         b.say("golden: %s: pruned %d flip dumps (%.1f MB), kept %d" % (scen, n, size / 1e6, kept))
         if STAMP_RE.match(stamp):
             stamps.append(stamp)
-    if stamps:
+    if stamps and getattr(b, "host", None):
+        rc = b.host.prune(stamps)
+        if rc != 0:
+            b.say("golden: the host's frames/ were not all removed (exit %d)" % rc)
+    elif stamps:
         with b.no_errexit():
             rc = b.r.remote(b.r.ship("prune_frames.sh", "STAMPS=(%s)\n" % quote_words(stamps)))[0]
         if rc != 0:
             b.say("golden: the host's frames/ were not all removed (exit %d)" % rc)
+
+
+def pull_windows(b, scen, stamp, log, idxs):
+    """A Windows run's checked frames and the flips the check reads, by sftp
+    (as the rsync pulls below do on a POSIX host)."""
+    frames = os.path.join(log, "frames")
+    for name in b.host.pull_frames(stamp, ["frame_%s.bmp" % i for i in idxs], frames):
+        b.say("golden: %s %s was not dumped" % (scen, name))
+    pulls = os.path.join(frames, "pulls.txt")
+    with open(pulls, "w") as f:
+        rc, _ = golden_py(b, "pulls", scen, os.path.join(log, "game-stdio.log"), stdout=f)
+    names = []
+    if rc == 0:
+        with open(pulls) as f:
+            names = [x.strip() for x in f if x.strip()]
+    if b.host.pull_frames(stamp, names, frames):
+        b.say(
+            "golden: %s: some flip dumps were not pulled (the check says INCOMPLETE if it "
+            "needed them)" % scen
+        )
 
 
 def parse_args(args):
@@ -175,7 +199,8 @@ def verdict_word(end_rc, present_rc, compare_rc, text=""):
     or early end), FAIL-PRESENT, REGRESSION, then for check's exit 2 the
     first of INCOMPLETE, MISSING and NEWVIEW its output (text) shows (a hub
     view nobody has recorded yet is not a flaky run), INCONCLUSIVE (slow on
-    a busy host), pass."""
+    a busy host), pass-with-known (check passed apart from frames marked
+    known_divergence for this host: never read as a clean pass), pass."""
     if end_rc not in (0, 3):
         return "FAIL-RUN"
     if present_rc:
@@ -187,23 +212,27 @@ def verdict_word(end_rc, present_rc, compare_rc, text=""):
         return next((t for t in ("INCOMPLETE", "MISSING", "NEWVIEW") if t in tags), "INCOMPLETE")
     if end_rc == 3:
         return "INCONCLUSIVE"
+    if "golden: PASS-with-known" in text:
+        return "pass-with-known"
     return "pass"
 
 
 SESSIONS = "golden-sessions.tsv"
 
 
-def session_line(kind, tests, words, rc, only=None, now=None):
+def session_line(kind, tests, words, rc, only=None, now=None, host="posix"):
     """A line of bench-logs/golden-sessions.tsv: time, kind (golden or
     integrate), tests (pass, skip, nobuild, FAIL, off), only=all or the --only list
     (a one-scenario rerun is not a full pass), scen=stamp:WORD per
-    scenario, exit code. What a flake count reads."""
+    scenario, exit code, host=BENCH_HOST_OS (last, so older readers keep
+    their columns; PC and Deck sessions share the one store). What a flake
+    count reads."""
     t = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
     return (
         "\t".join(
             [t, kind, "tests=" + tests, "only=" + (",".join(only) if only else "all")]
             + ["%s=%s:%s" % (scen, stamp, w) for scen, (stamp, w) in words.items()]
-            + ["rc=%d" % rc]
+            + ["rc=%d" % rc, "host=" + host]
         )
         + "\n"
     )
@@ -280,6 +309,12 @@ def cmd_golden(b, args, bench_env=None, kind="golden"):
         os.makedirs(os.path.join(log, "frames"), exist_ok=True)
         _, idxs = golden_py(b, "frames", scen, capture=True)
         c = b.cfg
+        if c.windows:
+            pull_windows(b, scen, stamp, log, idxs.split())
+            dirs.append("%s=%s" % (scen, os.path.join(log, "frames")))
+            runs[scen] = (stamp, os.path.join(log, "frames"), e == 0 and pm == 0)
+            notes[scen] = (log, lines, e, pm)
+            continue
         for idx in idxs.split():
             if (
                 rsync(
@@ -357,7 +392,8 @@ def cmd_golden(b, args, bench_env=None, kind="golden"):
         sessions = os.path.join(b.cfg.game_dir, "bench-logs", SESSIONS)
         try:
             with open(sessions, "a", encoding="utf-8") as f:
-                f.write(session_line(kind, tests, words, rc, only))
+                host = "windows" if b.cfg.windows else "posix"
+                f.write(session_line(kind, tests, words, rc, only, host=host))
         except OSError as e:
             print("golden: warning: %s not written (%s)" % (sessions, e), file=sys.stderr)
     return rc
@@ -375,7 +411,12 @@ def check_each(b, runs, notes, prune_after):
         fd, used = tempfile.mkstemp(prefix="golden-used-")
         os.close(fd)
         try:
-            rc, text = golden_py(b, "check", "--used", used, "%s=%s" % (scen, frames), capture=True)
+            # A Windows host's frames marked known_divergence there read
+            # KNOWN, never a pass; the Deck's check is unchanged.
+            host_os = ["--host-os", "windows"] if b.cfg.windows else []
+            rc, text = golden_py(
+                b, "check", *host_os, "--used", used, "%s=%s" % (scen, frames), capture=True
+            )
             try:
                 res.update(read_used(used))
             except OSError:

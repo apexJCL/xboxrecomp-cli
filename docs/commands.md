@@ -487,7 +487,10 @@ a shipped exe's `provenance.txt` also names the `gen/` digest.
 
 `bench golden` keeps, for a passing scenario, only the frames its check
 read; each scenario's verdict is in its run's `golden.txt`, and every pass
-adds a line to `bench-logs/golden-sessions.tsv`. The toolkit's Proton tests
+adds a line to `bench-logs/golden-sessions.tsv`, ending in the host's OS
+(`host=posix` or `host=windows`). On a Windows host a scenario whose only
+failures are frames marked `known_divergence` there reads
+`pass-with-known`, never `pass`, and keeps its frames. The toolkit's Proton tests
 are skipped when the host's toolkit, the CLI, the toolchain and the Proton
 and prefix versions are those of their last pass (`--tests` runs them
 anyway), and when the host tree has no configured `build-win/` (a tree

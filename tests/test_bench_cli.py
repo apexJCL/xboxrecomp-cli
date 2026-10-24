@@ -686,7 +686,10 @@ def test_golden_only_and_kept_verdicts(d):
     sessions = open(os.path.join(logs, "golden-sessions.tsv")).read().splitlines()
     assert len(sessions) == 2, sessions
     f = sessions[1].split("\t")
-    assert f[1:4] == ["golden", "tests=pass", "only=stage1,attract"] and f[-1] == "rc=1", f
+    assert f[1:4] == ["golden", "tests=pass", "only=stage1,attract"] and f[-2:] == [
+        "rc=1",
+        "host=posix",
+    ], f
     assert re.match(r"attract=\d{8}-\d{6}:FAIL-RUN$", f[4]) and f[5].startswith("stage1="), f
     assert sessions[0].split("\t")[3] == "only=story", sessions[0]
     # A name not in golden.json stops before anything runs; integrate checks

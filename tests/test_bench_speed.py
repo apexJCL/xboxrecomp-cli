@@ -57,7 +57,14 @@ def test_verdict_word_hardest_first():
 def test_session_line():
     line = bg.session_line("integrate", "skip", {"attract": ("20261009-100000", "pass")}, 0, now=0)
     f = line.rstrip("\n").split("\t")
-    assert f[1:] == ["integrate", "tests=skip", "only=all", "attract=20261009-100000:pass", "rc=0"]
+    assert f[1:] == [
+        "integrate",
+        "tests=skip",
+        "only=all",
+        "attract=20261009-100000:pass",
+        "rc=0",
+        "host=posix",
+    ]
     line = bg.session_line("golden", "pass", {}, 2, only=["story", "stage1"], now=0)
     assert line.split("\t")[3] == "only=story,stage1", line
 
@@ -171,3 +178,16 @@ def test_tests_key_script_reads_the_game_sources(tmp_path):
     os.remove(b / "cat" / "cmake" / "x.cmake")
     os.rmdir(b / "cat" / "cmake")
     assert parts("")["game_src"] == "none"
+
+
+def test_pass_with_known_is_its_own_word_and_sessions_name_the_host():
+    known = "golden: KNOWN s/f: TRACK-42\ngolden: PASS-with-known (1 KNOWN)\n"
+    assert bg.verdict_word(0, 0, 0, known) == "pass-with-known"
+    assert bg.verdict_word(0, 0, 1, known) == "REGRESSION"
+    assert bg.verdict_word(3, 0, 0, known) == "INCONCLUSIVE"
+    line = bg.session_line("golden", "skip", {"s": ("st", "pass-with-known")}, 0, now=0)
+    cols = line.rstrip("\n").split("\t")
+    # host last, so a reader of the older columns keeps its places.
+    assert cols[-2:] == ["rc=0", "host=posix"] and "s=st:pass-with-known" in cols
+    line = bg.session_line("golden", "skip", {}, 0, now=0, host="windows")
+    assert line.endswith("\trc=0\thost=windows\n")

@@ -161,7 +161,7 @@ def test_prune_skips_option_values(tmp_path):
         G.cmd_prune(["s=" + d, "--log", "s=" + log])
     assert "pruned 4 flip dumps" in out.getvalue(), out.getvalue()
     assert os.path.isfile(log)
-    assert G.parse_check_args(["--window", "3", "--log", "s=" + log, "s=" + d])[4] == {"s": d}
+    assert G.parse_check_args(["--window", "3", "--log", "s=" + log, "s=" + d])[5] == {"s": d}
 
 
 class FakeRemote:

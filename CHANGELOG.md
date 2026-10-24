@@ -7,6 +7,26 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-24
+
+### Added
+- Native Windows bench hosts (`BENCH_HOST_OS=windows`) for `bench golden`
+  and `bench run`: the controller ships the exe and changed runtime files
+  over ssh to a per-run directory and drives the game through PowerShell
+  (`bench/host/windows/`). The host's lock, `.bench-lock` beside
+  `BENCH_DIR` by default, records the holder's pid and start time; a lock
+  whose holder is gone is taken over in place, and that run's game is
+  ended. The D3D11 shader cache lives at `<base>/shader-cache`, so it stays
+  warm across runs.
+- `known_divergence` on a golden frame: a host-scoped, known difference
+  (with the item that tracks it) reads KNOWN on that host instead of FAIL.
+  It applies only to an ordinary outside-limits compare; a size mismatch,
+  a missing reference or a gross failure stays FAIL. A scenario whose only
+  failures are KNOWN reads `pass-with-known`, never `pass`, and keeps its
+  frames through every prune. The public export drops these entries.
+- `golden-sessions.tsv` lines end with the host's OS (`host=posix` or
+  `host=windows`).
+
 ### Changed
 - `recomp` passes `--back-edge-yield` when the toolkit's recomp defines it
   (upstream xboxrecomp v0.16.0 and the fork after its v0.16 merge). There
@@ -510,7 +530,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.9.0...v0.10.0

@@ -1163,3 +1163,47 @@ def test_home_paths_without_case(pub, capsys):
         commit_file(root, "docs/bad.md", line)
         rc, out = xbr(root, "public", "export", capsys=capsys)
         assert rc == 1 and "docs/bad.md" in out.out, (line, out.out)
+
+
+def test_golden_known_divergence_is_dropped_whole(pub, capsys):
+    """golden.json's known_divergence entries name a private tracker item
+    (golden check --host-os): the export drops them whole, leaving valid
+    JSON with no such key and no item ref; the rest is as written."""
+    root = pub["root"]
+    toml = read(os.path.join(root, "game.toml"))
+    golden = 'json = "analysis/golden/golden.json"\n'
+    toml = (
+        toml.replace("[golden]\n", "[golden]\n" + golden, 1)
+        if "[golden]\n" in toml
+        else toml + "\n[golden]\n" + golden
+    )
+    write(os.path.join(root, "game.toml"), toml)
+    known = {"host": "windows", "item": "TRACK-42", "why": "menu dump timing"}
+    g = {
+        "about": "made up",
+        "scenarios": {
+            "s": {
+                "frames": [
+                    {"name": "menu", "dump": 58, "known_divergence": [known]},
+                    {"name": "hub", "dump": 72},
+                ]
+            }
+        },
+    }
+    rel = "analysis/golden/golden.json"
+    write(os.path.join(root, rel), json.dumps(g, indent=2) + "\n")
+    other = "docs/known.json"
+    write(os.path.join(root, other), '{"known_divergence": 1}\n')
+    git(root, "add", "-A")
+    git(root, "add", "-f", rel, other)
+    git(root, "commit", "-qm", "a known divergence")
+    assert xbr(root, "public", "init", capsys=capsys)[0] == 0
+    rc, out = xbr(root, "public", "export", capsys=capsys)
+    assert rc == 0, out.out + out.err
+    text = git(root, "show", "refs/public/main:" + rel).stdout
+    assert "known_divergence" not in text and "TRACK-42" not in text, text
+    frames = json.loads(text)["scenarios"]["s"]["frames"]
+    assert frames == [{"name": "menu", "dump": 58}, {"name": "hub", "dump": 72}]
+    assert text == json.dumps(json.loads(text), indent=2) + "\n"
+    # Only golden.json: another file keeps the key.
+    assert git(root, "show", "refs/public/main:" + other).stdout == '{"known_divergence": 1}\n'

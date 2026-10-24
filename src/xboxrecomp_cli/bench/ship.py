@@ -219,17 +219,9 @@ def stage(files, into):
         shutil.copy2(f, dst)
 
 
-def ship(b, exe=None, exe_sha=None):
-    """Send the local exe and the files beside it to its run directory on
-    the host (once per command), and make that the REMOTE_GAME. The exe's
-    directory there then holds exactly that set. Returns the sha256 of the
-    exe shipped, which run_game.sh checks again under the run lock.
-
-    The first ship of a command pins its exe: a later one (the next golden
-    scenario) refuses another sha, so one command never runs two builds.
-    integrate pins the exe it built and checked on the host."""
-    b.need_host()
-    c = b.cfg
+def check_dest(c):
+    """The exe's directory under the run directory, refused when it is the
+    run directory itself."""
     dest = exe_rel(c)
     # rsync --delete empties the exe's directory into the shipped set: never
     # the run directory itself (bench-logs/, config/, the game_files link).
@@ -239,6 +231,17 @@ def ship(b, exe=None, exe_sha=None):
             "subdirectory of the run directory: rsync --delete would empty the run "
             "directory itself" % dest
         )
+    return dest
+
+
+@contextlib.contextmanager
+def staged(b, exe=None, exe_sha=None):
+    """The ship's file set staged in a temporary directory, its exe hashed
+    and pinned for the command, and REMOTE_GAME pointed at its run
+    directory. Yields (tmp, staged dir, exe, sha256)."""
+    b.need_host()
+    c = b.cfg
+    check_dest(c)
     exe = exe or local_exe(c)
     if not os.path.isfile(exe):
         raise BenchError(
@@ -263,23 +266,49 @@ def ship(b, exe=None, exe_sha=None):
             )
         b._pinned = sha
         c.remote_game = run_dir(c, sha)
+        yield t, out, exe, sha
+
+
+def provenance_file(c, exe, sha, out, t):
+    """provenance.txt for the ship, written into the staged set when the
+    exe's directory is windows_dir, else beside it. Returns its path."""
+    local_prov = os.path.join(os.path.dirname(exe), LOCAL_PROVENANCE)
+    prov = os.path.join(
+        out if exe_rel(c) == c.game.m["build"]["windows_dir"] else t, "provenance.txt"
+    )
+    if recorded_sha(local_prov) == sha:
+        # copy2: its time too, so a second ship of the same exe resends
+        # no provenance bytes (rsync may still touch the times).
+        shutil.copy2(local_prov, prov)
+    else:
+        # An exe `<game> build windows` made, not bench build: the trees
+        # as they are now, which need not be what it was built from.
+        with open(prov, "w", encoding="utf-8") as f:
+            f.write(provenance(c, exe, sha, None, "shipped (not built by bench)"))
+    return prov
+
+
+def ship(b, exe=None, exe_sha=None):
+    """Send the local exe and the files beside it to its run directory on
+    the host (once per command), and make that the REMOTE_GAME. The exe's
+    directory there then holds exactly that set. Returns the sha256 of the
+    exe shipped, which run_game.sh checks again under the run lock.
+
+    The first ship of a command pins its exe: a later one (the next golden
+    scenario) refuses another sha, so one command never runs two builds.
+    integrate pins the exe it built and checked on the host."""
+    c = b.cfg
+    if c.windows:
+        return b.host.ship(exe, exe_sha)
+    with staged(b, exe, exe_sha) as (t, out, exe, sha):
+        dest = exe_rel(c)
         if getattr(b, "_shipped", None) == (c.remote_game, sha):
             return sha
         b.step("ship: %s -> %s:%s" % (os.path.relpath(exe, c.game_dir), c.host, c.remote_game))
         assigns = "DEST=%s\nSRC=%s\n" % (shell_quote(dest), host_path(c["BENCH_GAME_FILES"]))
         b.ok(b.r.remote(b.r.ship("ship_prep.sh", assigns))[0])
-        local_prov = os.path.join(os.path.dirname(exe), LOCAL_PROVENANCE)
         windows_dir = c.game.m["build"]["windows_dir"]
-        prov = os.path.join(out if dest == windows_dir else t, "provenance.txt")
-        if recorded_sha(local_prov) == sha:
-            # copy2: its time too, so a second ship of the same exe resends
-            # no provenance bytes (rsync may still touch the times).
-            shutil.copy2(local_prov, prov)
-        else:
-            # An exe `<game> build windows` made, not bench build: the trees
-            # as they are now, which need not be what it was built from.
-            with open(prov, "w", encoding="utf-8") as f:
-                f.write(provenance(c, exe, sha, None, "shipped (not built by bench)"))
+        prov = provenance_file(c, exe, sha, out, t)
         # --checksum: content decides, not times. -i lists every file that
         # differed (and *deleting for what the seed had but this build
         # lacks); the stats line says how many bytes went as literal data.

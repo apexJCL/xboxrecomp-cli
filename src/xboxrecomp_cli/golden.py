@@ -11,7 +11,7 @@ directory). Below, golden.json and frames/ are the game's.
   golden.py frames SCEN           the dump indexes (NNNN) SCEN checks
   golden.py diff A B [TOL]                     per-channel stats for two images (BMP or PNG)
   golden.py check [--window K] [--log SCEN=LOG]... [--allow-enhance KEY=VALUE]...
-                [--used FILE] SCEN=DIR...
+                [--used FILE] [--host-os OS] SCEN=DIR...
                                   compare each scenario's dumped frames with
                                   analysis/golden/golden.json; exit 1 on a
                                   regression, 2 on a missing frame or reference.
@@ -25,6 +25,9 @@ directory). Below, golden.json and frames/ are the game's.
                                   --used FILE: per scenario, the images its
                                   verdict read, every frame's plain dump and
                                   the verdict (what a prune keeps)
+                                  --host-os OS: the run host's OS, posix or
+                                  windows (bench passes it on Windows only),
+                                  for frames with a known_divergence there
   golden.py prune [--dry-run] [check options] SCEN=DIR...
                                   for a scenario that passes, remove the
                                   flip dumps the check did not read (plain
@@ -121,6 +124,20 @@ is a ratio, but the harm is drift (span x ratio): a long span drifts
 further at the same ratio, so set a frame's max_pace_diff to its span.
 
 The verdict: exit 1 on any FAIL, else 2 on any INCOMPLETE (counts printed).
+
+Known divergence. A frame that fails on one host for a filed bug may carry
+"known_divergence": [{"host": "windows", "item": "<tracker item>", "why":
+...}]. Checked with --host-os windows, it is compared as usual and reported
+as KNOWN with its numbers and the item, never counted as a pass; other
+hosts ignore the entry. Only an ordinary outside-limits compare reads
+KNOWN: a size mismatch, a missing reference or a wrong screen (bad at or
+past pace_fail_bad) stays FAIL. With nothing else wrong the verdict is
+PASS-with-known (exit 0) and names each item; --used gives that scenario
+verdict 3, so no prune removes its frames. A marked frame that passes is
+KNOWN-NOW-PASSES, named in the verdict, so the entry is dropped once the
+fix lands; an INCOMPLETE marked frame stays INCOMPLETE. A host other than
+posix or windows is refused. The item ref is private: the public export
+drops known_divergence entries.
 golden.json names, per scenario, the frames to check (by dump index) and the
 thresholds; it holds hashes and metrics only. The reference PNGs live in
 analysis/golden/frames/, which is gitignored: they are game frames.
@@ -1312,12 +1329,17 @@ def window_report(d, img_path, ref, fr, th, k):
 
 def parse_check_args(args):
     """check's options and its SCEN=DIR arguments: (window, logs, allow,
-    used_file, dirs). The value after an option is never a SCEN=DIR."""
-    window, logs, rest, allow, used_file = 2, {}, [], [], None
+    used_file, host_os, dirs). The value after an option is never a
+    SCEN=DIR."""
+    window, logs, rest, allow, used_file, host_os = 2, {}, [], [], None, None
     it = iter(args)
     for a in it:
         if a == "--window":
             window = int(next(it))
+        elif a == "--host-os":
+            host_os = next(it)
+            if host_os not in KNOWN_HOSTS:
+                sys.exit("golden: --host-os takes " + " or ".join(KNOWN_HOSTS))
         elif a == "--used":
             used_file = next(it)
         elif a == "--log":
@@ -1332,13 +1354,13 @@ def parse_check_args(args):
             allow.append(kv)
         else:
             rest.append(a)
-    return window, logs, allow, used_file, parse_scen_args(rest)
+    return window, logs, allow, used_file, host_os, parse_scen_args(rest)
 
 
 def cmd_check(args):
     g = load_golden()
     th = g["compare"]
-    window, logs, allow, used_file, dirs = parse_check_args(args)
+    window, logs, allow, used_file, host_os, dirs = parse_check_args(args)
     rcs = []  # per frame: 1 FAIL, 2 INCOMPLETE (MISSING, NEWVIEW too)
     # Per scenario, the images its verdict read and every frame's plain dump
     # (what record and reference read): what a prune keeps (--used).
@@ -1351,9 +1373,12 @@ def cmd_check(args):
         keep = used.setdefault(scen, [])
         for fr in sc["frames"]:
             keep.append(dump_image_path(d, fr["dump"]))
-        check_scenario(scen, d, sc, g, th, window, logs, allow, rcs, keep)
+        check_scenario(scen, d, sc, g, th, window, logs, allow, rcs, keep, host_os)
         part = rcs[first:]
-        scen_rc[scen] = 1 if 1 in part else 2 if 2 in part else 0
+        # 3: a known divergence and nothing worse. Not a pass, so no prune
+        # removes the frames its tracker item reads.
+        known = any(isinstance(r, tuple) for r in part)
+        scen_rc[scen] = 1 if 1 in part else 2 if 2 in part else 3 if known else 0
     if used_file:
         write_used(used_file, used, scen_rc)
     return verdict(rcs)
@@ -1427,7 +1452,7 @@ def cmd_prune(args):
         res = read_used(tmp)
     finally:
         os.remove(tmp)
-    dirs = parse_check_args(args)[4]
+    dirs = parse_check_args(args)[5]
     for scen, (rc, paths) in res.items():
         if rc != 0:
             print(f"golden: {scen}: verdict {rc}, nothing pruned (only a pass is)")
@@ -1440,7 +1465,7 @@ def cmd_prune(args):
     return 0
 
 
-def check_scenario(scen, d, sc, g, th, window, logs, allow, rcs, keep):
+def check_scenario(scen, d, sc, g, th, window, logs, allow, rcs, keep, host_os=None):
     """One scenario of check: print its frames' verdicts, append their rcs,
     and add the images they read to keep."""
     log = run_log(d, logs, scen)
@@ -1462,204 +1487,321 @@ def check_scenario(scen, d, sc, g, th, window, logs, allow, rcs, keep):
             " not a stock run, never recorded"
         )
     for fr in sc["frames"]:
-        tag = f"{scen}/{fr['name']} (dump {fr['dump']}, present {fr['dump'] * 60 + 1})"
-        skip = fr.get("skip_backends", sc.get("skip_backends", []))
-        if backend in skip:
-            print(
-                f"SKIP     {tag}: not checked on the {backend} backend "
-                f"({fr.get('skip_why', sc.get('skip_why', 'see golden.json'))})"
+        known = known_divergence(fr, host_os)
+        if not known:
+            rc = check_frame(scen, d, fr, sc, th, window, batches, times, backend, keep)
+            if rc:
+                rcs.append(rc)
+            continue
+        buf, info = io.StringIO(), {}
+        with contextlib.redirect_stdout(buf):
+            rc = check_frame(scen, d, fr, sc, th, window, batches, times, backend, keep, info)
+        if rc is None:
+            sys.stdout.write(buf.getvalue())
+            continue
+        tag = f"{scen}/{fr['name']}"
+        rcs.append(report_known(tag, buf.getvalue(), rc, known, host_os, info.get("ordinary")))
+
+
+KNOWN_HOSTS = ("posix", "windows")
+
+
+def known_divergence(fr, host_os):
+    """The frame's known_divergence entry for host_os, or None. Each entry
+    names the host, the tracker item and why; another host ignores it. A
+    misspelt host ("Windows", "win") would silently never match, so it
+    stops the check on every host."""
+    found = None
+    for k in fr.get("known_divergence", []):
+        if k.get("host") not in KNOWN_HOSTS:
+            sys.exit(
+                f"golden: {fr['name']}: known_divergence host {k.get('host')!r} is not "
+                + " or ".join(KNOWN_HOSTS)
             )
-            continue
-        targets = frame_targets(d, fr, sc, batches)
-        refs = frame_refs(fr)
-        multi = len(refs) > 1 or refs[0][0] is not None
-        notes = sorted({n for _, n in targets.values() if n})
-        if any(p is None for p, _ in targets.values()):
-            print(f"INCOMPLETE {tag}: the anchored flip is not checkable in this run")
-            for n in notes:
-                print("         " + n)
-            rcs.append(2)
-            continue
-        have = {lab: p for lab, (p, _) in targets.items() if os.path.exists(p)}
-        if not have:
-            p = targets[refs[0][0]][0]
-            print(f"MISSING  {tag}: {p} not dumped (run too short or crashed?)")
-            for n in notes:
-                print("         " + n)
-            rcs.append(2)
-            continue
-        imgs = {p: read_image(p) for p in set(have.values())}
-        keep.extend(sorted(imgs))
-        mismatch, pnotes = pace_report(fr, sc, th, batches, times)
-        notes += pnotes
-        hit = [r for r in refs if r[0] in have and pixel_sha(imgs[have[r[0]]]) == r[1]]
-        if hit:
-            print(f"EXACT    {tag}" + (f" = {hit[0][0]}" if multi else ""))
-            for n in notes:
-                print("         " + n)
-            continue
-        floor = pace_fail_bad(fr, sc, th)
-        if "split" in fr:
-            if not mismatch:
-                rcs.append(check_split(tag, fr, th, refs, have, imgs))
-                for n in notes:
-                    print("         " + n)
-                continue
-            # Pace mismatch: the split verdict stands when it passes
-            # (CLOSE) or is already INCOMPLETE (NEWVIEW); a FAIL is
-            # INCOMPLETE unless the frame is a wrong screen at any pace.
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                rc = check_split(tag, fr, th, refs, have, imgs)
-            raw = raw_compares(refs, have, imgs, fr, th)
-            if rc == 1:
-                gross = bool(raw) and min(st["bad_fraction"] for _, st in raw) >= floor
-                rc = 1 if gross else 2
-                print(
-                    (
-                        f"FAIL     {tag}: wrong screen at any pace ({mismatch}): "
-                        f"every reference off by {100 * floor:.0f}%+ of pixels"
-                    )
-                    if gross
-                    else f"INCOMPLETE {tag}: {mismatch}; the split compare failed, not judged"
-                )
-                for line in buf.getvalue().splitlines():
-                    print("         for information: " + line.strip())
-            else:
-                sys.stdout.write(buf.getvalue())
-                if rc == 0:
-                    print(f"         {mismatch}, but within limits")
-            for n in notes:
-                print("         " + n)
-            for lab, st in raw:
-                print("         for information, whole frame vs %s: %s" % (lab, fmt(st)))
-            rcs.append(rc)
-            continue
-        tol = fr.get("pixel_tol", th["pixel_tol"])
-        mae_lim = fr.get("max_channel_mae", th["max_channel_mae"])
-        bad_lim = fr.get("max_bad_fraction", th["max_bad_fraction"])
-        tile_lim = fr.get("max_tile_bad_fraction", th["max_tile_bad_fraction"])
-        lims = f"(limits mae {mae_lim}, bad {100 * bad_lim:.2f}%, tile {100 * tile_lim:.0f}% at tol {tol})"
-        # One result per reference with a PNG and an image: (ok, s, tv, label).
-        results, absent = [], []
-        for ref in refs:
-            if not os.path.exists(ref[2]):
-                absent.append(ref)
-                continue
-            if ref[0] not in have:
-                continue
-            ok, s, tv = compare(imgs[have[ref[0]]], ref[2], fr, th)
-            results.append((ok, s, tv, ref[0]))
-        for ref in absent:
-            sha = pixel_sha(next(iter(imgs.values())))
-            print(
-                f"{'WARNING ' if results else 'FAIL    '} {tag}: no reference PNG at {ref[2]} "
-                f"(got {sha[:16]}, want {ref[1][:16]})"
-            )
-            print("         " + missing_ref_hint(fr, ref))
-        if not results:
-            rcs.append(1)
-            continue
-        # Report the passing reference, else the closest one.
-        ok, s, tv, label = max(
-            results,
-            key=lambda r: (r[0], r[1] is not None, -(r[1]["bad_fraction"] if r[1] else 1)),
+        if host_os and k["host"] == host_os and found is None:
+            if not k.get("item"):
+                sys.exit(f"golden: {fr['name']}: a known_divergence entry needs an item")
+            found = k
+    return found
+
+
+VERDICT_HEADS = ("EXACT", "CLOSE", "FAIL", "INCOMPLETE", "MISSING", "NEWVIEW")
+
+
+def report_known(tag, out, rc, known, host_os, ordinary=False):
+    """Print a known-divergence frame's verdict and return its rcs entry.
+    An ordinary outside-limits FAIL (ordinary: check_frame's info) is
+    KNOWN, never a pass: ("known", tag, item, False). A size mismatch, a
+    missing reference or a wrong screen at any pace stays FAIL: the marking
+    covers the divergence its item describes, not a new regression on that
+    host. A frame that now passes is KNOWN-NOW-PASSES, ("known", tag, item,
+    True), so the marking is dropped once the fix lands. An INCOMPLETE
+    stays 2: an unjudged frame confirms nothing, known or not."""
+    item = known["item"]
+    why = f" ({known['why']})" if known.get("why") else ""
+    if rc == 2:
+        sys.stdout.write(out)
+        print(f"         marked as known on {host_os}: {item}{why}; not judged here")
+        return 2
+    if rc == 1 and not ordinary:
+        sys.stdout.write(out)
+        print(
+            f"         marked as known on {host_os}: {item}, but this is not an ordinary"
+            " outside-limits compare (size, missing reference or wrong screen); a FAIL"
         )
-        name = f" vs {label}" if multi else ""
-        if s is None:
-            img = imgs[have[label]]
-            print(f"FAIL     {tag}{name}: size {img[0]}x{img[1]} differs from the reference")
-            rcs.append(1)
-            continue
-        k = verdict_window(fr)
-        target_bad = min((r[1]["bad_fraction"] for r in results if r[1] is not None), default=1)
-        if not ok and k and target_bad < floor:
-            # Content on its own clock (a menu's background art) sits a few
-            # flips either side of the anchored target from run to run: the
-            # frame passes when a flip within k of the target does. Not when
-            # the target itself is off by pace_fail_bad or more: a black,
-            # torn or flickering present on that flip is a regression a
-            # clean neighbour must not hide.
-            near = []
-            for r in refs:
-                if r[0] in have and os.path.exists(r[2]):
-                    b = window_report(d, have[r[0]], r, fr, th, k)
-                    if b is not None and b[1]:
-                        near.append((b, r[0]))
-            if near:
-                (off, _, ws, wp), label = min(near, key=lambda n: n[0][2]["bad_fraction"])
-                notes.insert(
-                    0,
-                    "verdict_window +-%d: flip offset %+d passes (%s); the target gave %s"
-                    % (k, off, os.path.basename(wp), fmt(s)),
-                )
-                keep.append(wp)
-                ok, s, tv = True, ws, None
-                name = f" vs {label}" if multi else ""
-        rc, why = (0 if ok else 1), ""
-        if ok:
-            head = "CLOSE   "
-            if mismatch:
-                notes.append(f"{mismatch}, but within limits")
-        elif not mismatch:
-            head = "FAIL    "
-        elif min(r[1]["bad_fraction"] for r in results if r[1] is not None) >= floor:
-            # Off at every reference by this much: a wrong screen, which
-            # no flip rate explains.
-            head, why = "FAIL    ", f"wrong screen at any pace ({mismatch}): "
-        else:
-            # Wall-time content (the title's cloud movie) sits elsewhere
-            # at another flip rate: not a verdict on the rendering.
-            head, rc = "INCOMPLETE", 2
-            why = f"{mismatch}; outside limits, not judged: "
-        print(f"{head} {tag}{name}: {why}{fmt(s)} {lims}")
+        return 1
+    # The verdict line, not a WARNING about a missing reference before it.
+    lines = out.splitlines(keepends=True)
+    at = next((i for i, x in enumerate(lines) if x.split(" ", 1)[0] in VERDICT_HEADS), 0)
+    first = lines[at].rstrip("\n") if lines else ""
+    rest = "".join(lines[:at] + lines[at + 1 :])
+    head, _, detail = first.partition(" ")
+    detail = detail.lstrip()
+    if rc == 0:
+        print(f"KNOWN-NOW-PASSES {detail}")
+        print(
+            f"         was {head}; marked as known on {host_os}: {item}{why}."
+            " Drop its known_divergence once the fix is confirmed"
+        )
+    else:
+        print(f"KNOWN    {detail}")
+        print(f"         known divergence on {host_os}: {item}{why}; not counted as a pass")
+    sys.stdout.write(rest)
+    return ("known", tag, item, rc == 0)
+
+
+def check_frame(scen, d, fr, sc, th, window, batches, times, backend, keep, info=None):
+    """One frame of check: print its verdict and return its rc (0 pass, 1
+    FAIL, 2 INCOMPLETE, None when skipped on this backend). info, when
+    given, gains ordinary=True for a FAIL that is a plain outside-limits
+    compare under the frame's pace_fail_bad (what a known divergence may
+    cover)."""
+    if info is None:
+        info = {}
+    tag = f"{scen}/{fr['name']} (dump {fr['dump']}, present {fr['dump'] * 60 + 1})"
+    skip = fr.get("skip_backends", sc.get("skip_backends", []))
+    if backend in skip:
+        print(
+            f"SKIP     {tag}: not checked on the {backend} backend "
+            f"({fr.get('skip_why', sc.get('skip_why', 'see golden.json'))})"
+        )
+        return None
+    targets = frame_targets(d, fr, sc, batches)
+    refs = frame_refs(fr)
+    multi = len(refs) > 1 or refs[0][0] is not None
+    notes = sorted({n for _, n in targets.values() if n})
+    if any(p is None for p, _ in targets.values()):
+        print(f"INCOMPLETE {tag}: the anchored flip is not checkable in this run")
         for n in notes:
             print("         " + n)
-        if multi and not ok:
-            for o in results:
-                if o[3] != label and o[1] is not None:
-                    print(f"         vs {o[3]}: {fmt(o[1])}")
-        if s.get("presence"):
-            print("         presence: " + s["presence"])
-        if tv:
-            print(
-                "         tile %d,%d: %.1f%% of its pixels off (limit %.0f%%)"
-                % (tv[0], tv[1], 100 * tv[2], 100 * tv[3])
-            )
-        else:
-            # The printed tile limit is the frame's; say so when a region
-            # set the worst tile's limit, or a pass looks like a bug.
-            wl, wr = tile_limit(*s["worst_tile_at"], tile_lim, fr.get("regions", []))
-            if wr is not None and s["worst_tile"] > tile_lim:
-                print(
-                    "         worst tile is in region %s: limit %.0f%% there"
-                    % (",".join(map(str, wr["rect"])), 100 * wl)
+        return 2
+    have = {lab: p for lab, (p, _) in targets.items() if os.path.exists(p)}
+    if not have:
+        p = targets[refs[0][0]][0]
+        print(f"MISSING  {tag}: {p} not dumped (run too short or crashed?)")
+        for n in notes:
+            print("         " + n)
+        return 2
+    imgs = {p: read_image(p) for p in set(have.values())}
+    keep.extend(sorted(imgs))
+    mismatch, pnotes = pace_report(fr, sc, th, batches, times)
+    notes += pnotes
+    hit = [r for r in refs if r[0] in have and pixel_sha(imgs[have[r[0]]]) == r[1]]
+    if hit:
+        print(f"EXACT    {tag}" + (f" = {hit[0][0]}" if multi else ""))
+        for n in notes:
+            print("         " + n)
+        return 0
+    floor = pace_fail_bad(fr, sc, th)
+    if "split" in fr:
+        if not mismatch:
+            rc = check_split(tag, fr, th, refs, have, imgs)
+            if rc == 1:
+                raw = raw_compares(refs, have, imgs, fr, th)
+                info["ordinary"] = len(raw) == len(refs) and all(
+                    st["bad_fraction"] < floor for _, st in raw
                 )
-        ref = [r for r in refs if r[0] == label][0]
-        best = window_report(d, have[label], ref, fr, th, window)
-        if best is not None:
-            keep.append(best[3])
+            for n in notes:
+                print("         " + n)
+            return rc
+        # Pace mismatch: the split verdict stands when it passes
+        # (CLOSE) or is already INCOMPLETE (NEWVIEW); a FAIL is
+        # INCOMPLETE unless the frame is a wrong screen at any pace.
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = check_split(tag, fr, th, refs, have, imgs)
+        raw = raw_compares(refs, have, imgs, fr, th)
+        if rc == 1:
+            gross = bool(raw) and min(st["bad_fraction"] for _, st in raw) >= floor
+            rc = 1 if gross else 2
             print(
-                "         window +-%d: best flip offset %+d: %s%s"
-                % (window, best[0], fmt(best[2]), "" if best[1] else " (outside limits)")
+                (
+                    f"FAIL     {tag}: wrong screen at any pace ({mismatch}): "
+                    f"every reference off by {100 * floor:.0f}%+ of pixels"
+                )
+                if gross
+                else f"INCOMPLETE {tag}: {mismatch}; the split compare failed, not judged"
             )
-        if rc:
-            rcs.append(rc)
+            for line in buf.getvalue().splitlines():
+                print("         for information: " + line.strip())
+        else:
+            sys.stdout.write(buf.getvalue())
+            if rc == 0:
+                print(f"         {mismatch}, but within limits")
+        for n in notes:
+            print("         " + n)
+        for lab, st in raw:
+            print("         for information, whole frame vs %s: %s" % (lab, fmt(st)))
+        return rc
+    tol = fr.get("pixel_tol", th["pixel_tol"])
+    mae_lim = fr.get("max_channel_mae", th["max_channel_mae"])
+    bad_lim = fr.get("max_bad_fraction", th["max_bad_fraction"])
+    tile_lim = fr.get("max_tile_bad_fraction", th["max_tile_bad_fraction"])
+    lims = (
+        f"(limits mae {mae_lim}, bad {100 * bad_lim:.2f}%, tile {100 * tile_lim:.0f}% at tol {tol})"
+    )
+    # One result per reference with a PNG and an image: (ok, s, tv, label).
+    results, absent = [], []
+    for ref in refs:
+        if not os.path.exists(ref[2]):
+            absent.append(ref)
+            continue
+        if ref[0] not in have:
+            continue
+        ok, s, tv = compare(imgs[have[ref[0]]], ref[2], fr, th)
+        results.append((ok, s, tv, ref[0]))
+    for ref in absent:
+        sha = pixel_sha(next(iter(imgs.values())))
+        print(
+            f"{'WARNING ' if results else 'FAIL    '} {tag}: no reference PNG at {ref[2]} "
+            f"(got {sha[:16]}, want {ref[1][:16]})"
+        )
+        print("         " + missing_ref_hint(fr, ref))
+    if not results:
+        return 1
+    # Report the passing reference, else the closest one.
+    ok, s, tv, label = max(
+        results,
+        key=lambda r: (r[0], r[1] is not None, -(r[1]["bad_fraction"] if r[1] else 1)),
+    )
+    name = f" vs {label}" if multi else ""
+    if s is None:
+        img = imgs[have[label]]
+        print(f"FAIL     {tag}{name}: size {img[0]}x{img[1]} differs from the reference")
+        return 1
+    k = verdict_window(fr)
+    target_bad = min((r[1]["bad_fraction"] for r in results if r[1] is not None), default=1)
+    if not ok and k and target_bad < floor:
+        # Content on its own clock (a menu's background art) sits a few
+        # flips either side of the anchored target from run to run: the
+        # frame passes when a flip within k of the target does. Not when
+        # the target itself is off by pace_fail_bad or more: a black,
+        # torn or flickering present on that flip is a regression a
+        # clean neighbour must not hide.
+        near = []
+        for r in refs:
+            if r[0] in have and os.path.exists(r[2]):
+                b = window_report(d, have[r[0]], r, fr, th, k)
+                if b is not None and b[1]:
+                    near.append((b, r[0]))
+        if near:
+            (off, _, ws, wp), label = min(near, key=lambda n: n[0][2]["bad_fraction"])
+            notes.insert(
+                0,
+                "verdict_window +-%d: flip offset %+d passes (%s); the target gave %s"
+                % (k, off, os.path.basename(wp), fmt(s)),
+            )
+            keep.append(wp)
+            ok, s, tv = True, ws, None
+            name = f" vs {label}" if multi else ""
+    rc, why = (0 if ok else 1), ""
+    # A missing reference PNG or a size mismatch with any reference is not
+    # an ordinary compare, even when another reference compared normally.
+    info["ordinary"] = (
+        not ok and target_bad < floor and not absent and all(r[1] is not None for r in results)
+    )
+    if ok:
+        head = "CLOSE   "
+        if mismatch:
+            notes.append(f"{mismatch}, but within limits")
+    elif not mismatch:
+        head = "FAIL    "
+    elif min(r[1]["bad_fraction"] for r in results if r[1] is not None) >= floor:
+        # Off at every reference by this much: a wrong screen, which
+        # no flip rate explains.
+        head, why = "FAIL    ", f"wrong screen at any pace ({mismatch}): "
+    else:
+        # Wall-time content (the title's cloud movie) sits elsewhere
+        # at another flip rate: not a verdict on the rendering.
+        head, rc = "INCOMPLETE", 2
+        why = f"{mismatch}; outside limits, not judged: "
+    print(f"{head} {tag}{name}: {why}{fmt(s)} {lims}")
+    for n in notes:
+        print("         " + n)
+    if multi and not ok:
+        for o in results:
+            if o[3] != label and o[1] is not None:
+                print(f"         vs {o[3]}: {fmt(o[1])}")
+    if s.get("presence"):
+        print("         presence: " + s["presence"])
+    if tv:
+        print(
+            "         tile %d,%d: %.1f%% of its pixels off (limit %.0f%%)"
+            % (tv[0], tv[1], 100 * tv[2], 100 * tv[3])
+        )
+    else:
+        # The printed tile limit is the frame's; say so when a region
+        # set the worst tile's limit, or a pass looks like a bug.
+        wl, wr = tile_limit(*s["worst_tile_at"], tile_lim, fr.get("regions", []))
+        if wr is not None and s["worst_tile"] > tile_lim:
+            print(
+                "         worst tile is in region %s: limit %.0f%% there"
+                % (",".join(map(str, wr["rect"])), 100 * wl)
+            )
+    ref = [r for r in refs if r[0] == label][0]
+    best = window_report(d, have[label], ref, fr, th, window)
+    if best is not None:
+        keep.append(best[3])
+        print(
+            "         window +-%d: best flip offset %+d: %s%s"
+            % (window, best[0], fmt(best[2]), "" if best[1] else " (outside limits)")
+        )
+    return rc
 
 
 def verdict(rcs):
     """Print the run's verdict; exit 1 on any FAIL, else 2 on any
-    INCOMPLETE, else 0. A FAIL is never hidden behind an INCOMPLETE."""
+    INCOMPLETE, else 0. A FAIL is never hidden behind an INCOMPLETE. Known
+    divergences (report_known) are counted and named, never as a pass: with
+    nothing else wrong the verdict is PASS-with-known, exit 0."""
     nf, ni = rcs.count(1), rcs.count(2)
+    known = [r for r in rcs if isinstance(r, tuple) and r[0] == "known"]
     counts = ", ".join(
-        c for c in ("%d FAIL" % nf if nf else "", "%d INCOMPLETE" % ni if ni else "") if c
+        c
+        for c in (
+            "%d FAIL" % nf if nf else "",
+            "%d INCOMPLETE" % ni if ni else "",
+            "%d KNOWN" % len(known) if known else "",
+        )
+        if c
     )
+    for _, tag, item, _ in known:
+        print(f"golden: KNOWN {tag}: {item}")
+    for _, tag, item, now in known:
+        if now:
+            print(
+                f"golden: KNOWN-NOW-PASSES {tag}: it matches now; drop its"
+                f" known_divergence ({item}) once the fix is confirmed"
+            )
     if nf:
         print("golden: REGRESSION (%s)" % counts)
         return 1
     if ni:
         print("golden: INCOMPLETE (%s)" % counts)
         return 2
+    if known:
+        print("golden: PASS-with-known (%s)" % counts)
+        return 0
     print("golden: pass")
     return 0
 

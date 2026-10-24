@@ -27,6 +27,7 @@ $XBR_PUBLIC_DIR/audit-private, then $XBR_AUDIT_PRIVATE, then
 else <git dir>/info/xbr-public/rewrite (required in export mode)."""
 
 import datetime
+import json
 import os
 import re
 import subprocess
@@ -362,6 +363,31 @@ def line_hits(pats, label, text):
     return out
 
 
+def golden_path(ctx):
+    """golden.json's path in the repo, or None when the game has none."""
+    gj = getattr(ctx.game, "golden_json", "")
+    return os.path.relpath(gj, ctx.game.root).replace(os.sep, "/") if gj else None
+
+
+def drop_known(ctx, path, text):
+    """golden.json without its known_divergence entries. Each names a
+    private tracker item (golden check --host-os); the rewrite rules would
+    only cut the ref out of a JSON string, so the entry goes whole. Text
+    without the key is returned as is, so the export is unchanged."""
+    if path != golden_path(ctx) or '"known_divergence"' not in text:
+        return text
+
+    def strip(v):
+        if isinstance(v, dict):
+            return {k: strip(x) for k, x in v.items() if k != "known_divergence"}
+        if isinstance(v, list):
+            return [strip(x) for x in v]
+        return v
+
+    # golden.py writes it with json.dump(indent=2) and a newline.
+    return json.dumps(strip(json.loads(text)), indent=2) + "\n"
+
+
 # ── the context ──────────────────────────────────────────────────────────
 
 
@@ -466,7 +492,7 @@ def build_tree(ctx, ref, rules=None):
                 )
                 continue
             if text is not None:
-                new = rules.apply(text)
+                new = rules.apply(drop_known(ctx, path, text))
                 if new != text:
                     sha = g.out("hash-object", "-w", "--stdin", input=new.encode()).strip()
                     rewritten.append(path)

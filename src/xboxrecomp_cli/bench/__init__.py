@@ -25,6 +25,7 @@ from .gc import cmd_gc
 from .gc import parse_args as gc_parse_args
 from .golden import cmd_golden, golden_py, select_rows
 from .golden import parse_args as golden_parse_args
+from .hosts import WindowsHost, refusal
 from .pacing import cmd_pacing
 from .remote import BenchError, Remote, fill, host_text, quote_words, shell_quote
 from .sync import cmd_sync, rsync
@@ -161,6 +162,14 @@ this machine's home, as it did when bench.sh sourced the file:
   BENCH_BUILD      local (build here, ship the exe) or host (the host
                    compiles a synced tree)            (local)
   BENCH_RUN        the run directory's name, instead of the exe's sha256
+  BENCH_HOST_OS    posix (ssh bash, rsync, flock, Proton) or windows (native
+                   Windows 11 over OpenSSH: PowerShell, scp/sftp, a lock file;
+                   BENCH_BUILD=local, BENCH_DIR and BENCH_GAME_FILES drive
+                   paths such as D:/bench; setup, tests, pacing, gc,
+                   doctor and symbolize refused)               (posix)
+  BENCH_LOCK       windows: the lock file every PC run creates and deletes
+                   (BENCH_LOCK_HELD=1: the caller holds it)
+                   (.bench-lock beside BENCH_DIR)
   BENCH_JOBS       local builds: compile jobs        (0: as memory allows)
   BENCH_BOX        distrobox name                    (xbr-build)
   BENCH_IMAGE      distrobox image                   (fedora:42)
@@ -342,6 +351,7 @@ class Bench:
     def __init__(self, cfg):
         self.cfg = cfg
         self.r = Remote(cfg)
+        self.host = WindowsHost(self) if cfg.windows else None
         self.errexit = True
 
     # bash's echo, step, die and set -e
@@ -442,6 +452,21 @@ class Bench:
         if defaults:
             bench_env = self.apply_defaults(bench_env)
         stamp = time.strftime("%Y%m%d-%H%M%S")
+        if c.windows:
+            self.step("run: natively on %s -> bench-logs/%s" % (c.host, stamp))
+            self.host.run_game(
+                stamp,
+                game_args,
+                bench_env,
+                c.get("BENCH_TIMEOUT") if timeout is None else timeout,
+                (c.get("BENCH_FRAMES") or "0") if frames is None else frames,
+                (c.get("BENCH_LOCK_HELD") or "0") if lock_held is None else lock_held,
+                c.get("BENCH_KILL_GAME") or "0",
+                expect[len("EXPECT_SHA=") :].strip(),
+            )
+            self.cmd_logs([stamp])
+            self.say("local: %s" % os.path.join(c.game_dir, "bench-logs", stamp))
+            return stamp
         self.step("run: under %s -> bench-logs/%s" % (c["PROTONPATH"], stamp))
         assigns = (
             "STAMP=%s\nPROTONPATH=%s\nGAME_ARGS=(%s)\nGAME_ENV=(%s)\nTIMEOUT=%s\nFRAMES=%s\n"
@@ -609,6 +634,11 @@ class Bench:
 
     def cmd_logs(self, args):
         self.need_host()
+        if self.cfg.windows:
+            # sftp pulls named files: one run's, not the whole tree.
+            if not args:
+                raise BenchError("logs: name the run's stamp on a Windows host (logs STAMP)")
+            return self.ok(self.host.logs(args[:1]))
         with self.no_errexit():
             self.cmd_symbolize(args[:1])
         dst = os.path.join(self.cfg.game_dir, "bench-logs")
@@ -642,6 +672,8 @@ class Bench:
     def cmd_shell(self, args):
         self.need_host()
         c = self.cfg
+        if c.windows:
+            return self.host.shell()
         return self.r.command(
             "cd %s 2>/dev/null || cd %s; exec $SHELL -l" % (c.remote_game, c["BENCH_DIR"]),
             batch=False,
@@ -756,7 +788,10 @@ class Bench:
             "integrate: shipped %s/%s/%s.exe"
             % (c.remote_game, ship_mod.exe_rel(c), c.game.m["build"]["exe"])
         )
-        rc, out = self.r.remote(self.r.ship("integrate_show.sh"), capture=True)
+        if c.windows:
+            rc, out = self.host.exe_sha()
+        else:
+            rc, out = self.r.remote(self.r.ship("integrate_show.sh"), capture=True)
         self.say(out, end="")
         self.ok(rc)
         host_sha = (out.split() or [""])[0]
@@ -864,6 +899,15 @@ SHIPPING = ("setup", "sync", "build", "all", "integrate")
 
 
 def dispatch(b, cmd, args):
+    if b.cfg.windows:
+        why = refusal(cmd)
+        if why:
+            raise BenchError(why)
+        if cmd == "sync" and args:
+            raise BenchError(
+                "sync: %s not on a Windows host (BENCH_HOST_OS=windows): copy the game "
+                "files to BENCH_GAME_FILES (%s) by hand" % (args[0], b.cfg["BENCH_GAME_FILES"])
+            )
     if cmd not in SHIPPING:
         # logs, symbolize, shell, doctor, gc: this tree's run directory.
         ship_mod.resolve(b.cfg)

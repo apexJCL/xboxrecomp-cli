@@ -9,6 +9,7 @@ keep a literal ~ so the host's shell expands it.
 """
 
 import os
+import posixpath
 import re
 
 from .. import manifest
@@ -17,6 +18,11 @@ KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # BENCH_BUILD: local (this machine builds, the host only runs: bench/ship.py)
 # or host (the host compiles a synced tree).
 BUILD_MODES = ("local", "host")
+# BENCH_HOST_OS: posix (ssh bash, rsync, flock, Proton) or windows (native
+# Windows 11 over OpenSSH: PowerShell scripts, scp/sftp, a lock file).
+# Configured, not probed: a probe costs a round trip per command and guesses
+# wrong through a jump host.
+HOST_OSES = ("posix", "windows")
 RUN_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
@@ -96,6 +102,34 @@ def load_game(root, game_dir):
         raise ConfigError(str(e)) from e
 
 
+WINDOWS_PATHS = ("BENCH_DIR", "BENCH_GAME_FILES", "BENCH_LOCK")
+
+
+def windows_paths(env):
+    """A Windows host's paths: drive paths, given (BENCH_DIR and
+    BENCH_GAME_FILES have POSIX defaults, ~/xbox-recomp, which mean nothing
+    there), with / for \\ (PowerShell, scp and the game take either) and no
+    ~ (no shell expands it) or double quote (cmd.exe, the OpenSSH server's
+    shell, reads the command line)."""
+    for k in ("BENCH_DIR", "BENCH_GAME_FILES"):
+        if not env.get(k):
+            raise ConfigError(
+                "%s is not set: a Windows host (BENCH_HOST_OS=windows) needs it as a "
+                "drive path, e.g. %s=%s"
+                % (k, k, "D:/bench" if k == "BENCH_DIR" else "D:/bench/game_files")
+            )
+    for k in WINDOWS_PATHS:
+        v = env.get(k)
+        if not v:
+            continue
+        v = v.replace("\\", "/").rstrip("/")
+        if "~" in v or '"' in v or not re.match(r"^[A-Za-z]:/", v):
+            raise ConfigError(
+                '%s=%s: a Windows host takes a drive path (D:/...), without ~ or "' % (k, env[k])
+            )
+        env[k] = v
+
+
 class Config:
     """Every BENCH_* value as bench.sh had it, plus the trees."""
 
@@ -119,6 +153,13 @@ class Config:
             if not env.get(k):
                 env[k] = v
 
+        default("BENCH_HOST_OS", "posix")
+        if env["BENCH_HOST_OS"] not in HOST_OSES:
+            raise ConfigError(
+                "BENCH_HOST_OS=%s: use one of %s" % (env["BENCH_HOST_OS"], ", ".join(HOST_OSES))
+            )
+        if env["BENCH_HOST_OS"] == "windows":
+            windows_paths(env)
         default("BENCH_DIR", "~/xbox-recomp")
         default("BENCH_BOX", "xbr-build")
         default("BENCH_IMAGE", "fedora:42")
@@ -131,6 +172,14 @@ class Config:
             raise ConfigError(
                 "BENCH_BUILD=%s: use one of %s" % (env["BENCH_BUILD"], ", ".join(BUILD_MODES))
             )
+        if env["BENCH_HOST_OS"] == "windows" and env["BENCH_BUILD"] != "local":
+            raise ConfigError(
+                "BENCH_BUILD=%s: a Windows host only runs what this machine built "
+                "(BENCH_BUILD=local)" % env["BENCH_BUILD"]
+            )
+        # Beside the bench directory, not in it: every bench directory under
+        # one root (and the hand-run legs) shares the one PC lock.
+        default("BENCH_LOCK", posixpath.dirname(env["BENCH_DIR"]) + "/.bench-lock")
         # The game's directory on the host. With BENCH_BUILD=local the host
         # scripts run in one of its runs/<id>/ (ship.resolve, ship.ship),
         # and it is named after the game, not the checkout, so every
@@ -155,6 +204,10 @@ class Config:
         self.env = env
         self.remote_game = self.base
         self.regen_marker = self.game.regen_marker
+
+    @property
+    def windows(self):
+        return self.env.get("BENCH_HOST_OS") == "windows"
 
     HOST_PATHS = ("BENCH_DIR", "BENCH_PREFIX", "LLVM_MINGW_ROOT", "BENCH_GAME_FILES")
 
