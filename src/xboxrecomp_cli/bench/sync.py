@@ -50,12 +50,11 @@ GAME_EXCLUDES = [
     "*.log",
     # Gitignored local output the host never builds from: package bundles
     # (dist/ holds game_files, gigabytes), the Mac venv and toolkit clone,
-    # worktrees, timeline renders, caches, saves.
+    # worktrees, caches, saves.
     "/dist/",
     "/wt/",
     "/.venv/",
     "/external/",
-    "/timeline/",
     "/.ruff_cache/",
     "__pycache__/",
     "UDATA/",

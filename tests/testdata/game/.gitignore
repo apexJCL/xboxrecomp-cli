@@ -37,7 +37,6 @@ src/recomp/.gen-regenerating
 src/recomp/gen.key.json
 .DS_Store
 *.log
-timeline/
 __pycache__/
 # Game data and game output, anywhere in the tree: never commit these.
 *.xbe

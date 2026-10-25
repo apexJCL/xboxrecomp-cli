@@ -182,11 +182,11 @@ def test_game_tables():
     m = parse(
         MINIMAL
         + '[golden]\nenhance_stock = { "fps.mode" = "lock30", "fx.glow" = "on" }\n'
-        + '[bench.gc]\nrefs = ["timeline", "../notes"]\nrefs_exclude = ["../notes/x/*"]\ndays = 3\n'
+        + '[bench.gc]\nrefs = ["analysis", "../notes"]\nrefs_exclude = ["../notes/x/*"]\ndays = 3\n'
     )
     assert m["golden"]["enhance_stock"] == {"fps.mode": "lock30", "fx.glow": "on"}
     assert m["bench"]["gc"] == {
-        "refs": ["timeline", "../notes"],
+        "refs": ["analysis", "../notes"],
         "refs_exclude": ["../notes/x/*"],
         "keep": 3,
         "days": 3,

@@ -11,7 +11,7 @@ REL [--golden-audio REL]; the wrapper passes game.toml's).
 Protected (never compressed or deleted), first match wins:
   - symlinked entries and `_*` scratch entries (--include-scratch lifts the latter)
   - runs referenced by a stamp YYYYMMDD-HHMMSS anywhere in: the game's
-    golden.json and audio.json, timeline/**, RESUME*.md, TASKS.md, OPEN_QUESTIONS.md,
+    golden.json and audio.json, RESUME*.md, TASKS.md, OPEN_QUESTIONS.md,
     openspec/**/*.md, ../notes/**/*.md and any --refs PATH. An entry whose name
     CONTAINS a referenced stamp counts (suffixed runs), and a bare 6-digit
     token (HHMMSS) protects every stamped run with that time part (may
@@ -25,7 +25,7 @@ An unprotected run older than D days has *.png *.bmp *.raw *.wav and *.log over
 1 MB compressed in place (zstd if on PATH, else gzip; --gzip forces gzip), each
 file verified before the original is removed. With --prune the whole stamp-named
 directory is deleted instead (loose files never are). Nothing is deleted without
---prune. game-stdio.log is never compressed (timeline/charts.py globs it).
+--prune. game-stdio.log is never compressed (golden.py reads it, see below).
 steam-default.log is compressed in any run, protected or not, once older than D
 days (bench symbolize reads it for recent crashed runs). Re-running is a no-op.
 
@@ -87,16 +87,6 @@ def ref_paths(root, extra=()):
     if not res:
         warns.append("ref source missing: %s/RESUME*.md" % root)
     paths += [os.path.join(root, n) for n in res]
-    tl = os.path.join(root, "timeline")
-    if os.path.isdir(tl):
-        paths += _walk_files(tl)
-    else:
-        warns.append("ref source missing: %s" % tl)
-    if not os.path.isfile(os.path.join(tl, "entries.json")):
-        warns.append(
-            "LOUD: timeline/entries.json not found under %s; timeline "
-            "references are NOT protected" % root
-        )
     for rel, suffix in (("openspec", ".md"), (os.path.join(os.pardir, "notes"), ".md")):
         d = os.path.join(root, rel)
         if os.path.isdir(d):
@@ -279,7 +269,7 @@ def main(argv=None):
     ap.add_argument(
         "--root",
         default=os.getcwd(),
-        help="the game's main checkout, holding its golden files, timeline/, RESUME*.md",
+        help="the game's main checkout, holding its golden files, RESUME*.md",
     )
     ap.add_argument("--golden-json", required=True, help="golden.json, relative to ROOT")
     ap.add_argument("--golden-audio", default="", help="audio.json, relative to ROOT")

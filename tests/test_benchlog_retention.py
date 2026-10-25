@@ -49,7 +49,6 @@ class Fixture(unittest.TestCase):
         self.root = os.path.join(self.top, "cat")
         self.store = os.path.join(self.root, "bench-logs")
         write(os.path.join(self.root, "analysis/golden/golden.json"), b"{}")
-        write(os.path.join(self.root, "timeline/entries.json"), b"[]")
         R.GOLDEN_FILES[:] = ["analysis/golden/golden.json", "analysis/golden/audio.json"]
         self.stderr = io.StringIO()
 
@@ -92,19 +91,18 @@ class Fixture(unittest.TestCase):
 
 class TestProtection(Fixture):
     def test_detects_stamps_in_all_sources(self):
-        names = [stamp(60 + i) for i in range(8)]
+        names = [stamp(60 + i) for i in range(7)]
         write(os.path.join(self.root, "analysis/golden/golden.json"), names[0].encode())
         write(os.path.join(self.root, "analysis/golden/audio.json"), names[1].encode())
-        write(os.path.join(self.root, "timeline/sub/e.json"), names[2].encode())
-        write(os.path.join(self.root, "RESUME-x.md"), ("see " + names[3]).encode())
-        write(os.path.join(self.root, "openspec/changes/a/archive/n.md"), names[4].encode())
-        write(os.path.join(self.top, "notes/x/n.md"), names[5].encode())
+        write(os.path.join(self.root, "RESUME-x.md"), ("see " + names[2]).encode())
+        write(os.path.join(self.root, "openspec/changes/a/archive/n.md"), names[3].encode())
+        write(os.path.join(self.top, "notes/x/n.md"), names[4].encode())
         extra = os.path.join(self.top, "extra.txt")
-        write(extra, names[6].encode())
+        write(extra, names[5].encode())
         for n in names:
             self.run_dir(n)
         text = R.referenced_text(self.root, [extra])
-        self.assertEqual(set(R.protection(text, names)), set(names[:7]))
+        self.assertEqual(set(R.protection(text, names)), set(names[:6]))
 
     def test_suffixed_run_cited_by_bare_stamp(self):
         s = stamp(60)
@@ -149,10 +147,9 @@ class TestProtection(Fixture):
 
     def test_missing_sources_warn(self):
         self.run_dir(stamp(60))
-        os.remove(os.path.join(self.root, "timeline/entries.json"))
         self.main()
         err = self.stderr.getvalue()
-        self.assertIn("entries.json", err)
+        self.assertIn("RESUME", err)
         self.assertIn("openspec", err)
 
     def test_refuses_without_golden_json(self):
