@@ -27,6 +27,8 @@ class ManifestError(Exception):
 # manifest is filled after the plain ones (derived()).
 STR, INT, BOOL, STRS = "string", "integer", "boolean", "list of strings"
 INTS = "list of integers"
+# An integer or a decimal: a ratio such as bench.db.regress.ms_rise.
+FLOAT = "number"
 # A table of string keys to string values, held as one key (not a table of
 # the schema): golden.enhance_stock.
 STRMAP = "table of strings"
@@ -170,6 +172,37 @@ SPEC = {
         "refs_exclude": (STRS, []),
         "keep": (INT, 3),
         "days": (INT, 7),
+    },
+    # benchdb (docs/benchdb.md): what it keeps of this game's runs and
+    # builds, and when it flags a regression. Workspace facts (roots,
+    # hosts, the db path) are in the private benchdb.toml, never here.
+    "bench.db": {
+        # Published releases whose builds keep their large files.
+        "keep_releases": (INT, 2),
+        # Internal builds since the last release that keep theirs.
+        "internal_keep": (INT, 3),
+        # A log over this many bytes is a large file (frames always are).
+        "heavy_log": (INT, 1 << 20),
+        # Files up to this size get a sha256 in the artifacts table.
+        "hash_max": (INT, 1 << 20),
+    },
+    # The CLAUDE.md perf rules and the build-time rule (benchdb regress).
+    "bench.db.regress": {
+        "flips_drop": (FLOAT, 0.25),
+        "ms_rise": (FLOAT, 1.5),
+        "build_rise": (FLOAT, 1.5),
+        "build_min_secs": (FLOAT, 30),
+        "build_window": (INT, 5),
+        "build_min_baselines": (INT, 3),
+        "build_min_edges": (INT, 20),
+    },
+    # Published versions (benchdb releases): which tags count, and the
+    # paths whose changes make a different build.
+    "release": {
+        "tag_glob": (STR, "v*"),
+        # Empty: src/, config/ and the [pipeline] and [build] paths;
+        # game.toml's [toolkit] and [cli] tables always count.
+        "inputs": (STRS, []),
     },
     # Owner-made enhancement assets (xbr enhance). A game without the
     # table has no HUD set to build.
@@ -362,6 +395,8 @@ def _type_ok(kind, v):
         return isinstance(v, bool)
     if kind == INTS:
         return isinstance(v, list) and all(_type_ok(INT, x) for x in v)
+    if kind == FLOAT:
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
     if kind == STRMAP:
         return isinstance(v, dict) and all(
             isinstance(k, str) and isinstance(x, str) for k, x in v.items()
@@ -825,6 +860,18 @@ def _check_values(m):
     for k in ("keep", "days"):
         if gc[k] < 0:
             errors.append("bench.gc.%s: must not be negative" % k)
+    db = m["bench"]["db"]
+    for k in ("keep_releases", "internal_keep", "heavy_log", "hash_max"):
+        if db[k] < 0:
+            errors.append("bench.db.%s: must not be negative" % k)
+    for k, v in db["regress"].items():
+        if v <= 0:
+            errors.append("bench.db.regress.%s: must be positive" % k)
+    if not 0 < db["regress"]["flips_drop"] < 1:
+        errors.append("bench.db.regress.flips_drop: must be between 0 and 1")
+    for path in m["release"]["inputs"]:
+        if os.path.isabs(path) or path.startswith("~") or "\\" in path or ".." in path.split("/"):
+            errors.append("release.inputs: %r must be relative to the game root, with /" % path)
     for k in ("refs", "refs_exclude"):
         for path in gc[k]:
             # These may leave the game root on purpose (a workspace's notes

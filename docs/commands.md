@@ -432,7 +432,7 @@ text; the commands:
 | `pacing [--scen S] [--runs N] [--gate clock\|sleep] ["A env" "B env"]` | a frame-pacing A/B of one scenario under two environments |
 | `logs [STAMP]` | symbolize a run's crash reports, then pull `bench-logs/` from the host |
 | `symbolize [STAMP]` | name the native addresses in a run's crash reports, into `bench-logs/<stamp>/crash-symbols.txt` (default: the newest run) |
-| `gc [--apply] [--host] ...` | list, then remove, the bench runs nothing names any more |
+| `gc [--host] ...` | replaced by `benchdb plan` and `benchdb clean`: prints the `benchdb plan` call and exits 2 |
 | `shell` | an ssh shell in the host's project directory |
 | `all` | `sync`, `build`, `run` (local: build here, ship, run) |
 | `integrate [--golden] [--dirty] [--stale-gen-ok]` | build the integration heads (local: here, with `gen/`'s digest the same before and after, then ship and check the host's exe sha256; host: sync and build there), then optionally `golden` |
@@ -496,9 +496,59 @@ and prefix versions are those of their last pass (`--tests` runs them
 anyway), and when the host tree has no configured `build-win/` (a tree
 synced for goldens only, with its exe copied in), since `sync` never ships
 build trees, and with `BENCH_BUILD=local` (`tests=nobuild`); there `--tests`
-fails. `bench gc` spares runs named in `golden.json`, `TASKS.md`,
-`RESUME*.md`, `openspec/` or `[bench.gc] refs` in any worktree, other games'
-runs, young runs and the newest per scenario.
+fails. Old runs are deleted with `benchdb plan` and `benchdb clean`, which
+spare runs named in `golden.json`, `TASKS.md`, `RESUME*.md`, `openspec/` or
+`[bench.gc] refs` in any worktree, young runs and the runs D10 retention
+keeps.
+
+### `benchdb <verb>`
+
+The bench results database: one SQLite file (WAL) that holds every
+game's runs, golden sessions, verdicts, perf windows, builds and their
+steps, releases and artifacts. `mygame bench db <verb>` is the same
+command with `--game` set. Its path, the roots it indexes and the hosts are
+workspace facts in a private `benchdb.toml` (`$BENCHDB_CONFIG`, else
+found from the cwd), never in a game repo; the game's own settings are
+`[bench.db]` in `game.toml` ([manifest.md](manifest.md#benchdb)). `bench`,
+`golden`, `build`, `package` and the standalone `analyze` and `recomp`
+write their rows as they finish when the db is there, and otherwise only
+their record files, which `import` reads later. A failed write warns and
+never changes a command's exit code.
+
+| Verb | What it does |
+|---|---|
+| `init` | create or migrate the db, and load the roots and hosts from `benchdb.toml` |
+| `import [PATH...] [--dry-run]` | import run dirs, session TSVs, tests-pass files, build records and inboxes (default: every root) |
+| `releases` | the published releases per game and the builds that match each one |
+| `show WHAT` | one run, build, session or release, with its child rows |
+| `query NAME` or `query --sql SELECT` | a named query, or a read-only SELECT |
+| `export` | the sessions as a TSV, or every table as JSONL |
+| `pull [--host KEY]` | import the records in the hosts' inboxes, then delete them there |
+| `pins [--refresh]` | the run stamps that `golden.json`, `TASKS.md`, `RESUME*.md`, `openspec/` and `[bench.gc] refs` cite in any worktree |
+| `plan [TARGET...] [--older-than DAYS] [--json]` | what may be deleted, why, and what is refused; it saves the plan and prints its id |
+| `clean PLAN_ID [--large]` | delete what both the saved plan and a fresh plan hold, within the hour; `--large` allows over 100 GB or 20% of a disk |
+| `gc` | mark vanished artifacts missing, then optimise, rotate the backups and vacuum |
+| `regress [--build B] [--against A \| --release TAG] [--runs-only \| --builds-only] [--strict] [--json]` | a build's runs and build times against its baseline |
+
+`regress` compares build B (by default the game's newest integration build)
+with a baseline:
+- **Runs**: by default, the builds of the release before B. Only clean runs
+  count: stock, not busy, exact flip counts, and judged `pass`,
+  `pass-with-known` or `REGRESSION` (an unjudged run counts when it exited
+  0). It flags a drop in flips/s of 25% or more, or a frame-ms p50 or p95
+  1.5 times higher or more, on D3D11 and Metal. Other backends are listed,
+  never flagged.
+- **Build times**: against the median of the 5 newest comparable builds
+  before B (the same host, target, kind, cold or warm, fresh `gen/`, jobs,
+  ccache and toolchain). A measure is flagged at 1.5 times and 30 s
+  longer, with at least 3 baselines. Cold and full builds are measured by
+  their total and each step; package and patch by their steps; a fresh
+  recomp or analyze by its step; an incremental build by seconds per edge.
+
+The thresholds are `[bench.db.regress]` in `game.toml`. A flag is printed
+and the exit code stays 0, unless you pass `--strict`. `bench integrate
+--golden` prints regress for the build it shipped once the golden ends,
+and `package` prints its own build times. Neither changes its exit code.
 
 ## Developer tools
 
@@ -510,7 +560,6 @@ arguments; `mygame <tool> --help` prints them.
 | `mygame golden <subcommand>` | the golden-frame compare: `plan`, `frames`, `diff`, `check`, `prune`, `record`, `reference`, `dumpat`, `anchors`, `pulls`, `refs`, and `run` |
 | `mygame pacing-stats LOG...` | frame-pacing statistics from run logs (`RECOMP_TRACE=flip,pacing=all`): interval percentiles, flips/s, an A/B with `--arm` |
 | `mygame bench-matrix <command>` | settings matrices: `plan`, `run`, `series`, `collect`, `analyse`, `compare`, `windows`, and `report` |
-| `mygame benchlog-retention` | retention for the `bench-logs/` store; a dry run unless `--apply` |
 | `mygame audio-check WAV` | checks on an audio dump or an xemu reference capture; runs in the game's `.venv` (needs numpy) |
 | `mygame wrapper --check` / `--print` | compare the game's bootstrap with this CLI's template, or print the template |
 | `mygame workflow --check` / `--print` | compare `release-wizard.yml` (with `[wizard]`) and `checks.yml` (with `[public]`) with this CLI's templates, or print them |

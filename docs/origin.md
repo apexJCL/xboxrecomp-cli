@@ -37,7 +37,6 @@ The commits there that built this code:
 | `src/xboxrecomp_cli/package/progress.py` | `scripts/progress.py` |
 | `src/xboxrecomp_cli/golden.py` | `scripts/golden.py` |
 | `src/xboxrecomp_cli/pacing_stats.py` | `scripts/pacing_stats.py` |
-| `src/xboxrecomp_cli/benchlog_retention.py` | `scripts/benchlog-retention.py` |
 | `src/xboxrecomp_cli/audio_check.py` | `scripts/audio_check.py` |
 | `src/xboxrecomp_cli/bench/*.py` | `scripts/benchlib/*.py` (`__init__`, `checks`, `config`, `golden`, `pacing`, `remote`, `sync`) |
 | `src/xboxrecomp_cli/bench/host/*` | `scripts/benchlib/host/*`, made game-agnostic (prologue values from game.toml) |
@@ -45,7 +44,7 @@ The commits there that built this code:
 | `src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake` | `cmake/llvm-mingw-x86_64.cmake` |
 | `tests/test_cli.py` | `scripts/test_blinx2_cli.py` |
 | `tests/test_bench_cli.py`, `tests/testdata/bench_parity.json` | `scripts/test_bench_cli.py`, `scripts/testdata/bench_parity.json` |
-| `tests/test_<name>.py` | `scripts/test_<name>.py` for `bench_checks`, `bench_hold`, `package_lib`, `golden`, `game_icon`, `progress`, `pacing_stats`, `benchlog_retention` and `audio_check` |
+| `tests/test_<name>.py` | `scripts/test_<name>.py` for `bench_checks`, `bench_hold`, `package_lib`, `golden`, `game_icon`, `progress`, `pacing_stats` and `audio_check` |
 | `tests/testdata/game/` | `game.toml`, `.gitignore`, `config/setup-pins.json` and `analysis/golden/{golden,audio}.json` (frame hashes zeroed, host name generic) |
 
 These are new here and have no earlier history: `manifest.py`,

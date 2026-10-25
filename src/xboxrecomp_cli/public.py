@@ -728,6 +728,11 @@ def export(ctx, a):
         host.say("    " + f)
     if tag:
         host.say("  tag refs/public-tags/%s %s" % (tag, tag_sha[:12]))
+        # The new tag and its map line are both written: the db's
+        # releases can name the release's private sha and pins now.
+        from .benchdb import releases
+
+        releases.after_tag(ctx.game.root, say=lambda m: host.say("  " + m))
     host.say("  map: %s" % mp)
     push = "git push %s %s:refs/heads/%s" % (p["remote"], ctx.public_ref, p["branch"])
     if fresh:

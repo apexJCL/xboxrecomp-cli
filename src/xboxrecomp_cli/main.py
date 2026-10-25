@@ -7,7 +7,7 @@ the game's single-file CLI did. The commands and their help are below; the
 top-level help is helptext.py's.
 
 Developer tools outside the help's command list (the game's former
-scripts): `golden`, `pacing-stats`, `bench-matrix`, `benchlog-retention`,
+scripts): `golden`, `pacing-stats`, `bench-matrix`,
 `audio-check` (each passes the game's paths from game.toml and takes the
 script's own arguments), and `wrapper --check` (the game's bootstrap against this CLI's
 template).
@@ -84,9 +84,26 @@ def cmd_build(a):
 
 def _stage_cmd(fn):
     def cmd(a):
-        fn(a.extra)
+        if fn is pipeline.stage_recomp:
+            # The standalone recomp is a build in the db (benchdb, D13).
+            from .benchdb import live
+
+            live.gen_verb(
+                host.g(), "recomp", [("recomp", lambda: fn(a.extra))], _toolkit_dir_or_none()
+            )
+        else:
+            fn(a.extra)
 
     return cmd
+
+
+def _toolkit_dir_or_none():
+    from . import toolkit
+
+    try:
+        return toolkit.toolkit_dir()
+    except Exception:  # noqa: BLE001 (the record just lacks the toolkit tree)
+        return None
 
 
 def _cfg_stage(p):
@@ -111,7 +128,9 @@ def cmd_analyze(a, more=()):
     fingerprint.warn(fingerprint.current())
     resources.check_disk([resources.generate_need()] + list(more), a.ignore_disk_space)
     resources.warn_tools()
-    pipeline.analyze()
+    from .benchdb import live
+
+    live.gen_verb(host.g(), "analyze", pipeline.analyze_stages(), _toolkit_dir_or_none())
 
 
 def cmd_all(a):
@@ -635,14 +654,6 @@ def tool_argv(name, argv):
         from . import bench_matrix as mod
 
         return mod.main(argv, prog="%s bench-matrix" % G.slug, exe_name=G.exe_name)
-    if name == "benchlog-retention":
-        from . import benchlog_retention as mod
-
-        gj = G.m["golden"]
-        extra = ["--root", G.root] if "--root" not in argv else []
-        extra += ["--golden-json", gj["json"]] if gj["json"] else []
-        extra += ["--golden-audio", gj["audio"]] if gj["audio"] else []
-        return mod.main(extra + argv)
     if name == "audio-check":
         # numpy is the game's tools environment's, not this CLI's: the
         # script runs there, as it did from the game's scripts/.
@@ -667,7 +678,6 @@ TOOLS = (
     "golden",
     "pacing-stats",
     "bench-matrix",
-    "benchlog-retention",
     "audio-check",
     "wrapper",
     "workflow",

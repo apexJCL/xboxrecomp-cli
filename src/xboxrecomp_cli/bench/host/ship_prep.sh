@@ -6,6 +6,9 @@
 #@ copy, BENCH_GAME_FILES; a leading ~/ unquoted so ~ expands here).
 mkdir -p "$REMOTE_GAME/$DEST" "$REMOTE_GAME/bench-logs" "$CLI_DIR/src/xboxrecomp_cli"
 cd "$REMOTE_GAME"
+# Its time is when it was last shipped to: benchdb clean keeps a run
+# directory shipped to recently (D11 guard 5), whatever its files say.
+touch .
 # A new run directory starts as a copy of the newest other one: rsync then
 # sends only the blocks of the exe that changed, not all of it.
 if [ ! -f "$DEST/$EXE" ]; then

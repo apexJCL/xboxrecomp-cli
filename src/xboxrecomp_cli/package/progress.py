@@ -207,6 +207,9 @@ class View:
         self.last_pct = -10
         self.spin = 0
         self.timings = self._load_timings()
+        # Every ended step as [label, secs, detail], failed ones too: the
+        # package's build record (benchdb) takes them as its steps.
+        self.steps = []
 
     # -- output primitives
     def _w(self, s):
@@ -259,6 +262,7 @@ class View:
         if not self.label:
             return
         took = self.clock() - self.t0
+        self.steps.append([self.label, round(took, 3), None if ok else "failed"])
         if ok:
             self.timings[self.label] = round(took, 1)
             self._save_timings()

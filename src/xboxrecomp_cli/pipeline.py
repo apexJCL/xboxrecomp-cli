@@ -437,12 +437,20 @@ def stage_recomp(extra=()):
     write_gen_key()
 
 
+def analyze_stages():
+    """analyze's stages in order, as (name, fn): the verb times each one."""
+    return [
+        ("parse", stage_parse),
+        ("disasm", stage_disasm),
+        ("funcid", stage_funcid),
+        ("abi", stage_abi),
+        ("names", maybe_names),
+    ]
+
+
 def analyze():
-    stage_parse()
-    stage_disasm()
-    stage_funcid()
-    stage_abi()
-    maybe_names()
+    for _name, fn in analyze_stages():
+        fn()
 
 
 # ── generation key ───────────────────────────────────────────────────────

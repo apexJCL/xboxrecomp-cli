@@ -340,6 +340,10 @@ def write_text(path, text):
 def cmd_golden(b, args, bench_env=None, kind="golden"):
     b.need_host()
     mode, force, force_tests, only = parse_args(args)
+    from ..benchdb import live
+
+    started = live.now()
+    b.pull_inbox()
     check_dump(b.cfg.game)
     check_presets(b.cfg.game)
     if bench_env is None:
@@ -496,7 +500,40 @@ def cmd_golden(b, args, bench_env=None, kind="golden"):
                 f.write(session_line(kind, tests, words, rc, only, host=host))
         except OSError as e:
             print("golden: warning: %s not written (%s)" % (sessions, e), file=sys.stderr)
+        record_session(b, kind, started, tests, only, rc, runs, notes)
     return rc
+
+
+def record_session(b, kind, started, tests, only, rc, runs, notes):
+    """The session in the db beside its TSV line (benchdb, D7): each run
+    re-recorded with its scenario, then one session row with the verdicts.
+    Warn-only, as the TSV write is."""
+    from ..benchdb import live
+
+    logs = os.path.join(b.cfg.game_dir, "bench-logs")
+    verdicts = {}
+    host = None
+    for scen, (stamp, _frames, _clean) in runs.items():
+        b.record_run(stamp, scenario=scen, kind="golden")
+        verdicts[scen] = (os.path.join(logs, stamp), notes[scen][4])
+    try:
+        from ..benchdb import config as db_config
+
+        host = live.host_of(db_config.load(cwd=logs), b.cfg.host)
+    except Exception as e:  # noqa: BLE001
+        live.warn("the host of %s" % b.cfg.host, e)
+    live.session(
+        logs,
+        b.cfg.game.slug,
+        kind,
+        host=host,
+        backend=BENCH_BACKEND,
+        started=started,
+        tests=tests,
+        only=only,
+        rc=rc,
+        verdicts=verdicts,
+    )
 
 
 def check_each(b, runs, notes, prune_after):

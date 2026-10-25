@@ -342,6 +342,29 @@ def git_state(d):
     return r.stdout.strip() + (" (%d paths dirty)" % n if n else " clean")
 
 
+def provenance_lines(o):
+    """run-info's toolkit:, cli: and build: lines: the trees beside the
+    game's, and the build record the exe came from (benchdb, D7), so a
+    Mac run carries what a shipped run's built: lines do."""
+    from .benchdb import live
+    from .cli_dir import cli_dir
+
+    out = []
+    try:
+        from . import toolkit
+
+        tk = toolkit.toolkit_dir()
+    except Exception:  # noqa: BLE001 (no game context: the line is left out)
+        tk = None
+    for name, d in (("toolkit", tk), ("cli", cli_dir())):
+        if d and os.path.isdir(d):
+            out.append("%-7s %s %s" % (name + ":", d, git_state(d)))
+    doc = live.record_for_exe(o["exe"], o.get("exe_sha256"))
+    if doc:
+        out.append("build:  %s" % doc["uuid"])
+    return out
+
+
 def run_one(o, scen, sc, scen_env, secs, say):
     """One scenario's run; returns (run dir, exit code, why it stopped,
     wall seconds to the stop, last flip)."""
@@ -382,6 +405,9 @@ def run_game(o, sc, d, env, secs, say):
         "backend: %s" % o["backend"],
         "exe:    %s  %s" % (sha256_file(o["exe"]), o["exe"]),
         "tree:   %s %s" % (o["root"], git_state(o["root"])),
+    ]
+    info += provenance_lines(o)
+    info += [
         "env:    %s"
         % " ".join("%s=%s" % (k, v) for k, v in sorted(env.items()) if k.startswith("RECOMP_")),
         "limit:  %d s (SIGINT); stop at the last frame's flip" % secs,
@@ -564,7 +590,11 @@ def cmd_run(args):
         print(msg)
         sys.stdout.flush()
 
-    words, rcs, total = [], [], 0.0
+    from .benchdb import live
+
+    o["exe_sha256"] = sha256_file(o["exe"])
+    started = live.now()
+    words, rcs, total, verdicts = [], [], 0.0, {}
     try:
         with mac_lock("golden run " + " ".join(scens), o["lock_wait"], say=say) as waited:
             o["waited"] = waited
@@ -584,11 +614,35 @@ def cmd_run(args):
                 word, crc = check_and_prune(d, scen, erc, lines, o["keep"])
                 words.append("%s %s" % (scen, word))
                 rcs.append(1 if erc else crc)
+                verdicts[scen] = (d, word)
+                live.run(
+                    d,
+                    game.slug,
+                    kind="golden",
+                    backend=o["backend"],
+                    scenario=scen,
+                    secs=round(wall, 1),
+                    exit_code=rc,
+                )
     except RunError as e:
         print(e, file=sys.stderr)
         return e.rc
     say("\ngolden run: verdicts: %s (%.0f s of runs)" % (", ".join(words), total))
-    return 1 if 1 in rcs else 2 if any(rcs) else 0
+    rc = 1 if 1 in rcs else 2 if any(rcs) else 0
+    if verdicts:
+        doc = live.record_for_exe(o["exe"], o["exe_sha256"])
+        live.session(
+            o["out"],
+            game.slug,
+            "golden-run",
+            backend=o["backend"],
+            build=doc["uuid"] if doc else None,
+            started=started,
+            only=",".join(o["scens"]) or None,
+            rc=rc,
+            verdicts=verdicts,
+        )
+    return rc
 
 
 def check_and_prune(d, scen, erc, lines, keep):
@@ -807,6 +861,7 @@ def cmd_play(args):
         % (o["scen"], o["backend"], "from its pad_script" if o["script"] else "from the title"),
         "exe:    %s  %s" % (sha256_file(exe), exe),
         "tree:   %s %s" % (game.root, git_state(game.root)),
+        *provenance_lines(dict(o, exe=exe)),
         "seed:   %s (copied to %s)" % (seed, hdd)
         if seed
         else "seed:   none (an empty %s)" % hdd
@@ -881,6 +936,17 @@ def cmd_play(args):
     info.append("stop:   %s at flip %d after %.1f s, exit %s" % (why, flog.last, wall, rc))
     with open(os.path.join(d, "run-info.txt"), "w") as f:
         f.write("\n".join(info) + "\n")
+    from .benchdb import live
+
+    live.run(
+        d,
+        game.slug,
+        kind="play",
+        backend=o["backend"],
+        scenario=o["scen"],
+        secs=round(wall, 1),
+        exit_code=rc,
+    )
     try:
         with open(o["record"]) as f:
             n = sum(1 for x in f if x.strip() and not x.startswith("#"))

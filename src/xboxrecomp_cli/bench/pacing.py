@@ -79,6 +79,8 @@ def cmd_pacing(b, args):
                     )
                 with open(os.path.join(out, "runs.txt"), "a") as fh:
                     fh.write("%d %s\n" % (k, stamp))
+                # The run row again with its arm, so the db can split A from B.
+                b.record_run(stamp, kind="pacing", scenario=scen, arm="AB"[k], arm_env=envs[k])
                 logs[k].append(os.path.join(b.cfg.game_dir, "bench-logs", stamp, "game-stdio.log"))
     finally:
         release_run_lock(b)

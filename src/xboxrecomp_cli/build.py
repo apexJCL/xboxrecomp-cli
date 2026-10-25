@@ -247,6 +247,8 @@ def build(
     reconfigure=False,
     stale_ok=False,
     jobs=0,
+    command="build",
+    lineage=None,
 ):
     """Configure once (the generator is fixed by the first configure; an
     existing tree keeps its own), then build incrementally. stock (package's
@@ -254,7 +256,8 @@ def build(
     starts that tree's cache afresh. A gen/ stale against its key is refused
     unless stale_ok: it compiles, then fails at link or misbehaves (a
     wrapped function's gen/ from before the wrap links twice). jobs: --jobs
-    N, else 0 for as many as the free memory holds (resources.size)."""
+    N, else 0 for as many as the free memory holds (resources.size).
+    command and lineage go into its build-record.json (benchdb, D7)."""
     g = host.g()
     check_build_target(target)
     host.require(os.path.join(g.gen, "recomp_funcs.h"), "recomp")
@@ -266,9 +269,7 @@ def build(
     bdir = bdir or build_dir(target)
     tk = toolkit.toolkit_dir()
     if not os.path.isfile(os.path.join(tk, "CMakeLists.txt")):
-        raise CliError(
-            "no toolkit at %s: run '%s setup' or set XBOXRECOMP_DIR" % (tk, host.prog())
-        )
+        raise CliError("no toolkit at %s: run '%s setup' or set XBOXRECOMP_DIR" % (tk, host.prog()))
     if target == "windows":
         reset_stale_toolchain(bdir, toolchain_file())
     reset_stale_toolkit(bdir, tk)
@@ -283,6 +284,43 @@ def build(
         host.say("WARNING: " + w)
     extra = pool_args(bdir, sizing.gen_jobs) if pool else []
     configured = os.path.isfile(os.path.join(bdir, "CMakeCache.txt"))
+    timer = build_timer(g, target, bdir, tk, cmake, ninja, command, lineage, configured)
+    timer.doc["jobs"] = sizing.jobs
+    timer.doc["warm"] = (
+        "cold" if not configured else "reconfigured" if (reconfigure or stock) else "warm"
+    )
+    if timer.doc["warm"] != "warm":
+        timer.doc["kind"] = "full"
+    edges0 = ninja_log_lines(bdir)
+    try:
+        exe = configure_and_compile(
+            g,
+            target,
+            bdir,
+            tk,
+            cmake,
+            ninja,
+            env,
+            cmake_args,
+            extra,
+            stock,
+            configured,
+            sizing,
+            timer,
+        )
+    except BaseException:
+        timer.doc["edges"] = edges_since(bdir, edges0)
+        timer.finish(bdir, ok=False)
+        raise
+    timer.doc["edges"] = edges_since(bdir, edges0)
+    timer.doc["ccache"] = ccache_state(bdir)
+    timer.finish(bdir, ok=True, exe=exe)
+    return exe
+
+
+def configure_and_compile(
+    g, target, bdir, tk, cmake, ninja, env, cmake_args, extra, stock, configured, sizing, timer
+):
     if stock or not configured:
         cfg = [
             cmake,
@@ -300,12 +338,21 @@ def build(
                 "-DCMAKE_TOOLCHAIN_FILE=" + toolchain_file(),
                 "-DLLVM_MINGW_ROOT=" + fetch.mingw_root(),
             ]
-        host.run(cfg + list(cmake_args) + extra, env=env)
+        timer.timed("configure", lambda: host.run(cfg + list(cmake_args) + extra, env=env))
     elif cmake_args or (extra and pool_moved(bdir, extra)):
         # A new pool depth regenerates build.ninja only: no compile command
         # changes, so Ninja rebuilds nothing.
-        host.run([cmake, "-B", bdir] + list(cmake_args) + extra, env=env)
-    host.run([cmake, "--build", bdir, "--config", "Release", "-j", str(sizing.jobs)], env=env)
+        timer.timed(
+            "configure",
+            lambda: host.run([cmake, "-B", bdir] + list(cmake_args) + extra, env=env),
+            "reconfigure",
+        )
+    timer.timed(
+        "cmake --build",
+        lambda: host.run(
+            [cmake, "--build", bdir, "--config", "Release", "-j", str(sizing.jobs)], env=env
+        ),
+    )
     if host.LAST_PEAK:
         resources.record("compile:" + target, host.LAST_PEAK, sizing.gen_jobs)
         host.say("build: largest compile job %s" % resources.gb(host.LAST_PEAK))
@@ -313,3 +360,91 @@ def build(
     if not os.path.isfile(exe):
         raise CliError("the build finished but %s is missing" % exe)
     return exe
+
+
+# ---- the build's record (benchdb, D7) -------------------------------------------
+
+
+def ninja_log_lines(bdir):
+    """The entries in .ninja_log (one per edge run), or None without one."""
+    try:
+        with open(os.path.join(bdir, ".ninja_log"), "rb") as f:
+            return sum(1 for line in f if not line.startswith(b"#"))
+    except OSError:
+        return None
+
+
+def edges_since(bdir, before):
+    """Edges the build ran: the lines .ninja_log gained. Ninja rewrites
+    the log when it recompacts it, so a shrink reads as unknown."""
+    after = ninja_log_lines(bdir)
+    if after is None:
+        return None
+    if before is None:
+        return after
+    return after - before if after >= before else None
+
+
+def ccache_state(bdir):
+    """'off' when no compiler launcher is cached, 'on' when ccache is it,
+    the launcher's name otherwise; None without a cache."""
+    if not os.path.isfile(os.path.join(bdir, "CMakeCache.txt")):
+        return None
+    launch = cached(bdir, "CMAKE_C_COMPILER_LAUNCHER") or cached(
+        bdir, "CMAKE_CXX_COMPILER_LAUNCHER"
+    )
+    if not launch:
+        return "off"
+    return "on" if "ccache" in os.path.basename(launch) else os.path.basename(launch)
+
+
+def toolchain_line(target, cmake, ninja):
+    """'llvm-mingw <tag>, cmake 3.31, ninja 1.12.1' or '<CLT|Xcode>, ...':
+    builds compare only within one toolchain (D13)."""
+    import subprocess
+
+    parts = []
+    if target == "windows":
+        try:
+            parts.append("llvm-mingw %s" % fetch.mingw_tag())
+        except Exception:  # noqa: BLE001 (a record field, never a failure)
+            parts.append("llvm-mingw ?")
+    elif sys.platform == "darwin":
+        dev = os.environ.get("DEVELOPER_DIR", "")
+        if not dev:
+            try:
+                dev = subprocess.run(
+                    ["xcode-select", "-p"], capture_output=True, text=True, timeout=5
+                ).stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                dev = ""
+        parts.append("CLT" if "CommandLineTools" in dev else "Xcode" if dev else "clang ?")
+    v = cmake_version(cmake)
+    parts.append("cmake %s" % ("%d.%d" % v if v else "?"))
+    if ninja:
+        try:
+            nv = subprocess.run(
+                [ninja, "--version"], capture_output=True, text=True, timeout=5
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            nv = "?"
+        parts.append("ninja %s" % (nv or "?"))
+    return ", ".join(parts)
+
+
+def build_timer(g, target, bdir, tk, cmake, ninja, command, lineage, configured):
+    from .benchdb import live
+    from .cli_dir import cli_dir
+
+    t = live.Timer(
+        g.slug,
+        target,
+        command,
+        # The host's own OS: a windows exe built on a Mac is a cross build.
+        cross=int(target != ("macos" if host.host_os() == "macos" else "windows")),
+        toolchain=toolchain_line(target, cmake, ninja),
+        trees=live.trees(g.root, tk, cli_dir()),
+    )
+    if lineage:
+        t.doc["lineage"] = lineage
+    return t

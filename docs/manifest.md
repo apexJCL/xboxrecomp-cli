@@ -402,6 +402,40 @@ What `bench gc` reads to decide which bench runs are still named somewhere. Ever
 | `keep` | `3` | The newest runs kept per scenario and kind (golden, pacing, plain). |
 | `days` | `7` | Runs younger than this many days are kept. |
 
+## [bench.db]
+
+What `benchdb` keeps of this game's runs and builds ([commands.md](commands.md#benchdb-verb)). The db path, the roots and the hosts are workspace facts in the private `benchdb.toml`, never here.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `keep_releases` | `2` | The newest published releases (not withdrawn) whose builds' runs keep their large files: the current and the previous one. |
+| `internal_keep` | `3` | The newest internal builds since the last release whose runs keep their large files. The newest integration build is one of them and is never pushed out by branch builds. |
+| `heavy_log` | `1048576` | A log over this many bytes is a large file. Frames and disk images always are. |
+| `hash_max` | `1048576` | Files up to this many bytes get a sha256 in the artifacts table. |
+
+## [bench.db.regress]
+
+The thresholds of `benchdb regress`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `flips_drop` | `0.25` | A run group is flagged when its median flips/s is at most `1 - flips_drop` times the baseline's. |
+| `ms_rise` | `1.5` | A run group is flagged when its median frame-time p50 or p95 is at least this many times the baseline's. |
+| `build_rise` | `1.5` | A build value is flagged when it is at least this many times the median of the comparable builds before it... |
+| `build_min_secs` | `30` | ...and at least this many seconds longer. |
+| `build_window` | `5` | How many comparable builds before it make the median. |
+| `build_min_baselines` | `3` | Fewer comparable builds are printed with their count and never flagged. |
+| `build_min_edges` | `20` | An incremental build is compared by seconds per Ninja edge only when it ran at least this many edges. |
+
+## [release]
+
+Which builds belong to a published version (`benchdb releases`).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `tag_glob` | `"v*"` | The public tags that are releases. |
+| `inputs` | `[]` | The paths, relative to the game root, whose changes make a different build. A release commit that touches none of them (a changelog, docs) still matches the build benched before it. Empty is `src/`, `config/` and the `[pipeline]` and `[build]` paths. The `[toolkit]` and `[cli]` tables of `game.toml` are always inputs. |
+
 Host settings are not part of the manifest: `BENCH_HOST`, `BENCH_DIR` and
 the rest come from the environment or the game's `scripts/bench.env`
 (`<game> bench --help`).

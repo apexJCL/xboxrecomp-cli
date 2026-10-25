@@ -11,6 +11,9 @@ Remove-Item -LiteralPath $Params
 $run = $p.run_dir
 $exact = Join-Path $run $p.exact
 New-Item -ItemType Directory -Force -Path $exact, (Join-Path $run 'bench-logs') | Out-Null
+# Its time is when it was last shipped to: benchdb clean keeps a run
+# directory shipped to recently (D11 guard 5), whatever its files say.
+(Get-Item -LiteralPath $run).LastWriteTime = Get-Date
 # A new run directory starts as a copy of the newest other one's exe
 # directory: scp has no deltas, so the runtime files that did not change
 # (DLLs, data) are then not sent again.

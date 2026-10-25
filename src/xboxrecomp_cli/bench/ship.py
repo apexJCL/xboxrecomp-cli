@@ -133,6 +133,13 @@ def provenance(cfg, exe, exe_sha, gen, first):
     ]
     if gen:
         lines.append("gen: sha256 %s (%d files)" % gen)
+    from ..benchdb import live
+
+    rec = live.record_for_exe(exe, exe_sha)
+    if rec:
+        # The run-info quotes it as `built:  build: <uuid>`: the db links
+        # the run to this very build, not to any with the same exe sha.
+        lines.append("build: %s" % rec["uuid"])
     lines.append("exe: %s %s" % (exe_sha, os.path.basename(exe)))
     return "\n".join(lines) + "\n"
 
@@ -162,9 +169,10 @@ def gen_of(cfg):
     return package_lib.gen_digest(gen)
 
 
-def build_local(b, cmake_args=(), stale_ok=False):
+def build_local(b, cmake_args=(), stale_ok=False, command="bench build", lineage=None):
     """`<game> build windows` for the bench's tree, then its provenance
-    beside the exe. Returns (exe, sha256, gen (digest, files))."""
+    beside the exe. Returns (exe, sha256, gen (digest, files)). command and
+    lineage go into the build's record."""
     from .. import build as build_mod
     from ..host import CliError
 
@@ -184,7 +192,14 @@ def build_local(b, cmake_args=(), stale_ok=False):
     gen_before = gen_of(c)
     with driving(c):
         try:
-            exe = build_mod.build("windows", list(cmake_args), stale_ok=stale_ok, jobs=jobs)
+            exe = build_mod.build(
+                "windows",
+                list(cmake_args),
+                stale_ok=stale_ok,
+                jobs=jobs,
+                command=command,
+                lineage=lineage,
+            )
         except CliError as e:
             raise BenchError("build: %s" % e) from None
     gen = gen_of(c)
@@ -196,6 +211,19 @@ def build_local(b, cmake_args=(), stale_ok=False):
             % (c.game.m["pipeline"]["gen"], gen_before and gen_before[0], gen and gen[0])
         )
     sha = sha256_file(exe)
+    from ..benchdb import live
+
+    rec = live.record_for_exe(exe, sha)
+    if rec:
+        # ship's side of the same record: what the bench built it for.
+        live.build(
+            os.path.dirname(live.record_path_of(exe, rec)),
+            {
+                "uuid": rec["uuid"],
+                "gen_digest": gen[0] if gen else None,
+                "ship": {"host": c.host, "run_dir": c.remote_game},
+            },
+        )
     with open(os.path.join(os.path.dirname(exe), LOCAL_PROVENANCE), "w", encoding="utf-8") as f:
         f.write(provenance(c, exe, sha, gen, "built"))
     b.say("build: %s sha256 %s" % (os.path.relpath(exe, c.game_dir), sha))

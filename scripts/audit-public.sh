@@ -17,7 +17,10 @@
 # the private patterns below; the files the range adds for binaries and
 # game data (*.xbe *.iso *.xiso *.bmp *.png *.wav *.sav, and *.pack, a
 # texture pack made from game data); every author and
-# committer address, which must be the noreply one. Exit 1 on any hit.
+# committer address, which must be the noreply one; the bench results db
+# and its config (benchdb.toml, *.db and its -wal/-shm/-journal, *.sqlite,
+# *.sqlite3, and any file that starts with SQLite's magic, whatever its
+# name). Exit 1 on any hit.
 # Commits listed in scripts/audit-public-allowed-messages were public before
 # a pattern that matches their message was added; only their messages are
 # skipped.
@@ -58,6 +61,10 @@ PUBLIC_PATTERNS=(
     '@[d]eck([^a-z0-9_.-]|$)'
 )
 DATA_EXT='\.(xbe|iso|xiso|bmp|png|wav|sav|pack)$'
+# The bench results db holds every host's paths and runs, and its config
+# names the hosts: neither is ever published.
+DB_PATH='(^|/)benchdb\.toml$|\.(db|db-wal|db-shm|db-journal|sqlite|sqlite3)$'
+DB_MAGIC='SQLite format 3'
 # Files that may be binary or carry a data extension (extended regexes on
 # the path): the wizard's window icon, rendered from the committed SVG and
 # checked against it by TestIcongen. The tests build their fixtures in
@@ -206,6 +213,18 @@ while IFS= read -r f; do
     [ -z "$f" ] && continue
     allowed "$f" && continue
     [[ $f =~ $DATA_EXT ]] && hit "game data or capture: $f"
+done <<<"$files"
+# The files as the push leaves them: HEAD, or the range's tip.
+tip=HEAD
+[ $all = 1 ] || tip=${range##*..}
+while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    if [[ $f =~ $DB_PATH ]]; then
+        hit "bench db or its config: $f"
+        continue
+    fi
+    magic=$(git cat-file -p "$tip:$f" 2>/dev/null | head -c ${#DB_MAGIC} | tr -d "\000" || true)
+    [ "$magic" = "$DB_MAGIC" ] && hit "bench db (SQLite file): $f"
 done <<<"$files"
 while IFS= read -r f; do
     [ -z "$f" ] && continue

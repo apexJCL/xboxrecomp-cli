@@ -128,6 +128,42 @@ def test_each_rule_hits(d, name, data, msg, email, rule):
     assert audit(r, "--all").returncode == 1, rule
 
 
+# The bench results db and its config never leave the maintainer's
+# machines: by name, and by SQLite's magic under any name.
+SQLITE = b"SQLite format 3\x00" + bytes(84)
+
+
+@pytest.mark.parametrize(
+    "name,data,rule",
+    [
+        ("benchdb.toml", "db = 'x'\n", "bench db or its config: benchdb.toml"),
+        ("notes/benchdb.toml", "db = 'x'\n", "bench db or its config: notes/benchdb.toml"),
+        ("bench.db", "x\n", "bench db or its config: bench.db"),
+        ("bench.db-wal", "x\n", "bench db or its config: bench.db-wal"),
+        ("bench.db-shm", "x\n", "bench db or its config: bench.db-shm"),
+        ("data/runs.sqlite3", "x\n", "bench db or its config: data/runs.sqlite3"),
+        ("fixtures/results.bin", SQLITE, "bench db (SQLite file): fixtures/results.bin"),
+    ],
+)
+def test_bench_db_refused(d, name, data, rule):
+    r = repo(d)
+    commit(r, name, data)
+    p = audit(r)
+    assert p.returncode == 1, (rule, p.stdout, p.stderr)
+    assert "HIT  " + rule in p.stdout, (rule, p.stdout)
+    assert "HIT  " + rule in audit(r, "--all").stdout, rule
+
+
+def test_bench_db_near_names_pass(d):
+    """Names that only contain the db's words are not hits."""
+    r = repo(d)
+    commit(r, "src/benchdb/store.py", "x = 1\n")
+    commit(r, "docs/benchdb.toml.md", "the config\n")
+    commit(r, "src/db.py", "SQLite format 2 is not a header\n")
+    p = audit(r)
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
 @pytest.mark.parametrize(
     "line",
     [

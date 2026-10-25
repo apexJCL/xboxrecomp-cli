@@ -106,15 +106,10 @@ Commands:
             host into ./bench-logs/              [stamp, default: newest run]
   symbolize name the native addresses in a run's @CRASH_TAG@ reports, into
             bench-logs/<stamp>/crash-symbols.txt  [stamp, default: newest run]
-  gc        list bench runs nothing names any more, with their sizes; a dry
-            run unless --apply. Only stamp-named run dirs ever go; kept:
-            other games' runs, runs named in golden.json, TASKS.md,
-            RESUME*.md, openspec/ or game.toml [bench.gc] refs (in every
-            worktree), runs without exit-code, young runs and the newest per
-            scenario. --host: the host's store, under the run lock; a run
-            goes only when this machine holds a whole copy
-            [--apply] [--host] [--keep N] [--days D] [--include-unowned]
-            [--refs PATH]... [--quiet]
+  gc        replaced by `benchdb plan` and `benchdb clean`: prints the
+            benchdb plan call and exits 2   [--host] [--days D]
+  db        the bench results database: `benchdb VERB` for this game
+            (import, query, releases, show, regress, plan, clean, ...)
   shell     open an ssh shell in the host's project directory
   all       sync, build, run (local: build here, ship, run)
   integrate build the integration heads (local: here, then ship and check
@@ -465,6 +460,7 @@ class Bench:
                 expect[len("EXPECT_SHA=") :].strip(),
             )
             self.cmd_logs([stamp])
+            self.record_run(stamp)
             self.say("local: %s" % os.path.join(c.game_dir, "bench-logs", stamp))
             return stamp
         self.step("run: under %s -> bench-logs/%s" % (c["PROTONPATH"], stamp))
@@ -493,8 +489,26 @@ class Bench:
                 "(another ship to the same run directory?); nothing ran" % c.remote_game
             )
         self.cmd_logs([stamp])
+        self.record_run(stamp)
         self.say("local: %s" % os.path.join(c.game_dir, "bench-logs", stamp))
         return stamp
+
+    def pull_inbox(self):
+        """The host's inbox records into the db first (benchdb pull, D7.6):
+        nothing waits when the host or the db is not there."""
+        from ..benchdb import pull
+
+        pull.pull_quietly(self.cfg.game_dir, self.cfg.host, say=lambda m: self.say("benchdb " + m))
+
+    def record_run(self, stamp, **fields):
+        """The pulled run in the db (benchdb, D7): host from BENCH_HOST,
+        never the uname. Warn-only; returns the run id or None."""
+        from ..benchdb import live
+
+        d = os.path.join(self.cfg.game_dir, "bench-logs", stamp)
+        if not os.path.isdir(d):
+            return None
+        return live.run(d, self.cfg.game.slug, host_alias=self.cfg.host, **fields)
 
     def apply_defaults(self, text):
         """text with the game's launch.env.default under it, and a warning
@@ -618,6 +632,9 @@ class Bench:
                 tests_skip.write_record(
                     self.tests_record(), key, parts, self.cfg.host, self.cfg.remote_game
                 )
+                from ..benchdb import live
+
+                live.tests_pass(self.tests_record(), cwd=self.cfg.game_dir)
         elif rc == 75:
             self.say("tests: FAIL the run lock was held for an hour; nothing run")
         elif rc == ship_mod.NO_BUILD_RC:
@@ -722,6 +739,7 @@ class Bench:
                 raise BenchError("integrate: no golden plan")
             select_rows(plan, only)
         c = self.cfg
+        self.pull_inbox()
 
         def git(d, *a):
             return subprocess.run(["git", "-C", d] + list(a), stdout=subprocess.PIPE).stdout.decode(
@@ -793,7 +811,9 @@ class Bench:
         very bytes built."""
         c = self.cfg
         # The stale check above already ran (or --stale-gen-ok skipped it).
-        exe, sha, gen = ship_mod.build_local(self, stale_ok=True)
+        exe, sha, gen = ship_mod.build_local(
+            self, stale_ok=True, command="bench integrate", lineage="integration"
+        )
         self.say("gen: %d files, sha256 %s (unchanged during the build)" % (gen[1], gen[0]))
         ship_mod.ship(self, exe, sha)
         self.step(
@@ -811,7 +831,15 @@ class Bench:
             raise BenchError(
                 "integrate: the host's exe is %s, not the one built here (%s)" % (host_sha, sha)
             )
-        return self.integrate_golden(golden, golden_args)
+        rc = self.integrate_golden(golden, golden_args)
+        if golden:
+            # D13: the shipped build against the previous release, after the
+            # golden's own verdicts; a flag is printed, golden's rc stands.
+            from ..benchdb import live
+
+            rec = live.record_for_exe(exe, sha)
+            live.regress_lines(c.game.root, c.game.slug, rec and rec["uuid"], say=self.say)
+        return rc
 
     def integrate_golden(self, golden, golden_args):
         if not golden:
@@ -946,6 +974,12 @@ def main(argv, game):
     if cmd in ("-h", "--help", "help"):
         sys.stdout.write(render_help(game))
         return 0
+    if cmd == "db":
+        # `<game> bench db VERB`: benchdb with --game set; no bench config
+        # or host is needed to read or write the db.
+        from ..benchdb import cli as benchdb_cli
+
+        return benchdb_cli.main(["--game", game.root] + argv, prog="%s bench db" % game.slug)
     if cmd not in COMMANDS and cmd not in ("sync", "golden", "pacing", "all", "gc"):
         sys.stdout.write(render_help(game))
         return 1

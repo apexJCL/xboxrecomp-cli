@@ -15,6 +15,7 @@ import pytest
 
 from xboxrecomp_cli import golden as G
 from xboxrecomp_cli import golden_run as R
+from xboxrecomp_cli.benchdb import record
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GAME = os.path.join(HERE, "testdata", "game")
@@ -179,8 +180,11 @@ def test_run_stops_after_the_last_needed_flip(tmp_path, monkeypatch, capsys):
     cfg += ["--golden-frames", frames, "--game-root", root]
     rc = G.main(cfg + ["run", "attract", "--exe", exe, "--out", out, "--secs", "30"])
     text = capsys.readouterr().out
-    (d,) = [os.path.join(out, n) for n in os.listdir(out)]
+    # The run dir, and the golden-run session's record beside it.
+    (d,) = [os.path.join(out, n) for n in os.listdir(out) if n != record.SESSIONS]
     assert d.endswith("-metal-attract"), d
+    (sess,) = os.listdir(os.path.join(out, record.SESSIONS))
+    assert record.read(os.path.join(out, record.SESSIONS, sess))["kind"] == "golden-run"
     # attract: title-3d at 230 -> 230 + 301 - 228 = 303; first-3d at 900 ->
     # 900 + 1141 - 897 = 1144; + window 2 + 3: stop from flip 1149.
     info = open(os.path.join(d, "run-info.txt")).read()

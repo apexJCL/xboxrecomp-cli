@@ -50,3 +50,31 @@ def content_memo():
     lib.CONTENT_MEMO.clear()
     yield
     lib.CONTENT_MEMO.clear()
+
+
+@pytest.fixture(autouse=True)
+def no_benchdb_env():
+    """No test reaches a real bench db or inbox through the caller's env:
+    the benchdb tests set these themselves, on temp trees. Its own
+    MonkeyPatch, as pin_stub's: a test's monkeypatch.undo() keeps it."""
+    monkeypatch = pytest.MonkeyPatch()
+    for k in ("BENCHDB_CONFIG", "BENCHDB_INBOX", "BENCHDB_HOST", "BENCHDB_AGENT"):
+        monkeypatch.delenv(k, raising=False)
+    # The walk up from a test's cwd must not find the workspace's own
+    # benchdb.toml: a writer under test would then write the real db.
+    import tempfile
+
+    from xboxrecomp_cli.benchdb import config as db_config
+
+    real = db_config.find
+    tmp = os.path.realpath(tempfile.gettempdir())
+
+    def find(cwd=None):
+        p = real(cwd)
+        if p and not os.path.realpath(p).startswith(tmp + os.sep):
+            return None
+        return p
+
+    monkeypatch.setattr(db_config, "find", find)
+    yield
+    monkeypatch.undo()

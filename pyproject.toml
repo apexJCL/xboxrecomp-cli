@@ -16,6 +16,7 @@ dependencies = []
 
 [project.scripts]
 xbr = "xboxrecomp_cli.main:main"
+benchdb = "xboxrecomp_cli.benchdb.cli:main"
 
 [dependency-groups]
 # ruff at the version the games lock, so the bootstrap a game vendors formats

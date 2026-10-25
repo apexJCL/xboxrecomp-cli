@@ -1106,6 +1106,14 @@ def wrap(a, stage, payload, version, exe, overrides, lib):
         with open(man_path, encoding="utf-8") as f:
             man = json.load(f)
         c = patch.choose(a, man, target, app(), g().m, incr.bundles_dir(st, target))
+        RECORD["kind"] = c.kind
+        if c.kind == "patch":
+            RECORD.update(
+                base_version=c.base.version,
+                base_manifest_sha256=c.base.sha256,
+                payload_bytes=patch.payload_size(c.diff),
+                full_bytes=patch.full_size(man),
+            )
         if c.kind == "patch":
             host.say(
                 "patch: %s (%s of %s; --full for the full bundle)"
@@ -1149,6 +1157,13 @@ def wrap(a, stage, payload, version, exe, overrides, lib):
         return False, key, inputs
 
     def done(ok, key, inputs, outs, man_path):
+        RECORD.update(
+            target=target,
+            version=version,
+            made=not ok,
+            outs=[os.path.abspath(o) for o in outs],
+            manifest_sha256=incr._sha(man_path),
+        )
         if not ok:
             st.record(wname, key, inputs, outs, meta={"basis": dict(basis)})
         incr.record_bundle(st, target, man_path, outs[0], made=not ok)
@@ -1251,22 +1266,113 @@ def prune_bundles(a, target, current):
             "bundles: removed %s (%s; keeping the newest %d)" % (G.rel(p), clean.human(n), keep)
         )
     c.delete()
+    if c.items:
+        from ..benchdb import live
+
+        live.deletions(
+            G.root,
+            "package-prune",
+            [
+                (
+                    p,
+                    n,
+                    "older than the newest %d bundles" % keep,
+                    "failed" if os.path.lexists(p) else "deleted",
+                )
+                for _cat, p, n in c.items
+            ],
+        )
+
+
+# What this package run made, for its build record (benchdb, D7.5): the
+# choice (full or patch, the base, the sizes) and the outputs.
+RECORD = {}
 
 
 def cmd_package(a):
     if getattr(a, "plan", False):
         package(a)
         return
+    from ..benchdb import live
+
     prog = host.progress_lib()
     host.VIEW = prog.View(prog.choose_mode(a.plain or a.verbose), logs=g().logs)
     host.VIEW.verbose = a.verbose
     host.VIEW.plan = []
+    RECORD.clear()
+    timer = live.Timer(g().slug, a.target, "package", kind="package")
+    ok = False
     try:
         package(a)
+        ok = True
     finally:
         host.VIEW.close()
+        uuid = None
+        try:
+            uuid = record_package(a, timer, host.VIEW.steps, ok)
+        except Exception as e:  # noqa: BLE001 (the record never fails the package)
+            live.warn("the package record", e)
+        if ok:
+            # D13: this bundle's build times against the comparable ones.
+            live.regress_lines(g().root, g().slug, uuid, runs=False)
         prog.prune_logs(g().logs)
         host.VIEW = None
+
+
+def record_package(a, timer, steps, ok):
+    """The package run's build record beside its bundle: kind package or
+    patch, its steps from the progress view, its outputs as artifacts.
+    A kept bundle (nothing made) adds no record; a failed run writes
+    failed-<target>.package-record.json in the output folder."""
+    from ..benchdb import live, record
+
+    if ok and not RECORD.get("made"):
+        return None
+    doc = timer.doc
+    doc["steps"] = steps
+    doc["ended"] = live.now()
+    doc["secs"] = round(timer._clock() - timer.t0, 3)
+    doc["ok"] = int(bool(ok))
+    if not ok:
+        return live.package(
+            os.path.join(a.out, "failed-%s%s" % (a.target, PACKAGE_RECORD)), doc, cwd=g().root
+        )
+    patching = RECORD.get("kind") == "patch"
+    for k in ("version", "base_version", "base_manifest_sha256", "payload_bytes", "full_bytes"):
+        if RECORD.get(k) is not None:
+            doc[k] = RECORD[k]
+    doc["kind"] = "patch" if patching else "package"
+    outs = RECORD.get("outs") or []
+    # The bundle index names the same bundle by its manifest's sha256:
+    # the record takes that key, so import does not count it twice.
+    doc["uuid"] = record.derived_uuid("bundle", g().slug, a.target, RECORD["manifest_sha256"])
+    if patching and outs:
+        pj = os.path.join(outs[0], patch.PATCH_JSON)
+        if os.path.isfile(pj):
+            doc["uuid"] = record.derived_uuid("patch", g().slug, os.path.relpath(pj, g().root))
+    arts = []
+    for o in outs:
+        from ..benchdb import parse
+
+        size, files = parse.size_of(o) if os.path.isdir(o) else (os.path.getsize(o), 1)
+        arts.append(
+            {
+                "path": o,
+                "kind": "patch" if patching else "bundle",
+                "heavy": True,
+                "bytes": size,
+                "files": files,
+            }
+        )
+    doc["artifacts"] = arts
+    if not patching and outs and os.path.isfile(outs[0]):
+        doc.setdefault("full_bytes", os.path.getsize(outs[0]))
+    if not outs:
+        return None
+    return live.package(outs[0] + PACKAGE_RECORD, doc, cwd=g().root)
+
+
+PACKAGE_RECORD = ".package-record.json"
 
 
 def package(a):

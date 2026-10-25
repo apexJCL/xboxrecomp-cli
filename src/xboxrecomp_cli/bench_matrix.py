@@ -1129,6 +1129,12 @@ def collect(run_dir, scene=None, exe=None, nm=None):
     with open(os.path.join(run_dir, "run.json"), "w") as f:
         json.dump(out, f, indent=1)
         f.write("\n")
+    try:
+        from .benchdb import live
+
+        live.matrix(run_dir, summary_row(out, run_dir), info)
+    except Exception as e:  # noqa: BLE001 (the db is a side record: never fails collect)
+        print("benchdb: warning: %s not recorded (%s)" % (run_dir, e), file=sys.stderr)
     return out
 
 
