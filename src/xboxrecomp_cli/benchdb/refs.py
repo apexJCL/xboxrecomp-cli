@@ -3,13 +3,15 @@ tree or worktree that any of it names is pinned and never deleted.
 
 It is read over every game of benchdb.toml and every worktree of each
 game's repository, and it fails closed: when git cannot list a game's
-worktrees, or a required file is missing in a main checkout, the whole
-plan is refused, because a partial reference text deletes evidence.
+worktrees, or a required file is missing in a main checkout (a configured
+source, or a TASKS.md or openspec/ the repo tracks), the whole plan is
+refused, because a partial reference text deletes evidence.
 
 The matching is bench gc's: the full relpath, the run name, its stamp,
 and the bare HHMMSS token of the stamp (which may over-protect; that is
-intended). A name with no stamp (a worktree, a scratch dir) is pinned
-when the text names it as a word."""
+intended). A name with no stamp (a topic dir, a worktree, a scratch dir)
+is pinned when the text names a path to it (runs/<topic>, wt/<name>),
+never by the bare name, which is often a word of ordinary prose."""
 
 import fnmatch
 import hashlib
@@ -29,6 +31,8 @@ SKIP_DIRS = {".git", "bench-logs", "third_party", ".venv", "node_modules"}
 MAX_REF_FILE = 8 << 20
 # The pipeline's stage outputs under pipeline.out (pipeline.py).
 STAGE_DIRS = ("disasm", "func_id", "abi", "recomp", "ghidra")
+# Read in every checkout that has them; required where the repo tracks them.
+CONVENTIONAL = ("TASKS.md", "openspec")
 
 
 def protection(text, names, include_named=False):
@@ -48,7 +52,7 @@ def protection(text, names, include_named=False):
                 hit[n] = "referenced (HHMMSS)"
         elif not include_named:
             hit[n] = "named evidence"
-        elif re.search(r"(?<![\w.-])" + re.escape(n) + r"(?![\w-])", text):
+        elif "/" in n and re.search(r"(?<![\w.-])" + re.escape(n) + r"(?![\w-])", text):
             hit[n] = "referenced (name)"
     return hit
 
@@ -116,12 +120,28 @@ def worktrees(root):
     return out
 
 
+# benchdb plan's own table (clean.table), saved to a file: it names every
+# path it weighed, so read as a reference it would pin them all.
+LISTING_ROW = re.compile(r"^(remove|REFUSE) +\S* +\S|^WARNING: ")
+LISTING_END = re.compile(r"^plan \S+: \d+ to remove, .*; \d+ refused$")
+
+
+def is_listing(text):
+    """True for a saved benchdb plan table: its closing "plan <id>: ..."
+    line, and nothing else but its rows. A note that quotes a few rows
+    among prose stays a reference."""
+    lines = [x for x in text.splitlines() if x.strip()]
+    ends = [x for x in lines if LISTING_END.match(x)]
+    return bool(ends) and all(LISTING_ROW.match(x) or LISTING_END.match(x) for x in lines)
+
+
 class Refs:
     """The files read and their text."""
 
     def __init__(self):
         self.files = {}  # realpath -> text
         self.skipped_big = []
+        self.listings = []  # saved plan tables, not read as refs
         self.missing = []
         self.worktrees = 0
         self.exclude = []  # realpaths that are never refs ([refs] exclude)
@@ -146,9 +166,14 @@ class Refs:
                 )
                 return
             with open(real, errors="replace") as f:
-                self.files[real] = f.read()
+                text = f.read()
         except OSError as e:
             self.missing.append("%s (%s)" % (os.path.normpath(path), e.strerror or e))
+            return
+        if is_listing(text):
+            self.listings.append(os.path.normpath(path))
+            return
+        self.files[real] = text
 
     def text(self):
         return "\n".join(self.files.values())
@@ -194,6 +219,18 @@ def _walk(top, suffixes, skip, excl, refs):
                 refs.add(p)
 
 
+def tracked(root, rel):
+    """True when git tracks rel (a file or anything under a dir) in the
+    checkout at root; refuses when git cannot say."""
+    r = subprocess.run(["git", "-C", root, "ls-files", "--", rel], capture_output=True, timeout=120)
+    if r.returncode != 0:
+        raise DbError(
+            "cannot list the tracked files of %s (%s); refusing: the reference text would be "
+            "partial" % (root, r.stderr.decode(errors="replace").strip())
+        )
+    return bool(r.stdout.strip())
+
+
 def read_refs(game, main_root, others, extra=(), refs=None):
     """Refs over the main checkout (every source required) and the other
     worktrees (missing paths skipped). game is a loaded manifest."""
@@ -211,15 +248,23 @@ def read_refs(game, main_root, others, extra=(), refs=None):
         skip |= {os.path.normpath(os.path.join(root, out, d)) for d in STAGE_DIRS}
         required = [m["golden"]["json"]] if m["golden"]["json"] else []
         required += [m["golden"]["audio"]] if m["golden"]["audio"] else []
-        required += ["TASKS.md", "openspec"] + list(gc["refs"])
+        required += list(gc["refs"])
+        # TASKS.md and openspec/ are what most games keep, not what every
+        # game has: they are required where the repo tracks them (a tracked
+        # one gone from the disk is a partial text), and skipped where it
+        # never had them.
+        need = [x for x in CONVENTIONAL if not main or tracked(root, x)]
+        required += need
         # The pipeline's own inputs cite runs too: a seed's "source" names
         # the bench run that observed it.
         required += list(m["pipeline"]["seeds"])
         required += [m["pipeline"]["spin_waits"]] if m["pipeline"]["spin_waits"] else []
-        for rel in required:
+        # An untracked one on the disk is read all the same: a game that
+        # keeps its TASKS.md out of git still cites runs in it.
+        for rel in required + [x for x in CONVENTIONAL if x not in need]:
             p = os.path.join(root, rel)
             if not os.path.exists(p):
-                if main:
+                if main and rel in required:
                     refs.missing.append(p)
                 continue
             if os.path.isdir(p):

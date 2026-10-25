@@ -91,6 +91,13 @@ kind = "host-scratch"
 pattern = ['[a-z0-9-]+-bench']
 lock = "bench-lock"
 
+[roots.pcruns]
+host = "hostB"
+path = 'D:\xbr\bench\demo\runs'
+kind = "host-scratch"
+pattern = ['[A-Za-z0-9_.-]+']
+lock = "bench-lock"
+
 [never]
 local = ["runs/keep-me"]
 hostA = ["/srv/u/xbr-bench/demo/runs/base"]
@@ -377,6 +384,27 @@ def test_a_missing_required_ref_refuses_the_whole_plan(ws):
         ws.plan()
 
 
+def test_a_game_without_tasks_or_openspec_still_plans(ws):
+    """Only some games keep a TASKS.md or openspec/: one whose repo never
+    tracked them is read without them, or with an untracked one on the disk;
+    a tracked one gone still refuses."""
+    git(ws.game, "rm", "-q", "-r", "TASKS.md", "openspec")
+    git(ws.game, "commit", "-q", "-m", "no tasks")
+    ws.plan()
+    # One kept out of git is still read.
+    write(ws.p("runs/20261001-100001/a.png"))
+    age(ws.p("runs/20261001-100001"))
+    write(os.path.join(ws.game, "TASKS.md"), "kept 20261001-100001\n")
+    assert "TASKS.md cites 20261001-100001" in ws.why(
+        ws.plan(ws.p("runs/20261001-100001")), "runs/20261001-100001"
+    )
+    git(ws.game, "add", "TASKS.md")
+    git(ws.game, "commit", "-q", "-m", "tasks again")
+    os.unlink(os.path.join(ws.game, "TASKS.md"))
+    with pytest.raises(DbError, match="reference sources missing"):
+        ws.plan()
+
+
 def test_a_failing_worktree_list_refuses_the_whole_plan(ws):
     os.rename(os.path.join(ws.game, ".git"), os.path.join(ws.game, ".git-off"))
     with pytest.raises(DbError, match="cannot list the worktrees"):
@@ -395,6 +423,150 @@ def test_a_worktree_named_in_the_text_is_pinned(ws):
     write(ws.p("notes/refs/handoff.md"), "resume from wt/agent2 tomorrow\n")
     plan = ws.plan(top)
     assert "handoff.md names wt/agent2" in ws.why(plan, "wt/agent2")
+
+
+def test_a_bare_name_pins_nothing_but_a_path_to_it_does(ws, monkeypatch):
+    """A topic or scratch name is a word of prose (ssx3, cli): only a path
+    to it pins, from the root, the workspace, in full or from ~ on a host."""
+    for n in ("ssx3", "free-cam"):
+        write(ws.p("runs/%s/a.png" % n))
+        age(ws.p("runs/" + n))
+    write(ws.p("notes/refs/prose.md"), "the ssx3 menu fades; x-bench and y-bench are cold\n")
+    write(ws.p("notes/refs/cite.md"), "frames in runs/free-cam/ for the A/B\n")
+    plan = ws.plan(ws.p("runs/ssx3"), ws.p("runs/free-cam"))
+    assert ws.planned(plan) == ["runs/ssx3"]
+    assert "cite.md names runs/free-cam" in ws.why(plan, "runs/free-cam")
+    lines = HOSTA_ROOTS + tuple(entry("/srv/u/tmp/%s-bench" % n) for n in ("x", "y", "z", "w"))
+    monkeypatch.setattr(clean, "run_host", FakeHost(listing(*lines)))
+    write(ws.p("notes/refs/host.md"), "BENCH_DIR=/srv/u/tmp/z-bench, then ~/tmp/w-bench\n")
+    plan = ws.plan("hosttmp")
+    assert ws.planned(plan, "hostA") == ["/srv/u/tmp/x-bench", "/srv/u/tmp/y-bench"]
+    assert "names /srv/u/tmp/z-bench" in ws.why(plan, "/srv/u/tmp/z-bench")
+    assert "names ~/tmp/w-bench" in ws.why(plan, "/srv/u/tmp/w-bench")
+
+
+def test_a_root_name_wins_over_a_cwd_entry(ws, monkeypatch):
+    """plan runs from the workspace sweeps the runs root; ./runs is the
+    path."""
+    write(ws.p("runs/old/a.png"))
+    age(ws.p("runs/old"))
+    monkeypatch.chdir(ws.d)
+    assert clean.split_targets(ws.cfg, ["runs", "./runs"]) == (["runs"], ["./runs"], {})
+    assert ws.planned(ws.plan("runs")) == ["runs/old"]
+    assert ws.why(ws.plan("./runs"), "runs") == "the root runs itself"
+
+
+def test_a_never_path_on_a_host_is_reported_as_one(ws, monkeypatch):
+    """A never-path the pattern would also refuse says never, not pattern."""
+    lines = HOSTA_ROOTS + (entry("/srv/u/tmp/keep_me"),)
+    monkeypatch.setattr(clean, "run_host", FakeHost(listing(*lines)))
+    ws.cfg.never["hostA"] = ["/srv/u/tmp/keep_me"]
+    plan = ws.plan("hosttmp")
+    assert ws.why(plan, "/srv/u/tmp/keep_me") == "under or over the never-path /srv/u/tmp/keep_me"
+    write(ws.p("runs/Keep Me/a.png"))
+    age(ws.p("runs/Keep Me"))
+    ws.cfg.never["local"] = [ws.p("runs/Keep Me")]
+    plan = ws.plan(ws.p("runs/Keep Me"))
+    assert ws.why(plan, "runs/Keep Me").startswith("under or over the never-path")
+
+
+def test_a_host_run_dir_pins_by_the_endings_of_its_path(ws, monkeypatch):
+    """A Deck run dir is cited as runs/<sha>, <game>/runs/<x> or
+    xbr-bench/<game>/runs/<x>, and a build sha alone pins its dir (in full
+    where the dir is a short sha). Any other bare word still pins nothing."""
+    base = "/srv/u/xbr-bench/demo/runs/"
+    names = ("3ae6eaaf5407", "abc1234def", "task-a", "task-b", "plainword", "task-c")
+    lines = HOSTA_ROOTS + tuple(entry(base + n) for n in names)
+    monkeypatch.setattr(clean, "run_host", FakeHost(listing(*lines)))
+    write(
+        ws.p("notes/refs/deck.md"),
+        "golden at runs/3ae6eaaf5407 passed; build abc1234def0123456789abcd shipped\n"
+        "frames in xbr-bench/demo/runs/task-a and demo/runs/task-b; plainword\n",
+    )
+    plan = ws.plan("hosta")
+    assert ws.planned(plan, "hostA") == [base + "plainword", base + "task-c"]
+    assert "names runs/3ae6eaaf5407" in ws.why(plan, base + "3ae6eaaf5407")
+    assert "names abc1234def" in ws.why(plan, base + "abc1234def")
+    assert "names xbr-bench/demo/runs/task-a" in ws.why(plan, base + "task-a")
+    assert "names demo/runs/task-b" in ws.why(plan, base + "task-b")
+
+
+def test_a_windows_run_dir_pins_by_its_backslash_paths(ws, monkeypatch):
+    r"""runs\<task>, the full D:\ path (in any case) and its / form all pin."""
+    base = "D:\\xbr\\bench\\demo\\runs\\"
+    lines = ("T\t0\tD:\\xbr\t1000000\t500000", "T\t1\tD:\\xbr\\bench\\demo\\runs\t1000000\t500000")
+    lines += tuple(entry(base + n) for n in ("t-one", "t-two", "t-three", "t-four"))
+    lines += (entry("D:\\xbr\\a-bench"), entry("D:\\xbr\\b-bench"))
+    monkeypatch.setattr(clean, "run_host", FakeHost(listing(*lines)))
+    write(
+        ws.p("notes/refs/pc.md"),
+        "Runs\\t-one; d:\\XBR\\bench\\demo\\runs\\t-two; D:/xbr/bench/demo/runs/t-three\n"
+        "and D:\\xbr\\a-bench\n",
+    )
+    plan = ws.plan("pc", "pcruns")
+    assert ws.planned(plan, "hostB") == ["D:\\xbr\\b-bench", base + "t-four"]
+    assert "names runs\\t-one" in ws.why(plan, base + "t-one")
+    assert "names D:\\xbr\\bench\\demo\\runs\\t-two" in ws.why(plan, base + "t-two")
+    assert "names D:/xbr/bench/demo/runs/t-three" in ws.why(plan, base + "t-three")
+    assert "names D:\\xbr\\a-bench" in ws.why(plan, "D:\\xbr\\a-bench")
+
+
+def test_a_topic_dir_kept_for_nested_pins_keeps_only_those(ws):
+    """The user, 2026-10-25: runs/fork-prs, kept only for the one run a note
+    cites, keeps that run; its other children go one by one under their own
+    guards (young here), and the topic dir stays until it is empty. Cited as
+    a whole, it stays whole."""
+    top = "runs/fork-prs/"
+    for rel in (
+        "mac-r1/golden-skates/20261024-221209-metal-x/a.png",
+        "mac-r1/golden-skates/20261024-221500-metal-x/a.png",
+        "mac-r1/other/20261024-200000-metal/a.png",
+        "mac-r1/notes.txt",
+        "pc-r2/x.png",
+        "deck-cold/bench.log",
+        "deck-cold/bench-logs/20261024-200829/run-info.txt",
+    ):
+        write(ws.p(top + rel))
+    age(ws.p("runs/fork-prs"))
+    write(ws.p(top + "fresh/x.png"))
+    write(ws.p("notes/refs/perf.md"), "the skates golden at 221209; cold at 200829\n")
+    for plan in (ws.plan(ws.p("runs/fork-prs")), ws.plan()):
+        assert ws.planned(plan) == [
+            top + "mac-r1/golden-skates/20261024-221500-metal-x",
+            top + "mac-r1/notes.txt",
+            top + "mac-r1/other",
+            top + "pc-r2",
+        ]
+        for d in ("runs/fork-prs", top + "mac-r1", top + "mac-r1/golden-skates"):
+            assert ws.why(plan, d).startswith("kept until empty: ")
+        assert "perf.md cites 221209" in ws.why(
+            plan, top + "mac-r1/golden-skates/20261024-221209-metal-x"
+        )
+        assert ws.why(plan, top + "fresh").startswith("written within")
+        # One bench's output dir stays whole: its bench.log tells the run.
+        assert "perf.md cites 200829" in ws.why(plan, top + "deck-cold")
+    write(ws.p("notes/refs/topic.md"), "the PR frames are in runs/fork-prs\n")
+    plan = ws.plan(ws.p("runs/fork-prs"))
+    assert ws.planned(plan) == []
+    assert "topic.md names runs/fork-prs" in ws.why(plan, "runs/fork-prs")
+
+
+def test_a_saved_plan_table_is_not_a_reference(ws):
+    """benchdb plan > notes/x.txt names every path it weighed; read as a
+    reference it would pin them all. A note quoting one row still pins."""
+    write(ws.p("runs/20261001-100006/a.png"))
+    age(ws.p("runs/20261001-100006"))
+    lines = []
+    clean.table(ws.plan(ws.p("runs/20261001-100006")), lines.append)
+    write(ws.p("notes/refs/plan-dry.txt"), "\n".join(lines) + "\n")
+    assert refs.is_listing("\n".join(lines))
+    plan = ws.plan(ws.p("runs/20261001-100006"))
+    assert ws.planned(plan) == ["runs/20261001-100006"]
+    assert any("notes/refs/plan-dry.txt" in w for w in plan["warnings"])
+    write(ws.p("notes/refs/plan-dry.txt"), "keep this one:\n" + "\n".join(lines) + "\n")
+    assert ws.why(ws.plan(ws.p("runs/20261001-100006")), "runs/20261001-100006").startswith(
+        "pinned: "
+    )
 
 
 def test_a_plan_id_pins_nothing():
@@ -873,12 +1045,18 @@ def test_windows_patterns_refuse_the_bench_tree_and_its_lock(ws, monkeypatch):
     monkeypatch.setattr(clean, "run_host", fake)
     plan = ws.plan("pc")
     assert ws.planned(plan, "hostB") == ["D:\\xbr\\x-bench"]
-    for n in ("bench", "spartan", ".bench-lock"):
-        assert ws.why(plan, "D:\\xbr\\" + n) == "%s does not match the pc root's pattern" % n
+    # The bench base and its lock are the built-in floor, said as such.
+    for n in ("bench", ".bench-lock"):
+        assert (
+            ws.why(plan, "D:\\xbr\\" + n)
+            == "under or over the never-path D:\\xbr\\%s (built in)" % n
+        )
+    assert ws.why(plan, "D:\\xbr\\spartan") == "spartan does not match the pc root's pattern"
     assert ws.why(plan, "D:\\xbr\\y-bench").startswith("its real path is")
     _host, cmd, script, _t = fake.calls[0]
     assert cmd.startswith("powershell -NoProfile -NonInteractive -EncodedCommand ")
-    assert "$Roots = @('D:\\xbr')" in script and "$Sweep = @(1)" in script
+    assert "$Roots = @('D:\\xbr', 'D:\\xbr\\bench\\demo\\runs')" in script
+    assert "$Sweep = @(1, 0)" in script
 
 
 def test_an_unreachable_host_refuses_its_paths(ws, monkeypatch):
@@ -1215,6 +1393,8 @@ def test_a_run_nested_in_a_topic_dir_is_pinned(ws):
     write(ws.p("notes/refs/x.md"), "the fade shows at 170000\n")
     plan = ws.plan(ws.p("runs/topic-x"))
     assert "x.md cites 170000 (HHMMSS)" in ws.why(plan, "runs/topic-x")
+    assert "x.md cites 170000 (HHMMSS)" in ws.why(plan, "runs/topic-x/20261001-170000")
+    assert ws.planned(plan) == []
     d = ws.p("bench-logs/20261001-171000-ab/20261001-171500")
     write(os.path.join(d, "run-info.txt"))
     write(os.path.join(d, "exit-code"), "0\n")

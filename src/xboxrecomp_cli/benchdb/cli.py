@@ -183,8 +183,20 @@ def cmd_releases(a, cfg):
         if not cfg.games:
             print("benchdb releases: benchdb.toml lists no [games]", file=sys.stderr)
             return 1
-        releases.refresh(db, cfg, a.game, remote=not a.local)
+        # A failed ls-remote is a warning (local tags only). A game whose
+        # refresh fails exits 1, after every other game has been refreshed.
+        failed = []
+        # Warnings go to stderr, so --format json stays parseable.
+        releases.refresh(
+            db,
+            cfg,
+            a.game,
+            remote=not a.local,
+            say=lambda m: print(m, file=sys.stderr),
+            failed=failed,
+        )
     else:
+        failed = []
         db = store.open(a.db, cfg, readonly=True)
     rows = []
     for r in releases.listing(db, a.game):
@@ -211,7 +223,7 @@ def cmd_releases(a, cfg):
             }
         )
     emit(rows, a.fmt)
-    return 0
+    return 1 if failed else 0
 
 
 # ---- show ---------------------------------------------------------------------
@@ -501,8 +513,8 @@ def _cfg_plan(p):
         "targets",
         nargs="*",
         metavar="TARGET",
-        help="a root's name (a sweep), host:path, or a local path (default: the local "
-        "store and runs roots)",
+        help="a root's name (a sweep, even when the cwd holds an entry so named), "
+        "host:path, or a local path such as ./runs (default: the local store and runs roots)",
     )
     p.add_argument("--older-than", type=float, metavar="DAYS", help="guard 5's age for every root")
     p.add_argument(

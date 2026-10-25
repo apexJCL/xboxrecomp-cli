@@ -4,6 +4,7 @@ stand-ins, after_release, unmapped and withdrawn tags."""
 
 import os
 import subprocess
+import time
 
 import pytest
 from benchdb_util import CLI_SHA, game_dir, open_db
@@ -242,3 +243,66 @@ def test_times_are_compared_parsed(rel):
         w.sql("UPDATE releases SET published = '2026-10-20T10:30:00Z'")
     releases.match(db, cfg, "demo")
     assert by_uuid(db, "mac-dirty")["release_match"] == "stand-in"
+
+
+def test_a_build_without_times_takes_its_first_runs(rel):
+    """A build whose run-info had no shipped line has no times: its first
+    run's start places it, so a release still gets its stand-in and a later
+    build its after_release."""
+    db, cfg, g, c = rel
+    old = build(db, "mac-old", "macos", c["c1"], None, dirty=1)
+    new = build(db, "mac-new", "macos", c["c2"], None, dirty=1)
+    with db.write() as w:
+        for i, (b, t) in enumerate(
+            [
+                (old, "2026-10-19T11:30:00Z"),
+                (old, "2026-10-21T09:00:00Z"),
+                (new, "2026-10-21T10:00:00Z"),
+            ]
+        ):
+            stamp = t[:10].replace("-", "") + "-" + t[11:19].replace(":", "")
+            w.run("demo", "store", "r%d" % i, stamp, "golden", build=b, started=t)
+    releases.refresh(db, cfg, "demo", remote=False, say=lambda m: None)
+    assert by_uuid(db, "mac-old")["release_match"] == "stand-in"
+    assert by_uuid(db, "mac-new")["after_release"] == "v1"
+
+
+def test_a_first_run_is_placed_by_its_stamp(rel, monkeypatch):
+    """A Windows run-info time is naive local time: read as UTC it moves the
+    run by the zone's offset. The stamp is read as local time and wins."""
+    monkeypatch.setenv("TZ", "America/Mexico_City")
+    time.tzset()
+    try:
+        db, cfg, g, c = rel
+        new = build(db, "win-new", "windows", c["c2"], None, dirty=1)
+        with db.write() as w:
+            # 08:30 at UTC-6 is 14:30Z, after v1 (10:00Z); as UTC, before.
+            w.run(
+                "demo",
+                "store",
+                "r0",
+                "20261020-083000",
+                "golden",
+                build=new,
+                started="2026-10-20T08:30:00",
+            )
+        releases.refresh(db, cfg, "demo", remote=False, say=lambda m: None)
+        assert by_uuid(db, "win-new")["after_release"] == "v1"
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+
+
+def test_one_failing_game_does_not_stop_the_others(rel, d):
+    db, cfg, g, c = rel
+    build(db, "win-ok", "windows", c["c1"], "2026-10-19T11:00:00Z")
+    # A game whose export map is not text (a half-copied file) fails its
+    # refresh; the next game is still read.
+    with open(os.path.join(d, "maps", "aaa.map"), "wb") as f:
+        f.write(b"\xff\xfe\x00garbage\n")
+    cfg.games = dict(cfg.games, aaa=g)
+    said, failed = [], []
+    seen = releases.refresh(db, cfg, remote=False, say=said.append, failed=failed)
+    assert seen == {"demo": ["v1"]} and failed == ["aaa"]
+    assert any("aaa: refresh failed" in m for m in said)
+    assert by_uuid(db, "win-ok")["release_match"] == "match"

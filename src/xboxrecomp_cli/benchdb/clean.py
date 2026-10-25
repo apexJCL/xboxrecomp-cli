@@ -49,6 +49,9 @@ MIN_OLDER_THAN = 1.0
 LARGE_BYTES = 100 * 10**9
 LARGE_SHARE = 0.20
 PLAN_ID_RE = re.compile(r"^[0-9]{14}-[a-z]{6}$")
+# A name that is a short or full build sha (a Deck run dir) pins as a bare
+# word: unlike ssx3 or cli, it is no word of prose.
+HEX_RE = re.compile(r"[0-9a-f]{7,}")
 # The store's own files: never a sweep's, never an explicit path's.
 STORE_OWN = {
     "bench.db",
@@ -73,7 +76,10 @@ APPLY_TIMEOUT = 3600 + 1800
 
 class Pins:
     """Guard 3 over a Refs: a stamp, its HHMMSS token, or (for a name with
-    no stamp) the name as a word. Each answer names the citing file."""
+    no stamp) a path to it, such as runs/<topic>, wt/<name> or runs\\<task>.
+    A bare name never pins, but for a build sha: ssx3, cli or bench-logs
+    are words of ordinary prose, and as words they pinned trees no note
+    meant. Each answer names the citing file."""
 
     def __init__(self, refs, base=None):
         self.refs = refs
@@ -90,10 +96,10 @@ class Pins:
             return os.path.relpath(path, self.base)
         return path
 
-    def source(self, names, words=True):
+    def source(self, names):
         """The citing file and match for the first of names that is cited,
-        or None. words=False matches stamps only (and names by full text
-        only when they hold a /, as a path)."""
+        or None. A name with no stamp matches only as a path (it holds a
+        / or a \\) or as a build sha, never as a bare word."""
         for n in names:
             if not n:
                 continue
@@ -105,9 +111,16 @@ class Pins:
                 if st[9:] in self.six:
                     return "%s cites %s (HHMMSS)" % (self.where(self.six[st[9:]]), st[9:])
                 continue
-            if not words and "/" not in n:
+            if HEX_RE.fullmatch(n):
+                # A dir named by a build sha (a Deck run dir): its sha cited
+                # alone, or in full where the name is a prefix, pins it.
+                pat = re.compile(r"(?<![\w.-])" + re.escape(n) + r"[0-9a-f]*(?![\w-])")
+            elif "/" in n or "\\" in n:
+                # Windows paths are cited in either case.
+                flags = re.I if "\\" in n else 0
+                pat = re.compile(r"(?<![\w.-])" + re.escape(n) + r"(?![\w-])", flags)
+            else:
                 continue
-            pat = re.compile(r"(?<![\w.-])" + re.escape(n) + r"(?![\w-])")
             for path, text in self.refs.files.items():
                 if pat.search(text):
                     return "%s names %s" % (self.where(path), n)
@@ -207,6 +220,26 @@ def bench_env_floor(cfg):
         for k in ("BENCH_GAME_FILES", "BENCH_PREFIX", "BENCH_LOCK"):
             if env.get(k):
                 fl.append(("tree", host_path(env[k])))
+    return out
+
+
+def host_names(res, win, home):
+    """The spellings a note may cite a host entry by besides its full path
+    and its stamps: each ending of its path of two or more parts
+    (runs/<sha>, blinx2/runs/<sha>, xbr-bench/blinx2/runs/<sha>; an ending
+    also matches inside ~/... or a longer path), its path from ~ on a POSIX
+    host, and on Windows each in both slash forms."""
+    sep = "\\" if win else "/"
+    parts = [x for x in res.split(sep) if x]
+    out = []
+    if not win and under_text(res, home, sep) and res != home:
+        out.append("~/" + res[len(home.rstrip(sep)) + 1 :])
+    # Longest first, so a refusal names the spelling the note used.
+    for k in range(len(parts), 1, -1):
+        tail = sep.join(parts[-k:])
+        out.append(tail)
+        if win:
+            out.append(tail.replace("\\", "/"))
     return out
 
 
@@ -613,8 +646,10 @@ class Planner:
                 return n
         return None
 
-    def check_local(self, path):
-        """Every guard for one local path; adds an item or a refusal."""
+    def check_local(self, path, inside=False):
+        """Every guard for one local path; adds an item or a refusal.
+        inside: a child of a topic dir being split, whose pattern its topic
+        dir passed."""
         got, why = self.resolve(path)
         if got is None:
             # A .. path is shown as given: normalised, it would name another path.
@@ -629,12 +664,16 @@ class Planner:
                 return self._old_plan(r, res, rel, st)
             self.refuse(res, "the store's own %s" % first, r)
             return
-        if not r.matches(rel) and not (kind == "link" and r.kind == "store" and "/" not in rel):
-            self.refuse(res, "%s does not match the %s root's pattern" % (rel, r.name), r)
-            return
         hit = self.never_hit("local", res)
         if hit:
             self.refuse(res, "under or over the never-path %s" % hit, r)
+            return
+        if (
+            not inside
+            and not r.matches(rel)
+            and not (kind == "link" and r.kind == "store" and "/" not in rel)
+        ):
+            self.refuse(res, "%s does not match the %s root's pattern" % (rel, r.name), r)
             return
         if r.own and st.st_uid != os.getuid():
             self.refuse(res, "owned by uid %d, not this user" % st.st_uid, r)
@@ -643,8 +682,7 @@ class Planner:
             # A link is only unlinked and its target stays, so no tree rule
             # applies; but its own name can be cited (a link other tools
             # rely on), and one made just now is still in use.
-            names = [rel, os.path.basename(res), os.path.relpath(res, self.cfg.dir)]
-            src = self.pins.source(names, words=r.kind not in ("scratch",))
+            src = self.pins.source(self.local_names(r, res, rel))
             if src:
                 self.refuse(res, "pinned: %s" % src, r)
                 return
@@ -656,17 +694,31 @@ class Planner:
             return
         if r.kind == "worktrees":
             kind = "worktree"
-            names = [rel, os.path.relpath(res, self.cfg.dir), res]
-            src = self.pins.source(names, words=False)
+            src = self.pins.source(self.local_names(r, res, rel))
         else:
             kind = "tree" if stat.S_ISDIR(st.st_mode) else "file"
-            names = [rel, os.path.basename(res), os.path.relpath(res, self.cfg.dir)]
-            src = self.pins.source(names, words=r.kind not in ("scratch",))
-        if not src and kind == "tree":
-            src = self.nested_pin(res, r)
+            src = self.pins.source(self.local_names(r, res, rel))
         if src:
             self.refuse(res, "pinned: %s" % src, r)
             return
+        if kind == "tree":
+            held = self.nested_pins(res, r)
+            if held and (
+                refs_mod.STAMP_RE.search(os.path.basename(res))
+                or os.path.isfile(os.path.join(res, "run-info.txt"))
+                or os.path.isdir(os.path.join(res, "bench-logs"))
+            ):
+                # A run is never taken apart: a pinned file in it keeps it
+                # all. Nor is one bench's output dir (its bench.log and env
+                # beside bench-logs/<stamp>), which tells how the run was made.
+                self.refuse(
+                    res,
+                    "pinned: %s (in %s)" % (held[0][1], os.path.relpath(held[0][0], res)),
+                    r,
+                )
+                return
+            if held:
+                return self.split(r, res, held)
         if kind == "worktree" and not self.force_dirty:
             why = self.dirty(res)
             if why:
@@ -694,23 +746,48 @@ class Planner:
             rule = "older than %g days" % d
         self.add(r, res, rel, kind, refs_mod.allocated(res), mt, rule)
 
-    def nested_pin(self, res, r):
+    def local_names(self, r, res, rel):
+        """The spellings a note may cite a local entry by: its stamp (in any
+        of them), its path below the root, from the workspace and in full."""
+        return [rel, os.path.basename(res), os.path.relpath(res, self.cfg.dir), res]
+
+    def nested_pins(self, res, r):
         """Guard 3 below a tree: a topic dir (runs/ab-fade, a store copy)
         holds runs whose stamps a note cites while its own name cites
-        nothing. Any stamped dir or file inside that is cited pins it all."""
+        nothing. Each cited stamped dir or file inside, with its citation;
+        a cited dir is not walked further."""
         base = os.path.realpath(r.path)
+        out = []
         for dp, dirs, files in os.walk(res, followlinks=False):
-            for n in dirs + files:
-                if not refs_mod.STAMP_RE.search(n):
-                    continue
+            keep = []
+            for n in sorted(dirs) + sorted(files):
                 p = os.path.join(dp, n)
-                src = self.pins.source(
-                    [n, os.path.relpath(p, base), os.path.relpath(p, self.cfg.dir)],
-                    words=False,
-                )
+                src = None
+                if refs_mod.STAMP_RE.search(n):
+                    src = self.pins.source(
+                        [n, os.path.relpath(p, base), os.path.relpath(p, self.cfg.dir)]
+                    )
                 if src:
-                    return "%s (in %s)" % (src, os.path.relpath(p, res))
-        return None
+                    out.append((p, src))
+                elif n in dirs:
+                    keep.append(n)
+            dirs[:] = keep
+        return out
+
+    def split(self, r, res, held):
+        """A topic dir kept only for the pinned runs inside it keeps just
+        those: each other child is judged alone, with every guard, and the
+        topic dir stays until it is empty (the user, 2026-10-25). A topic
+        dir cited as a whole never gets here: it stays whole."""
+        first = os.path.relpath(held[0][0], res)
+        self.refuse(
+            res,
+            "kept until empty: %d nested run%s pinned (%s: %s)"
+            % (len(held), "" if len(held) == 1 else "s", first, held[0][1]),
+            r,
+        )
+        for n in sorted(os.listdir(res)):
+            self.check_local(os.path.join(res, n), inside=True)
 
     def _old_plan(self, r, res, rel, st):
         y, d = self.young(r, st.st_mtime)
@@ -962,11 +1039,6 @@ class Planner:
         if e["type"] != "l" and e["real"] != res:
             self.refuse(res, "its real path is %s, not %s" % (e["real"], res), root, key)
             return
-        if not root.matches(rel):
-            self.refuse(
-                res, "%s does not match the %s root's pattern" % (rel, root.name), root, key
-            )
-            return
         home = listing.get("home", "~")
         if not win and not home.startswith("/"):
             self.refuse(res, "host %s's listing has no home" % key, root, key)
@@ -987,11 +1059,18 @@ class Planner:
             if under_text(a, b, sep) or under_text(b, a, sep):
                 self.refuse(res, "under or over the never-path %s" % n, root, key)
                 return
+        # After the never-paths, so a never-path is reported as one even when
+        # the pattern would refuse it too.
+        if not root.matches(rel):
+            self.refuse(
+                res, "%s does not match the %s root's pattern" % (rel, root.name), root, key
+            )
+            return
         if root.own and e["uid"] not in ("-", listing["uid"]):
             self.refuse(res, "owned by uid %s, not this user" % e["uid"], root, key)
             return
         stamps = listing["stamps"].get(res, {})
-        names = [rel, rel.split("/")[-1]] + list(stamps)
+        names = [res] + host_names(res, win, home) + [rel, rel.split("/")[-1]] + list(stamps)
         src = self.pins.source(names)
         if src:
             self.refuse(res, "pinned: %s" % src, root, key)
@@ -1227,11 +1306,14 @@ def parse_apply(text):
 
 def split_targets(cfg, targets):
     """(root names, local paths, {host: [paths]}) of plan's arguments: a
-    root's name, host:path for a [hosts] key or ssh alias, else a local
-    path."""
+    root's name (even when the cwd holds an entry so named), host:path for
+    a [hosts] key or ssh alias, else a local path."""
     roots, local, remote = [], [], {}
     for t in targets:
-        if t in cfg.roots and not os.path.lexists(t):
+        # A root's name wins over a cwd entry of the same name: plan from
+        # the workspace names "runs" for the root, never ./runs. A path
+        # spells itself with a / (./runs).
+        if t in cfg.roots:
             roots.append(t)
             continue
         head, sep, tail = t.partition(":")
@@ -1308,11 +1390,19 @@ def make_plan(
             force_young=bool(force_young),
         )
     )
+    warnings = []
     if older_than is not None and older_than < MIN_OLDER_THAN:
-        plan["warnings"] = [
+        warnings.append(
             "--force-young: guard 5's age is %g days, under the %g-day floor"
             % (older_than, MIN_OLDER_THAN)
-        ]
+        )
+    if pl.refs.listings:
+        warnings.append(
+            "%d saved plan table(s) not read as references: %s"
+            % (len(pl.refs.listings), ", ".join(pl.refs.listings[:5]))
+        )
+    if warnings:
+        plan["warnings"] = warnings
     plan["disks"] = {"%s:%s" % k: v for k, v in pl.disks.items()}
     return plan
 

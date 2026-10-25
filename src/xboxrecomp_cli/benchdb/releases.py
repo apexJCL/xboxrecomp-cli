@@ -172,68 +172,88 @@ def pins(doc):
     return doc.get("toolkit", {}).get("commit"), doc.get("cli", {}).get("commit")
 
 
-def refresh(db, cfg, game=None, remote=True, say=print):
+def refresh(db, cfg, game=None, remote=True, say=print, failed=None):
     """Reads every game's tags and export map again, writes the releases
-    rows, then matches builds (match()). Returns {game: [tags]}."""
+    rows, then matches builds (match()). Returns {game: [tags]}. A game
+    that fails is warned about, named in failed (a list) and skipped: one
+    game's broken repo or config must not stop the others' refresh."""
     tkmap = toolkit_map(cfg)
     seen = {}
     for slug, repo in sorted(cfg.games.items()):
         if game and slug != game:
             continue
-        gm = ingest.settings(cfg, slug)
-        glob = gm["release"]["tag_glob"]
-        git = Git(repo)
-        local = local_tags(git, glob)
-        far = None
-        if remote:
-            rname = gm.get("public", {}).get("remote", "public") if "public" in gm else "public"
-            far = remote_tags(git, rname, glob)
-            if far is None:
-                say("benchdb: %s: ls-remote %s failed; local tags only" % (slug, rname))
-        emap = export_map(cfg, slug)
-        tags = dict((t, (c, d)) for t, (c, d) in local.items())
-        for t, c in (far or {}).items():
-            if t not in tags:
-                tags[t] = (c, None)
-        with db.write() as w:
-            old = {r["tag"]: r for r in w.sql("SELECT * FROM releases WHERE game = ?", (slug,))}
-            for tag, (public, date) in sorted(tags.items()):
-                hit = emap.get(public)
-                if not hit:
-                    w.release(
-                        slug,
-                        tag,
-                        old.get(tag, {}).get("game_sha") or "",
-                        "unmapped",
-                        public_sha=public,
-                        published=date,
-                    )
-                    continue
-                private, mdate = hit
-                tk_pin, cli_pin = pins(game_toml(git, private))
+        try:
+            seen[slug] = refresh_game(db, cfg, slug, repo, tkmap, remote, say)
+        except Exception as e:  # noqa: BLE001 -- one game, warned and counted
+            say(
+                "benchdb: WARNING: %s: refresh failed (%s); its releases are as they were"
+                % (slug, describe(e))
+            )
+            if failed is not None:
+                failed.append(slug)
+    match(db, cfg, game, failed=failed)
+    return seen
+
+
+def refresh_game(db, cfg, slug, repo, tkmap, remote, say):
+    """One game's refresh(): its tag names."""
+    gm = ingest.settings(cfg, slug)
+    glob = gm["release"]["tag_glob"]
+    git = Git(repo)
+    local = local_tags(git, glob)
+    far = None
+    if remote:
+        rname = gm.get("public", {}).get("remote", "public") if "public" in gm else "public"
+        far = remote_tags(git, rname, glob)
+        if far is None:
+            say("benchdb: %s: ls-remote %s failed; local tags only" % (slug, rname))
+    emap = export_map(cfg, slug)
+    tags = dict((t, (c, d)) for t, (c, d) in local.items())
+    for t, c in (far or {}).items():
+        if t not in tags:
+            tags[t] = (c, None)
+    with db.write() as w:
+        old = {r["tag"]: r for r in w.sql("SELECT * FROM releases WHERE game = ?", (slug,))}
+        for tag, (public, date) in sorted(tags.items()):
+            hit = emap.get(public)
+            if not hit:
                 w.release(
                     slug,
                     tag,
-                    private,
-                    "published",
+                    old.get(tag, {}).get("game_sha") or "",
+                    "unmapped",
                     public_sha=public,
-                    published=date or iso(mdate),
-                    toolkit_pin=tk_pin,
-                    toolkit_sha=by_prefix(tkmap, tk_pin) or tk_pin,
-                    cli_sha=cli_pin,
+                    published=date,
                 )
-            # A tag gone from both sides keeps its row; when ls-remote
-            # failed, only the local side was read, so nothing is withdrawn.
-            if far is not None or not remote:
-                for tag in old:
-                    if tag not in tags and old[tag]["state"] != "withdrawn":
-                        w.sql(
-                            "UPDATE releases SET state = 'withdrawn' WHERE game = ? AND tag = ?",
-                            (slug, tag),
-                        )
-        seen[slug] = sorted(tags)
-    match(db, cfg, game)
-    return seen
+                continue
+            private, mdate = hit
+            tk_pin, cli_pin = pins(game_toml(git, private))
+            w.release(
+                slug,
+                tag,
+                private,
+                "published",
+                public_sha=public,
+                published=date or iso(mdate),
+                toolkit_pin=tk_pin,
+                toolkit_sha=by_prefix(tkmap, tk_pin) or tk_pin,
+                cli_sha=cli_pin,
+            )
+        # A tag gone from both sides keeps its row; when ls-remote
+        # failed, only the local side was read, so nothing is withdrawn.
+        if far is not None or not remote:
+            for tag in old:
+                if tag not in tags and old[tag]["state"] != "withdrawn":
+                    w.sql(
+                        "UPDATE releases SET state = 'withdrawn' WHERE game = ? AND tag = ?",
+                        (slug, tag),
+                    )
+    return sorted(tags)
+
+
+def describe(e):
+    """An error for a warning line: its own text, or its type when it has none."""
+    return str(e) or type(e).__name__
 
 
 def inputs_of(gm):
@@ -273,19 +293,45 @@ def cli_match(cgit, b, r):
     return cgit is not None and cgit.quiet(b["cli_sha"], r["cli_sha"], "--", "src")
 
 
-def when(b):
+def when(b, first_run=None):
     """A build's time as UTC seconds, or None: times are compared parsed,
-    since a Z, a +00:00 and a naive time sort wrongly as text."""
-    return retain.parse_time(b["started"] or b["ended"] or "")
+    since a Z, a +00:00 and a naive time sort wrongly as text. A build
+    with no times of its own (a run-info written before the shipped line,
+    which is all of the early runs) takes its first run's start: the build
+    existed by then, which is what the release order needs."""
+    t = retain.parse_time(b["started"] or b["ended"] or "")
+    if t is None and first_run is not None:
+        t = first_run.get(b["id"])
+    return t
+
+
+def first_runs(db, slug):
+    """{build id: the earliest start of its runs, as UTC seconds}. A run's
+    stamp is its start in local time (the hosts keep one zone); its run-info time
+    is naive on Windows, and read as UTC it would move the run by the
+    host's offset, so the stamp comes first."""
+    out = {}
+    for r in db.sql(
+        "SELECT r.build_id, r.stamp, r.started FROM runs r JOIN builds b ON b.id = r.build_id "
+        "WHERE b.game = ? AND (r.stamp IS NOT NULL OR r.started IS NOT NULL)",
+        (slug,),
+    ):
+        t = retain.parse_time(r["stamp"] or "")
+        if t is None:
+            t = retain.parse_time(r["started"] or "")
+        if t is not None and (r["build_id"] not in out or t < out[r["build_id"]]):
+            out[r["build_id"]] = t
+    return out
 
 
 def pub(r):
     return retain.parse_time(r["published"] or "")
 
 
-def match(db, cfg, game=None):
+def match(db, cfg, game=None, failed=None):
     """Recomputes builds.release, release_match and after_release for each
-    game (D10). Returns {(game, tag): {target: (build id, match)}}."""
+    game (D10). Returns {(game, tag): {target: (build id, match)}}. A game
+    that fails is warned about and named in failed, as in refresh()."""
     tgit = Git(cfg.toolkit) if cfg.toolkit and os.path.isdir(cfg.toolkit) else None
     cgit = Git(cfg.cli) if cfg.cli and os.path.isdir(cfg.cli) else None
     result = {}
@@ -293,87 +339,96 @@ def match(db, cfg, game=None):
     for slug in slugs:
         if game and slug != game:
             continue
-        gm = ingest.settings(cfg, slug)
-        repo = cfg.games.get(slug)
-        git = Git(repo) if repo and os.path.isdir(repo) else None
-        rels = db.sql(
-            "SELECT * FROM releases WHERE game = ? AND state = 'published' "
-            "ORDER BY coalesce(published, '') DESC, tag DESC",
-            (slug,),
-        )
-        builds = db.sql("SELECT * FROM builds WHERE game = ? AND ok IS NOT 0", (slug,))
-        # With no repo to match against (a removed worktree, an unmounted
-        # drive, --config on another machine), keep the assignment the db
-        # has: a recompute would clear every real match and leave only
-        # stand-ins, and retention would then let the release builds' runs go.
-        shas = {b["game_sha"] for b in builds if b["game_sha"]}
-        if rels and shas and (git is None or not any(git.has(x) for x in sorted(shas))):
+        try:
+            match_game(db, cfg, slug, tgit, cgit, result)
+        except Exception as e:  # noqa: BLE001 -- one game, warned and counted
             print(
-                "benchdb: WARNING: %s: cannot read the game repo (%s); its release "
-                "matches are kept as they were" % (slug, repo or "not in [games]"),
+                "benchdb: WARNING: %s: release match failed (%s); its matches are as they were"
+                % (slug, describe(e)),
                 file=sys.stderr,
             )
-            continue
-        assign = {}
-        for r in rels:
-            for b in builds:
-                if b["id"] in assign or git is None:
-                    continue
-                if (
-                    game_match(git, b, r, gm)
-                    and toolkit_match(tgit, b, r)
-                    and cli_match(cgit, b, r)
-                ):
-                    assign[b["id"]] = (r["tag"], "match")
-        for i, r in enumerate(reversed(rels)):
-            # The stand-in comes from the builds since the previous release,
-            # so two releases with no build between them share none.
-            prev = rels[len(rels) - i] if i > 0 else None
-            have = {b["target"] for b in builds if assign.get(b["id"], (None,))[0] == r["tag"]}
-            for target in sorted({b["target"] for b in builds} - have):
-                cands = [
-                    b
-                    for b in builds
-                    if b["target"] == target
-                    and b["lineage"] == "integration"
-                    and b["id"] not in assign
-                    and pub(r) is not None
-                    and when(b) is not None
-                    and when(b) < pub(r)
-                    and not (prev and pub(prev) is not None and when(b) < pub(prev))
-                    and b["kind"] in ("full", "incremental", "unknown")
-                ]
-                if cands:
-                    b = max(cands, key=lambda x: (when(x), x["id"]))
-                    assign[b["id"]] = (r["tag"], "stand-in")
-        with db.write() as w:
-            w.sql(
-                "UPDATE builds SET release = NULL, release_match = NULL, after_release = NULL "
-                "WHERE game = ?",
-                (slug,),
-            )
-            for bid, (tag, how) in assign.items():
-                w.sql(
-                    "UPDATE builds SET release = ?, release_match = ? WHERE id = ?", (tag, how, bid)
-                )
-                result.setdefault((slug, tag), {})
-            for b in builds:
-                if b["id"] in assign:
-                    continue
-                before = [
-                    r
-                    for r in rels
-                    if pub(r) is not None and when(b) is not None and pub(r) < when(b)
-                ]
-                if before:
-                    w.sql(
-                        "UPDATE builds SET after_release = ? WHERE id = ?",
-                        (before[0]["tag"], b["id"]),
-                    )
-        for bid, (tag, how) in assign.items():
-            b = next(x for x in builds if x["id"] == bid)
-            result[(slug, tag)][b["target"]] = (bid, how)
+            if failed is not None and slug not in failed:
+                failed.append(slug)
     return result
+
+
+def match_game(db, cfg, slug, tgit, cgit, result):
+    """One game's match(), into result."""
+    gm = ingest.settings(cfg, slug)
+    repo = cfg.games.get(slug)
+    git = Git(repo) if repo and os.path.isdir(repo) else None
+    rels = db.sql(
+        "SELECT * FROM releases WHERE game = ? AND state = 'published' "
+        "ORDER BY coalesce(published, '') DESC, tag DESC",
+        (slug,),
+    )
+    builds = db.sql("SELECT * FROM builds WHERE game = ? AND ok IS NOT 0", (slug,))
+    # With no repo to match against (a removed worktree, an unmounted
+    # drive, --config on another machine), keep the assignment the db
+    # has: a recompute would clear every real match and leave only
+    # stand-ins, and retention would then let the release builds' runs go.
+    shas = {b["game_sha"] for b in builds if b["game_sha"]}
+    if rels and shas and (git is None or not any(git.has(x) for x in sorted(shas))):
+        print(
+            "benchdb: WARNING: %s: cannot read the game repo (%s); its release "
+            "matches are kept as they were" % (slug, repo or "not in [games]"),
+            file=sys.stderr,
+        )
+        return
+    fr = first_runs(db, slug)
+    assign = {}
+    for r in rels:
+        for b in builds:
+            if b["id"] in assign or git is None:
+                continue
+            if game_match(git, b, r, gm) and toolkit_match(tgit, b, r) and cli_match(cgit, b, r):
+                assign[b["id"]] = (r["tag"], "match")
+    for i, r in enumerate(reversed(rels)):
+        # The stand-in comes from the builds since the previous release,
+        # so two releases with no build between them share none.
+        prev = rels[len(rels) - i] if i > 0 else None
+        have = {b["target"] for b in builds if assign.get(b["id"], (None,))[0] == r["tag"]}
+        for target in sorted({b["target"] for b in builds} - have):
+            cands = [
+                b
+                for b in builds
+                if b["target"] == target
+                and b["lineage"] == "integration"
+                and b["id"] not in assign
+                and pub(r) is not None
+                and when(b, fr) is not None
+                and when(b, fr) < pub(r)
+                and not (prev and pub(prev) is not None and when(b, fr) < pub(prev))
+                and b["kind"] in ("full", "incremental", "unknown")
+            ]
+            if cands:
+                b = max(cands, key=lambda x: (when(x, fr), x["id"]))
+                assign[b["id"]] = (r["tag"], "stand-in")
+    with db.write() as w:
+        w.sql(
+            "UPDATE builds SET release = NULL, release_match = NULL, after_release = NULL "
+            "WHERE game = ?",
+            (slug,),
+        )
+        for bid, (tag, how) in assign.items():
+            w.sql("UPDATE builds SET release = ?, release_match = ? WHERE id = ?", (tag, how, bid))
+            result.setdefault((slug, tag), {})
+        for b in builds:
+            if b["id"] in assign:
+                continue
+            before = [
+                r
+                for r in rels
+                if pub(r) is not None and when(b, fr) is not None and pub(r) < when(b, fr)
+            ]
+            if before:
+                w.sql(
+                    "UPDATE builds SET after_release = ? WHERE id = ?",
+                    (before[0]["tag"], b["id"]),
+                )
+    for bid, (tag, how) in assign.items():
+        b = next(x for x in builds if x["id"] == bid)
+        result[(slug, tag)][b["target"]] = (bid, how)
 
 
 def listing(db, game=None):

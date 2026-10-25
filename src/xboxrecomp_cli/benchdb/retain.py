@@ -19,6 +19,7 @@ first reason that holds keeps them:
 Anything else is superseded, and its heavy artifacts may go."""
 
 import datetime
+import re
 
 from . import ingest
 
@@ -28,6 +29,12 @@ def parse_time(s):
     (taken as local time, as the stamp is); None when neither parses."""
     if not s:
         return None
+    # Before fromisoformat, which reads a stamp too but as UTC.
+    if re.match(r"[0-9]{8}-[0-9]{6}(?![0-9])", s):
+        try:
+            return datetime.datetime.strptime(s[:15], "%Y%m%d-%H%M%S").timestamp()
+        except ValueError:
+            return None
     try:
         d = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
         if d.tzinfo is None:
