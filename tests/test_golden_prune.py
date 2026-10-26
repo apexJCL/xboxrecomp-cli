@@ -419,11 +419,12 @@ def test_host_debug_pad_script(tmp_path):
 
 
 def seed_block():
-    """run_game.sh's RECOMP_HDD_DIR=@seed: block, to run on its own."""
+    """run_game.sh's RECOMP_HDD_DIR=@seed: block, to run on its own, with
+    the frames functions before it that its EXIT trap calls."""
     import re
 
     with open(os.path.join(HOST, "run_game.sh")) as f:
-        m = re.search(r"^SEED_HDD=\n.*?^esac\n", f.read(), re.S | re.M)
+        m = re.search(r"^FRAMES_SHM=.*?^SEED_HDD=\n.*?^esac\n", f.read(), re.S | re.M)
     assert m, "no seed block in run_game.sh"
     return m.group(0)
 

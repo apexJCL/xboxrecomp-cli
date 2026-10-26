@@ -186,7 +186,10 @@ this machine's home, as it did when bench.sh sourced the file:
                    launch.env.default under it; a key here replaces the file's
   BENCH_TIMEOUT    stop the game with SIGINT after this many seconds
   BENCH_FRAMES     1: RECOMP_DEBUG=d3d11_dump into bench-logs/<stamp>/frames/
-                   on the host (every 60th present; not pulled by logs)
+                   on the host (every 60th present; not pulled by logs).
+                   A golden run's bounded dump list goes to /dev/shm while
+                   the game runs on Proton hosts (when it has room) and
+                   moves there after
   BENCH_HOLD_MAX   pacing: the most seconds its hold of the run lock lasts if
                    this command dies without releasing it  (14400)
   BENCH_KEEP_FRAMES 1: as --keep-frames

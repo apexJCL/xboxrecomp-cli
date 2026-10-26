@@ -530,7 +530,9 @@ def record_session(b, kind, started, tests, only, rc, runs, notes):
         backend=BENCH_BACKEND,
         started=started,
         tests=tests,
-        only=only,
+        # --only's scenario list, joined as golden_run's session joins its
+        # own: the db column takes text, and a list failed the whole row.
+        only=",".join(only) if only else None,
         rc=rc,
         verdicts=verdicts,
     )

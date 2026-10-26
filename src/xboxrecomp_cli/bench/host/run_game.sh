@@ -111,6 +111,56 @@ if [ "${RECOMP_SAVE_DIR:-}" = @run ]; then
         [ "${GAME_ENV[$i]}" != RECOMP_SAVE_DIR=@run ] || GAME_ENV[$i]="RECOMP_SAVE_DIR=$RECOMP_SAVE_DIR"
     done
 fi
+# The D3D11 dumper writes each BMP inside present. On a slow disk the
+# kernel throttles those writes for 0.4-3 s per frame once the dirty pages
+# pile up, which stalls the game's flips and eats the run's time limit. So
+# a golden run's dumps (a bounded fb_dump_at list) go to a tmpfs dir first
+# when it has room, and move into $LOG/frames/ once the game is gone
+# (frames_home, on every way out of this script). FRAMES_TMPFS names
+# another tmpfs (the tests use it). Each dir holds .home, the frames/ it
+# belongs to, so a later run can finish a move this one could not (a
+# SIGKILL, or a game still writing when a signal ended this script).
+FRAMES_SHM=${FRAMES_TMPFS:-/dev/shm}
+# frames_move DIR DEST: every file of DIR into DEST, then DIR removed.
+# Fails, leaving DIR, if any move fails.
+frames_move() {
+    local f bad=0
+    for f in "$1"/*; do
+        [ -e "$f" ] || continue
+        mv -f "$f" "$2/" || bad=1
+    done
+    [ "$bad" = 0 ] && rm -f "$1/.home" && rmdir "$1"
+}
+frames_home() {
+    [ -n "$FRAMES_TMP" ] && [ -d "$FRAMES_TMP" ] || return 0
+    if frames_move "$FRAMES_TMP" "$LOG/frames"; then
+        FRAMES_TMP=
+    else
+        # Kept: the EXIT trap tries again, and the next run's sweep after it.
+        echo "bench: WARN some frames stayed in $FRAMES_TMP" >&2
+    fi
+}
+SEED_HDD=
+FRAMES_TMP=
+trap '[ -z "$SEED_HDD" ] || rm -rf "$SEED_HDD"; frames_home' EXIT
+# Under the run lock no other bench run is writing a tmpfs frames dir, so
+# any left is an earlier run's: moved to its frames/ when that still
+# exists, else dropped (its log dir is gone). One without .home is not a
+# bench run's and is left alone.
+for d in "$FRAMES_SHM"/xbr-frames-*; do
+    [ -d "$d" ] && [ -O "$d" ] || continue
+    home=$(cat "$d/.home" 2>/dev/null) || home=
+    if [ -z "$home" ]; then
+        echo "bench: WARN $d has no .home; left alone" >&2
+        continue
+    fi
+    if [ -d "$home" ]; then
+        frames_move "$d" "$home" && echo "bench: moved an earlier run's frames from $d to $home" \
+            || echo "bench: WARN could not move $d to $home" >&2
+    else
+        rm -rf "$d" && echo "bench: dropped $d (its run's $home is gone)"
+    fi
+done
 # RECOMP_HDD_DIR=@seed:PATH (bench golden ships PATH, a game's hdd tree with
 # its save, under the base's golden-seeds/): a copy in this run's log dir (a
 # Z: path for Wine) is the run's disk, so every run boots on the same save
@@ -119,7 +169,6 @@ fi
 # and with none set the runtime falls back to the game dir's UDATA. The copy
 # (the save, and the partition images the runtime makes) is removed when this
 # script exits, however it exits.
-SEED_HDD=
 case "${RECOMP_HDD_DIR:-}" in
     @seed:*)
         seed=${RECOMP_HDD_DIR#@seed:}
@@ -127,7 +176,6 @@ case "${RECOMP_HDD_DIR:-}" in
         [ -d "$seed" ] || { echo "no hdd seed $seed -- bench golden ships it" >&2; exit 1; }
         [ -d "$seed/UDATA" ] || { echo "hdd seed $seed has no UDATA/" >&2; exit 1; }
         SEED_HDD="$LOG/hdd"
-        trap '[ -z "$SEED_HDD" ] || rm -rf "$SEED_HDD"' EXIT
         # u+w: a fixture is kept read-only, and the game writes its save here.
         { mkdir -p "$SEED_HDD" && cp -a --sparse=always "$seed/." "$SEED_HDD/" \
             && chmod -R u+w "$SEED_HDD"; } \
@@ -197,10 +245,26 @@ if [ "${RECOMP_FB_DUMP:-}" = @run ]; then
     done
 fi
 if [ "$FRAMES" = 1 ]; then
-    # Wine sees the host's / as Z:.
     mkdir -p "$LOG/frames"
-    export RECOMP_DEBUG="${RECOMP_DEBUG:+$RECOMP_DEBUG,}d3d11_dump=Z:$PWD/$LOG/frames/"
-    GAME_ENV+=("RECOMP_DEBUG=d3d11_dump=Z:$PWD/$LOG/frames/")
+    fdir="$PWD/$LOG/frames"
+    # Only a bounded dump list goes to tmpfs (a golden's fb_dump_at; every
+    # 60th present of a long run is not), and only with room for it at 8 MiB
+    # a BMP (3x scale) plus 2 GiB, so the dumps cannot squeeze the host's RAM.
+    n=$(printf '%s' ",${RECOMP_DEBUG:-}" | sed -n 's/.*,fb_dump_at=\([0-9,-]*\).*/\1/p' \
+        | tr ',' '\n' | awk -F- 'NF == 1 && $1 != "" {n++} NF == 2 {n += $2 - $1 + 1} END {print n + 0}')
+    avail=$(df -Pk "$FRAMES_SHM" 2>/dev/null | awk 'NR == 2 {print $4}' || true)
+    need=$(( n * 8192 + 2097152 ))
+    if [ "$n" -gt 0 ] && [ -n "$avail" ] && [ "$avail" -ge "$need" ] \
+            && FRAMES_TMP=$(mktemp -d "$FRAMES_SHM/xbr-frames-$STAMP.XXXXXX" 2>/dev/null) \
+            && printf '%s\n' "$PWD/$LOG/frames" > "$FRAMES_TMP/.home"; then
+        fdir=$FRAMES_TMP
+    else
+        [ -z "$FRAMES_TMP" ] || rm -rf "$FRAMES_TMP"
+        FRAMES_TMP=
+    fi
+    # Wine sees the host's / as Z:.
+    export RECOMP_DEBUG="${RECOMP_DEBUG:+$RECOMP_DEBUG,}d3d11_dump=Z:$fdir/"
+    GAME_ENV+=("RECOMP_DEBUG=d3d11_dump=Z:$fdir/")
 fi
 
 {
@@ -210,6 +274,7 @@ fi
     echo "args:   ${GAME_ARGS[*]:-(none)}"
     echo "limit:  ${TIMEOUT:-none}${TIMEOUT:+ s (SIGINT)}"
     echo "lock:   $LOCK, waited ${waited}s"
+    [ -z "$FRAMES_TMP" ] || echo "frames: in $FRAMES_TMP (tmpfs) during the run, then $LOG/frames/"
     sha256sum "$EXE_REL"
     if [ -f build-win/provenance.txt ]; then
         sed 's/^/built:  /' build-win/provenance.txt
@@ -390,4 +455,5 @@ if [ "$PROTON_LOG_MODE" = cap ]; then
     done
 fi
 [ -f xbox_kernel.log ] && cp xbox_kernel.log "$LOG/"
+frames_home
 echo "exit code $rc; logs in $REMOTE_GAME/$LOG"

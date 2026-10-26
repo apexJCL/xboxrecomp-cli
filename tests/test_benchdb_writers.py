@@ -469,3 +469,27 @@ def test_pull_quietly_never_raises(pws, monkeypatch, capsys):
     # A host without an inbox, or one not in the config: nothing to pull.
     assert pull.pull_quietly(d, "hosta") is None
     assert pull.pull_quietly(d, "elsewhere") is None
+
+
+def test_bench_golden_only_records_its_session(ws, capsys):
+    """bench golden --only story: `only` is a list there, and the session row
+    is recorded with it joined (a list failed the insert, so the session was
+    never recorded)."""
+    from xboxrecomp_cli.bench import golden as bg
+
+    d, db = ws
+    run_dir(logs(d), "20261025-072135", PROTON_INFO, log=flip_log())
+    b = types.SimpleNamespace(
+        cfg=types.SimpleNamespace(
+            game_dir=d, host="carlos@hosta", game=types.SimpleNamespace(slug="demo")
+        ),
+        record_run=lambda stamp, **k: live.run(os.path.join(logs(d), stamp), "demo", **k),
+    )
+    notes = {"story": (None, None, None, None, "pass")}
+    runs = {"story": ("20261025-072135", None, None)}
+    bg.record_session(b, "golden", None, "pass", ["story", "attract"], 0, runs, notes)
+    assert "not recorded" not in capsys.readouterr().err
+    s = db.one("SELECT * FROM sessions")
+    assert s["only"] == "story,attract" and s["rc"] == 0
+    v = db.one("SELECT * FROM verdicts")
+    assert v["scenario"] == "story" and v["run_id"] == db.one("SELECT id FROM runs")["id"]
