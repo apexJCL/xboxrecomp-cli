@@ -13,28 +13,36 @@ several hosts, measured the same way everywhere.
                           [--recollect [--scene SCENE] [--exe EXE]]
   <game> bench-matrix compare BEFORE AFTER [--out DIR] [--include-disturbed]
   <game> bench-matrix windows SCENE --local LOCAL --out DIR [--host H]
-                          [--series [series options]]
+                          [--exe PC_EXE] [--series [series options]]
 
 SCENE is the game's TOML (its config, never this CLI's): how long to run,
 how the scene's start is found from the flip trace, the axes and how each
 maps onto config.toml or the environment, and which hosts run which arms.
 LOCAL is the machine's own TOML (paths, ssh names, locks); it is not
-tracked. An arm is one value per axis, named by the scene's arm_id.
+tracked. A top-level base = "<path>" (relative to LOCAL) reads that file
+first, LOCAL's keys winning per host table: one shared file per machine,
+and a bench's copy holds only what it changes. An arm is one value per axis, named by the scene's arm_id.
 
 run takes the host's lock, then waits (30 min at most) for the host to be
 quiet, starts the game from a fresh copy of the hdd seed with the arm's config,
 and collects the run into DIR/run.json:
   - host "local": this machine (the Mac); flock (as lockf takes it) on the
-    lock file and quiet_locks, then run_wrapper, a command prefix holding
-    a lock of its own (a run queue), all before the quiet checks; the game
-    runs in its own session, killed whole at the cap.
+    lock file, ~/.recomp-mac.lock on macOS whatever lock names, and
+    quiet_locks, then run_wrapper, a command prefix holding a lock of its
+    own (a run queue; macOS warns without one), all before the quiet
+    checks; the game runs in its own session, killed whole at the cap.
+    tmux_status_pause = true stops tmux's status refresh for the game's
+    run and restores it after (run-info: tmux_status_paused). Never wrap
+    run or series in `lockf ~/.recomp-mac.lock`: the run takes that lock
+    itself and would wait on its own wrapper until the lock wait gives up.
   - host "proton": a SteamOS box over ssh, the Windows exe under umu-run
     and Proton, flock on the lock file, the GPU clock and busy sampled
     every 250 ms from sysfs, the CPU cores' clocks and the game's threads
     (load, last core) every second from /proc.
   - host "windows" is not run from here: windows writes run-arm.ps1 and the
     arms (and run-series.ps1 with --series), for whoever drives that PC;
-    collect reads what it brings back.
+    collect reads what it brings back. --exe (or the local [windows] exe)
+    runs that exe in place of the installed app's current version.
 Every run opens borderless desktop fullscreen (present.fullscreen): an OS
 throttles the presents of a covered or unfocused window. Each runner also
 watches the run: another process busy (the game is skipped by id, never by
@@ -49,9 +57,13 @@ it held. A quiet wait that gave up marks the run disturbed.
 
 series runs many arms in order into ROOT/<host>/<run>/, each named
 <arm>[-noprof][-rN], skipping those collected (run.json), and collects
-each. A run folder without run.json (a run that failed) is moved aside to
-<run>.failed-<time> and run again; a failed run does not stop the series,
-which then exits 1.
+each. A run folder without run.json whose run reached its end (run-info
+with rc) is collected now and kept; one that still will not collect, or a
+run that died, is moved aside to <run>.failed-<time> and run again. A
+failed run does not stop the series, which then exits 1. A series holds
+ROOT/<host>/.series.lock, and on a Proton host <dir>/.series.lock there
+(the hosts' run dirs are shared across roots), for its whole length; a
+second series finds them held and stops at once.
 --order interleave (the default) runs each arm's sampled and unsampled runs
 back to back, alternating which goes first; blocks runs every sampled run,
 then every unsampled one.
@@ -62,7 +74,7 @@ runtime's own sampler (RECOMP_TRACE=prof), since it is the one profiler
 that works alike on macOS, Wine and native Windows; collect symbolises its
 module offsets with the exe's symbol table (nm / llvm-nm).
 
-analyse reads ROOT/<host>/<run>/run.json and writes summary.json,
+analyse reads ROOT/<host>/<run>/run.json (not the .failed- ones) and writes summary.json,
 summary.csv (one row per run) and summary-arms.csv (one row per arm: the
 median, min, max and MAD over its repeats, and how many runs the scene's
 [verdict] calls good or bad). A run's repeat is run --rep, else a -rN
@@ -122,6 +134,12 @@ QUIET_WAIT_S = 30 * 60
 # A local run's cap past the scene's run_s: the game's own quit comes first;
 # the cap ends a hung one. The lock and quiet waits come before it.
 LOCAL_CAP_EXTRA_S = 120
+# The Mac's build and bench lock (lockf(1) users queue on it): a Mac run
+# always holds it, whatever the local TOML's lock names, so no build that
+# takes it can start mid-run.
+MAC_LOCK = "~/.recomp-mac.lock"
+# A run folder series moved aside: <run>.failed-<stamp>. Not a run.
+ASIDE_RE = re.compile(r"\.failed-\d{8}-\d{6}(-\d+)?$")
 GPU_PERIOD_MS = 250
 
 
@@ -1460,10 +1478,15 @@ def load_rows(root, recollect=False, scene=None, exe=None):
     """(run.json dicts, summary rows) for ROOT/<host>/<run>/run.json.
     recollect runs collect again on each run first (a run collected by an
     older CLI lacks the newer columns), with scene, when given, in place of
-    the one in run-info.json (a key added since, such as spin_functions)."""
+    the one in run-info.json (a key added since, such as spin_functions).
+    A run series moved aside (<run>.failed-<stamp>) is skipped: it is an
+    attempt the series ran again, and counting it would count that arm
+    twice."""
     runs, rows = [], []
     for path in sorted(glob.glob(os.path.join(root, "*", "*", "run.json"))):
         d = os.path.dirname(path)
+        if ASIDE_RE.search(os.path.basename(d)):
+            continue
         r = None
         if recollect:
             try:
@@ -1763,7 +1786,7 @@ class Locks:
     game's end, so nothing the checks waited out can start in between."""
 
     def __init__(self):
-        self.fds, self.holder, self.held = [], None, []
+        self.fds, self.holders, self.held = [], [], []
 
     def take_file(self, path, wait_s=3600, step_s=1.0):
         """flock(2) on path: what BSD lockf(1) and util-linux flock(1) take,
@@ -1795,42 +1818,120 @@ class Locks:
         of its own (a queue such as mac-run-lock.sh, not a lock file): it
         runs a child that says so and then waits on its stdin, held until
         release closes that."""
-        cmd = list(wrapper) + ["sh", "-c", "echo held; exec cat >/dev/null"]
+        cmd = list(wrapper) + ["sh", "-c", HELD_SH]
+        self.take_held(cmd, " ".join(map(str, wrapper)), "run wrapper %s" % (wrapper,))
+
+    def take_remote(self, ssh, path):
+        """flock -n on path on an ssh host, held by one ssh session for as
+        long as this holds it: closing its stdin ends the remote cat and
+        with it the lock. Fails at once when another holder has it. The
+        session idles for hours, so keepalives notice a host that slept or
+        dropped off the network; alive() then reports the lock gone."""
+        q = remote_path_sh(path)
+        cmd = 'mkdir -p "$(dirname %s)" && exec flock -n %s sh -c %s' % (q, q, shlex.quote(HELD_SH))
+        opts = [
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ServerAliveInterval=30",
+            "-o",
+            "ServerAliveCountMax=4",
+        ]
+        self.take_held(["ssh", *opts, ssh, cmd], "%s:%s" % (ssh, path), "%s:%s" % (ssh, path))
+
+    def check_alive(self):
+        """MatrixError when a held-line holder has exited: its lock is gone
+        (an ssh session that died with its host), so nothing stops another
+        series from moving aside the next run."""
+        for h, name in self.holders:
+            if h.poll() is not None:
+                raise MatrixError(
+                    "lock %s lost (its holder exited, rc %s): stopping the series; "
+                    "run it again" % (name, h.returncode)
+                )
+
+    def take_held(self, cmd, name, what):
         h = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, start_new_session=True
         )
-        if h.stdout.readline().strip() != "held":
+        try:
+            line = h.stdout.readline()
+        except BaseException:
+            # Ctrl-C while the queue waits: a wrapper left behind keeps its
+            # queue ticket and, once granted, holds the lock with no run.
+            kill_group(h)
+            raise
+        if line.strip() != "held":
             h.stdin.close()
-            raise MatrixError("run wrapper %s: no lock (rc %s)" % (wrapper, h.wait()))
-        self.holder = h
-        self.held.append(" ".join(map(str, wrapper)))
+            raise MatrixError("%s: no lock (rc %s)" % (what, h.wait()))
+        self.holders.append((h, name))
+        self.held.append(name)
 
     def release(self):
-        if self.holder:
-            self.holder.stdin.close()
+        for h, _ in reversed(self.holders):
             try:
-                self.holder.wait(timeout=30)
+                h.stdin.close()
+            except OSError:
+                pass
+            try:
+                h.wait(timeout=30)
             except subprocess.TimeoutExpired:
-                kill_group(self.holder)
-            self.holder = None
+                kill_group(h)
+        self.holders = []
         for fd in reversed(self.fds):
             os.close(fd)
         self.fds = []
 
 
+# What a held-line lock runs inside its lock: says so, then waits on stdin.
+HELD_SH = "echo held; exec cat >/dev/null"
+
+
+def remote_path_sh(p):
+    """p quoted for a remote sh, a leading ~/ left to that shell's $HOME."""
+    if p == "~":
+        return '"$HOME"'
+    if p.startswith("~/"):
+        return '"$HOME"/' + shlex.quote(p[2:])
+    return shlex.quote(p)
+
+
+def group_left(pgid):
+    """True while process group pgid still has a member: a leader that
+    ended on TERM can leave a child that ignores it."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def kill_group(proc, grace_s=5):
     """Ends proc and everything it started (its own session): TERM, then
-    KILL after grace_s, so no child is left running or holding a lock."""
-    for sig in (signal.SIGTERM, signal.SIGKILL):
+    KILL after grace_s, so no child is left running or holding a lock. A
+    second Ctrl-C during the grace still sends the KILL before it goes on
+    up, or a child that ignores TERM would outlive the run."""
+
+    def signal_group(sig):
         try:
             os.killpg(proc.pid, sig)
         except (ProcessLookupError, PermissionError):
             pass
-        try:
-            proc.wait(timeout=grace_s)
-            return
-        except subprocess.TimeoutExpired:
-            continue
+
+    signal_group(signal.SIGTERM)
+    try:
+        proc.wait(timeout=grace_s)
+    except subprocess.TimeoutExpired:
+        pass
+    finally:
+        if proc.returncode is None or group_left(proc.pid):
+            signal_group(signal.SIGKILL)
+    try:
+        proc.wait(timeout=grace_s)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def wait_quiet(ps_cmd, ignore=(), limit_s=QUIET_WAIT_S, step_s=30, log=print):
@@ -1886,6 +1987,89 @@ def expand(p):
     return os.path.expanduser(p) if isinstance(p, str) else p
 
 
+class TmuxStatusPause:
+    """Stops tmux's status-line refresh for the measured part of a Mac
+    run: every status-interval tmux runs the status commands (git, battery,
+    load), which shows as noise in a quiet run. The old interval comes back
+    on any exit, Ctrl-C too. Off unless the local TOML sets
+    tmux_status_pause; no tmux server means nothing to pause."""
+
+    def __init__(self, enabled, tmux="tmux"):
+        self.enabled, self.tmux = enabled, tmux
+        self.paused, self.interval = False, None
+
+    def __enter__(self):
+        if not self.enabled:
+            return self
+        try:
+            r = subprocess.run(
+                [self.tmux, "show", "-gv", "status-interval"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                self.interval = r.stdout.strip()
+                s = subprocess.run(
+                    [self.tmux, "set", "-g", "status-interval", "0"],
+                    capture_output=True,
+                    timeout=10,
+                )
+                self.paused = s.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            pass
+        if self.paused:
+            self.catch_signals()
+        return self
+
+    def catch_signals(self):
+        """SIGTERM and SIGHUP (the terminal closed, a kill) unwind like
+        Ctrl-C, so __exit__ restores the interval and the run's finally
+        blocks kill the game and free the locks. Only the main thread can
+        set handlers; elsewhere the default stays."""
+        self.prior = {}
+
+        def unwind(signum, frame):
+            raise SystemExit(128 + signum)
+
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            try:
+                self.prior[sig] = signal.signal(sig, unwind)
+            except ValueError:
+                break
+
+    def __exit__(self, *exc):
+        for sig, h in getattr(self, "prior", {}).items():
+            signal.signal(sig, h)
+        self.prior = {}
+        if self.paused:
+            try:
+                subprocess.run(
+                    [self.tmux, "set", "-g", "status-interval", self.interval],
+                    capture_output=True,
+                    timeout=10,
+                )
+            except (OSError, subprocess.SubprocessError):
+                print(
+                    "tmux: status-interval not restored; run: tmux set -g status-interval %s"
+                    % self.interval
+                )
+        return False
+
+
+def local_locks(local):
+    """The lock files a local run takes, in order: the bench lock, the
+    Mac lock on macOS when the bench lock is another file, then
+    quiet_locks."""
+    files = [expand(local.get("lock", MAC_LOCK))]
+    if sys.platform == "darwin" and expand(MAC_LOCK) not in files:
+        files.append(expand(MAC_LOCK))
+    for x in map(expand, local.get("quiet_locks", [])):
+        if x not in files:
+            files.append(x)
+    return files
+
+
 def run_local(scene, host, local, arm, out, prof, benches, rep_n=None, order=None, extra=None):
     """This machine (the Mac): fresh hdd copy, the arm's config, locks.
     The Mac also collects every host's data, so its runs come last and it
@@ -1919,9 +2103,13 @@ def run_local(scene, host, local, arm, out, prof, benches, rep_n=None, order=Non
     )
     full = {k: v for k, v in os.environ.items() if not k.startswith("RECOMP_")}
     full.update(env)
-    lock = expand(local.get("lock", "~/.recomp-mac.lock"))
-    files = [lock] + [x for x in map(expand, local.get("quiet_locks", [])) if x != lock]
+    files = local_locks(local)
     wrapper = [expand(x) for x in local.get("run_wrapper", [])]
+    if sys.platform == "darwin" and not wrapper:
+        print(
+            "warning: no run_wrapper in the local TOML: this run does not hold the "
+            "Mac's game-run queue, so a golden or another run can start beside it"
+        )
     cap = scene["scene"]["run_s"] + LOCAL_CAP_EXTRA_S
     os.makedirs(os.path.join(out, "save"))
     ignore = quiet_ignore(scene, host, os.path.basename(exe))
@@ -1947,7 +2135,11 @@ def run_local(scene, host, local, arm, out, prof, benches, rep_n=None, order=Non
             % (host["_name"], scene["scene"]["name"], arm["id"]),
         )
         info["started"] = datetime.datetime.now().isoformat(timespec="seconds")
-        with open(os.path.join(out, "game.log"), "w") as log:
+        tmux = TmuxStatusPause(bool(local.get("tmux_status_pause", False)))
+        with tmux, open(os.path.join(out, "game.log"), "w") as log:
+            info["tmux_status_paused"] = tmux.paused
+            if tmux.paused:
+                info["tmux_status_interval"] = tmux.interval
             proc = subprocess.Popen(
                 [exe],
                 cwd=out,
@@ -2294,6 +2486,10 @@ RUN_ARM_PS1 = r"""# bench-matrix: one measured run of an arm on this PC (written
 # `bench-matrix windows`; scene %(scene)s, host %(host)s). Usage, in the
 # logged-on desktop:
 #   powershell -ExecutionPolicy Bypass -File run-arm.ps1 -Arm <id> [-NoProf] [-Rep N] [-SkipDone]
+#     [-ExePath <exe>]
+# -ExePath runs that exe (relative to %(dir)s, or absolute; its version
+# is its folder's name, its manifest.json the one beside it) in place of
+# the installed app's current version; the game files stay the app's.
 # -SkipDone (what run-series.ps1 passes) keeps a run that has its
 # run-info.json, so a series restarted after a stop resumes; without it the
 # run is redone.
@@ -2302,7 +2498,8 @@ RUN_ARM_PS1 = r"""# bench-matrix: one measured run of an arm on this PC (written
 # folder back under runs/<scene>/%(host)s/ keeping its name (the arm leads
 # it, so the tree reads without opening run.json) and run `bench-matrix collect`.
 # A run another process or window disturbed prints DISTURBED: run it again.
-param([Parameter(Mandatory)][string]$Arm, [switch]$NoProf, [int]$Rep = 1, [switch]$SkipDone)
+param([Parameter(Mandatory)][string]$Arm, [switch]$NoProf, [int]$Rep = 1, [switch]$SkipDone,
+      [string]$ExePath = '%(exe_path)s')
 $S = '%(dir)s'
 # PowerShell names are case-blind: $ArmDir must not share a name with any
 # later variable (a quiet-loop "a" once overwrote the arm dir "A", and every
@@ -2356,8 +2553,15 @@ Add-Type -Namespace BenchMatrix -Name Win -MemberDefinition @'
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 '@
-$I = Join-Path $env:LOCALAPPDATA 'Programs\%(app)s'; $v = (Get-Content -Raw "$I\current.txt").Trim()
-$exe = Join-Path "$I\versions\$v" '%(exe)s'
+$I = Join-Path $env:LOCALAPPDATA 'Programs\%(app)s'
+if ($ExePath) {
+    $exe = if ([IO.Path]::IsPathRooted($ExePath)) { $ExePath } else { Join-Path $S $ExePath }
+    $vdir = Split-Path -Parent $exe; $v = Split-Path -Leaf $vdir
+} else {
+    $v = (Get-Content -Raw "$I\current.txt").Trim(); $vdir = "$I\versions\$v"
+    $exe = Join-Path $vdir '%(exe)s'
+}
+if (-not (Test-Path $exe)) { Write-Host "no exe at $exe"; exit 2 }
 $name = if ($NoProf) { "$Arm-noprof" } else { $Arm }
 $R = if ($Rep -gt 1) { "$S\runs\$name-r$Rep" } else { "$S\runs\$name" }
 if ($SkipDone -and (Test-Path "$R\run-info.json")) { Write-Host "$R done, skipped"; exit 0 }
@@ -2463,7 +2667,7 @@ $hwInfo = @{ schema = 1
   backend = @{ name = '%(backend)s' } }
 # The build: the version folder's payload manifest names the shas.
 $build = @{ version = $v }
-$man = "$I\versions\$v\manifest.json"
+$man = "$vdir\manifest.json"
 if (Test-Path $man) {
     $mj = Get-Content -Raw $man | ConvertFrom-Json
     foreach ($p in $mj.sources.PSObject.Properties) {
@@ -2511,10 +2715,13 @@ def windows_host(scene, name=None):
 
 
 def write_windows(
-    scene, local, out, exe_name=None, host_name=None, series=None, order="interleave"
+    scene, local, out, exe_name=None, host_name=None, series=None, order="interleave", exe_path=None
 ):
     """run-arm.ps1 and arms/<id>/{config.toml,env.txt} for the PC; with
-    series (series_plan's list), run-series.ps1 too."""
+    series (series_plan's list), run-series.ps1 too. exe_path (else the
+    local table's exe) is the exe run-arm.ps1 runs by default in place of
+    the installed app's: a build under test that is not installed."""
+    exe_path = exe_path or local.get("exe")
     host = windows_host(scene, host_name)
     os.makedirs(os.path.join(out, "arms"), exist_ok=True)
     for arm in arms(scene, host["_name"]):
@@ -2543,6 +2750,7 @@ def write_windows(
         "dir": ps_quote(local["dir"]),
         "app": ps_quote(local["app"]),
         "exe": ps_quote(exe),
+        "exe_path": ps_quote(exe_path or ""),
         "backend": ps_quote(host["backend"]),
         # Perf counter instances are named without .exe.
         "ignore": "".join(
@@ -2744,6 +2952,11 @@ def main(argv=None, prog="bench-matrix", exe_name=None):
     p.add_argument("--out", required=True)
     p.add_argument("--host", help="the PC's host in the scene (default: its kind windows one)")
     p.add_argument("--series", action="store_true", help="also run-series.ps1, in order")
+    p.add_argument(
+        "--exe",
+        help="the PC's exe to run (relative to the local dir, or absolute) in place of "
+        "the installed app's current version",
+    )
     series_args(p)
     p = sub.add_parser("report", help="the result's HTML report; --public: its README part")
     p.add_argument("result", help="the matrix's result dir (analysed)")
@@ -2798,11 +3011,155 @@ def report_cmd(a):
     return code
 
 
+def load_local(path, seen=()):
+    """The local TOML, with base = "<path>" (relative to this file) read
+    first: a copy for one bench then names the machine's shared file and
+    holds only what it changes, so a key added there (a lock, run_wrapper)
+    reaches every copy. Per host table, this file's keys win."""
+    path = os.path.abspath(os.path.expanduser(path))
+    if path in seen:
+        raise MatrixError("%s: base loops back to itself" % path)
+    doc = load_toml(path)
+    base = doc.pop("base", None)
+    if base is None:
+        return doc
+    if not isinstance(base, str):
+        raise MatrixError("%s: base must be a path" % path)
+    merged = load_local(
+        os.path.join(os.path.dirname(path), os.path.expanduser(base)), seen + (path,)
+    )
+    for k, v in doc.items():
+        if isinstance(v, dict) and isinstance(merged.get(k), dict):
+            merged[k] = dict(merged[k], **v)
+        else:
+            merged[k] = v
+    return merged
+
+
 def local_table(path, host):
-    local = load_toml(path).get(host)
+    local = load_local(path).get(host)
     if not local:
         raise MatrixError("%s: no [%s] table" % (path, host))
     return local
+
+
+def series_locks(locks, a, scene, hosts):
+    """One series per host and results root, and one per remote run dir:
+    a second series would move aside, or run over, a run the first has
+    live. ROOT/<host>/.series.lock here; a Proton host's runs share
+    <dir>/runs/<run> whatever the root, so its <dir>/.series.lock there too.
+    Neither waits: two series at once is a mistake to report, not a queue."""
+    remote = set()
+    for h in hosts:
+        d = os.path.join(a.root, h)
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, ".series.lock")
+        try:
+            locks.take_file(path, wait_s=0, step_s=0)
+        except MatrixError as e:
+            raise MatrixError("another series is running on %s (%s is held)" % (d, path)) from e
+        local = local_table(a.local, h) if scene["hosts"][h].get("kind") == "proton" else {}
+        # Two hosts of the scene on one box (two backends on the Deck)
+        # share its run dir: one lock for both, not a clash with itself.
+        key = (local.get("ssh"), (local.get("dir") or "").rstrip("/"))
+        if all(key) and key not in remote:
+            remote.add(key)
+            path = local["dir"].rstrip("/") + "/.series.lock"
+            try:
+                locks.take_remote(local["ssh"], path)
+            except MatrixError as e:
+                raise MatrixError(
+                    "another series is running on %s (%s:%s is held)" % (h, local["ssh"], path)
+                ) from e
+
+
+def recollect_left(out):
+    """A folder a series left without run.json: when its run got to the
+    end (run-info.json with rc) and only the collect failed or never ran,
+    collect it now; True when that made it a done run."""
+    try:
+        info = json.loads((read(os.path.join(out, "run-info.json")) or "{}").lstrip("\ufeff"))
+    except ValueError:
+        return False
+    if "rc" not in info:
+        return False
+    try:
+        collect(out)
+    except (MatrixError, OSError, ValueError, KeyError) as e:
+        print("%s: collect failed again: %s" % (out, e))
+        return False
+    return True
+
+
+def aside_name(out):
+    """<run>.failed-<time>, with -2, -3... when one from the same second
+    is already there (a series rerun at once that failed at once)."""
+    aside = "%s.failed-%s" % (out, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    n, name = 1, aside
+    while os.path.exists(name):
+        n += 1
+        name = "%s-%d" % (aside, n)
+    return name
+
+
+def run_series(a, scene, hosts, todo, locks=None):
+    prev, failed = None, []
+    for i, (h, arm_id, p, rep) in enumerate(todo):
+        if locks and not a.dry_run:
+            locks.check_alive()
+        out = os.path.join(a.root, h, run_name(arm_id, p, rep))
+        # Done means collected: a run that died (ssh, a lock not granted,
+        # Ctrl-C) leaves its folder without run.json, and is moved aside
+        # and run again. One that ran to the end and failed only to
+        # collect is collected now and kept.
+        if os.path.exists(os.path.join(out, "run.json")):
+            print("%d/%d %s: done, skipped" % (i + 1, len(todo), out))
+            continue
+        if os.path.exists(out):
+            if a.dry_run:
+                print("%d/%d %s: not collected; collect, else move aside" % (i + 1, len(todo), out))
+                continue
+            if recollect_left(out):
+                print("%d/%d %s: collected now, kept" % (i + 1, len(todo), out))
+                prev = os.path.join(h, os.path.basename(out))
+                continue
+            aside = aside_name(out)
+            print("%d/%d %s: not collected; %s" % (i + 1, len(todo), out, aside))
+            os.rename(out, aside)
+        else:
+            print("%d/%d %s" % (i + 1, len(todo), out))
+        if a.dry_run:
+            continue
+        order = {
+            "index": i + 1,
+            "of": len(todo),
+            "order": a.order,
+            "hosts": hosts,
+            "previous": prev,
+        }
+        try:
+            run_one(
+                a,
+                scene,
+                host_of(scene, h),
+                local_table(a.local, h),
+                find_arm(scene, h, arm_id),
+                out,
+                p,
+                rep,
+                order,
+            )
+            prev = os.path.join(h, os.path.basename(out))
+            print(table([summary_row(collect(out), out)]))
+        except (MatrixError, OSError, subprocess.SubprocessError) as e:
+            # One failed run does not end the series; the next series
+            # runs it again.
+            print("%s: failed: %s" % (out, e))
+            failed.append(out)
+    if failed:
+        print("%d run(s) failed, run the series again: %s" % (len(failed), failed))
+        return 1
+    return 0
 
 
 def dispatch(a):
@@ -2839,55 +3196,13 @@ def dispatch(a):
         for h in hosts:
             plan = series_plan(arm_list(scene, h, a.arms), a.reps, a.first_rep, a.prof, a.order)
             todo += [(h, arm, p, rep) for arm, p, rep in plan]
-        prev, failed = None, []
-        for i, (h, arm_id, p, rep) in enumerate(todo):
-            out = os.path.join(a.root, h, run_name(arm_id, p, rep))
-            # Done means collected: a run that died (ssh, a lock not
-            # granted, Ctrl-C) leaves its folder without run.json, and is
-            # moved aside and run again.
-            if os.path.exists(os.path.join(out, "run.json")):
-                print("%d/%d %s: done, skipped" % (i + 1, len(todo), out))
-                continue
-            if os.path.exists(out):
-                aside = "%s.failed-%s" % (out, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
-                print("%d/%d %s: not collected; %s" % (i + 1, len(todo), out, aside))
-                if a.dry_run:
-                    continue
-                os.rename(out, aside)
-            else:
-                print("%d/%d %s" % (i + 1, len(todo), out))
-            if a.dry_run:
-                continue
-            order = {
-                "index": i + 1,
-                "of": len(todo),
-                "order": a.order,
-                "hosts": hosts,
-                "previous": prev,
-            }
-            try:
-                run_one(
-                    a,
-                    scene,
-                    host_of(scene, h),
-                    local_table(a.local, h),
-                    find_arm(scene, h, arm_id),
-                    out,
-                    p,
-                    rep,
-                    order,
-                )
-                prev = os.path.join(h, os.path.basename(out))
-                print(table([summary_row(collect(out), out)]))
-            except (MatrixError, OSError, subprocess.SubprocessError) as e:
-                # One failed run does not end the series; the next series
-                # runs it again.
-                print("%s: failed: %s" % (out, e))
-                failed.append(out)
-        if failed:
-            print("%d run(s) failed, run the series again: %s" % (len(failed), failed))
-            return 1
-        return 0
+        locks = Locks()
+        try:
+            if not a.dry_run:
+                series_locks(locks, a, scene, hosts)
+            return run_series(a, scene, hosts, todo, locks)
+        finally:
+            locks.release()
     if a.cmd == "collect":
         scene = load_scene(a.scene) if a.scene else None
         if scene and "scene" not in json.loads(
@@ -2935,7 +3250,7 @@ def dispatch(a):
             series = series_plan(
                 arm_list(scene, host["_name"], a.arms), a.reps, a.first_rep, a.prof, a.order
             )
-        ids = write_windows(scene, local, a.out, a.exe_name, host["_name"], series, a.order)
+        ids = write_windows(scene, local, a.out, a.exe_name, host["_name"], series, a.order, a.exe)
         print(
             "%s: run-arm.ps1 and %d arms%s"
             % (a.out, len(ids), ", run-series.ps1 (%d runs)" % len(series) if series else "")

@@ -1042,3 +1042,57 @@ def test_pad_step_count_cross_checked():
         assert G.pad_steps_expected({"RECOMP_PAD_SCRIPT": "@fx/gone.pad"}, tmp) is None
         assert G.pad_steps_expected({"RECOMP_DEBUG": "pad_script=@seed:x/r.pad"}, tmp) is None
         assert G.pad_steps_expected({}, tmp) is None
+
+
+def test_worktree_reads_references_from_the_main_checkout():
+    # The reference PNGs are gitignored, so a worktree has none: a missing
+    # one is read from the main checkout when its pixels are the recorded
+    # ones, and never when they are another picture.
+    import subprocess
+
+    def git(*a, cwd):
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *a],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = os.path.realpath(tmp)
+        main, wt = os.path.join(tmp, "main"), os.path.join(tmp, "wt")
+        os.makedirs(os.path.join(main, "golden", "frames"))
+        git("init", "-q", cwd=main)
+        with open(os.path.join(main, "golden", "golden.json"), "w") as f:
+            f.write("{}")
+        git("add", ".", cwd=main)
+        git("commit", "-qm", "x", cwd=main)
+        git("worktree", "add", "-q", "-b", "wt", wt, cwd=main)
+        G.write_png(os.path.join(main, "golden", "frames", "a.png"), W, H, flat(100))
+        G.write_png(os.path.join(main, "golden", "frames", "b.ok.png"), W, H, flat(7))
+        sha = G.pixel_sha(G.read_image(os.path.join(main, "golden", "frames", "a.png")))
+        sha_b = G.pixel_sha(G.read_image(os.path.join(main, "golden", "frames", "b.ok.png")))
+        saved = (G.REPO, G.GOLDEN_DIR, G.GOLDEN_JSON, G.FRAMES_DIR, G.GAME_ENHANCE)
+        try:
+            G.configure(os.path.join(wt, "golden", "golden.json"), root=wt)
+            mine = os.path.join(wt, "golden", "frames")
+            assert G.frame_refs({"name": "a", "sha256": sha})[0][2] == os.path.join(
+                main, "golden", "frames", "a.png"
+            )
+            refs = G.frame_refs({"name": "b", "references": [{"label": "ok", "sha256": sha_b}]})
+            assert refs[0][2] == os.path.join(main, "golden", "frames", "b.ok.png")
+            # Another picture there: the worktree's own (missing) path.
+            assert G.frame_refs({"name": "a", "sha256": "0" * 64})[0][2] == os.path.join(
+                mine, "a.png"
+            )
+            # The worktree's own copy wins once it has one.
+            os.makedirs(mine)
+            G.write_png(os.path.join(mine, "a.png"), W, H, flat(100))
+            assert G.frame_refs({"name": "a", "sha256": sha})[0][2] == os.path.join(mine, "a.png")
+            # The main checkout itself looks nowhere else.
+            G.configure(os.path.join(main, "golden", "golden.json"), root=main)
+            assert G.main_frames_dir() is None
+        finally:
+            G.REPO, G.GOLDEN_DIR, G.GOLDEN_JSON, G.FRAMES_DIR, G.GAME_ENHANCE = saved
+            G._MAIN_FRAMES[:] = []
+            G._MAIN_REFS.clear()

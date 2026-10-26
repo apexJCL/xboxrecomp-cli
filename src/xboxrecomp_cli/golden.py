@@ -217,6 +217,8 @@ def configure(json_path, frames_dir=None, root=None, enhance=None):
     FRAMES_DIR = os.path.abspath(frames_dir) if frames_dir else os.path.join(GOLDEN_DIR, "frames")
     REPO = os.path.abspath(root) if root else GOLDEN_DIR
     GAME_ENHANCE = dict(enhance or {})
+    _MAIN_REFS.clear()
+    _MAIN_FRAMES[:] = []
 
 
 CONFIG_FLAGS = ("--golden-json", "--golden-frames", "--game-root")
@@ -777,22 +779,82 @@ def check_split(tag, fr, th, refs, have, imgs):
     return 2
 
 
+# The main checkout's frames dir when REPO is a linked worktree ([dir] or
+# [None]; [] until looked up) and the references read from it.
+_MAIN_FRAMES = []
+_MAIN_REFS = {}
+
+
+def main_frames_dir():
+    """FRAMES_DIR's place in the repo's main checkout when REPO is a linked
+    git worktree, else None. The reference PNGs are gitignored, so a
+    worktree has none of its own until someone copies them."""
+    if not _MAIN_FRAMES:
+        found = None
+        try:
+            common = subprocess.run(
+                ["git", "-C", REPO, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            top = subprocess.run(
+                ["git", "-C", REPO, "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            main = os.path.dirname(common) if os.path.basename(common) == ".git" else None
+            rel = os.path.relpath(FRAMES_DIR, top)
+            if (
+                main
+                and os.path.realpath(main) != os.path.realpath(top)
+                and not rel.startswith("..")
+            ):
+                found = os.path.join(main, rel)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        _MAIN_FRAMES[:] = [found]
+    return _MAIN_FRAMES[0]
+
+
+def ref_path(name, sha):
+    """frames/<name> here; in a worktree without it, the main checkout's
+    copy when that has the recorded pixels (never another picture). Only
+    reads go there: record and reference write to FRAMES_DIR."""
+    path = os.path.join(FRAMES_DIR, name)
+    if sha is None or os.path.exists(path):
+        return path
+    main = main_frames_dir()
+    if not main:
+        return path
+    cand = os.path.join(main, name)
+    key = (cand, sha)
+    if key not in _MAIN_REFS:
+        try:
+            _MAIN_REFS[key] = os.path.exists(cand) and pixel_sha(read_image(cand)) == sha
+        except Exception:
+            _MAIN_REFS[key] = False
+    return cand if _MAIN_REFS[key] else path
+
+
 def frame_refs(fr):
     """(label, sha256, PNG path) of each reference of a frame: its
     `references`, or its one sha256 (label None) at frames/<name>.png. A
     frame with neither (just added, before golden reference records it) has
     one entry with sha256 None: check says NOREF, refs skips it, and the
-    run still dumps it so it can be recorded."""
+    run still dumps it so it can be recorded. In a git worktree a missing
+    PNG is read from the main checkout (ref_path)."""
     if fr.get("references"):
         return [
             (
                 r["label"],
                 r["sha256"],
-                os.path.join(FRAMES_DIR, "%s.%s.png" % (fr["name"], r["label"])),
+                ref_path("%s.%s.png" % (fr["name"], r["label"]), r["sha256"]),
             )
             for r in fr["references"]
         ]
-    return [(None, fr.get("sha256"), os.path.join(FRAMES_DIR, fr["name"] + ".png"))]
+    return [(None, fr.get("sha256"), ref_path(fr["name"] + ".png", fr.get("sha256")))]
 
 
 def missing_ref_hint(fr, ref=None):

@@ -277,7 +277,10 @@ def test_ps1_writes_hw_and_build(ps1):
     code = "\n".join(x for x in text.splitlines() if not x.lstrip().startswith("#"))
     for bad in ("$cs.Name", "SerialNumber", "UUID", "Win32_BIOS", "Win32_NetworkAdapter"):
         assert bad not in code
-    assert "$I\\versions\\$v\\manifest.json" in text
+    # The version folder's manifest: the installed one's, or the one beside
+    # an -ExePath exe.
+    assert '$man = "$vdir\\manifest.json"' in text
+    assert '$vdir = "$I\\versions\\$v"' in text
 
 
 @pytest.mark.skipif(not shutil.which("pwsh"), reason="no pwsh")

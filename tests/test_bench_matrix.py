@@ -71,6 +71,15 @@ backend = "vulkan"
 """
 
 
+@pytest.fixture(autouse=True)
+def mac_lock(tmp_path, monkeypatch):
+    """A Mac run always takes the Mac lock: a test's is its own file, never
+    the real ~/.recomp-mac.lock a build may hold."""
+    p = str(tmp_path / "recomp-mac.lock")
+    monkeypatch.setattr(B, "MAC_LOCK", p)
+    return p
+
+
 @pytest.fixture
 def scene(tmp_path):
     p = tmp_path / "scene.toml"
@@ -1020,7 +1029,7 @@ def test_series_reruns_a_failed_run(scene, tmp_path, monkeypatch, capsys):
     # and runs it again.
     assert B.main(args) == 1
     assert len(calls) == 2
-    left = sorted(os.listdir(root / "deck"))
+    left = sorted(x for x in os.listdir(root / "deck") if not x.startswith("."))
     assert left[0] == "s1-dsp0-43" and left[1].startswith("s1-dsp0-43.failed-")
     # A collected run is done.
     (root / "deck" / "s1-dsp0-43" / "run.json").write_text("{}")
@@ -1052,7 +1061,7 @@ def test_locks_files_and_wrapper(tmp_path):
         B.Locks().take_wrapper(["sh", "-c", "exit 75", "x"])
 
 
-def test_run_local_locks_first_and_kills_the_group(scene, tmp_path, monkeypatch):
+def test_run_local_locks_first_and_kills_the_group(scene, tmp_path, monkeypatch, mac_lock):
     """The quiet waits run inside the locks; a game past the cap is killed
     with what it started, and the locks are free afterwards."""
     import fcntl
@@ -1091,7 +1100,10 @@ def test_run_local_locks_first_and_kills_the_group(scene, tmp_path, monkeypatch)
     B.run_local(sc, host, local, B.find_arm(scene, "mac", "s1-dsp0-43"), out, False, None)
     info = json.loads(open(os.path.join(out, "run-info.json")).read())
     assert held_in_wait == [True, True]
-    assert info["rc"] == "killed" and info["locks"] == [lk]
+    assert info["rc"] == "killed"
+    # On macOS the Mac lock too, though the local TOML names another.
+    assert info["locks"] == ([lk, mac_lock] if B.sys.platform == "darwin" else [lk])
+    assert info["tmux_status_paused"] is False
     pid = int(child.read_text())
     time.sleep(0.2)
     with pytest.raises(ProcessLookupError):
@@ -1108,3 +1120,389 @@ def test_quiet_wait_given_up_disturbs_a_run(scene, tmp_path):
     for k in ("busy_at_start", "builds_at_start"):
         row = B.summary_row(dict(r, **{k: [[60.0, "ninja"]]}))
         assert row["disturbed"] and row["busy_at_start"] == 1
+
+
+def series_argv(sc, root, host="deck", local="x"):
+    return [
+        "series",
+        str(sc),
+        "--host",
+        host,
+        "--root",
+        str(root),
+        "--local",
+        str(local),
+        "--arms",
+        "s1-dsp0-43",
+        "--prof",
+        "on",
+    ]
+
+
+def test_series_lock_fails_fast(scene, tmp_path, monkeypatch, capsys):
+    """A second series on the same host and root stops at once: it would
+    move aside the run the first has live."""
+    sc = tmp_path / "scene.toml"
+    sc.write_text(SCENE)
+    root = tmp_path / "res"
+    (root / "deck").mkdir(parents=True)
+    ran = []
+    monkeypatch.setattr(B, "run_one", lambda *a, **k: ran.append(a))
+    monkeypatch.setattr(B, "local_table", lambda path, h: {})
+    first = B.Locks()
+    first.take_file(str(root / "deck" / ".series.lock"))
+    try:
+        assert B.main(series_argv(sc, root)) == 2
+        assert "another series is running" in capsys.readouterr().err and not ran
+    finally:
+        first.release()
+    # Free again once the first is done; a dry run takes no lock at all.
+    first.take_file(str(root / "deck" / ".series.lock"))
+    try:
+        assert B.main(series_argv(sc, root) + ["--dry-run"]) == 0
+    finally:
+        first.release()
+
+
+def test_series_takes_the_proton_hosts_remote_lock(scene, tmp_path, monkeypatch):
+    sc = tmp_path / "scene.toml"
+    sc.write_text(SCENE)
+    got = []
+    monkeypatch.setattr(B, "run_one", lambda *a, **k: None)
+    monkeypatch.setattr(B, "collect", lambda out, *a: {})
+    monkeypatch.setattr(B, "summary_row", lambda *a: {})
+    monkeypatch.setattr(B, "table", lambda rows: "")
+    monkeypatch.setattr(B, "local_table", lambda path, h: {"ssh": "deck", "dir": "~/bm/"})
+    monkeypatch.setattr(B.Locks, "take_remote", lambda self, ssh, p: got.append((ssh, p)))
+    assert B.main(series_argv(sc, tmp_path / "res")) == 0
+    assert got == [("deck", "~/bm/.series.lock")]
+
+    def held(self, ssh, p):
+        raise B.MatrixError("deck:%s: no lock (rc 1)" % p)
+
+    monkeypatch.setattr(B.Locks, "take_remote", held)
+    a = type("A", (), {"root": str(tmp_path / "res2"), "local": "x"})()
+    L = B.Locks()
+    with pytest.raises(B.MatrixError, match="another series is running on deck"):
+        B.series_locks(L, a, scene, ["deck"])
+    L.release()
+
+
+def test_series_locks_one_remote_lock_per_box(scene, tmp_path, monkeypatch):
+    got = []
+    monkeypatch.setattr(B, "local_table", lambda path, h: {"ssh": "deck", "dir": "~/bm"})
+    monkeypatch.setattr(B.Locks, "take_remote", lambda self, ssh, p: got.append((ssh, p)))
+    two = dict(scene, hosts=dict(scene["hosts"], deck2=dict(scene["hosts"]["deck"])))
+    a = type("A", (), {"root": str(tmp_path / "res"), "local": "x"})()
+    L = B.Locks()
+    B.series_locks(L, a, two, ["deck", "deck2"])
+    L.release()
+    assert got == [("deck", "~/bm/.series.lock")]
+
+
+def test_take_remote_holds_one_ssh_session(tmp_path, monkeypatch):
+    """The remote series lock is one ssh session running flock around a
+    child that waits on stdin; closing that ends the lock. A fake ssh runs
+    the command here, and a fake flock takes the lock with mkdir."""
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    (bin_ / "ssh").write_text(
+        '#!/bin/sh\necho "$@" > "%s"\nfor x; do last=$x; done\nexec sh -c "$last"\n'
+        % (tmp_path / "ssh.args")
+    )
+    (bin_ / "flock").write_text(
+        '#!/bin/sh\n[ "$1" = -n ] || exit 64\np="$2"\nmkdir "$p.d" 2>/dev/null || exit 1\n'
+        'shift 2\n"$@"\nrc=$?\nrmdir "$p.d"\nexit $rc\n'
+    )
+    for f in ("ssh", "flock"):
+        (bin_ / f).chmod(0o755)
+    monkeypatch.setenv("PATH", "%s:%s" % (bin_, os.environ["PATH"]))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    L = B.Locks()
+    L.take_remote("handheld", "~/bm dir/.series.lock")
+    assert L.held == ["handheld:~/bm dir/.series.lock"]
+    assert (tmp_path / "home" / "bm dir" / ".series.lock.d").is_dir()
+    args = (tmp_path / "ssh.args").read_text()
+    assert args.startswith(
+        "-o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4 handheld "
+    )
+    L.check_alive()
+    with pytest.raises(B.MatrixError, match="no lock"):
+        B.Locks().take_remote("handheld", "~/bm dir/.series.lock")
+    L.release()
+    # A holder that died (the ssh session lost with its host): the lock is
+    # gone and check_alive says so.
+    L2 = B.Locks()
+    L2.take_remote("handheld", "~/bm dir/.series.lock")
+    h = L2.holders[0][0]
+    B.kill_group(h, grace_s=1)
+    with pytest.raises(B.MatrixError, match="lost"):
+        L2.check_alive()
+    L2.release()
+    assert B.remote_path_sh("~/a b") == "\"$HOME\"/'a b'"
+    assert B.remote_path_sh("/x") == "/x"
+
+
+def test_series_collects_a_finished_run_before_moving_it(scene, tmp_path, monkeypatch, capsys):
+    """A run that got to the end (run-info.json with rc) but never got
+    collected is collected and kept; one that still will not collect is
+    moved aside and run again."""
+    sc = tmp_path / "scene.toml"
+    sc.write_text(SCENE)
+    root = tmp_path / "res"
+    make_run(str(root), scene, "deck", "s1-dsp0-43", [16.7])
+    d = root / "deck" / "s1-dsp0-43"
+    (d / "run.json").unlink()
+    info = json.loads((d / "run-info.json").read_text())
+    (d / "run-info.json").write_text(json.dumps(dict(info, rc=0)))
+    ran = []
+    monkeypatch.setattr(B, "run_one", lambda *a, **k: ran.append(a))
+    monkeypatch.setattr(B, "local_table", lambda path, h: {})
+    assert B.main(series_argv(sc, root)) == 0
+    assert "collected now, kept" in capsys.readouterr().out
+    assert not ran and (d / "run.json").exists()
+    assert sorted(x for x in os.listdir(root / "deck") if not x.startswith(".")) == ["s1-dsp0-43"]
+    # rc but a log that does not collect: moved aside, run again.
+    (d / "run.json").unlink()
+    (d / "game.log").write_text("")
+    (d / "game-stdio.log").write_text("")
+
+    def rerun(a, scene, host, local, arm, out, prof, rep, order=None):
+        ran.append(out)
+        raise B.MatrixError("ssh host: down")
+
+    monkeypatch.setattr(B, "run_one", rerun)
+    assert B.main(series_argv(sc, root)) == 1
+    out = capsys.readouterr().out
+    assert "collect failed again" in out and len(ran) == 1
+    left = sorted(x for x in os.listdir(root / "deck") if not x.startswith("."))
+    assert len(left) == 1 and left[0].startswith("s1-dsp0-43.failed-")
+    # No rc (the run died before its end): moved aside without a collect.
+    os.makedirs(d)
+    (d / "run-info.json").write_text(json.dumps(info))
+    assert B.main(series_argv(sc, root)) == 1
+    assert "collect failed again" not in capsys.readouterr().out and len(ran) == 2
+
+
+def test_analyse_skips_runs_moved_aside(scene, tmp_path):
+    root = str(tmp_path / "out")
+    make_run(root, scene, "mac", "s1-dsp0-43", [16.0])
+    make_run(root, scene, "mac", "s1-dsp0-43", [30.0], suffix=".failed-20261026-041500")
+    rows, _, _ = B.analyse(root)
+    assert len(rows) == 1 and rows[0]["steady_fps"] > 55
+    _, rows = B.load_rows(root)
+    assert [r["run_dir"] for r in rows] == [os.path.join("mac", "s1-dsp0-43")]
+
+
+def test_take_wrapper_interrupted_kills_the_queue(tmp_path, monkeypatch):
+    """Ctrl-C while the wrapper waits for its lock: the wrapper and what it
+    started go, so no queue ticket is left to be granted later."""
+    pidf = tmp_path / "wrap.pid"
+    wrap = tmp_path / "wrap.sh"
+    wrap.write_text('echo $$ > "%s"\nsleep 60\n"$@"\n' % pidf)
+    real = B.subprocess.Popen
+
+    class Popen(real):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            out = self.stdout
+
+            class Out:
+                def readline(self_):
+                    for _ in range(100):
+                        if pidf.exists() and pidf.read_text().strip():
+                            break
+                        time.sleep(0.02)
+                    raise KeyboardInterrupt
+
+            self.stdout, self._out = Out(), out
+
+    monkeypatch.setattr(B.subprocess, "Popen", Popen)
+    L = B.Locks()
+    with pytest.raises(KeyboardInterrupt):
+        L.take_wrapper(["sh", str(wrap)])
+    assert not L.holders and not L.held
+    pid = int(pidf.read_text())
+    time.sleep(0.2)
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+def test_kill_group_still_kills_on_a_second_ctrl_c(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(B.os, "killpg", lambda pid, sig: sent.append(sig))
+
+    class Proc:
+        pid, returncode = 12345, None
+
+        def wait(self, timeout=None):
+            if len(sent) == 1:
+                raise KeyboardInterrupt
+            raise B.subprocess.TimeoutExpired("x", timeout)
+
+    with pytest.raises(KeyboardInterrupt):
+        B.kill_group(Proc(), grace_s=0)
+    assert sent == [B.signal.SIGTERM, B.signal.SIGKILL]
+    # One that ends on TERM gets no KILL.
+    sent.clear()
+
+    class Done(Proc):
+        def wait(self, timeout=None):
+            self.returncode = -15
+            return -15
+
+    def gone(pid, sig):
+        sent.append(sig)
+        if sig == 0:
+            raise ProcessLookupError
+
+    monkeypatch.setattr(B.os, "killpg", gone)
+    B.kill_group(Done(), grace_s=0)
+    assert sent == [B.signal.SIGTERM, 0]
+    # The leader ended on TERM but a member of its group is still there.
+    sent.clear()
+    monkeypatch.setattr(B.os, "killpg", lambda pid, sig: sent.append(sig))
+    B.kill_group(Done(), grace_s=0)
+    assert sent == [B.signal.SIGTERM, 0, B.signal.SIGKILL]
+
+
+def test_kill_group_kills_a_child_that_ignores_term(tmp_path):
+    pidf = tmp_path / "child.pid"
+    p = B.subprocess.Popen(
+        [
+            "sh",
+            "-c",
+            "(trap '' TERM; echo $$ >/dev/null; exec sleep 60) & echo $! > %s; exit 0" % pidf,
+        ],
+        start_new_session=True,
+    )
+    p.wait(timeout=10)
+    for _ in range(100):
+        if pidf.exists() and pidf.read_text().strip():
+            break
+        time.sleep(0.02)
+    child = int(pidf.read_text())
+    B.kill_group(p, grace_s=1)
+    for _ in range(100):
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    with pytest.raises(ProcessLookupError):
+        os.kill(child, 0)
+
+
+def fake_tmux(tmp_path, interval="15", fail_show=False):
+    log = tmp_path / "tmux.log"
+    t = tmp_path / "tmux"
+    t.write_text(
+        '#!/bin/sh\necho "$*" >> "%s"\n' % log
+        + ('[ "$1" = show ] && exit 1\n' if fail_show else "")
+        + '[ "$1" = show ] && echo %s\nexit 0\n' % interval
+    )
+    t.chmod(0o755)
+    return str(t), log
+
+
+def test_tmux_status_pause(tmp_path):
+    t, log = fake_tmux(tmp_path)
+    with B.TmuxStatusPause(True, t) as p:
+        assert p.paused and p.interval == "15"
+        assert log.read_text().splitlines() == [
+            "show -gv status-interval",
+            "set -g status-interval 0",
+        ]
+    assert log.read_text().splitlines()[-1] == "set -g status-interval 15"
+    # Restored on Ctrl-C too.
+    log.write_text("")
+    with pytest.raises(KeyboardInterrupt):
+        with B.TmuxStatusPause(True, t):
+            raise KeyboardInterrupt
+    assert log.read_text().splitlines()[-1] == "set -g status-interval 15"
+    # Off by default; no server (show fails) or no tmux at all: nothing.
+    log.write_text("")
+    with B.TmuxStatusPause(False, t) as p:
+        assert not p.paused
+    assert log.read_text() == ""
+    (tmp_path / "noserver").mkdir()
+    t2, _ = fake_tmux(tmp_path / "noserver", fail_show=True)
+    with B.TmuxStatusPause(True, t2) as p:
+        assert not p.paused
+    with B.TmuxStatusPause(True, str(tmp_path / "no-tmux")) as p:
+        assert not p.paused
+    # SIGTERM and SIGHUP unwind too, and the old handlers come back.
+    before = B.signal.getsignal(B.signal.SIGTERM)
+    log.write_text("")
+    with pytest.raises(SystemExit):
+        with B.TmuxStatusPause(True, t):
+            os.kill(os.getpid(), B.signal.SIGHUP)
+            time.sleep(1)
+    assert log.read_text().splitlines()[-1] == "set -g status-interval 15"
+    assert B.signal.getsignal(B.signal.SIGTERM) is before
+
+
+def test_run_local_pauses_tmux_and_takes_the_mac_lock(scene, tmp_path, monkeypatch, mac_lock):
+    t, log = fake_tmux(tmp_path, "5")
+    real = B.TmuxStatusPause
+    monkeypatch.setattr(B, "TmuxStatusPause", lambda on: real(on, t))
+    monkeypatch.setattr(B, "wait_builds", lambda *a, **k: (0, []))
+    monkeypatch.setattr(B, "wait_quiet", lambda *a, **k: (0, []))
+    monkeypatch.setattr(B.sys, "platform", "darwin")
+    exe = tmp_path / "game"
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    (tmp_path / "seed").mkdir()
+    local = {
+        "exe": str(exe),
+        "hdd_seed": str(tmp_path / "seed"),
+        "game_files": str(tmp_path),
+        "lock": str(tmp_path / "other.lock"),
+        "quiet_locks": [mac_lock],
+        "tmux_status_pause": True,
+    }
+    host = dict(scene["hosts"]["mac"], _name="mac")
+    out = str(tmp_path / "run")
+    B.run_local(scene, host, local, B.find_arm(scene, "mac", "s1-dsp0-43"), out, False, None)
+    info = json.loads(open(os.path.join(out, "run-info.json")).read())
+    assert info["locks"] == [str(tmp_path / "other.lock"), mac_lock]
+    assert info["tmux_status_paused"] is True and info["tmux_status_interval"] == "5"
+    assert log.read_text().splitlines()[-1] == "set -g status-interval 5"
+
+
+def test_local_toml_base(tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "local.toml").write_text(
+        '[mac]\nexe = "/a/game"\nrun_wrapper = ["sh", "/q.sh"]\n[deck]\nssh = "deck"\n'
+    )
+    own = tmp_path / "bench" / "local.toml"
+    own.parent.mkdir()
+    own.write_text('base = "../shared/local.toml"\n[mac]\nexe = "/b/game"\n[windows]\napp = "G"\n')
+    mac = B.local_table(str(own), "mac")
+    assert mac == {"exe": "/b/game", "run_wrapper": ["sh", "/q.sh"]}
+    assert B.local_table(str(own), "deck") == {"ssh": "deck"}
+    assert B.local_table(str(own), "windows") == {"app": "G"}
+    (shared / "local.toml").write_text('base = "../bench/local.toml"\n')
+    with pytest.raises(B.MatrixError, match="loops"):
+        B.local_table(str(own), "mac")
+
+
+def test_windows_env_fullscreen_and_exe_override(scene, tmp_path, capsys):
+    out = tmp_path / "pc"
+    B.write_windows(scene, {"dir": "D:\\b", "app": "G"}, str(out), "game")
+    env = (out / "arms" / "s1-dsp0-43" / "env.txt").read_text()
+    assert "RECOMP_PRESENT_FULLSCREEN=1" in env.splitlines()
+    ps1 = (out / "run-arm.ps1").read_text()
+    # No override: the installed app's current version, as before.
+    assert "[string]$ExePath = ''" in ps1
+    assert '$man = "$vdir\\manifest.json"' in ps1
+    B.write_windows(scene, {"dir": "D:\\b", "app": "G", "exe": "exe\\it's.exe"}, str(out), "game")
+    assert "[string]$ExePath = 'exe\\it''s.exe'" in (out / "run-arm.ps1").read_text()
+    sc = tmp_path / "scene.toml"
+    sc.write_text(SCENE)
+    loc = tmp_path / "local.toml"
+    loc.write_text('[windows]\ndir = \'D:\\b\'\napp = "G"\nexe_name = "g.exe"\n')
+    argv = ["windows", str(sc), "--local", str(loc), "--out", str(out), "--exe", "D:\\t\\g.exe"]
+    assert B.main(argv) == 0
+    assert "[string]$ExePath = 'D:\\t\\g.exe'" in (out / "run-arm.ps1").read_text()
