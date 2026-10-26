@@ -1,0 +1,99 @@
+{
+ "rep": null,
+ "run_order": null,
+ "scene_name": "title",
+ "host": "deck",
+ "backend": "d3d11",
+ "arm": "s1-43-noprof",
+ "values": {
+  "scale": 1,
+  "aspect": "4:3"
+ },
+ "prof": false,
+ "exe": "/build/game/build-win/game_recomp.exe",
+ "exe_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+ "env": {
+  "RECOMP_TRACE": "pacing=all",
+  "RECOMP_PRESENT_FULLSCREEN": "1",
+  "RECOMP_WINDOW_QUIT_AFTER": "160",
+  "RECOMP_PB_BACKEND": "d3d11",
+  "RECOMP_GAME_FILES": "Z:/bench/game/game_files",
+  "RECOMP_HDD_DIR": "Z:/bench/matrix/runs/title-r1/hdd",
+  "RECOMP_SAVE_DIR": "Z:/bench/matrix/runs/title-r1/save",
+  "RECOMP_CONFIG": "Z:/bench/matrix/runs/title-r1/config.toml",
+  "RECOMP_STDIO_LOG": "Z:/bench/matrix/runs/title-r1/game-stdio.log",
+  "WINEPREFIX": "/bench/matrix/prefix",
+  "GAMEID": "umu-default",
+  "UMU_RUNTIME_UPDATE": "0",
+  "PROTONPATH": "/bench/compat/GE-Proton11-7-x86_64",
+  "EXE": "/bench/matrix/exe/game_recomp.exe"
+ },
+ "config": {},
+ "quiet_wait_s": 244,
+ "busy_at_start": [],
+ "present_fullscreen": "1",
+ "remote_exe": "/bench/matrix/exe/game_recomp.exe",
+ "remote_dir": "/bench/matrix/runs/title-r1",
+ "hw": {
+  "schema": 1,
+  "os": {
+   "name": "SteamOS",
+   "version": "3.8.28",
+   "build": "20260922.1",
+   "kernel": "6.18.50-valve2-1-neptune-618"
+  },
+  "device": {
+   "model": "Galileo"
+  },
+  "cpu": {
+   "model": "AMD Custom APU 0932",
+   "cores": 4,
+   "threads": 8,
+   "p_cores": null,
+   "e_cores": null,
+   "max_mhz": 3501,
+   "governor": "powersave"
+  },
+  "gpu": [
+   {
+    "model": "AMD Custom GPU 0932 (RADV VANGOGH)",
+    "vendor": "AMD",
+    "driver": "radv Mesa 26.2.0-devel",
+    "vram_mb": 1024,
+    "max_mhz": 3500
+   }
+  ],
+  "ram_gb": 14.5,
+  "display": {
+   "refresh_hz": null,
+   "width": null,
+   "height": null
+  },
+  "power": {
+   "source": "AC",
+   "profile": null,
+   "tdp_w": 15.0,
+   "gpu_mhz_cap": 3500,
+   "cpu_mhz_cap": null,
+   "perf_level": null
+  },
+  "backend": {
+   "name": "d3d11",
+   "translation": "GE-Proton11-7-x86_64",
+   "translation_version": null
+  }
+ },
+ "build": {
+  "version": "20261024.0012-1a2b3c4-t5d6e7f8",
+  "version_public": "20261024.0012",
+  "game_sha": "1a2b3c4000000000000000000000000000000000",
+  "toolkit_sha": "5d6e7f8000000000000000000000000000000000",
+  "cli_version": "0.10.1",
+  "exe_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+ },
+ "started": "2026-10-24T11:18:23",
+ "ssh_rc": 0,
+ "ended": "2026-10-24T11:21:14",
+ "rc": "0",
+ "symbols": "/build/game/build-win/game_recomp.exe"
+}

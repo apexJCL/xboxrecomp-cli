@@ -106,7 +106,8 @@ def public_arm(e):
             out["judged_figs"] = {k: j.get(k) for k in ("mean", "low1", "p99", "n")}
         if e.get("delta"):
             out["delta"] = {
-                k: e["delta"].get(k) for k in ("fps", "low1", "groups_differ", "present_differs")
+                k: e["delta"].get(k)
+                for k in ("fps", "low1", "groups_differ", "present_differs", "judged")
             }
     return out
 
@@ -128,10 +129,14 @@ def public_model(model, scene):
         "warmup_s": model["warmup_s"],
         "hosts": [],
     }
-    unrecorded = []
+    unrecorded, missing = [], []
     for key, cfg in hosts.items():
         hm = model["hosts"].get(key)
         if not hm:
+            # The fragment replaces the scene's whole README block, so a
+            # host left out here would silently drop its published figures
+            # (often a bench that failed): refuse, as for no hw (D5).
+            missing.append(cfg["label"])
             continue
         d = hm["disclosure"]
         if not d["hw_recorded"]:
@@ -174,6 +179,7 @@ def public_model(model, scene):
                     "thresholds": {"mean_share_min": b["thresholds"]["mean_share_min"]},
                     "picks": [
                         {
+                            "split": dict(p.get("split") or {}),
                             "split_display": p["split_display"],
                             "arm": p.get("arm"),
                             "single_run": bool(p.get("single_run")),
@@ -192,13 +198,19 @@ def public_model(model, scene):
                 "baseline": base,
             }
         )
+    why = []
+    if missing:
+        why.append(
+            "no runs for %s in this result: run them, or drop them from "
+            "[report.public.hosts] to publish without them" % ", ".join(missing)
+        )
     if unrecorded:
-        raise Refused(
+        why.append(
             "no hardware recorded for %s (runs from before the hw block): "
             "rerun them to publish" % ", ".join(unrecorded)
         )
-    if not out["hosts"]:
-        raise R.ReportError("none of the public hosts has runs in this result")
+    if why:
+        raise Refused("; ".join(why))
     return out
 
 
@@ -277,33 +289,47 @@ def table_rows(pm, h, baseline):
             mark = " " + SINGLE if p["single_run"] else ""
             single = single or p["single_run"]
             what = "best and stock" if stock and stock["id"] == best["id"] else "best"
-            rows.append(("%s%s: %s%s" % (what, at, best["display"], mark), best, None))
+            rows.append(("%s%s: %s%s" % (what, at, best["display"], mark), best, None, True))
         else:
-            rows.append(("best%s" % at, None, "no tested setting holds"))
+            rows.append(("best%s" % at, None, "no tested setting holds", True))
         if stock and best and stock["id"] == best["id"]:
             continue
         if not stock:
-            rows.append(("stock%s" % at, None, "not in the plan"))
+            rows.append(("stock%s" % at, None, "not in the plan", False))
             continue
         reason = None
         if stock["status"] != "ok":
             reason = stock["status"]
         elif stock.get("judged") == "not judged":
             reason = "not judged"
-        rows.append(("stock%s: %s" % (at, stock["display"]), stock if not reason else None, reason))
+        rows.append(
+            ("stock%s: %s" % (at, stock["display"]), stock if not reason else None, reason, False)
+        )
     out = []
-    for i, (settings, e, reason) in enumerate(rows):
+    for i, (settings, e, reason, is_best) in enumerate(rows):
         r = [cell(h["label"]) if i == 0 else "", cell(settings), target]
+        judged = is_best and not reason and e.get("judged_figs")
         if reason:
             r += [cell(reason), "", "", "", ""]
-        elif settings.startswith("best") and e.get("judged_figs"):
+        elif judged:
             jf = e["judged_figs"]
             r += [R.fmt(jf["mean"]), R.fmt(jf["low1"], 0), R.fmt(jf["p99"])]
             r += ["%d of %d" % (jf["n"], e["n"]), sampler_text(h)]
         else:
             r += figure_cells(e) + [str(e["n"]), sampler_text(h)]
         if baseline:
-            r += ["", ""] if reason else [delta_text(e, "fps"), delta_text(e, "low1")]
+            if reason:
+                r += ["", ""]
+            elif judged:
+                # The row shows the judged runs, so its change must too: the
+                # baseline's judged runs, not compare()'s every-run pairing.
+                jd = dict((e.get("delta") or {}).get("judged") or {})
+                jd.update(
+                    {k: (e.get("delta") or {}).get(k) for k in ("groups_differ", "present_differs")}
+                )
+                r += [delta_text({"delta": jd}, "fps"), delta_text({"delta": jd}, "low1")]
+            else:
+                r += [delta_text(e, "fps"), delta_text(e, "low1")]
         out.append(r)
     return out, single
 
@@ -366,13 +392,22 @@ def hw_items(hv, rv, refresh_low, target):
     return items
 
 
+def build_text(hosts):
+    """The heading's build: one line when every host ran the same builds,
+    else each host's, so one host's build is never read as everyone's."""
+    per = [(h["label"], " and ".join(h["version_public"]) or "not recorded") for h in hosts]
+    if not per:
+        return ""
+    if len({v for _, v in per}) == 1:
+        v = per[0][1]
+        return "" if v == "not recorded" else "build %s" % v
+    return "builds: %s" % ", ".join("%s %s" % lv for lv in per)
+
+
 def fragment(pm, img_rel):
     """The README text between the markers. img_rel: the images folder of
     this scene, relative to the README, with forward slashes."""
     newest = max((h["dates"][1] for h in pm["hosts"] if h["dates"]), default=None)
-    versions = []
-    for h in pm["hosts"]:
-        versions += [v for v in h["version_public"] if v not in versions]
     bases = []
     for h in pm["hosts"]:
         v = (h["baseline"] or {}).get("version_public")
@@ -382,8 +417,9 @@ def fragment(pm, img_rel):
     sub = []
     if newest:
         sub.append("runs up to %s" % newest)
-    if versions:
-        sub.append("build %s" % ", ".join(versions))
+    build = build_text(pm["hosts"])
+    if build:
+        sub.append(build)
     if bases:
         sub.append("since %s" % ", ".join(bases))
     if sub:
@@ -426,6 +462,12 @@ def fragment(pm, img_rel):
         notes.append(
             "Where runs start in a slow mode, a setting is judged on its runs that did not: "
             "a best row shows those runs (n reads judged of all), the other rows every run."
+            + (
+                " A best row's change compares them with the baseline's judged runs"
+                " (- where it has none)."
+                if baseline
+                else ""
+            )
         )
     if single:
         notes.append("%s The pick rests on a single judged run." % SINGLE)
@@ -504,6 +546,42 @@ def rewrite_hits(files, rules):
     return hits
 
 
+def game_of(repo):
+    """The game repo's manifest, or None when it has no game.toml (the
+    export then checks the generic rules only)."""
+    from . import manifest
+
+    if not os.path.isfile(os.path.join(repo, manifest.FILE)):
+        return None
+    try:
+        return manifest.load(repo)
+    except manifest.ManifestError as e:
+        raise R.ReportError("%s: %s" % (repo, e)) from e
+
+
+def export_path_hits(files, game):
+    """[(file, why, path)]: the game's own `public export` would drop the
+    file ([public] exclude, the private set) or refuse it (its layout
+    refusals, a data extension), so the fragment would point at an image
+    the public repo never gets."""
+    from . import layout
+
+    if game is None:
+        return []
+    hits = []
+    for name in files:
+        rel = name.replace(os.sep, "/")
+        if layout.private(game, rel):
+            hits.append((name, "the game's export drops it ([public] exclude)", rel))
+            continue
+        why = layout.refused_path(game, rel) or (
+            layout.data_ext(rel) and "a data extension (.%s)" % layout.data_ext(rel)
+        )
+        if why:
+            hits.append((name, "the game's export refuses it: %s" % why, rel))
+    return hits
+
+
 def leak_hits(files, pats):
     """[(file, what, match)] over every file's name and text."""
     hits = []
@@ -554,6 +632,7 @@ def export(model, scene, repo, stdout=None):
             files[os.path.relpath(os.path.join(images, n), repo)] = t
     hits = leak_hits(files, leak_patterns(repo, list(scene["hosts"])))
     hits += rewrite_hits(files, rewrite_rules(repo))
+    hits += export_path_hits(files, game_of(repo))
     if hits:
         raise LeakError(
             "the public export would leak; nothing written:\n"

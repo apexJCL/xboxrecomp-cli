@@ -254,7 +254,10 @@ def find_up(rel):
     return None
 
 
-TITLE_RUNS = find_up("runs/bench-matrix/jsrf-title")
+# The title matrix result: XBR_BENCH_TITLE_RUNS names it in a checkout without
+# the workspace's runs/ above it (a scratch worktree, CI).
+TITLE_REL = "runs/bench-matrix/jsrf-title"
+TITLE_RUNS = os.environ.get("XBR_BENCH_TITLE_RUNS") or find_up(TITLE_REL)
 TITLE_REPORT = """
 [report]
 target_fps = 60
@@ -267,7 +270,8 @@ prefer = { scale = [4, 3, 2, 1], dsp = [1, 0] }
 
 @pytest.mark.skipif(
     not (TITLE_RUNS and os.path.isfile(os.path.join(TITLE_RUNS, "summary.json"))),
-    reason="the jsrf-title runs are not on this machine",
+    reason="no %s above this checkout and no XBR_BENCH_TITLE_RUNS: the D4 picks go "
+    "unchecked" % TITLE_REL,
 )
 def test_title_runs_picks():
     scene = R.find_scene(TITLE_RUNS)
@@ -397,31 +401,79 @@ PLANTS = [
 ]
 
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+# A real Deck run-info from the D5 runner, its paths, shas and names
+# scrubbed: the poisoned fixture starts from it, so a field the runner
+# adds later is planted too once the fixture is refreshed.
+REAL_INFO = os.path.join(HERE, "testdata", "bench_report", "run-info-deck.json")
+# Who and what the run was: make_run's scene and arm stand in for them.
+IDENTITY = ("rep", "run_order", "scene", "scene_name", "host", "backend", "arm", "values", "prof")
+# Fields the report parses or publishes as they are (the D8 allow-list,
+# the dates, the window mode): a plant there would be published by design.
+UNPLANTED = {
+    ("present_fullscreen",),
+    ("started",),
+    ("ended",),
+    ("rc",),
+    ("build", "version_public"),
+    ("hw", "device", "model"),
+    ("hw", "os", "name"),
+    ("hw", "os", "version"),
+    ("hw", "cpu", "model"),
+    ("hw", "gpu", "model"),
+    ("hw", "gpu", "driver"),
+    ("hw", "power", "source"),
+    ("hw", "power", "profile"),
+    ("hw", "backend", "name"),
+    ("hw", "backend", "translation"),
+    ("hw", "backend", "translation_version"),
+}
+
+
 def poisoned_info():
-    """The fields a title-scene run-info.json holds, each carrying a plant."""
-    return {
-        "hw": {
-            "schema": 1,
-            "device": {"model": "Valve Jupiter", "serial": "C02XK1ABCDEF"},
-            "os": {"name": "SteamOS", "version": "3.7", "hostname": "myhost-7"},
-            "cpu": {"model": "AMD Custom APU 0405", "cores": 4, "threads": 8},
-            "gpu": [{"model": "AMD Custom GPU 0405", "mac": "a4:83:e7:12:34:56"}],
-            "net": {"ip": "192.0.2.17"},
-            "ram_gb": 15.6,
-            "backend": {"name": "d3d11", "translation": "GE-Proton10-25"},
-        },
-        "build": {
-            "version": "20261023.0049-c5d8e7b0-t4ec1a73",
-            "game_sha": "c5d8e7b0",
-            "toolkit_sha": "4ec1a73",
-        },
-        "remote_dir": "/ho" + "me/someone/xbr/run",
-        "remote_exe": "/Us" + "ers/someone/game.exe",
-        "env": {"RECOMP_NOTE": "someone@example.org cla" + "ude.ai/chat"},
-        "busy_during": [],
-        "present_fullscreen": "1",
-        "refresh_hz": 60,
-    }
+    """The real run-info with a plant in every string field outside the
+    allow-list, plus the fields a careless capture could add (a host name,
+    a serial, a MAC, an IP, raw tool output)."""
+    with open(REAL_INFO) as f:
+        info = json.load(f)
+    for k in IDENTITY:
+        info.pop(k, None)
+    planted = []
+
+    def plant(x, path):
+        if isinstance(x, dict):
+            return {k: plant(v, path + (k,)) for k, v in x.items()}
+        if isinstance(x, list):
+            return [plant(v, path) for v in x]
+        if isinstance(x, str) and path not in UNPLANTED:
+            p = PLANTS[len(planted) % len(PLANTS)]
+            planted.append(path)
+            return "%s %s" % (x, p)
+        return x
+
+    info = plant(info, ())
+    hw = info["hw"]
+    hw["device"]["serial"] = "C02XK1ABCDEF"
+    hw["os"]["hostname"] = "myhost-7"
+    hw["gpu"][0]["mac"] = "a4:83:e7:12:34:56"
+    hw["net"] = {"ip": "192.0.2.17"}
+    hw["raw"] = "lspci: " + " ".join(PLANTS)
+    info["env"]["RECOMP_NOTE"] = " ".join(PLANTS)
+    assert len(planted) >= len(PLANTS)
+    return info
+
+
+def test_poisoned_fixture_is_the_real_run_info(scene, tmp_path):
+    """Every field of the real run-info reaches the run's files, so the
+    export below meets them all."""
+    with open(REAL_INFO) as f:
+        real = json.load(f)
+    root = str(tmp_path / "out")
+    make_run(root, scene, "deck", "s1-43", [16.0], info_extra=poisoned_info())
+    with open(os.path.join(root, "deck", "s1-43", "run-info.json")) as f:
+        info = json.load(f)
+    assert set(real) - set(IDENTITY) <= set(info)
+    assert set(real["hw"]) <= set(info["hw"]) and set(real["build"]) <= set(info["build"])
 
 
 def test_public_export_allow_list(scene, tmp_path, audit):
@@ -442,8 +494,8 @@ def test_public_export_allow_list(scene, tmp_path, audit):
         assert p not in text, p
     assert "Tail." in text and "old" not in text.split("xbr:bench t begin")[1]
     # The public build is the date and sequence only.
-    assert "20261023.0049" in text and "c5d8e7b0" not in text
-    assert "GE-Proton10-25" in text and "fullscreen" in text
+    assert "20261024.0012" in text and "1a2b3c4" not in text
+    assert "GE-Proton11-7" in text and "fullscreen" in text
 
 
 def test_public_export_template_plant_fails(scene, result, tmp_path, audit):
@@ -673,11 +725,182 @@ def test_radar_desc_with_a_pick(scene):
     model = {"target_fps": 60, "hosts": {"deck": hm}}
     svg = S.radar(model, "deck", S.PUBLIC_LIGHT, "r")
     desc = re.search(r"<desc[^>]*>(.*?)</desc>", svg).group(1)
-    assert desc.startswith("Target 60 fps. Best: 2x")
-    assert "at 4:3" in desc and "arms run hold" not in desc
+    # The display already names the split; the split with no pick says so.
+    assert desc.startswith("Target 60 fps. Best: 2x · 4:3; none at 16:9. ")
+    assert "4:3 at 4:3" not in desc and "arms run hold" not in desc
 
 
 def test_private_page_never_prints_build_none(scene, result_no_hw):
     model, s = R.build_model(result_no_hw, scene)
     page = HTML.render(model, scene, s, result_no_hw)
     assert "build None" not in page and "None" not in re.sub(r"<[^>]+>", " ", page)
+
+
+# --- review follow-ups: plan-only groups, missing hosts, builds, judged deltas ---
+
+
+def test_sampler_group_ignores_arms_outside_the_plan(scene):
+    """A retired arm sampled at 250 Hz only must not make the planned arms'
+    group mixed."""
+    rows = [
+        row("s1-43", 60, prof=0, scale=1, aspect="4:3"),
+        row("s1-43", 60, prof=250, scale=1, aspect="4:3"),
+        row("s2-43", 60, prof=0, scale=2, aspect="4:3"),
+        row("s9-43", 60, prof=250, scale=9, aspect="4:3"),
+    ]
+    sg = model_of(scene, rows)["sampler"]
+    assert sg["hz"] == 0 and not sg["mixed"]
+    assert "s9-43" not in sg["per_arm"] and sg["others"] == [250]
+
+
+def test_verdicts_of_arms_outside_the_plan_do_not_count(scene):
+    """A retired arm's verdict must not switch the planned arms to the
+    verdict rules (D4)."""
+    rows = [
+        row("s1-43", 60, scale=1, aspect="4:3"),
+        row("s9-43", 60, verdict="good", scale=9, aspect="4:3"),
+    ]
+    assert not model_of(scene, rows)["has_verdict"]
+    rows.append(row("s1-43", 60, verdict="good", scale=1, aspect="4:3"))
+    assert model_of(scene, rows)["has_verdict"]
+
+
+def test_public_export_refuses_a_public_host_without_runs(scene, tmp_path, audit):
+    """The fragment replaces the whole block: a public host with no runs
+    would silently lose its published figures."""
+    root = str(tmp_path / "out")
+    make_run(root, scene, "mac", "s1-43", [16.6], info_extra=clean_info("Mac mini"))
+    B.analyse(root)
+    repo = git_repo(tmp_path, MARKED)
+    model, _ = R.build_model(root, scene)
+    with pytest.raises(P.Refused, match=r"no runs for Steam Deck \(Proton\)"):
+        P.export(model, scene, repo)
+    assert open(os.path.join(repo, "README.md")).read() == MARKED
+    del scene["report"]["public"]["hosts"]["deck"]
+    assert P.export(model, scene, repo)[0] == 0
+
+
+def test_heading_names_the_build_per_host_when_they_differ():
+    one = {"label": "Mac", "version_public": ["20261024.0012"]}
+    two = {"label": "PC", "version_public": []}
+    assert P.build_text([one, dict(one, label="PC")]) == "build 20261024.0012"
+    assert P.build_text([one, two]) == "builds: Mac 20261024.0012, PC not recorded"
+    assert P.build_text([two]) == ""
+
+
+GAME_TOML = """schema = 1
+[game]
+name = "Some Game"
+slug = "some-game"
+[xbe]
+title_id = 0x12345678
+[cli]
+commit = "%(sha)s"
+[toolkit]
+url = "https://example.invalid/tk.git"
+branch = "main"
+commit = "%(sha)s"
+[pipeline]
+game_name = "some"
+gen = "src/gen"
+[build]
+exe = "some_recomp"
+[public]
+url = "git@example.invalid:owner/some-recomp.git"
+author = "Someone <someone@users.noreply.example.invalid>"
+%(exclude)s
+""" % {"sha": "0123456789abcdef" * 2 + "01234567", "exclude": "%s"}
+
+
+@pytest.mark.parametrize(
+    "exclude, refused",
+    [("", False), ('exclude = ["docs/images/bench/**"]', True), ('exclude = ["README.md"]', True)],
+)
+def test_public_export_honours_the_games_export_rules(
+    scene, result, tmp_path, audit, exclude, refused
+):
+    """D8 task 4.3 with the game's own manifest: a file its `public export`
+    would drop never reaches the public repo, so the export refuses."""
+    repo = git_repo(tmp_path, MARKED)
+    with open(os.path.join(repo, "game.toml"), "w") as f:
+        f.write(GAME_TOML % exclude)
+    model, _ = R.build_model(result, scene)
+    if refused:
+        with pytest.raises(P.LeakError, match=r"\[public\] exclude"):
+            P.export(model, scene, repo)
+        assert open(os.path.join(repo, "README.md")).read() == MARKED
+    else:
+        assert P.export(model, scene, repo)[0] == 0
+
+
+def test_public_export_refuses_a_path_the_layout_refuses(scene, result, tmp_path, audit):
+    repo = git_repo(tmp_path, MARKED)
+    with open(os.path.join(repo, "game.toml"), "w") as f:
+        f.write(GAME_TOML % "")
+    scene["report"]["public"]["images"] = "bench-logs/images"
+    model, _ = R.build_model(result, scene)
+    with pytest.raises(P.LeakError, match="refuses it: bench-logs/"):
+        P.export(model, scene, repo)
+
+
+def slow_rows(good_fps, host="deck"):
+    rows = []
+    for arm, sc in (("s1-43", 1), ("s2-43", 2)):
+        rows += [row(arm, good_fps, verdict="good", host=host, scale=sc, aspect="4:3")] * 4
+        rows += [row(arm, 42, verdict="bad", host=host, scale=sc, aspect="4:3")] * 4
+    return rows
+
+
+def test_best_row_delta_compares_the_judged_runs(scene):
+    """The best row prints the good-run medians: its change is good runs
+    against good runs, not compare()'s pairing of every run."""
+    hm = model_of(scene, slow_rows(60))
+    base = model_of(scene, slow_rows(58))
+    e = next(x for x in hm["arms"] if x["id"] == "s2-43")
+    b = next(x for x in base["arms"] if x["id"] == "s2-43")
+    # compare() over all runs: (60+42)/2 against (58+42)/2.
+    e["delta"] = {"fps": 1.0, "low1": 1.0}
+    R.judged_delta(e, b)
+    assert e["delta"]["judged"] == {"fps": 2.0, "low1": 2.0}
+    h = {
+        "label": "Deck",
+        "arms": [P.public_arm(x) for x in hm["arms"]],
+        "best": hm["best"],
+        "sampler": {"mixed": False, "hz": 0},
+    }
+    out, _ = P.table_rows({"target_fps": 60}, h, True)
+    best = next(r for r in out if r[1].startswith("best"))
+    assert best[-2:] == ["+2.0", "+2.0"]
+    # A baseline not judged on good runs has no like-for-like change.
+    b["judged"]["basis"] = "all"
+    R.judged_delta(e, b)
+    h["arms"] = [P.public_arm(x) for x in hm["arms"]]
+    best = next(r for r in P.table_rows({"target_fps": 60}, h, True)[0] if r[1].startswith("best"))
+    assert best[-2:] == ["-", "-"]
+
+
+def test_groups_differ_keeps_the_per_arm_window_check(scene, tmp_path):
+    """compare() pairs nothing when the sampler groups differ; the arm's own
+    window modes still mark the delta."""
+    base = str(tmp_path / "base")
+    now = str(tmp_path / "now")
+    for host in ("mac", "deck"):
+        make_run(base, scene, host, "s2-43", [16.0], info_extra=clean_info(fullscreen="0"))
+        make_run(base, scene, host, "s1-43", [16.0], info_extra=clean_info(fullscreen="1"))
+        make_run(now, scene, host, "s2-43", [16.0], info_extra=clean_info(fullscreen="1"))
+        make_run(now, scene, host, "s1-43", [16.0], info_extra=clean_info(fullscreen="0"))
+    # Both sides hold both modes, so the host-level check sees no change.
+    for d in (base, now):
+        B.analyse(d)
+    with open(os.path.join(base, "summary.json")) as f:
+        summ = json.load(f)
+    for r in summ["rows"]:
+        # A sampled baseline against the same arms at another rate.
+        r["prof"] = 100
+    with open(os.path.join(base, "summary.json"), "w") as f:
+        json.dump(summ, f)
+    model, _ = R.build_model(now, scene, baseline=base)
+    assert not model["baseline"]["hosts"]["deck"]["present_differs"]
+    d = {e["id"]: e.get("delta") for e in model["hosts"]["deck"]["arms"]}
+    assert d["s2-43"]["groups_differ"] and d["s2-43"]["present_differs"]
+    assert d["s1-43"]["present_differs"]

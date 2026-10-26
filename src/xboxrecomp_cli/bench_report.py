@@ -377,9 +377,13 @@ def host_model(scene, host, rows, target, minutes):
     run_ids = {a["id"] for a in B.arms(scene, host)}
     mine = [r for r in rows if r["host"] == host]
     clean = [r for r in mine if not r["disturbed"]]
-    group = sampler_group(clean)
+    # Rows of arms the plan no longer runs here (a retired or excluded arm,
+    # a summary from an older scene) must not decide the group: they could
+    # lift it to a rate the planned arms do not need, or make it mixed.
+    planned = [r for r in clean if r["arm"] in run_ids]
+    group = sampler_group(planned)
     t = thresholds(scene, host)
-    has_verdict = any(r.get("verdict") in ("good", "bad") for r in clean)
+    has_verdict = any(r.get("verdict") in ("good", "bad") for r in planned)
     arms_out = []
     pooled = []
     for a in plan:
@@ -419,7 +423,7 @@ def host_model(scene, host, rows, target, minutes):
     best = best_settings(scene, host, arms_out, pooled, t, target, minutes, has_verdict)
     for e in arms_out:
         e.pop("_rows", None)
-    others = sorted({r["prof"] for r in clean} - set(group["per_arm"].values()))
+    others = sorted({r["prof"] for r in planned} - set(group["per_arm"].values()))
     return {
         "key": host,
         "backend": (scene["hosts"].get(host) or {}).get("backend"),
@@ -810,6 +814,8 @@ def add_baseline(model, result, baseline, scene):
         model["baseline"]["hosts"][h]["window"] = {"baseline": wins[0], "now": wins[1]}
         model["baseline"]["hosts"][h]["present_differs"] = host_differs
         bgroup = {e["id"]: e.get("prof") for e in bh["arms"] if e["status"] == "ok"}
+        barms = {e["id"]: e for e in bh["arms"]}
+        wins_by = None
         for e in hm["arms"]:
             if e["status"] != "ok" or e["id"] not in bgroup:
                 continue
@@ -834,8 +840,44 @@ def add_baseline(model, result, baseline, scene):
                     else None,
                     "groups_differ": True,
                 }
+                # compare() paired nothing, so its per-arm window check is
+                # missing too: a host that mixes modes within one side
+                # would slip past the host-level check.
+                if wins_by is None:
+                    wins_by = (run_windows(baseline, h), run_windows(result, h))
+                sides = [
+                    {wins_by[i].get(d, "unknown") for d in x.get("runs") or []} - {"unknown"}
+                    for i, x in enumerate((barms[e["id"]], e))
+                ]
+                if sides[0] and sides[1] and sides[0] != sides[1]:
+                    e["delta"]["present_differs"] = True
             if host_differs or (c or {}).get("present_differs"):
                 e["delta"]["present_differs"] = True
+            judged_delta(e, barms[e["id"]])
+
+
+def run_windows(result, host):
+    """{run dir: window mode} over a host's runs."""
+    from . import bench_hw as H
+
+    return {
+        d: (i.get("run") or {}).get("window") or H.window_mode(i)
+        for d, i in run_infos(result, host)
+    }
+
+
+def judged_delta(e, b):
+    """The change in the judged figures, for a best row that shows them
+    (bench_report_public): both sides judged on their good runs, else None."""
+    ej, bj = e.get("judged") or {}, b.get("judged") or {}
+    if ej.get("status") != "judged" or ej.get("basis") != "good":
+        return
+    same = bj.get("status") == "judged" and bj.get("basis") == "good"
+    out = {}
+    for key, fig in (("fps", "mean"), ("low1", "low1")):
+        now, was = ej.get(fig), bj.get(fig)
+        out[key] = round(now - was, 3) if same and now is not None and was is not None else None
+    e["delta"]["judged"] = out
 
 
 def write_json(path, model):

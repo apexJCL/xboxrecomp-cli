@@ -136,15 +136,21 @@ def radar(model, host, pal, ident, only=None, baseline=None, tips=False, suffix=
     if run_arms:
         # The D4 pick, not the highest mean: the table's best row and the
         # screen reader's must agree.
+        # An arm's display names every axis, the split ones included, so
+        # the pick needs no " at <split>"; a split this radar shows with no
+        # pick is named, or the reader would think it had one.
         disp = {e["id"]: e["display"] for e in arms}
-        picks = [
-            "%s%s"
-            % (disp[p["arm"]], (" at " + p["split_display"]) if p.get("split_display") else "")
-            for p in hm["best"]["picks"]
-            if p.get("arm") in disp
-        ]
+        picks, held = [], False
+        for p in hm["best"]["picks"]:
+            if p.get("arm") in disp:
+                picks.append(disp[p["arm"]])
+                held = True
+            elif not p.get("arm") and p.get("split_display"):
+                sp = p.get("split") or {}
+                if any(all(e["values"].get(k) == v for k, v in sp.items()) for e in arms):
+                    picks.append("none at %s" % p["split_display"])
         pick_txt = (
-            ("Best: %s." % "; ".join(picks)) if picks else "No tested setting holds the target."
+            ("Best: %s." % "; ".join(picks)) if held else "No tested setting holds the target."
         )
         top = max(run_arms, key=lambda x: (x[1], (x[0].get("low1") or {}).get("median") or 0))
         worst = min(run_arms, key=lambda x: (x[1], (x[0].get("low1") or {}).get("median") or 0))
