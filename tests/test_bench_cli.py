@@ -325,7 +325,7 @@ BODIES = sorted(BODY_NAMES, key=len, reverse=True)
 # What a prologue may hold. The prefix runs in a local bash below, so any
 # other line (a host script that drifted out of BODIES) must stop the test
 # before it runs mkdir or distrobox here.
-PROLOGUE_LINE = re.compile(r"^(set -euo pipefail|[A-Za-z_][A-Za-z0-9_]*=)")
+PROLOGUE_LINE = re.compile(r"^(set -euo pipefail|#|[A-Za-z_][A-Za-z0-9_]*=)")
 
 
 def split_script(text):

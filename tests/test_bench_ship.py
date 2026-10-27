@@ -385,6 +385,8 @@ def test_setup_local_makes_no_box(tree):
     assert run(t, "setup") == 0
     cs = calls(t)
     assert bodies(cs) == ["check_umu.sh", "setup_mingw.sh"], bodies(cs)
+    # check_umu.sh gets the prologue: its PATH is where umu-run is found.
+    assert 'PATH="$PATH:$HOME/.local/bin"' in cs[0][2], cs[0][2]
     assert not any("distrobox" in " ".join(c[1]) + (c[2] or "") for c in cs)
 
 

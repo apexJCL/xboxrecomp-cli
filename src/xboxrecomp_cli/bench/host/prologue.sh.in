@@ -2,9 +2,11 @@
 #@ blinx2-recomp's scripts/bench.sh expanded. The #@ lines this file starts
 #@ with are this note and are not sent. It is the remote_vars prologue every script after it starts with. @NAME@ is
 #@ filled with the configured value, unquoted on purpose: ~ expands on the host.
+#@ @HOST_PATH@ is remote.HOST_PATH: ~/.local/bin (umu-run) on PATH.
 #@ The game's own values after them (game.toml; paths relative to
 #@ REMOTE_GAME) come shell-quoted: a game files folder may hold a space.
 set -euo pipefail
+@HOST_PATH@
 BENCH_DIR=@BENCH_DIR@
 REMOTE_GAME=@REMOTE_GAME@
 LLVM_MINGW_ROOT=@LLVM_MINGW_ROOT@

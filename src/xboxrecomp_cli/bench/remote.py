@@ -16,6 +16,18 @@ import sys
 
 HOST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "host")
 
+# umu-run is a user install (~/.local/bin on the Steam Deck). Non-interactive
+# ssh got that PATH only from ~/.ssh/environment, which needs sshd's
+# PermitUserEnvironment, and SteamOS updates reset /etc/ssh; ~/.bashrc sets
+# PATH only after its interactive guard. Every script that runs umu-run on the
+# host starts with it (the prologue, bench-matrix's DECK_RUN). Appended, so the
+# host's ~/.local/bin never shadows a distrobox's own tools.
+HOST_PATH = (
+    "# The host's ~/.local/bin (umu-run): ssh no longer reads ~/.ssh/environment\n"
+    "# once a SteamOS update resets /etc/ssh, and ~/.bashrc stops non-interactive.\n"
+    'PATH="$PATH:$HOME/.local/bin"'
+)
+
 SSH_HINT = {
     "darwin": "it ships with macOS; check PATH",
     "win32": "Settings > Apps > Optional features > OpenSSH Client",
@@ -134,6 +146,7 @@ class Remote:
                 else '"$CLI_DIR"/src/xboxrecomp_cli/cmake/llvm-mingw-x86_64.cmake'
             ),
             CRASH_TAG=shell_quote(m["bench"]["crash_tag"]),
+            HOST_PATH=HOST_PATH,
         )
 
     def ship(self, name, assignments="", prologue=True):

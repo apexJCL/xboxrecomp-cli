@@ -123,6 +123,7 @@ import time
 import tomllib
 
 from . import bench_hw
+from .bench.remote import HOST_PATH
 from .host import CliError
 
 PACING_FLIP_RE = re.compile(r"^\[PACING\] flip (\d+) t_us (\d+) batches (\d+)")
@@ -2293,7 +2294,12 @@ while True:
     time.sleep(period)
 """
 
-DECK_RUN = r"""set -u
+# HOST_PATH: umu-run is in the Deck's ~/.local/bin, which ssh's
+# non-interactive bash no longer has on PATH.
+DECK_RUN = (
+    "set -u\n"
+    + HOST_PATH
+    + r"""
 R=$1; CAP=$2
 B=$(dirname "$(dirname "$R")")
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
@@ -2317,6 +2323,7 @@ kill $GS $CS 2>/dev/null; GS=; CS=
 sleep 3
 "$PROTONPATH/files/bin/wineserver" -k 2>/dev/null || true
 """
+)
 
 
 def quiet_ignore(scene, host, exe_name):

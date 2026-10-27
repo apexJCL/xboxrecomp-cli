@@ -391,7 +391,7 @@ class Bench:
             # host keeps umu-run and llvm-mingw (symbolize's llvm-symbolizer
             # and llvm-readobj), fetched with the host's own curl and tar.
             self.step("setup: no build box (BENCH_BUILD=local)")
-            self.ok(r.remote(r.ship("check_umu.sh", prologue=False))[0])
+            self.ok(r.remote(r.ship("check_umu.sh"))[0])
             self.step("setup: llvm-mingw %s -> %s" % (c["LLVM_MINGW_TAG"], c["LLVM_MINGW_ROOT"]))
             return self.ok(r.remote(r.ship("setup_mingw.sh", tag))[0])
         self.step("setup: distrobox %s (%s)" % (c["BENCH_BOX"], c["BENCH_IMAGE"]))
@@ -404,7 +404,7 @@ class Bench:
         # restart the box (box_check.sh.in), which would kill this.
         self.ok(setup_locked(r.in_box_locked(r.ship("setup_pkgs.sh"), what="setup")[0]))
         # Proton runs from the host, not the box: the host ships umu-run.
-        self.ok(r.remote(r.ship("check_umu.sh", prologue=False))[0])
+        self.ok(r.remote(r.ship("check_umu.sh"))[0])
         self.step("setup: llvm-mingw %s -> %s" % (c["LLVM_MINGW_TAG"], c["LLVM_MINGW_ROOT"]))
         return self.ok(
             setup_locked(r.in_box_locked(r.ship("setup_mingw.sh", tag), what="setup")[0])
