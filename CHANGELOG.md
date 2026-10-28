@@ -7,6 +7,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-28
+
 ### Added
 - A golden scenario can boot on a seeded hdd: `RECOMP_HDD_DIR=@seed:PATH`
   in its env names an hdd tree under the game root (private and gitignored,
@@ -58,6 +60,13 @@ a release by its tag in `game.toml`'s `[cli]` table.
   (a label of `metal` or `metal-...`), or all of them when none of those is
   paced. A frame that paces differently per backend is no longer a
   mismatch against the other backend's reference.
+
+### Fixed
+- benchdb records builds from every host and verb. A top-level `host` key
+  in `benchdb.toml` names the writer's host; its records go to that host's
+  inbox (a relative inbox is relative to the config). `all` times its
+  recomp. Ingest fills the build host of older runs from their shipped,
+  built-on and synced lines, and leaves an unknown name empty.
 
 ## [0.12.0] - 2026-10-24
 
@@ -582,7 +591,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.10.0...v0.10.1
