@@ -421,6 +421,7 @@ The thresholds of `benchdb regress`.
 |---|---|---|
 | `flips_drop` | `0.25` | A run group is flagged when its median flips/s is at most `1 - flips_drop` times the baseline's. |
 | `ms_rise` | `1.5` | A run group is flagged when its median frame-time p50 or p95 is at least this many times the baseline's. |
+| `mem_rise` | `1.25` | A run group is flagged when its median RAM peak or GPU memory peak (the game's `[MEM] exit` line) is at least this many times the baseline's. |
 | `build_rise` | `1.5` | A build value is flagged when it is at least this many times the median of the comparable builds before it... |
 | `build_min_secs` | `30` | ...and at least this many seconds longer. |
 | `build_window` | `5` | How many comparable builds before it make the median. |

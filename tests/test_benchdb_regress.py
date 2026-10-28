@@ -122,6 +122,45 @@ def test_flips_drop_and_frame_ms_rise(db, ab):
     assert "FLAG flips" in text and text.count("p95 is the sensitive figure") == 1
 
 
+def mem(db, rid, ram=None, gpu=None):
+    with db.write() as w:
+        if ram is not None:
+            w.metric(rid, "ram_peak_mib", ram, "MiB")
+        if gpu is not None:
+            w.metric(rid, "gpu_peak_mib", gpu, "MiB")
+
+
+def test_mem_rise(db, ab):
+    a, b = ab
+    for _ in range(2):
+        mem(db, run(db, a, scenario="menu"), ram=800.0, gpu=300.0)
+        mem(db, run(db, a, scenario="race"), ram=800.0, gpu=300.0)
+        mem(db, run(db, a, scenario="ok", backend="cpu"), ram=800.0)
+    for _ in range(2):
+        mem(db, run(db, b, scenario="menu"), ram=1000.0, gpu=300.0)  # 1.25 x: flagged
+        mem(db, run(db, b, scenario="race"), ram=900.0, gpu=400.0)  # gpu 1.33 x
+        mem(db, run(db, b, scenario="ok", backend="cpu"), ram=990.0)  # 1.24 x
+    # A run outside the whitelist never counts.
+    mem(db, run(db, b, scenario="menu", busy=1), ram=9000.0)
+    res = regress.regress(db, db.cfg, game="demo")
+    rows = {r["scenario"]: r for r in res["mem"]}
+    assert rows["menu"]["flag"] == "ram" and rows["menu"]["b_ram_peak_mib"] == 1000.0
+    assert rows["race"]["flag"] == "gpu-mem"
+    # RAM is checked on every backend; a host without a GPU figure has none.
+    assert rows["ok"]["flag"] == "" and rows["ok"]["a_gpu_peak_mib"] is None
+    assert res["flags"] == 2
+    text = "\n".join(regress.lines(res))
+    assert "ram peak 800 -> 1000 MiB (1.25)" in text and "FLAG gpu-mem" in text
+    assert "gpu peak - -> - MiB (-)" in text
+
+
+def test_mem_without_baseline(db, ab):
+    _a, b = ab
+    mem(db, run(db, b), ram=500.0)
+    (row,) = regress.regress(db, db.cfg, game="demo")["mem"]
+    assert row["flag"] == "" and row["note"] == "no baseline"
+
+
 def test_the_whitelist_and_one_verdict_per_run(db, ab):
     a, b = ab
     run(db, a, flips=60.0)

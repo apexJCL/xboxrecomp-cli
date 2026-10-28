@@ -483,6 +483,16 @@ def ingest_run(w, cfg, run_dir, game=None, host=None, kind=None):
         )
         if stats.get("first_s") is not None:
             w.metric(run_id, "first_flip_s", stats["first_s"], "s")
+    mem = parse.mem_stats(log) if os.path.exists(log) else None
+    if mem:
+        # The game's RAM and GPU memory (the toolkit's [MEM] line): regress
+        # flags a rise against the baseline (mem_rise). A run killed before
+        # its exit line has only its last sample, a partial figure: it goes
+        # under mem_sample_* so regress never compares it with an exit peak.
+        pre = "" if mem["kind"] == "exit" else "mem_sample_"
+        for k in parse.MEM_KEYS:
+            if mem.get(k) is not None:
+                w.metric(run_id, pre + k, mem[k], "MiB")
     for p in rec.get("perf", []):
         p = dict(p)
         w.perf(run_id, p.pop("window", "run"), p.pop("source", "record"), **p)

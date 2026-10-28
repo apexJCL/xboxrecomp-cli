@@ -299,3 +299,25 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
             print("ok   %s" % name)
+
+
+def test_report_mem():
+    with tempfile.TemporaryDirectory() as d:
+        p = make(
+            d,
+            "r",
+            stdio="[MEM] exit ram_mib=812.4 ram_peak_mib=905.1 commit_mib=n/a commit_peak_mib=n/a"
+            " gpu_mib=n/a gpu_peak_mib=n/a gpu_nl_mib=n/a gpu_nl_peak_mib=n/a"
+            " ram_src=working_set gpu_src=none why=ctrl-c\n",
+        )
+        got = []
+        checks.report_mem(p, out=got.append)
+        assert got == ["mem: ram 812 MiB (peak 905, working_set) gpu n/a MiB (peak n/a, none)"]
+        p = make(d, "s", stdio="[MEM] sample t=3.0 ram_mib=10.0 gpu_src=metal\n")
+        got = []
+        checks.report_mem(p, out=got.append)
+        assert got[0].endswith("(from a sample: no exit line)")
+        p = make(d, "old")
+        got = []
+        checks.report_mem(p, out=got.append)
+        assert got == []

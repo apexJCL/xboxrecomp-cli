@@ -205,6 +205,41 @@ def report_flips(log, out=print):
     )
 
 
+def mem_summary(stdio_log):
+    """One line from the game's [MEM] line (the toolkit's mem_stats.c):
+    `mem: ram R MiB (peak P, src) gpu G MiB (peak Q, src)`, n/a where the
+    host or backend gives no figure, `(from a sample: no exit line)` when
+    the game died before printing its exit line. None without a [MEM]
+    line (a build from before it)."""
+    from ..benchdb import parse
+
+    m = parse.mem_stats(stdio_log)
+    if not m:
+        return None
+
+    def mib(k):
+        v = m.get(k)
+        return "n/a" if v is None else "%.0f" % v
+
+    return "mem: ram %s MiB (peak %s, %s) gpu %s MiB (peak %s, %s)%s" % (
+        mib("ram_mib"),
+        mib("ram_peak_mib"),
+        m.get("ram_src", "?"),
+        mib("gpu_mib"),
+        mib("gpu_peak_mib"),
+        m.get("gpu_src", "?"),
+        " (from a sample: no exit line)" if m["kind"] != "exit" else "",
+    )
+
+
+def report_mem(log, out=print):
+    """bench run's memory line (mem_summary) for a run dir; silent without
+    a [MEM] line."""
+    line = mem_summary(os.path.join(log, "game-stdio.log"))
+    if line:
+        out(line)
+
+
 def _git(d, *args):
     r = subprocess.run(
         ["git", "-C", d] + list(args), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL

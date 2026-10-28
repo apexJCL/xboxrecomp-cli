@@ -13,7 +13,7 @@ import sys
 import tempfile
 import time
 
-from .checks import check_present_mismatch, check_run_end
+from .checks import check_present_mismatch, check_run_end, report_mem
 from .remote import BenchError, host_path, quote_words
 from .sync import rsync
 
@@ -399,6 +399,9 @@ def cmd_golden(b, args, bench_env=None, kind="golden"):
             inc = 1
         elif e != 0:
             erc = 1
+        # Said, not kept in lines: they go to golden.txt, whose reader
+        # knows only the check words.
+        report_mem(log, out=b.say)
         pm = check_present_mismatch(os.path.join(log, "game-stdio.log"), out=out)
         if pm != 0:
             prc = 1

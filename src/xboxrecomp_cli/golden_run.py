@@ -590,6 +590,7 @@ def cmd_run(args):
         print(msg)
         sys.stdout.flush()
 
+    from .bench.checks import mem_summary
     from .benchdb import live
 
     o["exe_sha256"] = sha256_file(o["exe"])
@@ -608,6 +609,9 @@ def cmd_run(args):
                     "run: %s at flip %d after %.1f s (%.1f flips/s), exit %s -> %s"
                     % (why, last, wall, last / wall if wall else 0, rc, d)
                 )
+                mem = mem_summary(os.path.join(d, "game-stdio.log"))
+                if mem:
+                    say(mem)
                 erc, lines = end_check(d, why, rc, game.m["bench"]["crash_tag"])
                 for x in lines:
                     say(x)

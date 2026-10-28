@@ -543,6 +543,7 @@ class Bench:
                 rc = 1
             else:
                 checks.report_flips(log, out=self.say)
+            checks.report_mem(log, out=self.say)
             if (
                 checks.check_present_mismatch(os.path.join(log, "game-stdio.log"), out=self.say)
                 != 0

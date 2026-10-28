@@ -197,6 +197,45 @@ def test_flip_stats(tmp_path):
     assert parse.flip_stats(str(p)) is None
 
 
+MEM_EXIT = (
+    "[MEM] exit ram_mib=812.4 ram_peak_mib=905.1 commit_mib=n/a commit_peak_mib=n/a"
+    " gpu_mib=301.0 gpu_peak_mib=350.2 gpu_nl_mib=0.0 gpu_nl_peak_mib=n/a"
+    " ram_src=phys_footprint gpu_src=metal why=sigint"
+)
+
+
+def test_mem_line():
+    m = parse.mem_line("12:00 " + MEM_EXIT)
+    assert m["kind"] == "exit" and m["why"] == "sigint"
+    assert m["ram_mib"] == 812.4 and m["ram_peak_mib"] == 905.1
+    assert m["gpu_peak_mib"] == 350.2 and m["gpu_nl_mib"] == 0.0
+    # n/a is left out, not zero.
+    assert "commit_mib" not in m and "gpu_nl_peak_mib" not in m
+    assert m["ram_src"] == "phys_footprint" and m["gpu_src"] == "metal"
+    s = parse.mem_line("[MEM] sample t=12.5 ram_mib=10.0 future_mib=3 gpu_src=none")
+    assert s == {"kind": "sample", "t": 12.5, "ram_mib": 10.0, "gpu_src": "none"}
+    assert parse.mem_line("[MEM] sampling every 1000 ms") is None
+    assert parse.mem_line("[PROF] exit ram_mib=1") is None
+
+
+def test_mem_stats(tmp_path):
+    p = tmp_path / "game-stdio.log"
+    p.write_text(
+        "boot\n[MEM] sampling every 1000 ms\n"
+        "[MEM] sample t=1.0 ram_mib=100.0 ram_peak_mib=100.0\n"
+        "[MEM] sample t=2.0 ram_mib=120.0 ram_peak_mib=120.0\n" + MEM_EXIT + "\n"
+    )
+    m = parse.mem_stats(str(p))
+    assert m["kind"] == "exit" and m["ram_peak_mib"] == 905.1 and m["samples"] == 2
+    # Killed before its exit line: the last sample stands in.
+    p.write_text("[MEM] sample t=1.0 ram_mib=100.0\n[MEM] sample t=2.0 ram_mib=120.0\n")
+    m = parse.mem_stats(str(p))
+    assert m["kind"] == "sample" and m["ram_mib"] == 120.0
+    p.write_text("no memory line\n")
+    assert parse.mem_stats(str(p)) is None
+    assert parse.mem_stats(str(tmp_path / "missing.log")) is None
+
+
 def test_size_of(tmp_path):
     (tmp_path / "d").mkdir()
     (tmp_path / "d" / "a").write_text("12345")

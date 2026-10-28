@@ -190,6 +190,8 @@ SPEC = {
     "bench.db.regress": {
         "flips_drop": (FLOAT, 0.25),
         "ms_rise": (FLOAT, 1.5),
+        # The game's RAM or GPU memory peak at this many times the baseline's.
+        "mem_rise": (FLOAT, 1.25),
         "build_rise": (FLOAT, 1.5),
         "build_min_secs": (FLOAT, 30),
         "build_window": (INT, 5),

@@ -236,6 +236,55 @@ def test_mac_golden_run_makes_a_session(ws):
     assert status == "ok", problems
 
 
+def test_mem_line_becomes_metrics(ws):
+    d, db, cfg = ws
+    info = MAC_INFO.format(exe=SHA_A, game=GAME_SHA, ws=d)
+    log = flip_log() + (
+        "[MEM] exit ram_mib=812.4 ram_peak_mib=905.1 commit_mib=n/a commit_peak_mib=n/a"
+        " gpu_mib=301.0 gpu_peak_mib=350.2 gpu_nl_mib=n/a gpu_nl_peak_mib=n/a"
+        " ram_src=phys_footprint gpu_src=metal why=sigint\n"
+    )
+    p = run_dir(store_dir(d), "20261025-074508-metal-menu", info, golden=GOLDEN_TXT, log=log)
+    rid, _how, status, problems = ingest(db, cfg, p, host="hostA")
+    assert status == "ok", problems
+    got = {
+        r["name"]: (r["value"], r["unit"])
+        for r in db.sql("SELECT name, value, unit FROM metrics WHERE run_id = ?", (rid,))
+        if r["name"].endswith("_mib")
+    }
+    assert got == {
+        "ram_mib": (812.4, "MiB"),
+        "ram_peak_mib": (905.1, "MiB"),
+        "gpu_mib": (301.0, "MiB"),
+        "gpu_peak_mib": (350.2, "MiB"),
+    }
+
+
+def test_mem_sample_only_is_kept_apart(ws):
+    # Killed before the exit line: the last sample is stored, but not under
+    # the names regress compares.
+    d, db, cfg = ws
+    info = MAC_INFO.format(exe=SHA_A, game=GAME_SHA, ws=d)
+    log = flip_log() + (
+        "[MEM] sample t=30.0 ram_mib=700.0 ram_peak_mib=750.0 gpu_mib=50.0"
+        " gpu_peak_mib=55.0 ram_src=phys_footprint gpu_src=metal\n"
+    )
+    p = run_dir(store_dir(d), "20261025-074509-metal-menu", info, golden=GOLDEN_TXT, log=log)
+    rid, _how, status, problems = ingest(db, cfg, p, host="hostA")
+    assert status == "ok", problems
+    got = {
+        r["name"]: r["value"]
+        for r in db.sql("SELECT name, value FROM metrics WHERE run_id = ?", (rid,))
+        if r["name"].endswith("_mib")
+    }
+    assert got == {
+        "mem_sample_ram_mib": 700.0,
+        "mem_sample_ram_peak_mib": 750.0,
+        "mem_sample_gpu_mib": 50.0,
+        "mem_sample_gpu_peak_mib": 55.0,
+    }
+
+
 def test_unparsed_and_partial(ws):
     d, db, cfg = ws
     p = run_dir(store_dir(d), "20261025-080000", extra={"game-stdio.log": "boot\n"})

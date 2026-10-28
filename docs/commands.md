@@ -538,6 +538,13 @@ with a baseline:
   0). It flags a drop in flips/s of 25% or more, or a frame-ms p50 or p95
   1.5 times higher or more, on D3D11 and Metal. Other backends are listed,
   never flagged.
+- **Memory**: the same clean runs' `[MEM] exit` figures (the game's RAM
+  peak and the GPU memory peak its backend reports), one `mem` line per
+  host, backend and scenario. It flags a peak 1.25 times the baseline's
+  or more (`mem_rise`), on every backend. `bench run` and the golden runs
+  also print the run's figures (`mem: ram ... gpu ...`). A run killed
+  before its exit line keeps its last sample as `mem_sample_*` metrics,
+  which are never compared.
 - **Build times**: against the median of the 5 newest comparable builds
   before B (the same host, target, kind, cold or warm, fresh `gen/`, jobs,
   ccache and toolchain). A measure is flagged at 1.5 times and 30 s

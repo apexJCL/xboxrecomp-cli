@@ -1,7 +1,8 @@
 """Parsers for what the bench and build commands leave on disk (design D1,
 D12.2): run-info.txt in its three formats (Proton, native Windows, Mac),
 golden.txt, both session TSVs, tests-pass files, patch.json, the bundle
-index, the CLI's own record.json files, and the flip trace's statistics.
+index, the CLI's own record.json files, the flip trace's statistics and the
+[MEM] memory line.
 
 Every parser is pure (text in, dict out) and never raises on a malformed
 line: what it could not read goes in the result's "problems", so a run
@@ -529,6 +530,76 @@ def flip_stats(log):
         # the trace's clock starts before it (the [GPU] fallback starts at 0).
         "first_s": t[flips[0]] / 1e6 if t[flips[0]] > 0 else None,
     }
+
+
+# ---- the [MEM] line --------------------------------------------------------------
+
+# The toolkit's mem_stats.c prints "[MEM] exit k=v ..." at every exit and,
+# with RECOMP_TRACE=mem, "[MEM] sample t=S k=v ..." lines. Its sizes are
+# MiB with one decimal, "n/a" where the host or backend has no figure.
+MEM_RE = re.compile(r"\[MEM\] (exit|sample)\b(.*)$")
+MEM_KEYS = (
+    "ram_mib",
+    "ram_peak_mib",
+    "commit_mib",
+    "commit_peak_mib",
+    "gpu_mib",
+    "gpu_peak_mib",
+    "gpu_nl_mib",
+    "gpu_nl_peak_mib",
+)
+
+
+def mem_line(text):
+    """One [MEM] line as a dict: kind ("exit" or "sample"), t (seconds, on
+    a sample), each MEM_KEYS size it gives (MiB; an n/a size is left out),
+    ram_src, gpu_src and why. None when the text has no [MEM] exit or
+    sample line."""
+    m = MEM_RE.search(text)
+    if not m:
+        return None
+    out = {"kind": m.group(1)}
+    for tok in m.group(2).split():
+        k, sep, v = tok.partition("=")
+        if not sep:
+            continue
+        if k in MEM_KEYS or k == "t":
+            n = _num(v)
+            if n is not None:
+                out[k] = n
+        elif k in ("ram_src", "gpu_src", "why"):
+            out[k] = v
+    return out
+
+
+def mem_stats(log):
+    """The run's memory figures from a game log: its last [MEM] exit line,
+    else (a run killed before it could print one) its last sample line,
+    with "samples" the number of sample lines. None when the log has
+    neither."""
+    last_exit = last_sample = None
+    samples = 0
+    try:
+        with open(log, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if "[MEM] " not in line:
+                    continue
+                m = mem_line(line)
+                if m is None:
+                    continue
+                if m["kind"] == "exit":
+                    last_exit = m
+                else:
+                    last_sample = m
+                    samples += 1
+    except OSError:
+        return None
+    out = last_exit or last_sample
+    if out is None:
+        return None
+    out = dict(out)
+    out["samples"] = samples
+    return out
 
 
 def size_of(path):

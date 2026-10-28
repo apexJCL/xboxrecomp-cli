@@ -13,7 +13,12 @@ before it. A flag is printed, never an exit code, unless --strict.
   builds before it (or --release's), flagged at build_rise x and
   build_min_secs longer. Only work that can be normalised is flagged:
   cold and full builds by total and step, a fresh recomp or analyze, the
-  package and patch steps, and incremental builds by seconds per edge."""
+  package and patch steps, and incremental builds by seconds per edge.
+- Memory: the same clean runs' [MEM] figures (the game's RAM peak and the
+  GPU memory peak its backend reports), B's median against A's per host,
+  backend and scenario, flagged at mem_rise x. Every backend is checked:
+  RAM does not depend on it, and a GPU figure is only there when the
+  backend gives one."""
 
 import statistics
 
@@ -46,6 +51,28 @@ WHERE r.game = ? AND r.build_id IN (%s)
   AND r.stock = 1 AND COALESCE(r.busy, 0) = 0 AND p.flips_exact = 1
   AND ((j.word IS NULL AND r.exit_code = 0) OR j.word IN (%s))
 """
+
+
+# The clean runs' memory figures (the toolkit's [MEM] line, ingested as
+# metrics): the same whitelist as RUNS_SQL, without the perf join.
+MEM_SQL = """
+WITH judged AS (
+  SELECT v.run_id, v.word,
+         ROW_NUMBER() OVER (PARTITION BY v.run_id ORDER BY s.started DESC, s.id DESC) AS k
+  FROM verdicts v JOIN sessions s ON s.id = v.session_id
+  WHERE v.run_id IS NOT NULL AND s.kind <> 'reconstructed'
+    AND COALESCE(s.source, '') NOT IN ('golden.txt', 'reconstructed-tsv')
+)
+SELECT r.id, r.host, r.backend, r.scenario, r.build_id, m.name, m.value
+FROM runs r
+JOIN metrics m ON m.run_id = r.id AND m.name IN (%s)
+LEFT JOIN judged j ON j.run_id = r.id AND j.k = 1
+WHERE r.game = ? AND r.build_id IN (%s)
+  AND r.stock = 1 AND COALESCE(r.busy, 0) = 0
+  AND ((j.word IS NULL AND r.exit_code = 0) OR j.word IN (%s))
+"""
+# What a memory line compares, and the flag a rise gets.
+MEM_MEASURES = (("ram_peak_mib", "ram"), ("gpu_peak_mib", "gpu-mem"))
 
 
 def rules(cfg, game):
@@ -215,6 +242,71 @@ def compare_runs(db, cfg, game, b, a_builds, stand_in=False):
     return rows
 
 
+def clean_mem(db, game, build_ids):
+    """{(host, backend, scenario): {build_id: {measure: [MiB per run]}}}
+    from the clean runs of build_ids."""
+    if not build_ids:
+        return {}
+    names = [m for m, _f in MEM_MEASURES]
+    rows = db.sql(
+        MEM_SQL
+        % (
+            ",".join("?" * len(names)),
+            ",".join("?" * len(build_ids)),
+            ",".join("?" * len(COUNTED)),
+        ),
+        names + [game] + list(build_ids) + list(COUNTED),
+    )
+    out = {}
+    for r in rows:
+        if r["value"] is None:
+            continue
+        g = (r["host"], r["backend"], r["scenario"])
+        out.setdefault(g, {}).setdefault(r["build_id"], {}).setdefault(r["name"], []).append(
+            r["value"]
+        )
+    return out
+
+
+def compare_mem(db, cfg, game, b, a_builds, stand_in=False):
+    """One line per host, backend and scenario: B's median RAM and GPU
+    memory peaks against A's, flagged at mem_rise x."""
+    rl = rules(cfg, game)
+    a_ids = [x["id"] for x in a_builds]
+    mem = clean_mem(db, game, [b["id"]] + a_ids)
+    rows = []
+    for g in sorted(mem, key=lambda g: tuple("" if x is None else str(x) for x in g)):
+        host, backend, scenario = g
+        by = mem[g]
+        row = dict(host=host, backend=backend, scenario=scenario, flag="", note="")
+        flags, notes = [], []
+        a_n = b_n = 0
+        for name, fl in MEM_MEASURES:
+            bv = by.get(b["id"], {}).get(name, [])
+            av = [v for i in a_ids for v in by.get(i, {}).get(name, [])]
+            a = statistics.median(av) if av else None
+            v = statistics.median(bv) if bv else None
+            row["a_" + name], row["b_" + name] = a, v
+            row[name + "_ratio"] = ratio(a, v)
+            a_n, b_n = max(a_n, len(av)), max(b_n, len(bv))
+            if a and v is not None and v >= rl["mem_rise"] * a:
+                flags.append(fl)
+        row["a_n"], row["b_n"] = a_n, b_n
+        if not a_n:
+            notes.append("no baseline")
+        elif not b_n:
+            notes.append("not run")
+        else:
+            row["flag"] = ",".join(flags)
+            if a_n == 1 or b_n == 1:
+                notes.append("(1 run)")
+            if stand_in:
+                notes.append("stand-in baseline")
+        row["note"] = " ".join(notes)
+        rows.append(row)
+    return rows
+
+
 # ---- builds ------------------------------------------------------------------
 
 
@@ -348,10 +440,11 @@ def compare_build(db, cfg, b, release=None):
 
 
 def regress(db, cfg, game=None, build=None, against=None, release=None, runs=True, builds=True):
-    """{"b", "a", "runs", "builds", "flags"}: B's run and build lines."""
+    """{"b", "a", "runs", "mem", "builds", "flags"}: B's run, memory and
+    build lines."""
     game = game_of(db, game, build)
     b = find_build(db, build, game) if build else newest_integration(db, game)
-    out = dict(game=game, b=b["uuid"], a=None, runs=[], builds=[], flags=0)
+    out = dict(game=game, b=b["uuid"], a=None, runs=[], mem=[], builds=[], flags=0)
     if runs:
         stand_in = False
         if against:
@@ -362,12 +455,12 @@ def regress(db, cfg, game=None, build=None, against=None, release=None, runs=Tru
             a_builds = release_builds(db, game, tag) if tag else []
             stand_in = any(x["release_match"] == "stand-in" for x in a_builds)
             out["a"] = "release %s" % tag if tag else None
-        out["runs"] = compare_runs(
-            db, cfg, game, b, [x for x in a_builds if x["id"] != b["id"]], stand_in
-        )
+        a_builds = [x for x in a_builds if x["id"] != b["id"]]
+        out["runs"] = compare_runs(db, cfg, game, b, a_builds, stand_in)
+        out["mem"] = compare_mem(db, cfg, game, b, a_builds, stand_in)
     if builds:
         out["builds"] = compare_build(db, cfg, b, release)
-    out["flags"] = sum(1 for r in out["runs"] + out["builds"] if r["flag"])
+    out["flags"] = sum(1 for r in out["runs"] + out["mem"] + out["builds"] if r["flag"])
     return out
 
 
@@ -380,6 +473,7 @@ def fmt(v, nd=1):
 RUN_LINE = (
     "  %-10s %-6s %-14s %-6s flips/s %s -> %s (%s)  p50 %s -> %s  p95 %s -> %s  n %d/%d  %s%s"
 )
+MEM_LINE = "  %-10s %-6s %-14s mem    ram peak %s -> %s MiB (%s)  gpu peak %s -> %s MiB (%s)  n %d/%d  %s%s"
 BUILD_LINE = "  %-22s %s (median of %d) -> %s (%s)  %s%s"
 
 
@@ -390,7 +484,8 @@ def flag(r):
 def lines(res):
     """The text of a regress result, one line per group or measure."""
     out = []
-    if res["runs"] or res.get("a") is not None:
+    mem = res.get("mem") or []
+    if res["runs"] or mem or res.get("a") is not None:
         out.append(
             "regress %s: build %s against %s"
             % (res["game"], res["b"][:8], res["a"] or "nothing (no previous release)")
@@ -416,6 +511,23 @@ def lines(res):
             out.append(text.rstrip())
         if res["runs"]:
             out.append("  (%s)" % P95_NOTE)
+        for r in mem:
+            text = MEM_LINE % (
+                r["host"] or "-",
+                r["backend"] or "-",
+                r["scenario"] or "-",
+                fmt(r["a_ram_peak_mib"], 0),
+                fmt(r["b_ram_peak_mib"], 0),
+                fmt(r["ram_peak_mib_ratio"], 2),
+                fmt(r["a_gpu_peak_mib"], 0),
+                fmt(r["b_gpu_peak_mib"], 0),
+                fmt(r["gpu_peak_mib_ratio"], 2),
+                r["a_n"],
+                r["b_n"],
+                flag(r),
+                r["note"],
+            )
+            out.append(text.rstrip())
     if res["builds"]:
         out.append("build times %s:" % res["b"][:8])
         for r in res["builds"]:
