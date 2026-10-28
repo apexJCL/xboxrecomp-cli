@@ -211,11 +211,12 @@ def package(path, doc, cwd=None, inbox=None):
 
 
 def _land(doc, path, cwd, inbox):
-    h = None
+    h, broken = None, False
     try:
         h = here(cwd)
     except Exception as e:  # noqa: BLE001
         warn("build %s" % doc.get("uuid"), e)
+        broken = True
     if h is not None:
         cfg, db = h
         try:
@@ -224,11 +225,36 @@ def _land(doc, path, cwd, inbox):
         except Exception as e:  # noqa: BLE001
             warn("build %s" % doc.get("uuid"), e)
         return doc["uuid"]
+    # A broken config was warned about above: to_inbox's env inbox is
+    # all this_host would find, without a second warning.
+    if inbox is None and not broken:
+        key, d = this_host(cwd)
+        inbox = (key, d) if d else None
     try:
         record.to_inbox(doc, env=inbox)
     except OSError as e:
         warn("the inbox copy of build %s" % doc.get("uuid"), e)
     return doc["uuid"]
+
+
+def this_host(cwd=None):
+    """(host key, inbox dir or None) of this machine: BENCHDB_HOST and
+    BENCHDB_INBOX when both are set, else the host and its inbox that the
+    benchdb.toml found from cwd names, else ('local', None). A build host
+    without the db (the PC) names itself there, so its records carry its
+    key and reach its inbox without an environment to set first."""
+    ib = record.inbox()
+    if ib:
+        return ib
+    try:
+        cfg = config.load(cwd=cwd)
+    except Exception as e:  # noqa: BLE001 (a bad config never fails a build)
+        warn("this host's benchdb.toml", e)
+        return "local", None
+    key = cfg.this_host
+    h = cfg.hosts.get(key)
+    # A relative inbox is relative to the config's directory, not the cwd.
+    return key, (cfg.local_path(h.inbox) if h and h.inbox else None)
 
 
 def regress_lines(cwd, game, uuid, runs=True, say=print):
@@ -279,6 +305,7 @@ def gen_verb(g, verb, stages, toolkit_dir=None):
         "gen",
         verb,
         kind="full",
+        cwd=g.root,
         trees=trees(g.root, toolkit_dir, cli_dir()),
     )
     ok = False
@@ -388,9 +415,8 @@ class Timer:
     """A build's record as it runs: steps timed in order, then finish()
     writes it (a failed build too, with ok = 0 and the step it broke in)."""
 
-    def __init__(self, game, target, command, kind="incremental", **fields):
+    def __init__(self, game, target, command, kind="incremental", cwd=None, **fields):
         cpu, ncpu, mem, load = host_figures()
-        ib = record.inbox()
         self.doc = dict(
             record="build",
             uuid=record.new_uuid(),
@@ -398,7 +424,7 @@ class Timer:
             target=target,
             command=command,
             kind=kind,
-            host=ib[0] if ib else "local",
+            host=this_host(cwd)[0],
             started=now(),
             cpu=cpu,
             ncpu=ncpu,

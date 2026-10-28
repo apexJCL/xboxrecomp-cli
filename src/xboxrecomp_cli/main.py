@@ -136,7 +136,10 @@ def cmd_analyze(a, more=()):
 def cmd_all(a):
     target = build_mod.default_build_target()
     cmd_analyze(a, [resources.build_need(build_mod.build_dir(target))])
-    pipeline.stage_recomp()
+    from .benchdb import live
+
+    # Timed as the standalone verb is: `all` was the one recomp with no row.
+    live.gen_verb(host.g(), "recomp", [("recomp", pipeline.stage_recomp)], _toolkit_dir_or_none())
     host.step("build")
     build_mod.build(target, (), a.system_tools, jobs=a.jobs)
 

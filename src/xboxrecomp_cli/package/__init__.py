@@ -1300,7 +1300,7 @@ def cmd_package(a):
     host.VIEW.verbose = a.verbose
     host.VIEW.plan = []
     RECORD.clear()
-    timer = live.Timer(g().slug, a.target, "package", kind="package")
+    timer = live.Timer(g().slug, a.target, "package", kind="package", cwd=g().root)
     ok = False
     try:
         package(a)

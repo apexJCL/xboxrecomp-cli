@@ -20,6 +20,10 @@ TREE_RE = re.compile(r"^([\w.-]+): ([0-9a-f]{7,40}) (\S+) (clean|dirty)(?: \((\d
 SHIPPED_RE = re.compile(
     r"^(built|shipped \(not built by bench\)): (\S+) on (\S+) from (.+?)(?: \(|$)"
 )
+# A host build of a synced tree (BENCH_BUILD=host): the run's host compiled it.
+SYNCED_RE = re.compile(r"^synced: (\S+) from ([^:\s]+):(.+)$")
+# The hand-written form of mid-October runs: "<exe> built on <name> <iso> (...)".
+HAND_BUILT_RE = re.compile(r"^\S+ built on (the Mac|\S+) (\d{4}-\d\d-\d\dT\S+)")
 LOAD_POSIX_RE = re.compile(
     r"^([\d.]+) [\d.]+ [\d.]+ at start, ([\d.]+) [\d.]+ [\d.]+ at end \((\d+) cpus\)"
 )
@@ -263,6 +267,14 @@ def built_line(out, val):
             "on": m.group(3),
             "from": m.group(4),
         }
+        return
+    m = HAND_BUILT_RE.match(val)
+    if m:
+        out["shipped"] = {"how": "built", "at": iso_utc(m.group(2)), "on": m.group(1), "from": ""}
+        return
+    m = SYNCED_RE.match(val)
+    if m:
+        out["synced"] = {"at": iso_utc(m.group(1)), "from": m.group(2)}
         return
     if val.startswith("unknown sources"):
         out["problems"].append("build unknown (%s)" % val)

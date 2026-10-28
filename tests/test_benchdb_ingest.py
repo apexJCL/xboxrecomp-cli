@@ -91,6 +91,109 @@ def test_reimport_is_a_noop(ws):
     }
 
 
+def test_stand_in_build_knows_where_it_was_built(ws, monkeypatch):
+    """A run that predates the build records gets a kind-unknown stand-in
+    with no secs (nothing timed that build), but its built: line names the
+    machine: this one is 'local', a cross build for a Windows exe. A
+    re-import fills the host into a stand-in made before it was known."""
+    d, db, cfg = ws
+    monkeypatch.setattr(ingest_mod.platform, "node", lambda: "hostm.lan")
+    p = run_dir(store_dir(d), "20261025-072135", PROTON_INFO, log=flip_log())
+    rid, *_ = ingest(db, cfg, p)
+    b = db.one("SELECT b.* FROM builds b JOIN runs r ON r.build_id = b.id WHERE r.id = ?", (rid,))
+    assert b["kind"] == "unknown" and b["secs"] is None
+    assert b["host"] == "local" and b["cross"] == 1
+
+    # The same run before the fix: a stand-in without its host.
+    with db.write() as w:
+        w.conn.execute("UPDATE builds SET host = NULL, cross = NULL WHERE id = ?", (b["id"],))
+    ingest(db, cfg, p)
+    b = db.one("SELECT * FROM builds WHERE id = ?", (b["id"],))
+    assert b["host"] == "local" and b["cross"] == 1
+
+    # A name the config does not know leaves it unknown.
+    monkeypatch.setattr(ingest_mod.platform, "node", lambda: "elsewhere")
+    with db.write() as w:
+        w.conn.execute("UPDATE builds SET host = NULL WHERE id = ?", (b["id"],))
+    ingest(db, cfg, p)
+    assert db.one("SELECT host FROM builds WHERE id = ?", (b["id"],))["host"] is None
+
+
+def test_synced_tree_was_built_on_the_run_host(ws):
+    """Before BENCH_BUILD=local the bench host compiled a synced tree: the
+    `synced: ... from <mac>:<dir>` line names where the sources came from,
+    and the run's host is where the exe was built."""
+    d, db, cfg = ws
+    info = PROTON_INFO.replace(
+        "built:  shipped (not built by bench): 2026-10-25T14:21:34Z on hostm from /srv/u/demo"
+        " (BENCH_BUILD=local)",
+        "built:  synced: 2026-10-25T14:01:09Z from hostm:/srv/u/demo",
+    )
+    assert "synced:" in info
+    p = run_dir(store_dir(d), "20261025-072135", info, log=flip_log())
+    rid, *_ = ingest(db, cfg, p)
+    b = db.one("SELECT b.* FROM builds b JOIN runs r ON r.build_id = b.id WHERE r.id = ?", (rid,))
+    assert b["kind"] == "unknown" and b["host"] == "hostA" and b["cross"] == 1
+
+
+def test_mac_run_was_built_on_the_run_host(d, monkeypatch):
+    """A Mac run has no built: line: the Mac runs the exe it built in
+    place, so the stand-in build's host is the run's own, a native build."""
+    game_dir(d)
+    db = open_db(d, GAMES + WIN_HOST + '\n[hosts.hostM]\nos = "macos"\n', monkeypatch)
+    info = MAC_INFO.format(exe=SHA_A, game=GAME_SHA, ws=d)
+    assert "built:" not in info
+    p = run_dir(store_dir(d), "20261025-074507-metal-menu", info, log=flip_log())
+    rid, *_ = ingest(db, db.cfg, p, host="hostM")
+    b = db.one("SELECT b.* FROM builds b JOIN runs r ON r.build_id = b.id WHERE r.id = ?", (rid,))
+    assert b["kind"] == "unknown" and b["target"] == "macos"
+    assert (b["host"], b["cross"]) == ("hostM", 0)
+
+
+def test_hand_written_built_line(ws, monkeypatch):
+    """Mid-October runs carry a hand-written line: "<exe> built on <name>
+    <iso> (...)". A name is looked up as a shipped line's; "the Mac" is the
+    one macOS host."""
+    d, db, cfg = ws
+    shipped = (
+        "built:  shipped (not built by bench): 2026-10-25T14:21:34Z on hostm from /srv/u/demo"
+        " (BENCH_BUILD=local)"
+    )
+    monkeypatch.setattr(ingest_mod.platform, "node", lambda: "hostm.lan")
+    for stamp, line, want in (
+        (
+            "20261015-070000",
+            "built:  demo.exe built on hostm 2026-10-15T14:39:44Z (cross)",
+            "local",
+        ),
+        (
+            "20261015-080000",
+            "built:  demo.exe built on the Mac 2026-10-15T01:57:21Z (cross)",
+            "local",
+        ),
+    ):
+        info = PROTON_INFO.replace(shipped, line).replace(
+            SHA_A, stamp.replace("-", "") + SHA_A[14:]
+        )
+        p = run_dir(store_dir(d), stamp, info, log=flip_log())
+        rid, *_ = ingest(db, cfg, p)
+        b = db.one(
+            "SELECT b.* FROM builds b JOIN runs r ON r.build_id = b.id WHERE r.id = ?", (rid,)
+        )
+        assert (b["host"], b["cross"]) == (want, 1), line
+
+
+def test_timed_build_keeps_its_host(ws):
+    """Only a stand-in is filled: a recorded build's host is its own."""
+    d, db, cfg = ws
+    with db.write() as w:
+        w.build("u-1", "demo", "windows", "full", exe_sha256=SHA_A, host="hostA", secs=9.0)
+    p = run_dir(store_dir(d), "20261025-072135", PROTON_INFO, log=flip_log())
+    ingest(db, cfg, p)
+    b = db.one("SELECT host, secs FROM builds WHERE uuid = 'u-1'")
+    assert b == {"host": "hostA", "secs": 9.0}
+
+
 def test_windows_run_local_time_and_marker(ws):
     d, db, cfg = ws
     import datetime

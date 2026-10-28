@@ -5,7 +5,7 @@ game.toml [bench.db] defaults."""
 import os
 
 import pytest
-from benchdb_util import workspace
+from benchdb_util import BASE, workspace
 
 from xboxrecomp_cli import manifest
 from xboxrecomp_cli.benchdb import cli, config, store
@@ -60,6 +60,20 @@ def test_paths_relative_to_the_config(d):
 def test_errors_name_the_key(d, extra, msg):
     with pytest.raises(config.ConfigError, match=msg):
         workspace(d, extra)
+
+
+def test_this_host(d):
+    """The top-level host names the machine that reads the file: 'local'
+    by default, else a [hosts] key (a build host without the db)."""
+    assert workspace(d).this_host == "local"
+    cfg = workspace(d, text='host = "hostA"\n' + BASE)
+    assert cfg.this_host == "hostA" and cfg.db
+    with pytest.raises(config.ConfigError, match="host: 'nowhere' is not local"):
+        workspace(d, text='host = "nowhere"\n' + BASE)
+    # A table or list is a config error, not a TypeError.
+    for bad in ('host = ["hostA"]\n', "host = { k = 1 }\n"):
+        with pytest.raises(config.ConfigError, match="host: .* is not a string"):
+            workspace(d, text=bad + BASE)
 
 
 def test_reference_roots_are_not_deletable(d):

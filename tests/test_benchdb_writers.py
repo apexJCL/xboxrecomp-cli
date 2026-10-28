@@ -206,6 +206,32 @@ def test_gen_verb_records_beside_the_output(ws, monkeypatch):
     assert record.read(os.path.join(out, live.GEN_RECORD % "recomp"))["ok"] == 0
 
 
+def test_all_times_its_recomp(monkeypatch):
+    """`all` runs analyze, recomp and build: its recomp is a gen verb too,
+    so a regen through `all` leaves a row like the standalone verb."""
+    from xboxrecomp_cli import build as build_mod
+    from xboxrecomp_cli import main, pipeline
+
+    verbs = []
+    monkeypatch.setattr(main, "cmd_analyze", lambda a, more=(): verbs.append("analyze"))
+    monkeypatch.setattr(main.host, "g", lambda: types.SimpleNamespace())
+    monkeypatch.setattr(main.host, "step", lambda *a: None)
+    monkeypatch.setattr(main.resources, "build_need", lambda d: None)
+    monkeypatch.setattr(build_mod, "default_build_target", lambda: "macos")
+    monkeypatch.setattr(build_mod, "build_dir", lambda t: "b")
+    monkeypatch.setattr(build_mod, "build", lambda *a, **k: verbs.append("build"))
+    monkeypatch.setattr(main, "_toolkit_dir_or_none", lambda: None)
+
+    def gen_verb(g, verb, stages, tk=None):
+        assert [n for n, _ in stages] == ["recomp"]
+        assert stages[0][1] is pipeline.stage_recomp
+        verbs.append(verb)
+
+    monkeypatch.setattr(live, "gen_verb", gen_verb)
+    main.cmd_all(types.SimpleNamespace(system_tools=False, jobs=0))
+    assert verbs == ["analyze", "recomp", "build"]
+
+
 def test_build_without_a_db_goes_to_the_inbox(d, monkeypatch):
     bdir = os.path.join(d, "build")
     os.makedirs(bdir)
@@ -219,6 +245,90 @@ def test_build_without_a_db_goes_to_the_inbox(d, monkeypatch):
     assert copy["host"] == "hostB" and copy["record"] == "build"
     # The build dir keeps its own record either way.
     assert record.read(os.path.join(bdir, record.BUILD))["uuid"] == u
+
+
+# The PC's own benchdb.toml above its checkouts: it names itself and its
+# inbox, and has no db (D7.6).
+PC_HOST = """host = "hostB"
+
+[hosts.hostB]
+os = "windows"
+inbox = '{inbox}'
+"""
+
+
+def pc_host(d):
+    """d/pc: a game checkout under a host config without a db; returns
+    (game root, inbox dir)."""
+    pc = os.path.join(d, "pc")
+    root = game_dir(pc)
+    ib = os.path.join(pc, "benchdb-inbox")
+    with open(os.path.join(pc, "benchdb.toml"), "w") as f:
+        f.write(PC_HOST.format(inbox=ib))
+    return root, ib
+
+
+def test_host_config_sends_every_writer_to_its_inbox(d):
+    """A build, a package and a gen verb on a host whose benchdb.toml
+    names it: each record carries the host key and lands in its inbox,
+    with no BENCHDB_* environment (the PC's builds used to have none)."""
+    root, ib = pc_host(d)
+    bdir = os.path.join(root, "build-win")
+    os.makedirs(bdir)
+    t = live.Timer("demo", "windows", "build", cwd=root)
+    assert t.doc["host"] == "hostB"
+    t.timed("cmake --build", lambda: None)
+    u = t.finish(bdir, ok=True, cwd=root)
+    copy = record.read(os.path.join(ib, "%s.json" % u))
+    assert copy["host"] == "hostB" and copy["kind"] == "incremental"
+    assert copy["secs"] is not None and copy["steps"][0][0] == "cmake --build"
+
+    p = live.Timer("demo", "windows", "package", kind="package", cwd=root)
+    p.doc.update(ended=live.now(), secs=1.5, ok=1)
+    pu = live.package(os.path.join(root, "dist", "x.package-record.json"), p.doc, cwd=root)
+    assert record.read(os.path.join(ib, "%s.json" % pu))["host"] == "hostB"
+
+    g = types.SimpleNamespace(slug="demo", root=root, out=os.path.join(root, "analysis"))
+    os.makedirs(g.out)
+    live.gen_verb(g, "recomp", [("recomp", lambda: None)])
+    gu = record.read(os.path.join(g.out, live.GEN_RECORD % "recomp"))["uuid"]
+    assert record.read(os.path.join(ib, "%s.json" % gu))["host"] == "hostB"
+
+
+def test_environment_beats_the_host_config(d, monkeypatch):
+    root, ib = pc_host(d)
+    other = os.path.join(d, "other-inbox")
+    monkeypatch.setenv("BENCHDB_INBOX", other)
+    monkeypatch.setenv("BENCHDB_HOST", "hostC")
+    assert live.this_host(root) == ("hostC", other)
+    monkeypatch.delenv("BENCHDB_HOST")
+    assert live.this_host(root) == ("hostB", ib)
+    # Outside any config: this machine, no inbox.
+    assert live.this_host(os.path.join(d)) == ("local", None)
+
+
+def test_a_relative_inbox_is_relative_to_the_config(d, monkeypatch):
+    root, ib = pc_host(d)
+    with open(os.path.join(d, "pc", "benchdb.toml"), "w") as f:
+        f.write(PC_HOST.format(inbox="benchdb-inbox"))
+    # From another cwd the inbox still lands beside the config.
+    monkeypatch.chdir(d)
+    assert live.this_host(root) == ("hostB", ib)
+
+
+def test_a_broken_host_config_never_fails_the_build(d, capsys):
+    root, _ib = pc_host(d)
+    with open(os.path.join(d, "pc", "benchdb.toml"), "a") as f:
+        f.write("\n[bogus]\n")
+    t = live.Timer("demo", "windows", "build", cwd=root)
+    assert t.doc["host"] == "local"
+    assert "benchdb.toml" in capsys.readouterr().err
+    # Landing the record warns once, not again for the inbox lookup.
+    bdir = os.path.join(root, "build-win")
+    os.makedirs(bdir)
+    live._warned.clear()
+    t.finish(bdir, ok=True, cwd=root)
+    assert capsys.readouterr().err.count("benchdb: warning") == 1
 
 
 def test_build_merges_into_ships_record(ws):
@@ -368,6 +478,34 @@ def test_pull_imports_then_deletes(pws, monkeypatch):
     script = base64.b64decode(fake.calls[1][1].split()[-1]).decode("utf-16-le")
     assert "u-b1.json" in script and "junk.json" not in script
     assert hashlib.sha256(good).hexdigest() in script
+
+
+def test_pc_build_reaches_the_db_through_its_inbox(pws, monkeypatch):
+    """The whole PC path: a build under the PC's host config writes its
+    inbox copy; pull lists it over (fake) ssh, imports it with its host,
+    kind and secs, then deletes it there."""
+    d, db = pws
+    root, ib = pc_host(d)
+    bdir = os.path.join(root, "build-win")
+    os.makedirs(bdir)
+    t = live.Timer("demo", "windows", "build", cwd=root)
+    t.doc["kind"] = "full"
+    t.timed("configure", lambda: None)
+    u = t.finish(bdir, ok=True, cwd=root)
+    name = "%s.json" % u
+    with open(os.path.join(ib, name), "rb") as f:
+        data = f.read()
+    fake = FakeSsh({"hostB": listing([(name, data)])})
+    monkeypatch.setattr(pull, "ssh", fake)
+    assert pull.pull(db.cfg, "hostB", say=lambda m: None, db=db) == {"hostB": (1, 0)}
+    b = db.one("SELECT * FROM builds WHERE uuid = ?", (u,))
+    assert b["host"] == "hostB" and b["kind"] == "full" and b["command"] == "build"
+    assert b["secs"] is not None and b["ok"] == 1
+    assert db.one("SELECT step FROM build_steps WHERE build_id = ?", (b["id"],))["step"] == (
+        "configure"
+    )
+    script = base64.b64decode(fake.calls[1][1].split()[-1]).decode("utf-16-le")
+    assert name in script
 
 
 def test_a_record_that_fails_halfway_leaves_no_rows(pws, monkeypatch):

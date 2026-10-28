@@ -441,6 +441,7 @@ def build_timer(g, target, bdir, tk, cmake, ninja, command, lineage, configured)
         target,
         command,
         # The host's own OS: a windows exe built on a Mac is a cross build.
+        cwd=g.root,
         cross=int(target != ("macos" if host.host_os() == "macos" else "windows")),
         toolchain=toolchain_line(target, cmake, ninja),
         trees=live.trees(g.root, tk, cli_dir()),

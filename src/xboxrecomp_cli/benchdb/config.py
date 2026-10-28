@@ -4,6 +4,7 @@ when it is set, else finds it by walking up from the cwd, the way git
 finds .git.
 
   db = "bench-logs/bench.db"            # relative to this file's dir
+  host = "local"                        # this machine: 'local' or a [hosts] key
 
   [roots.store]                         # one table per root
   path = "bench-logs"
@@ -40,7 +41,16 @@ finds .git.
   mygame = "mygame"                     # slug = game dir
 
 Every relative local path is relative to the config file's directory.
-Without a config, the clean verbs are refused (D3)."""
+Without a config, the clean verbs are refused (D3).
+
+A build host without the db (the PC under Windows) keeps a config of its
+own above its checkouts that names itself and its inbox, so its builds,
+packages and gen verbs copy their records there for `benchdb pull`:
+
+  host = "pc"
+  [hosts.pc]
+  os = "windows"
+  inbox = 'D:\\xbr\\benchdb-inbox'"""
 
 import os
 import re
@@ -114,7 +124,7 @@ class Config:
         self.dir = os.path.dirname(path) if path else os.getcwd()
         doc = doc or {}
         errors = []
-        known = {"db", "roots", "never", "refs", "release", "hosts", "games"}
+        known = {"db", "host", "roots", "never", "refs", "release", "hosts", "games"}
         for k in doc:
             if k not in known:
                 errors.append("%s: unknown key" % k)
@@ -151,6 +161,15 @@ class Config:
                 h.get("inbox", ""),
                 h.get("label", ""),
             )
+        # Which machine reads this file: the writers' host key, and the
+        # inbox their records go to when the file names no db.
+        self.this_host = doc.get("host", "local")
+        if not isinstance(self.this_host, str):
+            # A table or list would be unhashable in the hosts lookup.
+            errors.append("host: %r is not a string" % (self.this_host,))
+            self.this_host = "local"
+        elif self.this_host != "local" and self.this_host not in self.hosts:
+            errors.append("host: %r is not local or a [hosts] key" % (self.this_host,))
         self.roots = {}
         for name, r in sorted(doc.get("roots", {}).items()):
             if not isinstance(r, dict):

@@ -227,13 +227,44 @@ def find_build(w, game, uuid=None, exe_sha=None):
     return None
 
 
+def built_on(w, info, host):
+    """The host key of the machine that built a run's exe: the built: line's
+    'on <name>' (this machine is 'local'), else for a Mac run the run's own
+    host, which runs the exe it built in place, as does a host that compiled
+    a synced tree (a `synced:` line, BENCH_BUILD=host); None when unknown."""
+    on = (info.get("shipped") or {}).get("on")
+    if on == "the Mac":
+        # The hand-written lines' name for the one macOS host.
+        macs = w.conn.execute("SELECT key FROM hosts WHERE os = 'macos'").fetchall()
+        return macs[0][0] if len(macs) == 1 else None
+    if on:
+        key = w.one("SELECT host FROM host_names WHERE seen = ?", (on,))
+        if key is not None:
+            return key
+        if on.split(".")[0] == platform.node().split(".")[0]:
+            return "local"
+        return None
+    return host if info.get("format") == "mac" or info.get("synced") else None
+
+
 def run_build(w, game, info, target, host, gm):
     """The build a run ran: the uuid ship wrote, else the newest build with
     its exe sha, else a `kind = unknown` build from its built: or tree:
-    lines (D5)."""
+    lines (D5). A stand-in has no kind or secs (nothing timed that build:
+    its run predates the build records), but it knows where it was built,
+    and a re-import fills that into one made without it."""
     uuid, exe = info.get("build_uuid"), info.get("exe_sha256")
     b = find_build(w, game, uuid, exe)
+    bhost = built_on(w, info, host) if (uuid or exe) else None
+    hos = w.one("SELECT os FROM hosts WHERE key = ?", (bhost,)) if bhost else None
+    cross = int(target != hos) if hos is not None else None
     if b is not None:
+        if hos is not None:
+            w.conn.execute(
+                "UPDATE builds SET host = ?, cross = coalesce(cross, ?) "
+                "WHERE id = ? AND kind = 'unknown' AND host IS NULL",
+                (bhost, cross, b),
+            )
         return b
     if not uuid and not exe:
         return None
@@ -243,6 +274,8 @@ def run_build(w, game, info, target, host, gm):
     f["exe_sha256"] = exe
     f["gen_digest"] = info.get("gen")
     f["ended"] = shipped.get("at")
+    if hos is not None:
+        f["host"], f["cross"] = bhost, cross
     return w.build(
         uuid or record.derived_uuid("exe", game, target, exe),
         game,
