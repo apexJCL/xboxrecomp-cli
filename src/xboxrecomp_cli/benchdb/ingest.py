@@ -738,6 +738,16 @@ def ingest_tsv(w, path, reconstructed=False, game=None):
     return added, updated
 
 
+def only_text(only):
+    """A session's --only list as its db text: names joined with ',' as the
+    TSV and golden_run write it, None for a full pass. Session records
+    written before bench golden joined it (27e4685) hold a JSON list, which
+    sqlite cannot bind."""
+    if isinstance(only, (list, tuple)):
+        return ",".join(str(x) for x in only) or None
+    return only or None
+
+
 def ingest_session(w, cfg, doc):
     """A live session record (benchdb-sessions/<uuid>.json)."""
     if not doc.get("uuid") or not doc.get("game"):
@@ -758,7 +768,7 @@ def ingest_session(w, cfg, doc):
         backend=doc.get("backend"),
         ended=doc.get("ended"),
         tests=doc.get("tests"),
-        only=doc.get("only"),
+        only=only_text(doc.get("only")),
         rc=doc.get("rc"),
     )
     first = None

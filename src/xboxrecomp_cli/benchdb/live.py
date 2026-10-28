@@ -155,6 +155,9 @@ def session(store_dir, game, kind, host=None, backend=None, build=None, started=
     verdicts = {}
     for sc, (rdir, word) in (fields.pop("verdicts", None) or {}).items():
         verdicts[sc] = {"word": word, "run": os.path.abspath(rdir) if rdir else None}
+    if "only" in fields:
+        # The record holds the text the db stores, whatever form a caller hands.
+        fields["only"] = ingest.only_text(fields["only"])
     doc = dict(
         record="session",
         uuid=record.new_uuid(),

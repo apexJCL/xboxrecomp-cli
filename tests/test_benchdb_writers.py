@@ -631,3 +631,8 @@ def test_bench_golden_only_records_its_session(ws, capsys):
     assert s["only"] == "story,attract" and s["rc"] == 0
     v = db.one("SELECT * FROM verdicts")
     assert v["scenario"] == "story" and v["run_id"] == db.one("SELECT id FROM runs")["id"]
+    # A caller handing the list itself gets the same text in record and row.
+    uuid = live.session(logs(d), "demo", "golden", only=["story"], rc=0)
+    with open(os.path.join(logs(d), record.SESSIONS, uuid + ".json")) as f:
+        assert json.load(f)["only"] == "story"
+    assert db.one("SELECT only FROM sessions WHERE uuid = ?", (uuid,))["only"] == "story"

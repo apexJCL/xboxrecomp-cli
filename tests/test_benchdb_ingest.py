@@ -425,6 +425,28 @@ def test_session_record_and_tests_pass(ws):
         assert ingest_mod.ingest_tests_pass(w, os.path.join(tp, "k1.txt")) == "updated"
 
 
+@pytest.mark.parametrize(
+    "only, want",
+    [(["story"], "story"), (["story", "attract"], "story,attract"), ([], None)]
+    + [("story,attract", "story,attract"), (None, None)],
+)
+def test_session_record_only_list_or_text(ws, only, want):
+    """A session record from bench golden --only before 27e4685 holds `only`
+    as a JSON list, which failed the insert ("type 'list' is not supported");
+    it is stored joined, as the text form already was."""
+    d, db, cfg = ws
+    sdir = os.path.join(store_dir(d), record.SESSIONS)
+    os.makedirs(sdir)
+    sp = os.path.join(sdir, "s1.json")
+    doc = {"record": "session", "uuid": "s1", "game": "demo", "kind": "golden", "rc": 0}
+    doc.update(started="2026-10-26T21:17:45Z")
+    record.write(sp, dict(doc, only=only, verdicts={"story": {"word": "pass", "run": None}}))
+    with db.write() as w:
+        assert ingest_mod.ingest_record(w, cfg, sp) == ("session", "added")
+    s = db.one("SELECT * FROM sessions")
+    assert s["only"] == want and s["rc"] == 0
+
+
 def test_walk_all_order_and_topic_dirs(ws):
     d, db, cfg = ws
     s = store_dir(d)
