@@ -496,6 +496,30 @@ def test_enhance_without_game_table():
         G.GAME_ENHANCE = saved
 
 
+MENU = "[ENHANCE] menu.enabled={} (F10, guide+a, paddle1)"
+STATS = "[ENHANCE] overlay.stats={}"
+
+
+def test_enhance_menu_and_stats_built_in():
+    """menu.enabled and overlay.stats are the toolkit's keys, so a game
+    without them in its enhance_stock still fails a run with the menu
+    (RECOMP_MENU=1) or the stats strip on; off, or no line, is stock."""
+    saved = dict(G.GAME_ENHANCE)
+    G.GAME_ENHANCE = {}
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out = enhance_case(tmp, [STOCK, MENU.format("on")])
+            assert rc == 1 and "not a stock run" in out and "menu.enabled=on" in out, out
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out = enhance_case(tmp, [STOCK, STATS.format("on")])
+            assert rc == 1 and "overlay.stats=on" in out, out
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out = enhance_case(tmp, [STOCK, "[ENHANCE] menu.enabled=off", STATS.format("off")])
+            assert rc == 0 and "EXACT" in out, out
+    finally:
+        G.GAME_ENHANCE = saved
+
+
 def test_enhance_stock_flags_configure():
     saved = (G.GOLDEN_JSON, G.FRAMES_DIR, G.REPO, G.GOLDEN_DIR, dict(G.GAME_ENHANCE))
     try:
@@ -540,6 +564,12 @@ def test_allow_enhance_pack():
         pack = "[ENHANCE] textures.pack=enhance/hud.pack (268 entries, scale 4)"
         rc, out = check_allowing(tmp, [STOCK, pack], "textures.pack=enhance/hud.pack")
         assert rc == 0 and "NOTE" in out and "textures.pack=enhance/hud.pack" in out, out
+
+
+def test_allow_enhance_menu():
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = check_allowing(tmp, [STOCK, MENU.format("on")], "menu.enabled=on")
+        assert rc == 0 and "NOTE" in out and "menu.enabled=on" in out, out
 
 
 def test_allow_enhance_overscan():

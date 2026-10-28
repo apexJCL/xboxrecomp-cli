@@ -17,8 +17,10 @@ directory). Below, golden.json and frames/ are the game's.
                                   regression, 2 on a missing frame or reference.
                                   A run whose [ENHANCE] lines show a non-stock
                                   render.scale, display.aspect,
-                                  display.overscan, present.pacing or game
-                                  key (game.toml golden.enhance_stock)
+                                  display.overscan, present.pacing, the menu
+                                  or stats strip on (menu.enabled,
+                                  overlay.stats) or game key (game.toml
+                                  golden.enhance_stock)
                                   FAILs unless that KEY=VALUE is allowed (an
                                   evaluation run, noted; record refuses the
                                   flag)
@@ -1181,8 +1183,18 @@ ENHANCE_OVERSCAN_RE = re.compile(
 # "=<path>: <reason>; no pack" (refused, so stock: the value is "none").
 ENHANCE_PACK_RE = re.compile(r"\[ENHANCE\] textures\.pack=(?!.*; no pack$)(\S+?):?(?:\s|$)")
 
+
+def game_key_re(key):
+    """A game key's value on an [ENHANCE] line: the key starts a word and
+    ends at '=', so fx.glow= never matches fx.glow_intensity=."""
+    return re.compile(r"\[ENHANCE\](?:.*\s)?" + re.escape(key) + r"=(\S+)")
+
+
 # The toolkit's keys: key -> (pattern, stock value). A game's own keys
 # (fps.mode, fx.glow for BLiNX 2) come from its game.toml (GAME_ENHANCE).
+# The menu and the stats strip draw over the frame, so a golden run with
+# either on (RECOMP_MENU=1, RECOMP_OVERLAY_STATS=1, or the user's saved
+# config) is not stock; each logs its own "[ENHANCE] key=on|off" line.
 ENHANCE_STOCK = (
     ("render.scale", ENHANCE_SCALE_RE, "1"),
     ("render.aniso", ENHANCE_ANISO_RE, "0"),
@@ -1190,13 +1202,9 @@ ENHANCE_STOCK = (
     ("display.overscan", ENHANCE_OVERSCAN_RE, "0"),
     ("present.pacing", ENHANCE_PACING_RE, "spin"),
     ("textures.pack", ENHANCE_PACK_RE, "none"),
+    ("menu.enabled", game_key_re("menu.enabled"), "off"),
+    ("overlay.stats", game_key_re("overlay.stats"), "off"),
 )
-
-
-def game_key_re(key):
-    """A game key's value on an [ENHANCE] line: the key starts a word and
-    ends at '=', so fx.glow= never matches fx.glow_intensity=."""
-    return re.compile(r"\[ENHANCE\](?:.*\s)?" + re.escape(key) + r"=(\S+)")
 
 
 def enhance_table():
@@ -1218,10 +1226,11 @@ def enhance_nonstock(log, allow=()):
     Goldens always run at the title's stock resolution, aspect, pacing and
     frame rate: a render.scale other than 1, a render.aniso other than 0,
     a display.aspect other than 4:3, a display.overscan other than 0, a
-    present.pacing other than spin or an
-    fps.mode other than lock30 (asked for, even where the game falls back)
-    makes the run unusable as a golden, whatever its frames look like. No
-    [ENHANCE] line (a build without the layer) is stock.
+    present.pacing other than spin, the menu or the stats strip on
+    (menu.enabled, overlay.stats) or an fps.mode other than lock30 (asked
+    for, even where the game falls back) makes the run unusable as a
+    golden, whatever its frames look like. No [ENHANCE] line (a build
+    without the layer) is stock.
 
     allow: "key=value" strings an evaluation run asked for on purpose
     (--allow-enhance); those are left out here and reported by

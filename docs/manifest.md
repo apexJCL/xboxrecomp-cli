@@ -172,7 +172,7 @@ do `game_files`.
 | `json` | `""` | The golden scenarios. Empty means no golden, pacing or `golden` command. |
 | `frames` | `<json dir>/frames` | The reference frames, which are game output: keep them out of git. |
 | `audio` | `""` | The audio thresholds. |
-| `enhance_stock` | `{}` | The game's own enhancement keys and their stock values, e.g. `{ "fps.mode" = "lock30", "fx.glow" = "on" }`. The golden check fails a run whose `[ENHANCE]` line shows another value for one of them (`--allow-enhance KEY=VALUE` lets an evaluation run through), as it does for the toolkit's `render.scale`, `display.aspect` and `present.pacing`, which it knows already and which may not be repeated here. Values that both read as numbers compare as numbers (`1` is `1.0`). |
+| `enhance_stock` | `{}` | The game's own enhancement keys and their stock values, e.g. `{ "fps.mode" = "lock30", "fx.glow" = "on" }`. The golden check fails a run whose `[ENHANCE]` line shows another value for one of them (`--allow-enhance KEY=VALUE` lets an evaluation run through), as it does for the toolkit's own keys (`render.scale`, `render.aniso`, `display.aspect`, `display.overscan`, `present.pacing`, `textures.pack`, `menu.enabled`, `overlay.stats`: `manifest.TOOLKIT_ENHANCE_KEYS`), which it knows already and which may not be repeated here. Values that both read as numbers compare as numbers (`1` is `1.0`). |
 
 ## [package]
 

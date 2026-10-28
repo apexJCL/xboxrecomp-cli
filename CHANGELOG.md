@@ -45,6 +45,10 @@ a release by its tag in `game.toml`'s `[cli]` table.
   `golden run` and `bench golden` (d3d11) plan per backend.
 
 ### Changed
+- `menu.enabled` and `overlay.stats` are built-in stock keys (stock `off`):
+  the golden check fails a run with the in-game menu or the stats strip on
+  without any `game.toml` row, and `golden.enhance_stock` rows for them are
+  refused.
 - A golden run with no seed gets an empty `hdd/` of its own, removed after,
   instead of the runtime's default hdd root (the player's own disk), unless
   the scenario sets a plain `RECOMP_HDD_DIR`. `golden play` does the same.

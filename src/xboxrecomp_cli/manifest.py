@@ -375,6 +375,8 @@ TOOLKIT_ENHANCE_KEYS = (
     "display.overscan",
     "present.pacing",
     "textures.pack",
+    "menu.enabled",
+    "overlay.stats",
 )
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # The bootstrap reads [cli] with a line parser, and the help without uv

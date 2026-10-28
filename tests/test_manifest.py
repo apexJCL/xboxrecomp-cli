@@ -97,6 +97,10 @@ def test_package_defaults():
             "golden.enhance_stock: 'render.scale' is a toolkit key",
         ),
         (
+            lambda t: t + '[golden]\nenhance_stock = { "menu.enabled" = "off" }\n',
+            "golden.enhance_stock: 'menu.enabled' is a toolkit key",
+        ),
+        (
             lambda t: t + '[golden]\nenhance_stock = { "fx.glow" = 1 }\n',
             "golden.enhance_stock: must be a table of strings",
         ),
