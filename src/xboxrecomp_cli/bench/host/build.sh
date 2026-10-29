@@ -33,7 +33,7 @@ if [ ! -f build-win/CMakeCache.txt ]; then
         -DCMAKE_BUILD_TYPE=Release \
         "${EXTRA_ARGS[@]}"
 elif [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
-    cmake -B build-win "${EXTRA_ARGS[@]}"
+    cmake -S . -B build-win "${EXTRA_ARGS[@]}"
 fi
 # Wall time of cmake --build alone (not ssh, distrobox or the lock wait),
 # with ninja's last line: "no work to do" or the final [N/M] step.

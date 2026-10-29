@@ -4,6 +4,7 @@ disk refusal (D9) in build and package."""
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import types
@@ -318,8 +319,35 @@ def test_build_argv_pool(d, monkeypatch, state, capsys):
         # --jobs 2 moves the pool: build.ninja is regenerated, nothing else.
         runs.clear()
         build.build("macos", bdir=bdir, jobs=2)
-        assert runs[0][:3] == ["cmake", "-B", bdir] and "-DXBR_GEN_JOBS=2" in runs[0]
+        assert runs[0][:5] == ["cmake", "-S", G.root, "-B", bdir]
+        assert "-DXBR_GEN_JOBS=2" in runs[0]
         assert runs[1][-2:] == ["-j", "2"]
+        # Extra cmake args on a configured tree reconfigure it too, and
+        # name the source: from any other directory (a build host's ssh
+        # home) -B alone made CMake take that directory.
+        runs.clear()
+        build.build("macos", ("-DFOO=1",), bdir=bdir, jobs=2)
+        assert runs[0][:5] == ["cmake", "-S", G.root, "-B", bdir] and "-DFOO=1" in runs[0]
+
+
+@pytest.mark.skipif(not shutil.which("cmake"), reason="no cmake on PATH")
+def test_cmake_b_alone_ignores_the_cache(d, monkeypatch):
+    """Why the reconfigure names -S: CMake 4 with -B alone takes the
+    working directory as the source tree even when the build tree's cache
+    names another (the ssh user's home on a PC build host)."""
+    src, bdir, away = (os.path.join(d, x) for x in ("src", "b", "away"))
+    write(
+        os.path.join(src, "CMakeLists.txt"),
+        "cmake_minimum_required(VERSION 3.20)\nproject(x NONE)\n",
+    )
+    os.makedirs(away)
+    cmake = shutil.which("cmake")
+    subprocess.run([cmake, "-S", src, "-B", bdir], check=True, capture_output=True)
+    monkeypatch.chdir(away)
+    alone = subprocess.run([cmake, "-B", bdir, "-DFOO=1"], capture_output=True, text=True)
+    named = subprocess.run([cmake, "-S", src, "-B", bdir, "-DFOO=1"], capture_output=True)
+    assert alone.returncode != 0
+    assert named.returncode == 0
 
 
 def test_build_argv_no_pool(d, monkeypatch, state):

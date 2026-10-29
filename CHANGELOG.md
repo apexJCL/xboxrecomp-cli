@@ -15,6 +15,15 @@ a release by its tag in `game.toml`'s `[cli]` table.
   only when its digest moved. `bench buildhost build` and
   `bench buildhost run ARGS [--pull REL]` drive it directly.
 
+### Fixed
+- `build` reconfigures a configured tree (a new pool depth, or extra cmake
+  args) with `-S` as well as `-B`. With `-B` alone CMake took the working
+  directory as the source tree, so a build run from anywhere but the game
+  root failed there: BLiNX 1's first build on the PC build host, which runs
+  the CLI from its ssh home, stopped there: that home "does not appear to
+  contain CMakeLists.txt". The bench host's `build.sh` and `tests.sh`
+  name `-S .` on their reconfigures too.
+
 ## [0.13.0] - 2026-10-28
 
 ### Added

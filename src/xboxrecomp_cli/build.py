@@ -341,10 +341,14 @@ def configure_and_compile(
         timer.timed("configure", lambda: host.run(cfg + list(cmake_args) + extra, env=env))
     elif cmake_args or (extra and pool_moved(bdir, extra)):
         # A new pool depth regenerates build.ninja only: no compile command
-        # changes, so Ninja rebuilds nothing.
+        # changes, so Ninja rebuilds nothing. -S even with a cache: given
+        # -B alone, CMake takes the working directory as the source tree,
+        # and a build host runs the CLI from its ssh home.
         timer.timed(
             "configure",
-            lambda: host.run([cmake, "-B", bdir] + list(cmake_args) + extra, env=env),
+            lambda: host.run(
+                [cmake, "-S", g.root, "-B", bdir] + list(cmake_args) + extra, env=env
+            ),
             "reconfigure",
         )
     timer.timed(
