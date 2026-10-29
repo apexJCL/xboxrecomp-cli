@@ -441,7 +441,8 @@ text; the commands:
 Flags shared by the commands that run the game: `--kill-game`
 (`BENCH_KILL_GAME=1`) ends a game running outside the bench once the lock is
 held; `--keep-frames` (`BENCH_KEEP_FRAMES=1`) keeps every frame dump of a
-passing scenario; `--proton-log` (`BENCH_PROTON_LOG=full`) keeps Proton's
+passing scenario, which otherwise drops them all once its verdict is
+written (a failing or recording run always keeps them); `--proton-log` (`BENCH_PROTON_LOG=full`) keeps Proton's
 whole log.
 
 Configuration comes from the environment or the game's `scripts/bench.env`
@@ -525,10 +526,47 @@ never changes a command's exit code.
 | `export` | the sessions as a TSV, or every table as JSONL |
 | `pull [--host KEY]` | import the records in the hosts' inboxes, then delete them there |
 | `pins [--refresh]` | the run stamps that `golden.json`, `TASKS.md`, `RESUME*.md`, `openspec/` and `[bench.gc] refs` cite in any worktree |
-| `plan [TARGET...] [--older-than DAYS] [--json]` | what may be deleted, why, and what is refused; it saves the plan and prints its id |
+| `plan [TARGET...] [--older-than DAYS] [--states FILE] [--guard-hours H] [--frames] [--json]` | what may be deleted, why, and what is refused; it saves the plan and prints its id |
 | `clean PLAN_ID [--large]` | delete what both the saved plan and a fresh plan hold, within the hour; `--large` allows over 100 GB or 20% of a disk |
 | `gc` | mark vanished artifacts missing, then optimise, rotate the backups and vacuum |
 | `regress [--build B] [--against A \| --release TAG] [--runs-only \| --builds-only] [--strict] [--json]` | a build's runs and build times against its baseline |
+
+With `[pending]` in `benchdb.toml` (or `plan --states FILE`), a citation
+pins only while its work is open. `golden.json` always pins. Otherwise
+each citation is matched to the work it belongs to: the refs of its table
+row, list item or paragraph, of its headings (not for a table row; a `#`
+line inside a code fence is no heading) and of the file's path (a
+`blxNNN`, not BLiNX 1's slug, or a notes folder named as an `agent:<name>`
+label), taken together. The work refs are tracker items (`BLX-n`) and
+`openspec/changes/<name>` (archived as exactly `archive/YYYY-MM-DD-<name>`).
+The citation pins while any of them is open, and stops pinning when all
+are Done or Cancelled or archived. With none, the refs anywhere in the
+file can only keep it: a citation that maps to no item keeps pinning (fail
+safe); the plan counts these in its `pins` field and `PINS:` line.
+
+```toml
+[pending]
+states = ["uv", "run", "-q", "--project", "<plane-agent>", "python", "notes/tracker_states.py"]
+prefixes = ["BLX"]
+cache_minutes = 10   # the states are cached in <store>/tracker-states.json
+
+[clean]
+guard_hours = 6
+```
+
+The states command prints `{"items": {"BLX-n": {"state": "Done", "group":
+"completed", "labels": ["agent:x"]}}, "fetched": ISO}`; `states_file`
+names a file instead. A doc with no items, or fetched over an hour ago, is
+refused: the plan then runs as without a tracker (every item pins).
+`[clean] guard_hours` (or `--guard-hours`, at least 1) replaces the
+store's days for an unpinned run whose verdicts are all `pass` (or that
+has none), and the runs root's 2 days with at least 24 hours, when the
+tracker states were read. A run with any other verdict keeps the games'
+`[bench.gc] days`, in the store and in the retention. A runs-root topic
+stays while it is live: a `wt/<topic>` exists, or an item Ready, In
+Progress, Blocked or In Review carries `agent:<topic>` or the topic's
+`blxNNN`. `plan --frames` plans only the `frames/` dirs of runs in
+the db whose verdicts are all `pass`, when nothing pins them.
 
 `regress` compares build B (by default the game's newest integration build)
 with a baseline:
@@ -595,7 +633,8 @@ Mac's own build: each scenario runs headless with dummy audio under the Mac
 run lock (`~/.recomp-mac-run.lock`), dumps its frames by flip, stops once
 the last frame its check reads is dumped, warns when the Mac is loaded (the
 pace check then says INCOMPLETE), then checks and prunes as `bench golden`
-does. Each run is `bench-logs/<stamp>-<backend>-<scen>/` with its `golden.txt`.
+does (its verdict does not weigh the D3D11 present check, so a present
+mismatch keeps the frames of a pass). Each run is `bench-logs/<stamp>-<backend>-<scen>/` with its `golden.txt`.
 
 A scenario that sets `RECOMP_HDD_DIR=@seed:PATH` in its `golden.json` env
 boots on an hdd tree of its own: `PATH` (relative to the game root, and

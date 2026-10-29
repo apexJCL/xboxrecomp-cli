@@ -122,7 +122,7 @@ def worktrees(root):
 
 # benchdb plan's own table (clean.table), saved to a file: it names every
 # path it weighed, so read as a reference it would pin them all.
-LISTING_ROW = re.compile(r"^(remove|REFUSE) +\S* +\S|^WARNING: ")
+LISTING_ROW = re.compile(r"^(remove|REFUSE) +\S* +\S|^WARNING: |^PINS: ")
 LISTING_END = re.compile(r"^plan \S+: \d+ to remove, .*; \d+ refused$")
 
 
@@ -145,6 +145,9 @@ class Refs:
         self.missing = []
         self.worktrees = 0
         self.exclude = []  # realpaths that are never refs ([refs] exclude)
+        # The games' golden json and audio files: their citations always
+        # pin, whatever the tracker says (pending.py).
+        self.golden = set()
 
     def excluded(self, path):
         real = os.path.realpath(path)
@@ -248,6 +251,7 @@ def read_refs(game, main_root, others, extra=(), refs=None):
         skip |= {os.path.normpath(os.path.join(root, out, d)) for d in STAGE_DIRS}
         required = [m["golden"]["json"]] if m["golden"]["json"] else []
         required += [m["golden"]["audio"]] if m["golden"]["audio"] else []
+        refs.golden |= {os.path.realpath(os.path.join(root, x)) for x in required}
         required += list(gc["refs"])
         # TASKS.md and openspec/ are what most games keep, not what every
         # game has: they are required where the repo tracks them (a tracked

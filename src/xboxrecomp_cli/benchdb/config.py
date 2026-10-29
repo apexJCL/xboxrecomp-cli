@@ -67,6 +67,10 @@ TABLE_KEYS = {
     "hosts": {"os", "ssh", "markers", "names", "inbox", "label"},
 }
 REFS_KEYS = {"paths", "exclude"}
+PENDING_KEYS = {"states", "states_file", "prefixes", "cache_minutes"}
+# [pending] prefixes when the table names none: the tracker project ids.
+DEFAULT_PREFIXES = ("BLX",)
+CLEAN_KEYS = {"guard_hours"}
 RELEASE_KEYS = {"export_maps", "toolkit_map", "toolkit", "cli"}
 
 
@@ -124,7 +128,18 @@ class Config:
         self.dir = os.path.dirname(path) if path else os.getcwd()
         doc = doc or {}
         errors = []
-        known = {"db", "host", "roots", "never", "refs", "release", "hosts", "games"}
+        known = {
+            "db",
+            "host",
+            "roots",
+            "never",
+            "refs",
+            "release",
+            "hosts",
+            "games",
+            "pending",
+            "clean",
+        }
         for k in doc:
             if k not in known:
                 errors.append("%s: unknown key" % k)
@@ -137,7 +152,12 @@ class Config:
                     continue
                 for k in sorted(set(t) - keys):
                     errors.append("%s.%s.%s: unknown key" % (table, name, k))
-        for table, keys in (("refs", REFS_KEYS), ("release", RELEASE_KEYS)):
+        for table, keys in (
+            ("refs", REFS_KEYS),
+            ("release", RELEASE_KEYS),
+            ("pending", PENDING_KEYS),
+            ("clean", CLEAN_KEYS),
+        ):
             for k in sorted(set(doc.get(table, {})) - keys):
                 errors.append("%s.%s: unknown key" % (table, k))
         self.hosts = {}
@@ -237,6 +257,46 @@ class Config:
         self.toolkit = self.local_path(rel["toolkit"]) if rel.get("toolkit") else None
         self.cli = self.local_path(rel["cli"]) if rel.get("cli") else None
         self.games = {k: self.local_path(v) for k, v in sorted(doc.get("games", {}).items())}
+        # The tracker states that judge each citation (pending.py),
+        # and the short age of unpinned runs.
+        pend = doc.get("pending", {})
+        self.pending = {}
+        if pend:
+            cmd = pend.get("states")
+            if cmd is not None and (
+                not isinstance(cmd, list) or not cmd or not all(isinstance(x, str) for x in cmd)
+            ):
+                errors.append("pending.states: not a command (a list of strings)")
+            elif cmd:
+                self.pending["states"] = list(cmd)
+            if "states_file" in pend:
+                if not isinstance(pend["states_file"], str):
+                    errors.append("pending.states_file: not a path")
+                else:
+                    self.pending["states_file"] = self.local_path(pend["states_file"])
+            if "states" not in self.pending and "states_file" not in self.pending:
+                errors.append("pending: needs states or states_file")
+            pre = pend.get("prefixes", list(DEFAULT_PREFIXES))
+            if (
+                not isinstance(pre, list)
+                or not pre
+                or not all(
+                    isinstance(x, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", x) for x in pre
+                )
+            ):
+                errors.append("pending.prefixes: not a list of project identifiers")
+            else:
+                self.pending["prefixes"] = [x.upper() for x in pre]
+            cm = pend.get("cache_minutes", 10)
+            if isinstance(cm, bool) or not isinstance(cm, (int, float)) or cm < 0:
+                errors.append("pending.cache_minutes: not a number of minutes")
+            else:
+                self.pending["cache_minutes"] = cm
+        gh = doc.get("clean", {}).get("guard_hours")
+        if gh is not None and (isinstance(gh, bool) or not isinstance(gh, (int, float)) or gh < 1):
+            errors.append("clean.guard_hours: a number of hours, at least 1")
+            gh = None
+        self.guard_hours = float(gh) if gh is not None else None
         if errors:
             raise ConfigError("%s: %s" % (path or NAME, "; ".join(errors)))
 

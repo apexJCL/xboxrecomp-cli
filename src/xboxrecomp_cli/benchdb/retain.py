@@ -65,10 +65,12 @@ def internal_kept(builds, keep):
     return {b["id"] for b in top}
 
 
-def decide(db, cfg, pinned=None, now=None, game=None):
+def decide(db, cfg, pinned=None, now=None, game=None, young_days=None):
     """{run id: (keep, reason)} for every run in the db (of game, if set).
     pinned is a function of a run row that returns the citing source or
-    None (default: never pinned)."""
+    None (default: never pinned). young_days replaces the games' [bench.gc]
+    days (benchdb.toml's [clean] guard_hours) for runs whose every
+    verdict is pass or that have none: a failure keeps the game's days."""
     now = now if now is not None else datetime.datetime.now(datetime.UTC).timestamp()
     pinned = pinned or (lambda r: None)
     out = {}
@@ -78,11 +80,18 @@ def decide(db, cfg, pinned=None, now=None, game=None):
         q += " WHERE game = ?"
         args.append(game)
     runs = db.sql(q, args)
+    failing = set()
+    if young_days is not None:
+        failing = {
+            v["run_id"]
+            for v in db.sql("SELECT DISTINCT run_id FROM verdicts WHERE word != 'pass'")
+            if v["run_id"] is not None
+        }
     games = sorted({r["game"] for r in runs})
     for slug in games:
         gm = ingest.settings(cfg, slug)
         dbs = gm["bench"]["db"]
-        days = float(gm["bench"]["gc"]["days"])
+        gc_days = float(gm["bench"]["gc"]["days"])
         rels = db.sql(
             "SELECT tag, published FROM releases WHERE game = ? AND state = 'published' "
             "ORDER BY coalesce(published, '') DESC, tag DESC",
@@ -119,7 +128,7 @@ def decide(db, cfg, pinned=None, now=None, game=None):
                     r,
                     builds.get(r["build_id"]),
                     now,
-                    days,
+                    gc_days if young_days is None or r["id"] in failing else young_days,
                     pinned,
                     keep_tags,
                     kept_internal,

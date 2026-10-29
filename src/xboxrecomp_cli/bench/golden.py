@@ -193,26 +193,35 @@ def keep_frames(cfg):
     return (cfg.get("BENCH_KEEP_FRAMES") or "0") == "1"
 
 
-def prune(b, runs, res):
-    """After a check: for each scenario that passed (EXACT or CLOSE), whose
-    run ended cleanly and presented only the walker's surfaces, keep only
-    the images the check read (every frame's plain dump, the verdict
-    images, the window's best) and remove the run's frames/ on the host.
-    Anything short of a pass keeps every frame, here and there: a NEWVIEW's
-    are what `golden reference` records the new view from. res: read_used()'s
-    {scen: (rc, paths)}."""
-    from ..golden import prune_frames
+def prune(b, runs, res, words=None):
+    """After a check: a scenario whose verdict is pass, whose run ended
+    cleanly and presented only the walker's surfaces, drops every frame
+    dump (its verdict is in golden.txt and the db). One that
+    passed apart from known divergences keeps only the images the check
+    read (every frame's plain dump, the verdict images, the window's
+    best). Both have the run's frames/ on the host removed. Anything short
+    of a pass keeps every frame, here and there: a NEWVIEW's are what
+    `golden reference` records the new view from. res: read_used()'s
+    {scen: (rc, paths)}; words: {scen: verdict word}."""
+    from ..golden import drop_frames, prune_frames
 
     if keep_frames(b.cfg):
         b.say("golden: frames kept (BENCH_KEEP_FRAMES=1 or --keep-frames)")
         return
+    words = words or {}
     stamps = []
     for scen, (stamp, frames, clean) in runs.items():
         rc, paths = res.get(scen, (None, []))
         if rc != 0 or not clean:
             continue
-        n, size, kept = prune_frames(frames, paths)
-        b.say("golden: %s: pruned %d flip dumps (%.1f MB), kept %d" % (scen, n, size / 1e6, kept))
+        if words.get(scen) == "pass":
+            n, size = drop_frames(frames)
+            b.say("golden: %s: dropped %d frame dumps (%.1f MB)" % (scen, n, size / 1e6))
+        else:
+            n, size, kept = prune_frames(frames, paths)
+            b.say(
+                "golden: %s: pruned %d flip dumps (%.1f MB), kept %d" % (scen, n, size / 1e6, kept)
+            )
         if STAMP_RE.match(stamp):
             stamps.append(stamp)
     if stamps and getattr(b, "host", None):
@@ -576,5 +585,5 @@ def check_each(b, runs, notes, prune_after):
         )
         rcs.append(rc)
     if prune_after:
-        prune(b, runs, res)
+        prune(b, runs, res, {k: v[4] for k, v in notes.items() if len(v) > 4})
     return 1 if 1 in rcs else 2 if any(rcs) else 0

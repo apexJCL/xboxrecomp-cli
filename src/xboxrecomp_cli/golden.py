@@ -1558,6 +1558,29 @@ def prune_frames(d, keep, dry_run=False):
     return removed, size, kept
 
 
+IMAGE_SUFFIXES = (".bmp", ".png", ".ppm", ".tga")
+
+
+def drop_frames(d):
+    """Remove every image dump under run frames dir d: a clean pass needs
+    none of them once its verdict is written. Text files
+    (pulls.txt) and links stay. (removed, bytes)."""
+    removed = size = 0
+    if not os.path.isdir(d) or os.path.islink(d):
+        return removed, size
+    for dp, _dirs, files in os.walk(d, followlinks=False):
+        for n in sorted(files):
+            p = os.path.join(dp, n)
+            if not n.lower().endswith(IMAGE_SUFFIXES) or os.path.islink(p):
+                continue
+            if not os.path.isfile(p):
+                continue
+            size += os.path.getsize(p)
+            os.remove(p)
+            removed += 1
+    return removed, size
+
+
 def cmd_prune(args):
     """prune [--dry-run] [check options] SCEN=DIR...: check each scenario
     quietly and, when its verdict is a pass, remove the flip dumps the

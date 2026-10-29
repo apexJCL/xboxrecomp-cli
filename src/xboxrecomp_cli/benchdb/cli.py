@@ -527,6 +527,24 @@ def _cfg_plan(p):
         action="store_true",
         help="allow --older-than under 1 day (a run being written could go), after looking",
     )
+    p.add_argument(
+        "--states",
+        metavar="FILE",
+        help="judge each citation by the tracker states in FILE (as [pending] does): "
+        "a citation of closed work no longer pins",
+    )
+    p.add_argument(
+        "--guard-hours",
+        type=float,
+        metavar="H",
+        help="the store and runs roots' age for an unpinned, not live run "
+        "(as [clean] guard_hours; at least 1; needs tracker states)",
+    )
+    p.add_argument(
+        "--frames",
+        action="store_true",
+        help="plan only the frame dumps of passing, unpinned runs in the db",
+    )
     p.add_argument("--json", action="store_true", help="the plan as JSON")
 
 
@@ -537,7 +555,15 @@ def cmd_plan(a, cfg):
     cfg.require("plan")
     db = store.open(a.db, cfg, readonly=True)
     plan = clean.make_plan(
-        cfg, db, a.targets, a.older_than, a.force_dirty, force_young=a.force_young
+        cfg,
+        db,
+        a.targets,
+        a.older_than,
+        a.force_dirty,
+        force_young=a.force_young,
+        states=os.path.abspath(a.states) if a.states else None,
+        guard_hours=a.guard_hours,
+        frames=a.frames,
     )
     pid, path = clean.save_plan(cfg, plan)
     if a.json:

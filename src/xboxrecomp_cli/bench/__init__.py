@@ -139,11 +139,12 @@ game running outside the bench once the run lock is held. Without it the
 run only warns, on stdout and in bench-logs/<stamp>/warnings.txt.
 
 --keep-frames (golden; or BENCH_KEEP_FRAMES=1): keep every frame dump of a
-passing scenario. Without it, a scenario that passes (EXACT or CLOSE, its
-run clean) keeps only the images its check read: each frame's plain dump,
-the verdict images and the window's best flip; its run's frames/ on the
-host goes. A run that fails, is INCOMPLETE or INCONCLUSIVE, or --record,
-keeps everything.
+passing scenario. Without it, a scenario whose verdict is pass (EXACT or
+CLOSE, its run clean) drops every frame dump once golden.txt holds its
+verdict; one that is pass-with-known keeps only the images its check read
+(each frame's plain dump, the verdict images, the window's best flip).
+Both have their run's frames/ on the host removed. A run that fails, is
+INCOMPLETE or INCONCLUSIVE, or --record, keeps everything.
 
 --proton-log (any command that runs the game or pulls logs; or
 BENCH_PROTON_LOG=full): keep and pull Proton's whole log,

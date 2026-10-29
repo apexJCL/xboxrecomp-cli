@@ -36,7 +36,7 @@ import subprocess
 import time
 import unicodedata
 
-from . import ingest, retain, store
+from . import config, ingest, pending, retain, store
 from . import refs as refs_mod
 from .store import DbError, flock, now_iso
 
@@ -46,6 +46,9 @@ CLEAN_LOCK = "benchdb-clean.lock"
 PLAN_MAX_AGE = 3600
 # Guard 5's least age for --older-than without --force-young, in days.
 MIN_OLDER_THAN = 1.0
+# guard_hours' floor for a runs topic (from review): a topic is named
+# by hand, so its live work is told only loosely.
+RUNS_GUARD_HOURS = 24.0
 LARGE_BYTES = 100 * 10**9
 LARGE_SHARE = 0.20
 PLAN_ID_RE = re.compile(r"^[0-9]{14}-[a-z]{6}$")
@@ -64,6 +67,8 @@ STORE_OWN = {
     "db-backup",
     "inbox",
     "golden-sessions.tsv",
+    "tracker-states.json",
+    "tracker-states.json.tmp",
 }
 HOST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "host")
 LIST_TIMEOUT = 600
@@ -79,17 +84,25 @@ class Pins:
     no stamp) a path to it, such as runs/<topic>, wt/<name> or runs\\<task>.
     A bare name never pins, but for a build sha: ssx3, cli or bench-logs
     are words of ordinary prose, and as words they pinned trees no note
-    meant. Each answer names the citing file."""
+    meant. Each answer names the citing file.
 
-    def __init__(self, refs, base=None):
+    With a pending.Pending judge each citation is weighed by the
+    work it belongs to, and only a live one pins; the answer then names
+    the file and line and why it is live. released keeps the names whose
+    every citation was closed work, and stats counts the judged citations."""
+
+    def __init__(self, refs, base=None, pending=None):
         self.refs = refs
         self.base = base
+        self.pending = pending
         self.stamp, self.six = {}, {}
         for path, text in refs.files.items():
-            for s in refs_mod.STAMP_RE.findall(text):
-                self.stamp.setdefault(s, path)
-            for s in refs_mod.SIX_RE.findall(text):
-                self.six.setdefault(s, path)
+            for s in set(refs_mod.STAMP_RE.findall(text)):
+                self.stamp.setdefault(s, []).append(path)
+            for s in set(refs_mod.SIX_RE.findall(text)):
+                self.six.setdefault(s, []).append(path)
+        self.released = {}
+        self._cache = {}
 
     def where(self, path):
         if self.base and path.startswith(self.base.rstrip(os.sep) + os.sep):
@@ -100,16 +113,33 @@ class Pins:
         """The citing file and match for the first of names that is cited,
         or None. A name with no stamp matches only as a path (it holds a
         / or a \\) or as a build sha, never as a bare word."""
+        key = tuple(names)
+        if key not in self._cache:
+            self._cache[key] = self._source(names)
+        return self._cache[key]
+
+    def _source(self, names):
+        closed, seen = [], set()
         for n in names:
             if not n:
                 continue
             m = refs_mod.STAMP_RE.search(n)
             if m:
                 st = m.group(1)
-                if st in self.stamp:
-                    return "%s cites %s" % (self.where(self.stamp[st]), st)
-                if st[9:] in self.six:
-                    return "%s cites %s (HHMMSS)" % (self.where(self.six[st[9:]]), st[9:])
+                # Every spelling of a run holds its stamp: weigh it once.
+                if st in seen:
+                    continue
+                seen.add(st)
+                pat = re.compile(r"(?<!\d)" + st + r"(?!\d)")
+                for path in self.stamp.get(st, ()):
+                    got = self.cite(path, pat, "%s cites %s", st, closed)
+                    if got:
+                        return got
+                pat = re.compile(r"(?<!\d)" + st[9:] + r"(?!\d)")
+                for path in self.six.get(st[9:], ()):
+                    got = self.cite(path, pat, "%s cites %s (HHMMSS)", st[9:], closed)
+                    if got:
+                        return got
                 continue
             if HEX_RE.fullmatch(n):
                 # A dir named by a build sha (a Deck run dir): its sha cited
@@ -123,7 +153,25 @@ class Pins:
                 continue
             for path, text in self.refs.files.items():
                 if pat.search(text):
-                    return "%s names %s" % (self.where(path), n)
+                    got = self.cite(path, pat, "%s names %s", n, closed)
+                    if got:
+                        return got
+        if closed:
+            first = next((n for n in names if n), "")
+            self.released[first] = list(dict.fromkeys(closed))
+        return None
+
+    def cite(self, path, pat, fmt, what, closed):
+        """The answer for path's citations of pat, or None when the judge
+        finds every one of them closed (each added to closed)."""
+        if self.pending is None:
+            return fmt % (self.where(path), what)
+        for m in pat.finditer(self.refs.files[path]):
+            live, failsafe, why, line = self.pending.judge(path, m.start())
+            where = "%s:%d" % (self.where(path), line)
+            if live:
+                return (fmt % (where, what)) + " (%s)" % why
+            closed.append("%s (%s)" % (where, why))
         return None
 
 
@@ -320,6 +368,13 @@ def host_text(name):
     while i < len(lines) and lines[i].startswith("#@"):
         i += 1
     return "".join(lines[i:])
+
+
+def span(days):
+    """An age for a message: days, or hours under one day (guard_hours)."""
+    if days < 1:
+        return "%g hours" % round(days * 24, 2)
+    return "%g days" % days
 
 
 def plan_id(now=None):
@@ -523,13 +578,32 @@ class Planner:
     """One plan's state: the config, the db, the pins, the items and the
     refusals."""
 
-    def __init__(self, cfg, db, older_than=None, force_dirty=False, now=None, refs=None):
+    def __init__(
+        self,
+        cfg,
+        db,
+        older_than=None,
+        force_dirty=False,
+        now=None,
+        refs=None,
+        judge=None,
+        guard_hours=None,
+    ):
         self.cfg, self.db = cfg, db
         self.older_than = older_than
         self.force_dirty = force_dirty
         self.now = now if now is not None else time.time()
         self.refs = refs if refs is not None else refs_mod.collect(cfg)
-        self.pins = Pins(self.refs, cfg.dir)
+        # judge is a pending.Pending (citations of closed work do
+        # not pin), guard_hours the store and runs roots' short age.
+        self.judge = judge
+        self.guard_hours = guard_hours
+        self.pins = Pins(self.refs, cfg.dir, judge)
+        self.wt_roots = [
+            os.path.realpath(r.path)
+            for r in cfg.roots.values()
+            if r.local and r.kind == "worktrees"
+        ]
         self.items, self.refused = [], []
         self.seen = set()
         self.disks = {}
@@ -568,13 +642,22 @@ class Planner:
     def days(self, root):
         """Guard 5's age: --older-than, else the root's days, else 2 for a
         runs root and the longest [bench.gc] days of the games (7 with no
-        game) for the store and the hosts."""
+        game) for the store and the hosts. guard_hours shortens the local
+        store's and runs root's age; a runs topic gets at least a day, since
+        its name rarely matches the worktree or item that writes it."""
         if self.older_than is not None:
             return float(self.older_than)
         if root.days is not None:
             return root.days
+        if self.guard_hours is not None and root.local and root.kind == "store":
+            return self.guard_hours / 24.0
+        if self.guard_hours is not None and root.local and root.kind == "runs":
+            return max(self.guard_hours, RUNS_GUARD_HOURS) / 24.0
         if root.kind == "runs":
             return 2.0
+        return self.gc_days()
+
+    def gc_days(self):
         if self._gc_days is None:
             ds = [
                 float(ingest.settings(self.cfg, g)["bench"]["gc"]["days"]) for g in self.cfg.games
@@ -582,8 +665,32 @@ class Planner:
             self._gc_days = max(ds) if ds else 7.0
         return self._gc_days
 
-    def young(self, root, mtime):
+    def failing(self, rel):
+        """Whether a store entry holds a run with a verdict other than pass:
+        a failure's evidence keeps the games' [bench.gc] days, guard_hours
+        or not."""
+        like = rel.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%"
+        return bool(
+            self.db.sql(
+                "SELECT 1 FROM verdicts v JOIN runs r ON r.id = v.run_id "
+                "WHERE (r.relpath = ? OR r.relpath LIKE ? ESCAPE '\\') AND v.word != 'pass' "
+                "LIMIT 1",
+                (rel, like),
+            )
+        )
+
+    def young(self, root, mtime, rel=None):
         d = self.days(root)
+        if (
+            rel is not None
+            and self.guard_hours is not None
+            and self.older_than is None
+            and root.days is None
+            and root.local
+            and root.kind == "store"
+            and self.failing(rel)
+        ):
+            d = max(d, self.gc_days())
         return mtime > self.now - d * 86400, d
 
     # ---- local roots --------------------------------------------------------
@@ -688,7 +795,7 @@ class Planner:
                 return
             y, d = self.young(r, st.st_mtime)
             if y:
-                self.refuse(res, "a link made within %g days" % d, r)
+                self.refuse(res, "a link made within %s" % span(d), r)
                 return
             self.add(r, res, rel, "link", 0, st.st_mtime, "a link (unlinked, target kept)")
             return
@@ -733,18 +840,29 @@ class Planner:
             if not os.path.isfile(os.path.join(res, "exit-code")):
                 self.refuse(res, "a run with no exit-code (being written)", r)
                 return
+        live = self.live(r, rel)
+        if live:
+            self.refuse(res, live, r)
+            return
         mt = refs_mod.newest_mtime(res)
-        y, d = self.young(r, mt)
+        y, d = self.young(r, mt, rel)
         if y:
-            self.refuse(res, "written within %g days" % d, r)
+            self.refuse(res, "written within %s" % span(d), r)
             return
         if kind == "worktree":
-            rule = "a worktree with its notes kept, older than %g days" % d
+            rule = "a worktree with its notes kept, older than %s" % span(d)
         elif r.kind == "store" and self.has_rows(rel):
-            rule = "an unparsed run older than %g days" % d
+            rule = "an unparsed run older than %s" % span(d)
         else:
-            rule = "older than %g days" % d
+            rule = "older than %s" % span(d)
         self.add(r, res, rel, kind, refs_mod.allocated(res), mt, rule)
+
+    def live(self, r, rel):
+        """Why a runs-root entry is being written now, or None. Only with
+        guard_hours: the roots' days keep a live topic anyway."""
+        if self.guard_hours is None or self.judge is None or r.kind != "runs":
+            return None
+        return self.judge.live_topic(rel.split("/")[0], self.wt_roots)
 
     def local_names(self, r, res, rel):
         """The spellings a note may cite a local entry by: its stamp (in any
@@ -792,7 +910,7 @@ class Planner:
     def _old_plan(self, r, res, rel, st):
         y, d = self.young(r, st.st_mtime)
         if y:
-            self.refuse(res, "a plan written within %g days" % d, r)
+            self.refuse(res, "a plan written within %s" % span(d), r)
             return
         self.add(r, res, rel, "plan", st.st_blocks * 512, st.st_mtime, "an old plan")
 
@@ -891,7 +1009,10 @@ class Planner:
             def pinned(r):
                 return self.pins.source([r["relpath"], r["relpath"].split("/")[-1]])
 
-            self._decide = retain.decide(self.db, self.cfg, pinned=pinned, now=self.now)
+            young = self.guard_hours / 24.0 if self.guard_hours is not None else None
+            self._decide = retain.decide(
+                self.db, self.cfg, pinned=pinned, now=self.now, young_days=young
+            )
         return self._decide
 
     def sweep_local(self, r):
@@ -948,7 +1069,7 @@ class Planner:
                     run_mt[run] = refs_mod.newest_mtime(run) if os.path.isdir(run) else 0
                 y, d = self.young(r, run_mt[run])
                 if y:
-                    self.refuse(p, "its run was written within %g days" % d, r)
+                    self.refuse(p, "its run was written within %s" % span(d), r)
                     continue
                 got, why = self.resolve(p)
                 if got is None:
@@ -967,6 +1088,107 @@ class Planner:
                 mt = st.st_mtime if kind == "link" else refs_mod.newest_mtime(res)
                 size = 0 if kind == "link" else refs_mod.allocated(res)
                 self.add(r, res, rel, kind, size, mt, "superseded (D10): %s" % a["kind"])
+
+    def frames(self, r, within=()):
+        """plan --frames: the frame dumps of the settled runs in
+        root r whose every verdict is pass (at least one), when nothing
+        live pins the run. The verdict judges the end: a golden run is
+        stopped (124, -2, -9) and a crash is FAIL-RUN, so the exit code
+        only has to be known. within: realpaths that
+        bound the runs (the plan's explicit targets)."""
+        base = os.path.realpath(r.path)
+        rows = self.db.sql(
+            "SELECT r.id, r.relpath AS run, r.exit_code, a.relpath FROM artifacts a "
+            "JOIN runs r ON r.id = a.run_id WHERE a.root = ? AND a.kind = 'frames' "
+            "AND a.state = 'present' ORDER BY a.relpath",
+            (r.name,),
+        )
+        words = {}
+        for v in self.db.sql("SELECT run_id, word FROM verdicts WHERE run_id IS NOT NULL"):
+            words.setdefault(v["run_id"], set()).add(v["word"])
+        for a in rows:
+            p = os.path.join(base, *a["relpath"].split("/"))
+            run = os.path.join(base, *a["run"].split("/"))
+            if within and not any(run == w or under(run, w) or under(w, run) for w in within):
+                continue
+            if not os.path.lexists(p):
+                continue
+            w = words.get(a["id"], set())
+            if w != {"pass"}:
+                why = "verdicts %s" % "/".join(sorted(w)) if w else "no verdict"
+                self.refuse(p, "frames kept: %s" % why, r)
+                continue
+            if a["exit_code"] is None:
+                self.refuse(p, "frames kept: no exit code parsed", r)
+                continue
+            if not os.path.isfile(os.path.join(run, "exit-code")) and os.path.isfile(
+                os.path.join(run, "run-info.txt")
+            ):
+                self.refuse(p, "a run with no exit-code (being written)", r)
+                continue
+            rel_run = os.path.relpath(run, base).replace(os.sep, "/")
+            names = self.local_names(r, run, rel_run) + [
+                os.path.relpath(p, base).replace(os.sep, "/")
+            ]
+            src = self.pins.source(names)
+            if src:
+                self.refuse(p, "pinned: %s" % src, r)
+                continue
+            live = self.live(r, rel_run)
+            if live:
+                self.refuse(p, live, r)
+                continue
+            y, d = self.young(r, refs_mod.newest_mtime(run))
+            if y:
+                self.refuse(p, "its run was written within %s" % span(d), r)
+                continue
+            got, why = self.resolve(p)
+            if got is None:
+                self.refuse(p, why, r)
+                continue
+            rr, res, rel, st = got
+            if rr.name != r.name or not r.matches(rel.split("/")[0]):
+                self.refuse(res, "not a run's file in the %s root" % r.name, r)
+                continue
+            hit = self.never_hit("local", res)
+            if hit:
+                self.refuse(res, "under or over the never-path %s" % hit, r)
+                continue
+            if stat.S_ISLNK(st.st_mode):
+                self.refuse(res, "frames that are a link", r)
+                continue
+            self.add(
+                r,
+                res,
+                rel,
+                "frames",
+                refs_mod.allocated(res),
+                refs_mod.newest_mtime(res),
+                "frames of a passing run",
+            )
+
+    def pin_stats(self):
+        """The judge's counts for the plan: citations by verdict and
+        source file, the refusals the fail safe made, and the names no
+        longer pinned because every citation of them is closed work."""
+        if self.judge is None:
+            return None
+        by = {"live": {}, "failsafe": {}, "closed": {}}
+        for (path, _pos), (live, fs, _why, _line) in self.judge.judged():
+            k = "failsafe" if live and fs else ("live" if live else "closed")
+            w = self.pins.where(path)
+            by[k][w] = by[k].get(w, 0) + 1
+        kept = [x for x in self.refused if x["why"].startswith("pinned: ")]
+        fs = [x for x in kept if "(fail-safe:" in x["why"] or "(anywhere in the file)" in x["why"]]
+        return dict(
+            tracker=self.judge.items is not None,
+            citations={k: sum(v.values()) for k, v in by.items()},
+            by_file={k: dict(sorted(v.items(), key=lambda kv: -kv[1])) for k, v in by.items()},
+            pinned=len(kept),
+            pinned_failsafe=len(fs),
+            pinned_golden=sum(1 for x in kept if "(golden reference)" in x["why"]),
+            released=dict(sorted(self.pins.released.items())),
+        )
 
     # ---- remote roots ------------------------------------------------------
 
@@ -1354,16 +1576,55 @@ def make_plan(
     now=None,
     refs=None,
     force_young=False,
+    states=None,
+    guard_hours=None,
+    frames=False,
 ):
     """The plan of targets (as split_targets reads them); with none, the
     local store and runs roots. Raises DbError when the reference text
-    cannot be read whole."""
+    cannot be read whole. states (a tracker states file) and [pending]
+    turn the pending judge on, guard_hours (or [clean] guard_hours) the
+    short age, frames the --frames plan."""
     cfg.require("plan")
     older_than = check_older_than(older_than, force_young)
-    pl = Planner(cfg, db, older_than, force_dirty, now, refs)
+    now = now if now is not None else time.time()
+    refs = refs if refs is not None else refs_mod.collect(cfg)
+    warnings = []
+    judge = None
+    if cfg.pending or states is not None:
+        items, _src, warn = pending.load_states(cfg, states, now)
+        warnings += pending.require_states(items, warn)
+        judge = pending.Pending(
+            cfg, refs, items, cfg.pending.get("prefixes", list(config.DEFAULT_PREFIXES))
+        )
+    guard = pending.check_guard(guard_hours if guard_hours is not None else cfg.guard_hours)
+    if guard is not None and (judge is None or judge.items is None):
+        # The short age leans on the tracker to tell a run being written.
+        warnings.append(
+            "guard_hours %g not used: no tracker states to tell live runs, the roots' "
+            "days apply" % guard
+        )
+        guard = None
+    pl = Planner(cfg, db, older_than, force_dirty, now, refs, judge, guard)
     roots, local, remote = split_targets(cfg, targets)
     if not targets:
         roots = [r.name for r in cfg.roots.values() if r.local and r.kind in ("store", "runs")]
+    if frames:
+        # Only the frame dirs of the runs in the db: an explicit local path
+        # bounds which runs, a root name picks the root.
+        mine = [r for r in cfg.roots.values() if r.local and r.kind in ("store", "runs")]
+        within = [os.path.realpath(p) for p in local]
+        for name in roots:
+            r = cfg.roots[name]
+            if r not in mine:
+                pl.refuse(r.path, "--frames covers the store and runs roots only", r)
+        for r in mine:
+            if r.name in roots or within:
+                pl.frames(r, within)
+        for key, paths in remote.items():
+            for x in paths:
+                pl.refuse(x, "--frames covers the store and runs roots only", host=key)
+        roots, local, remote = [], [], {}
     for p in local:
         pl.check_local(p)
     sweep_remote = {}
@@ -1388,9 +1649,16 @@ def make_plan(
             older_than=older_than,
             force_dirty=bool(force_dirty),
             force_young=bool(force_young),
+            states=states,
+            guard_hours=guard_hours,
+            frames=bool(frames),
         )
     )
-    warnings = []
+    stats = pl.pin_stats()
+    if stats is not None:
+        plan["pins"] = stats
+    if guard is not None:
+        plan["guard_hours"] = guard
     if older_than is not None and older_than < MIN_OLDER_THAN:
         warnings.append(
             "--force-young: guard 5's age is %g days, under the %g-day floor"
@@ -1560,6 +1828,9 @@ def clean(cfg, db, pid, large=False, force_dirty=False, now=None, refs=None, say
             now,
             refs,
             bool(args.get("force_young")),
+            args.get("states"),
+            args.get("guard_hours"),
+            bool(args.get("frames")),
         )
         kept, skipped = intersect(old, fresh)
         why = over_cap(cfg, kept, fresh.get("disks", {}))
@@ -1748,6 +2019,22 @@ def table(plan, out_say=print):
         out_say("%-8s %10s  %s%s  (%s)" % ("REFUSE", "", host_prefix(r), r["path"], r["why"]))
     for w in plan.get("warnings", []):
         out_say("WARNING: %s" % w)
+    ps = plan.get("pins")
+    if ps:
+        c = ps["citations"]
+        out_say(
+            "PINS: %d citations live, %d live by the fail safe, %d closed; %d refused as "
+            "pinned (%d by the fail safe, %d golden); %d names no longer pinned"
+            % (
+                c["live"],
+                c["failsafe"],
+                c["closed"],
+                ps["pinned"],
+                ps["pinned_failsafe"],
+                ps["pinned_golden"],
+                len(ps["released"]),
+            )
+        )
     out_say(
         "plan %s: %d to remove, %s; %d refused"
         % (plan.get("id"), len(plan["items"]), human(plan["bytes"]), len(plan["refused"]))

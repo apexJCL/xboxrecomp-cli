@@ -480,3 +480,115 @@ def test_host_seed_copy(tmp_path):
 
 if __name__ == "__main__":
     sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", __file__]))
+
+
+def bench_runs(tmp, scens):
+    """Frames dirs with two flips, a plain dump, a verdict image and the
+    pulls list, and the used file that says each scenario's check rc."""
+    runs, lines = {}, []
+    for scen, rc in scens:
+        frames = os.path.join(tmp, scen, "frames")
+        os.makedirs(os.path.join(frames, "verdict"))
+        for n in ("frame_0001.bmp", "flip_00061.bmp", "flip_00062.bmp", "pulls.txt"):
+            with open(os.path.join(frames, n), "w") as f:
+                f.write("x")
+        with open(os.path.join(frames, "verdict", "f-diff.png"), "w") as f:
+            f.write("x")
+        runs[scen] = ("20261007-00000%d" % len(runs), frames, True)
+        lines += ["%s\t%s" % (scen, os.path.join(frames, "flip_00061.bmp"))]
+        lines += ["%s\t#verdict\t%d" % (scen, rc)]
+    used = os.path.join(tmp, "used.txt")
+    with open(used, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    return runs, G.read_used(used)
+
+
+def test_bench_drops_every_frame_of_a_pass(tmp_path):
+    """A pass keeps no frame dump (pulls.txt stays); pass-with-known
+    keeps what its check read, a failure keeps all; the host's frames/ of
+    both passes go."""
+    tmp = str(tmp_path)
+    runs, res = bench_runs(tmp, (("a", 0), ("k", 0), ("c", 1)))
+    b = FakeBench({})
+    bg.prune(b, runs, res, {"a": "pass", "k": "pass-with-known", "c": "REGRESSION"})
+    a = os.path.join(tmp, "a", "frames")
+    assert names(a) == ["pulls.txt", "verdict"] and names(os.path.join(a, "verdict")) == []
+    assert names(os.path.join(tmp, "k", "frames")) == [
+        "flip_00061.bmp",
+        "frame_0001.bmp",
+        "pulls.txt",
+        "verdict",
+    ]
+    assert len(names(os.path.join(tmp, "c", "frames"))) == 5
+    assert any("a: dropped 4 frame dumps" in x for x in b.said), b.said
+    assert b.r.sent == ["prune_frames.sh\nSTAMPS=(20261007-000000 20261007-000001 )\n"]
+
+
+def test_bench_keep_frames_keeps_a_pass(tmp_path):
+    tmp = str(tmp_path)
+    runs, res = bench_runs(tmp, (("a", 0),))
+    b = FakeBench({"BENCH_KEEP_FRAMES": "1"})
+    bg.prune(b, runs, res, {"a": "pass"})
+    assert len(names(os.path.join(tmp, "a", "frames"))) == 5 and not b.r.sent
+
+
+def test_drop_frames_leaves_text_and_links(tmp_path):
+    d = tmp_path / "frames"
+    d.mkdir()
+    (d / "flip_00001.bmp").write_bytes(b"12")
+    (d / "x.PNG").write_bytes(b"1")
+    (d / "pulls.txt").write_text("1\n")
+    (tmp_path / "outside.bmp").write_bytes(b"1")
+    os.symlink(tmp_path / "outside.bmp", d / "link.bmp")
+    assert G.drop_frames(str(d)) == (2, 3)
+    assert names(str(d)) == ["link.bmp", "pulls.txt"]
+    assert (tmp_path / "outside.bmp").exists()
+    assert G.drop_frames(str(tmp_path / "none")) == (0, 0)
+
+
+def test_golden_run_drops_a_pass_and_keeps_the_rest(tmp_path, monkeypatch):
+    """golden run's check_and_prune: a pass with check rc 0 drops the run's
+    frame dumps; --keep-frames, a failure and a FAIL-RUN keep them."""
+    from xboxrecomp_cli import golden_run as GR
+
+    def fake(rc, text):
+        def run(argv, stdout=None):
+            used = argv[argv.index("--used") + 1]
+            with open(used, "w") as f:
+                f.write("s\t#verdict\t%d\n" % rc)
+            return subprocess.CompletedProcess(argv, rc, text.encode(), None)
+
+        monkeypatch.setattr(GR.subprocess, "run", run)
+
+    def run_dir(tag, present="0x1 walker 0x1"):
+        d = tmp_path / tag
+        (d / "frames").mkdir(parents=True)
+        for n in ("frame_0001.bmp", "flip_00002.bmp", "pulls.txt"):
+            (d / "frames" / n).write_text("x")
+        (d / "game-stdio.log").write_text("[D3D11] flip 1 present %s\n" % present)
+        return d
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        fake(0, "golden: PASS\n")
+        d = run_dir("pass")
+        assert GR.check_and_prune(str(d), "s", 0, ["end: ok"], False) == ("pass", 0)
+        assert names(str(d / "frames")) == ["pulls.txt"]
+        assert (d / "golden.txt").read_text().endswith("verdict: s pass\n")
+        d = run_dir("keep")
+        assert GR.check_and_prune(str(d), "s", 0, [], True)[0] == "pass"
+        assert len(names(str(d / "frames"))) == 3
+        d = run_dir("crash")
+        assert GR.check_and_prune(str(d), "s", 1, [], False)[0] == "FAIL-RUN"
+        assert len(names(str(d / "frames"))) == 3
+        fake(1, "FAIL s/f\n")
+        d = run_dir("fail")
+        assert GR.check_and_prune(str(d), "s", 0, [], False)[0] == "REGRESSION"
+        assert len(names(str(d / "frames"))) == 3
+        # Its verdict does not weigh the present check: a mismatch keeps them.
+        fake(0, "golden: PASS\n")
+        d = run_dir("mismatch", present="0x1 walker 0x2")
+        assert GR.check_and_prune(str(d), "s", 0, [], False)[0] == "pass"
+        assert len(names(str(d / "frames"))) == 3
+    assert "dropped 2 frame dumps" in out.getvalue()
+    assert "s: frames kept: present: FAIL 1/1" in out.getvalue()

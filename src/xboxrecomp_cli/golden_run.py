@@ -32,7 +32,8 @@ SCEN: golden.json's scenarios (default: all, in its order). Per scenario:
          --secs (default 2x the scenario's seconds), or ends by itself
   check  golden check of the run, as bench golden: the output and a last
          "verdict: SCEN WORD" line in the run's golden.txt; a passing run's
-         unread flip dumps pruned unless --keep-frames
+         frame dumps dropped unless --keep-frames, or unless its flips
+         presented a surface the walker did not draw
 
 Run dirs: DIR/<stamp>-<backend>-<scen>/ (DIR: --out, default the game's
 bench-logs/) with run-info.txt, game-stdio.log, frames/, save/ (or hdd/,
@@ -652,9 +653,10 @@ def cmd_run(args):
 def check_and_prune(d, scen, erc, lines, keep):
     """golden check of one run (a subprocess, as bench golden runs it):
     printed, and written with the run's end lines and a verdict line to
-    golden.txt. A clean pass has its unread flip dumps pruned. Returns
+    golden.txt. A clean pass has every frame dump dropped. Returns
     (verdict word, check's exit code)."""
     from . import golden as G
+    from .bench.checks import check_present_mismatch
     from .bench.golden import verdict_word
 
     frames = os.path.join(d, "frames")
@@ -680,13 +682,17 @@ def check_and_prune(d, scen, erc, lines, keep):
     with open(os.path.join(d, "golden.txt"), "w") as f:
         f.write("".join(x + "\n" for x in lines) + text + "verdict: %s %s\n" % (scen, word))
     if word == "pass" and not keep:
-        rc, paths = res.get(scen, (None, []))
-        if rc == 0:
-            n, size, kept = G.prune_frames(frames, paths)
-            print(
-                "golden run: %s: pruned %d flip dumps (%.1f MB), kept %d"
-                % (scen, n, size / 1e6, kept)
-            )
+        rc, _paths = res.get(scen, (None, []))
+        # The verdict here does not weigh the present check (bench golden's
+        # does); its frames are the evidence of a mismatch, so they stay.
+        said = []
+        if rc == 0 and check_present_mismatch(os.path.join(d, "game-stdio.log"), out=said.append):
+            print("golden run: %s: frames kept: %s" % (scen, " ".join(said) or "present check"))
+        elif rc == 0:
+            # A clean pass keeps no frames: its verdict is in golden.txt and
+            # the db, and only a failure's frames are evidence.
+            n, size = G.drop_frames(frames)
+            print("golden run: %s: dropped %d frame dumps (%.1f MB)" % (scen, n, size / 1e6))
     return word, r.returncode
 
 
