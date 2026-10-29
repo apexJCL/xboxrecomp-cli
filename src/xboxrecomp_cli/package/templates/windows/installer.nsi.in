@@ -44,12 +44,20 @@ ShowUninstDetails show
 !define MUI_UNICON "@ICON@"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\@APP@.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "Play @NAME@"
-!define MUI_FINISHPAGE_TEXT "@NAME@ @VERSION@ is installed in $INSTDIR.$\r$\n$\r$\nYour saves and settings are kept in $LOCALAPPDATA\@DATA_DIR@ and survive updates and uninstalling.$\r$\n$\r$\nPRIVATE: this contains your own copy of the game. Do not share it."
+; Each path on its own line: a label wraps only at spaces, which a path may lack.
+!define MUI_FINISHPAGE_TEXT "@NAME@ @VERSION@ is installed in:$\r$\n$INSTDIR$\r$\n$\r$\nYour saves and settings are kept in:$\r$\n$LOCALAPPDATA\@DATA_DIR@$\r$\nUpdates and uninstalling keep them.$\r$\n$\r$\nPRIVATE: the install folder holds your own copy of the game. Do not share it."
+!define MUI_FINISHPAGE_TEXT_LARGE
+; The installer never asks for a reboot, and FinishShow's taller label would
+; cover the reboot radio buttons if it did.
+!define MUI_FINISHPAGE_NOREBOOTSUPPORT
 !insertmacro MUI_PAGE_WELCOME
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE DirLeave
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
+; Defined here, not with the finish text: a page takes the CUSTOMFUNCTION
+; defines made before it, so earlier it would go to the welcome page.
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW FinishShow
 !insertmacro MUI_PAGE_FINISH
 !define MUI_UNFINISHPAGE_NOAUTOCLOSE
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -82,6 +90,36 @@ FunctionEnd
 
 Function DirLeave
   Call CheckInstDir
+FunctionEnd
+
+; MUI's text label is 60u tall even with TEXT_LARGE, and a long version,
+; install folder and saves path need about twice that: the rest was cut.
+; The label grows to 113u, which ends the Play checkbox (moved below it,
+; the same gap apart) at 173u of the 193u page. Scaled from the label's
+; own pixel size rather than mapped from dialog units: this page's units
+; are not the ones MapDialogRect gives for it, and scaling holds at any
+; display scaling.
+Function FinishShow
+  System::Call "*(i, i, i, i) p .r0"
+  System::Call "user32::GetWindowRect(p $mui.FinishPage.Text, p r0)"
+  System::Call "user32::MapWindowPoints(p 0, p $mui.FinishPage, p r0, i 2)"
+  System::Call "*$0(i .r1, i .r2, i .r3, i .r4)"
+  System::Call "user32::GetWindowRect(p $mui.FinishPage.Run, p r0)"
+  System::Call "user32::MapWindowPoints(p 0, p $mui.FinishPage, p r0, i 2)"
+  System::Call "*$0(i .r5, i .r6, i .r7, i .r8)"
+  System::Free $0
+  ; $3 width, $4 height (60u), $6 the gap, $7 and $8 the checkbox's size.
+  IntOp $3 $3 - $1
+  IntOp $7 $7 - $5
+  IntOp $8 $8 - $6
+  IntOp $6 $6 - $4
+  IntOp $4 $4 - $2
+  IntOp $4 $4 * 113
+  IntOp $4 $4 / 60
+  System::Call "user32::SetWindowPos(p $mui.FinishPage.Text, p 0, i r1, i r2, i r3, i r4, i 0x14)"
+  IntOp $6 $6 + $2
+  IntOp $6 $6 + $4
+  System::Call "user32::SetWindowPos(p $mui.FinishPage.Run, p 0, i r5, i r6, i r7, i r8, i 0x14)"
 FunctionEnd
 
 Section "@NAME@" SecMain

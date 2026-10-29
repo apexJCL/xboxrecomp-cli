@@ -97,8 +97,63 @@ def test_installer_cat_values(d):
     text = render_installer(os.path.join(d, "installer.nsi"))
     assert not PLACEHOLDER.findall(text)
     assert 'InstallDir "$LOCALAPPDATA\\Programs\\BLiNX2"' in text
-    assert "kept in $LOCALAPPDATA\\BLiNX2 and" in text
+    assert "kept in:$\\r$\\n$LOCALAPPDATA\\BLiNX2$\\r$\\n" in text
     assert '"$SMPROGRAMS\\BLiNX2\\BLiNX 2.lnk" "$INSTDIR\\BLiNX2.exe"' in text
+
+
+def test_installer_finish_page(d):
+    # The finish text names the install folder and the saves folder, each
+    # on its own line (a label wraps only at spaces), and the PRIVATE
+    # notice; FinishShow grows the label past MUI's 60u so none of it is
+    # cut, and moves the Play checkbox below it.
+    text = render_installer(os.path.join(d, "installer.nsi"))
+    line = re.search(r'^!define MUI_FINISHPAGE_TEXT "(.*)"$', text, re.M).group(1)
+    parts = line.split("$\\r$\\n")
+    assert "$INSTDIR" in parts and "$LOCALAPPDATA\\BLiNX2" in parts
+    assert parts[-1].startswith("PRIVATE:") and parts[-1].endswith("Do not share it.")
+    assert "survive" not in line and "keep them" in line
+    page = text.index("!insertmacro MUI_PAGE_FINISH")
+    assert text.index("!define MUI_FINISHPAGE_TEXT_LARGE") < page
+    # A page takes the CUSTOMFUNCTION defines made since the page before.
+    show_def = text.index("!define MUI_PAGE_CUSTOMFUNCTION_SHOW FinishShow")
+    assert text.index("!insertmacro MUI_PAGE_INSTFILES") < show_def < page
+    show = text[text.index("Function FinishShow") :]
+    show = show[: show.index("FunctionEnd")]
+    # Run FinishShow's arithmetic on MUI's layout (dialog units at a
+    # 2.5 px scale; the label 60u tall at 45u, the checkbox 5u below it):
+    # the label grows past 60u and the checkbox stays below it, inside
+    # the 193u page.
+    k = 2.5
+    r = {
+        1: 120 * k,
+        2: 45 * k,
+        3: 315 * k,
+        4: 105 * k,
+        5: 120 * k,
+        6: 110 * k,
+        7: 315 * k,
+        8: 120 * k,
+    }
+    ops = {
+        "+": lambda x, y: x + y,
+        "-": lambda x, y: x - y,
+        "*": lambda x, y: x * y,
+        "/": lambda x, y: x // y,
+    }
+    for dst, src, op, arg in re.findall(r"IntOp \$(\d) \$(\d) ([-+*/]) (\$\d|\d+)", show):
+        val = r[int(arg[1:])] if arg.startswith("$") else int(arg)
+        r[int(dst)] = ops[op](r[int(src)], val)
+    label = [v / k for v in (r[1], r[2], r[3], r[4])]
+    run = [v / k for v in (r[5], r[6], r[7], r[8])]
+    assert label[:3] == [120, 45, 195] and 100 <= label[3]
+    assert run[0] == 120 and run[2] == 195 and run[3] == 10
+    assert run[1] == 45 + label[3] + 5 and run[1] + run[3] <= 193
+    assert show.count("SetWindowPos") == 2
+    # The registers FinishShow computed are the ones it sets.
+    assert "SetWindowPos(p $mui.FinishPage.Text, p 0, i r1, i r2, i r3, i r4, i 0x14)" in show
+    assert "SetWindowPos(p $mui.FinishPage.Run, p 0, i r5, i r6, i r7, i r8, i 0x14)" in show
+    # No reboot radio buttons for the grown label to cover.
+    assert text.index("!define MUI_FINISHPAGE_NOREBOOTSUPPORT") < page
 
 
 def test_installer_drops_old_defaults(d):
@@ -140,7 +195,7 @@ def test_second_game_values(d, game2):
     # ':' cannot be in a file name: the shortcut is named without it.
     assert '"$SMPROGRAMS\\Second\\Second Game - Test.lnk"' in text
     assert 'Name "Second Game: Test"' in text
-    assert "kept in $LOCALAPPDATA\\Second\\Game and" in text
+    assert "kept in:$\\r$\\n$LOCALAPPDATA\\Second\\Game$\\r$\\n" in text
 
 
 def test_link_name():
