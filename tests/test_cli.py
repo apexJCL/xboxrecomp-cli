@@ -952,6 +952,8 @@ def test_package_plan(d, monkeypatch):
         plan = pkg.package_plan(A())
         assert plan[0] == ("generate", "config/seed_functions.json changed"), plan
         assert [n for n, _ in pkg.package_plan(A(no_build=True))] == ["package"]
+        # A build host packages the gen/ it was sent, stale key or not.
+        assert [n for n, _ in pkg.package_plan(A(stale_gen_ok=True))] == ["build", "package"]
         monkeypatch.setattr(setup, "setup_needs", lambda t, s=False: ["no llvm-mingw"])
         plan = pkg.package_plan(A(target="steamos"))
         assert plan[0] == ("setup", "no llvm-mingw") and plan[1][0] == "generate"

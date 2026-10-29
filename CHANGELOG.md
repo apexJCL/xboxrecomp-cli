@@ -7,6 +7,14 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Added
+- A native Windows build host: with `BENCH_BUILD_HOST` (and
+  `BENCH_BUILD_DIR`), bench commands build the Windows exe on that PC under
+  its own lock instead of cross-building on the Mac, then pull it and check
+  its sha256. The game, toolkit and CLI travel as git bundles, and gen/
+  only when its digest moved. `bench buildhost build` and
+  `bench buildhost run ARGS [--pull REL]` drive it directly.
+
 ## [0.13.0] - 2026-10-28
 
 ### Added

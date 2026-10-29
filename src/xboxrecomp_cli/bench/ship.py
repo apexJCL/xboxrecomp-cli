@@ -69,7 +69,13 @@ def driving(cfg):
 
 
 def local_exe(cfg):
+    """The exe a ship sends: the one this machine built, or with
+    BENCH_BUILD_HOST the build host's, pulled here (buildhost.py)."""
     g = cfg.game
+    if cfg.build_host:
+        from .buildhost import pulled_exe
+
+        return pulled_exe(cfg)
     return g.exe(g.build_dir("windows"), "windows")
 
 
@@ -116,9 +122,10 @@ def runtime_files(cfg, exe):
     return out
 
 
-def provenance(cfg, exe, exe_sha, gen, first):
+def provenance(cfg, exe, exe_sha, gen, first, extra=()):
     """provenance.txt for the host: who built the exe from what, the gen/
-    digest it was built from, and its sha256."""
+    digest it was built from, and its sha256. extra: lines after the
+    trees (a build host's name and the commits it was sent)."""
     lines = [
         "%s: %s on %s from %s (BENCH_BUILD=local)"
         % (
@@ -130,7 +137,7 @@ def provenance(cfg, exe, exe_sha, gen, first):
         tree_state(cfg.game_name, cfg.game_dir),
         tree_state("toolkit", cfg.toolkit),
         tree_state("cli", cli_dir()),
-    ]
+    ] + list(extra)
     if gen:
         lines.append("gen: sha256 %s (%d files)" % gen)
     from ..benchdb import live
@@ -188,18 +195,33 @@ def build_local(b, cmake_args=(), stale_ok=False, command="bench build", lineage
         jobs = int(c.get("BENCH_JOBS") or 0)
     except ValueError:
         raise BenchError("BENCH_JOBS=%s: not a number" % c["BENCH_JOBS"]) from None
-    b.step("build: %s here (BENCH_BUILD=local)" % os.path.relpath(local_exe(c), c.game_dir))
     gen_before = gen_of(c)
+    extra = ()
     with driving(c):
         try:
-            exe = build_mod.build(
-                "windows",
-                list(cmake_args),
-                stale_ok=stale_ok,
-                jobs=jobs,
-                command=command,
-                lineage=lineage,
-            )
+            if c.build_host:
+                from . import buildhost
+
+                b.step("build: on %s (BENCH_BUILD_HOST)" % c.build_host)
+                if not stale_ok:
+                    # Here, before a byte moves, as build() refuses it.
+                    from .. import pipeline
+
+                    pipeline.refuse_stale_gen("--stale-gen-ok")
+                exe, sent = buildhost.BuildHost(b).build(cmake_args, stale_ok=True, jobs=jobs)
+                extra = buildhost.provenance_lines(c, sent)
+            else:
+                b.step(
+                    "build: %s here (BENCH_BUILD=local)" % os.path.relpath(local_exe(c), c.game_dir)
+                )
+                exe = build_mod.build(
+                    "windows",
+                    list(cmake_args),
+                    stale_ok=stale_ok,
+                    jobs=jobs,
+                    command=command,
+                    lineage=lineage,
+                )
         except CliError as e:
             raise BenchError("build: %s" % e) from None
     gen = gen_of(c)
@@ -225,7 +247,7 @@ def build_local(b, cmake_args=(), stale_ok=False, command="bench build", lineage
             },
         )
     with open(os.path.join(os.path.dirname(exe), LOCAL_PROVENANCE), "w", encoding="utf-8") as f:
-        f.write(provenance(c, exe, sha, gen, "built"))
+        f.write(provenance(c, exe, sha, gen, "built", extra))
     b.say("build: %s sha256 %s" % (os.path.relpath(exe, c.game_dir), sha))
     return exe, sha, gen
 
@@ -276,6 +298,16 @@ def staged(b, exe=None, exe_sha=None):
             "no %s here: build it first (%s bench build)"
             % (os.path.relpath(exe, c.game_dir), c.game.slug)
         )
+    if c.build_host:
+        here = c.game.exe(c.game.build_dir("windows"), "windows")
+        if os.path.isfile(here) and os.path.getmtime(here) > os.path.getmtime(exe):
+            # Two exes now: a `<game> build windows` here does not reach a
+            # ship while BENCH_BUILD_HOST names the PC's.
+            b.say(
+                "ship: warning: %s (built here) is newer than the build host's %s, "
+                "which ships (BENCH_BUILD_HOST); `bench buildhost build` to rebuild it there"
+                % (os.path.relpath(here, c.game_dir), os.path.relpath(exe, c.game_dir))
+            )
     with tempfile.TemporaryDirectory() as t:
         files = runtime_files(c, exe)
         out = os.path.join(t, "exe")

@@ -222,6 +222,7 @@ def test_build_ships_by_scp(win, monkeypatch, capsys):
     assert [c[0] for c in cs] == ["ssh", "scp", "scp", "scp", "ssh", "scp"], cs
     assert cs[1][1][-1] == "fakehost:%s/" % d and cs[2][1][-2].endswith("digest.txt")
     assert sorted(os.path.basename(a) for a in cs[1][1] if a.endswith(".ps1")) == [
+        "build.ps1",
         "launch.ps1",
         "prune_frames.ps1",
         "run_game.ps1",

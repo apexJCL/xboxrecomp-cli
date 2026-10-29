@@ -8,6 +8,7 @@ Loaded by main.py only for `<game> bench`.
 """
 
 import contextlib
+import fnmatch
 import hashlib
 import os
 import posixpath
@@ -106,6 +107,14 @@ Commands:
             host into ./bench-logs/              [stamp, default: newest run]
   symbolize name the native addresses in a run's @CRASH_TAG@ reports, into
             bench-logs/<stamp>/crash-symbols.txt  [stamp, default: newest run]
+  buildhost (BENCH_BUILD_HOST) build on the native Windows build host:
+            build [cmake args]  `@SLUG@ build windows` there, pulled into
+                      the windows build dir's build-host/ (ships nothing;
+                      needs no BENCH_HOST)
+            run ARGS [--pull REL]...  `@SLUG@ ARGS` in the host's tree
+                      (package: gen/ checked here as a local package
+                      checks it), then pull REL (a glob in its last part,
+                      not in @GAME_FILES@/) into build-host/pulled/
   gc        replaced by `benchdb plan` and `benchdb clean`: prints the
             benchdb plan call and exits 2   [--host] [--days D]
   db        the bench results database: `benchdb VERB` for this game
@@ -166,6 +175,21 @@ this machine's home, as it did when bench.sh sourced the file:
                    (BENCH_LOCK_HELD=1: the caller holds it)
                    (.bench-lock beside BENCH_DIR)
   BENCH_JOBS       local builds: compile jobs        (0: as memory allows)
+  BENCH_BUILD_HOST ssh target of a native Windows machine that compiles
+                   what BENCH_BUILD=local would compile here: the game,
+                   toolkit and CLI go as git bundles (a dirty tree as its
+                   `git stash create` commit), gen/ as a tarball when its
+                   digest changed; the exe comes back sha256-checked and
+                   ships, runs and integrates as if built here    (unset)
+  BENCH_BUILD_DIR  build host: its trees, one per game (a drive path,
+                   required with BENCH_BUILD_HOST, e.g. D:/xbr/build-bench)
+  BENCH_BUILD_LOCK build host: the lock file its builds take
+                   (.bench-lock beside BENCH_BUILD_DIR); BENCH_LOCK_HELD=1
+                   skips it only when it is the PC run host's BENCH_LOCK
+  BENCH_BUILD_CLI  build host: the CLI tree it builds with (this CLI)
+  BENCH_BUILD_GAME_FILES  build host: its own game files (a drive path),
+                   linked into its tree for `buildhost run package ...`;
+                   a build needs none                       (unset)
   BENCH_BOX        distrobox name                    (xbr-build)
   BENCH_IMAGE      distrobox image                   (fedora:42)
   LLVM_MINGW_ROOT  llvm-mingw install on the host    ($BENCH_DIR/llvm-mingw)
@@ -857,6 +881,99 @@ class Bench:
         with self.no_errexit():
             return cmd_golden(self, golden_args, bench_env=env, kind="integrate")
 
+    # buildhost
+    def cmd_buildhost(self, args):
+        """build: the exe on BENCH_BUILD_HOST, pulled here, not shipped.
+        run: any `<game>` command in the build host's tree (package ...),
+        --pull REL (repeatable) fetching files of it into
+        <windows_dir>/build-host/pulled/."""
+        from . import buildhost
+
+        c = self.cfg
+        if not c.build_host:
+            raise BenchError("buildhost: set BENCH_BUILD_HOST (and BENCH_BUILD_DIR)")
+        verb = args[0] if args else "build"
+        rest = args[1:]
+        if verb == "build":
+            exe, sha, _ = ship_mod.build_local(self, rest, command="bench buildhost")
+            self.say("built %s" % exe)
+            return 0
+        if verb != "run" or not rest:
+            raise BenchError(
+                "buildhost: use `buildhost build [cmake args]` or `buildhost run ARGS`"
+            )
+        pulls, argv = [], []
+        it = iter(rest)
+        for a in it:
+            if a == "--pull":
+                pulls.append(next(it, ""))
+            else:
+                argv.append(a)
+        gf = c.game.m["data"]["game_files"].strip("/")
+        gsegs = gf.lower().split("/")
+        for p in pulls:
+            # The host's sftp-server splits on \ too, and its game files
+            # (linked in for package) are gigabytes that must not come here:
+            # nor through a glob that matches them, another case (NTFS) or
+            # a folder that holds them (".", which build.ps1 skips too).
+            q = p.replace("\\", "/")
+            segs = [s.lower() for s in q.split("/") if s and s != "."]
+            n = min(len(segs), len(gsegs))
+            if (
+                not p
+                or q.startswith("/")
+                or ":" in q
+                or ".." in segs
+                or all(fnmatch.fnmatchcase(gsegs[i], segs[i]) for i in range(n))
+            ):
+                raise BenchError(
+                    "buildhost: --pull %s: a path inside the game tree, not in %s/" % (p, gf)
+                )
+        package = bool(argv) and argv[0] == "package"
+        stale_ok = "--stale-gen-ok" in argv
+        # The guards build_local runs, here too: gen/ goes over as it is now.
+        if os.path.exists(c.regen_marker):
+            raise BenchError(
+                "buildhost: gen/ is mid-regeneration (%s exists); wait for %s recomp"
+                % (c.regen_marker, c.game.slug)
+            )
+        gen_before = ship_mod.gen_of(c)
+        with ship_mod.driving(c):
+            if package and not stale_ok:
+                from .. import pipeline
+                from ..host import CliError
+
+                try:
+                    pipeline.refuse_stale_gen("--stale-gen-ok")
+                except CliError as e:
+                    raise BenchError("buildhost: %s" % e) from None
+            # The build host has gen/ from here but not the analysis that
+            # keys it, so package would regenerate it there, without the
+            # Ghidra export, into other code: it packages the gen/ it was
+            # sent, checked here above.
+            if package and not stale_ok:
+                argv.append("--stale-gen-ok")
+            h = buildhost.BuildHost(self)
+            try:
+                rc, status, _, pulled, _ = h.run(argv, pull=pulls)
+                if status == "lock-timeout":
+                    raise BenchError(
+                        "buildhost: %s was held for an hour; nothing ran" % c["BENCH_BUILD_LOCK"]
+                    )
+                if status == "gen-moved":
+                    raise BenchError("buildhost: gen/ on %s kept changing; nothing ran" % h.target)
+                if ship_mod.gen_of(c) != gen_before:
+                    raise BenchError(
+                        "buildhost: %s/ changed here while it was sent; run again"
+                        % c.game.m["pipeline"]["gen"]
+                    )
+                if rc == 0 and pulls:
+                    out = h.pull_paths(pulled)
+                    self.say("pulled: %s" % out)
+            finally:
+                h.drop_out()
+        return rc
+
     # doctor
     def cmd_doctor(self, args):
         """What the bench needs, checked without changing anything."""
@@ -865,7 +982,12 @@ class Bench:
             self.say("host:     BENCH_HOST is not set (scripts/bench.env)")
             return 1
         self.say("host:     %s (BENCH_DIR %s, box %s)" % (c.host, c["BENCH_DIR"], c["BENCH_BOX"]))
-        if c.local_build:
+        if c.build_host:
+            self.say(
+                "build:    on %s (BENCH_BUILD_HOST, %s), shipped from here"
+                % (c.build_host, c["BENCH_BUILD_DIR"])
+            )
+        elif c.local_build:
             self.say(
                 "build:    local (built here, shipped to %s/runs/<id>; run dir %s)"
                 % (c.base, c.remote_game if c.remote_game != c.base else "none yet")
@@ -935,11 +1057,12 @@ COMMANDS = {
     "integrate": Bench.cmd_integrate,
     "tests": Bench.cmd_tests,
     "doctor": Bench.cmd_doctor,
+    "buildhost": Bench.cmd_buildhost,
 }
 
 
 # Commands that ship the local exe themselves (or never touch a run dir).
-SHIPPING = ("setup", "sync", "build", "all", "integrate")
+SHIPPING = ("setup", "sync", "build", "all", "integrate", "buildhost")
 
 
 def dispatch(b, cmd, args):

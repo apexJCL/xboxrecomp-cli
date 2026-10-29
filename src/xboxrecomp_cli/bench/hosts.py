@@ -24,7 +24,7 @@ from . import ship as ship_mod
 from .remote import KEEPALIVE, BenchError, ssh_bin
 
 WIN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "host", "windows")
-SCRIPTS = ("launch.ps1", "prune_frames.ps1", "run_game.ps1", "ship.ps1")
+SCRIPTS = ("build.ps1", "launch.ps1", "prune_frames.ps1", "run_game.ps1", "ship.ps1")
 
 # RECOMP_TRACE and RECOMP_DEBUG are lists: a scenario's pins and BENCH_ENV
 # each add their keys (docs/env.md) instead of the last one winning, as
@@ -137,9 +137,15 @@ def sftp_batch(pairs):
 
 
 class WindowsHost:
-    def __init__(self, b):
+    """target and base: the ssh target and the directory its scripts live
+    under, BENCH_HOST and BENCH_DIR unless given (a build host's are
+    BENCH_BUILD_HOST and BENCH_BUILD_DIR: bench/buildhost.py)."""
+
+    def __init__(self, b, target=None, base=None):
         self.b = b
         self.c = b.cfg
+        self.target = target or self.c.host
+        self.base = base or self.c["BENCH_DIR"]
         self._scripts = None
 
     # transport
@@ -155,7 +161,7 @@ class WindowsHost:
     def ssh(self, cmd, capture=False):
         """ssh HOST CMD; cmd.exe reads CMD."""
         return self._run(
-            [ssh_bin()] + ["-o", "BatchMode=yes"] + KEEPALIVE + [self.c.host, cmd], capture=capture
+            [ssh_bin()] + ["-o", "BatchMode=yes"] + KEEPALIVE + [self.target, cmd], capture=capture
         )
 
     def powershell(self, command, capture=False):
@@ -171,7 +177,7 @@ class WindowsHost:
             [s, "-q", "-o", "BatchMode=yes"]
             + KEEPALIVE
             + list(files)
-            + ["%s:%s/" % (self.c.host, dest_dir)]
+            + ["%s:%s/" % (self.target, dest_dir)]
         )
         return self._run(argv)[0]
 
@@ -182,7 +188,7 @@ class WindowsHost:
         with tempfile.NamedTemporaryFile("w", suffix=".sftp", delete=False) as f:
             f.write(batch)
         try:
-            argv = [s, "-q", "-o", "BatchMode=yes"] + KEEPALIVE + ["-b", f.name, self.c.host]
+            argv = [s, "-q", "-o", "BatchMode=yes"] + KEEPALIVE + ["-b", f.name, self.target]
             r = subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         finally:
             os.remove(f.name)
@@ -194,7 +200,7 @@ class WindowsHost:
         script gets a new directory, so a run never mixes two versions)."""
         if self._scripts:
             return self._scripts
-        d = "%s/.xbr/host/%s" % (self.c["BENCH_DIR"], script_digest())
+        d = "%s/.xbr/host/%s" % (self.base, script_digest())
         # The params dir every time: removed by hand, it would fail each
         # later ps() while digest.txt still says the copy is whole.
         rc, _ = self.powershell(
@@ -212,16 +218,16 @@ class WindowsHost:
                 if self.scp([os.path.join(WIN_DIR, n) for n in SCRIPTS], d) or self.scp(
                     [digest], d
                 ):
-                    raise BenchError("could not copy the host scripts to %s:%s" % (self.c.host, d))
+                    raise BenchError("could not copy the host scripts to %s:%s" % (self.target, d))
         elif rc:
             raise BenchError(
-                "ssh %s: PowerShell failed (exit %d); is it a Windows host?" % (self.c.host, rc)
+                "ssh %s: PowerShell failed (exit %d); is it a Windows host?" % (self.target, rc)
             )
         self._scripts = d
         return d
 
     def params_dir(self):
-        return "%s/.xbr/params" % self.c["BENCH_DIR"]
+        return "%s/.xbr/params" % self.base
 
     def ps(self, name, params, capture=False):
         """Run host/windows/NAME with PARAMS (a dict, sent as a JSON file
@@ -232,7 +238,7 @@ class WindowsHost:
             with open(p, "w", encoding="utf-8") as f:
                 json.dump(params, f, indent=1)
             if self.scp([p], self.params_dir()):
-                raise BenchError("could not send %s's params to %s" % (name, self.c.host))
+                raise BenchError("could not send %s's params to %s" % (name, self.target))
             remote = "%s/%s" % (self.params_dir(), os.path.basename(p))
         return self.ssh(
             'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%s/%s" -Params "%s"'

@@ -130,6 +130,37 @@ def windows_paths(env):
         env[k] = v
 
 
+def build_host(env):
+    """BENCH_BUILD_HOST: the native Windows machine that compiles what
+    BENCH_BUILD=local would compile here (bench/buildhost.py). Its
+    BENCH_BUILD_DIR is a drive path, given; its lock defaults to the
+    .bench-lock beside that directory, the file the PC's runs take."""
+    if not env.get("BENCH_BUILD_HOST"):
+        return
+    if env["BENCH_BUILD"] != "local":
+        raise ConfigError(
+            "BENCH_BUILD_HOST=%s needs BENCH_BUILD=local (the build host compiles, "
+            "this machine ships)" % env["BENCH_BUILD_HOST"]
+        )
+    if not env.get("BENCH_BUILD_DIR"):
+        raise ConfigError(
+            "BENCH_BUILD_DIR is not set: a build host (BENCH_BUILD_HOST) needs it as a "
+            "drive path, e.g. BENCH_BUILD_DIR=D:/xbr/build-bench"
+        )
+    for k in ("BENCH_BUILD_DIR", "BENCH_BUILD_LOCK", "BENCH_BUILD_GAME_FILES"):
+        v = env.get(k)
+        if not v:
+            continue
+        v = v.replace("\\", "/").rstrip("/")
+        if "~" in v or '"' in v or "'" in v or not re.match(r"^[A-Za-z]:/", v):
+            raise ConfigError(
+                "%s=%s: a build host takes a drive path (D:/...), without ~ or quotes" % (k, env[k])
+            )
+        env[k] = v
+    if not env.get("BENCH_BUILD_LOCK"):
+        env["BENCH_BUILD_LOCK"] = posixpath.dirname(env["BENCH_BUILD_DIR"]) + "/.bench-lock"
+
+
 class Config:
     """Every BENCH_* value as bench.sh had it, plus the trees."""
 
@@ -175,8 +206,10 @@ class Config:
         if env["BENCH_HOST_OS"] == "windows" and env["BENCH_BUILD"] != "local":
             raise ConfigError(
                 "BENCH_BUILD=%s: a Windows host only runs what this machine built "
-                "(BENCH_BUILD=local)" % env["BENCH_BUILD"]
+                "(BENCH_BUILD=local; BENCH_BUILD_HOST compiles on a Windows machine)"
+                % env["BENCH_BUILD"]
             )
+        build_host(env)
         # Beside the bench directory, not in it: every bench directory under
         # one root (and the hand-run legs) shares the one PC lock.
         default("BENCH_LOCK", posixpath.dirname(env["BENCH_DIR"]) + "/.bench-lock")
@@ -230,6 +263,11 @@ class Config:
 
     def get(self, k, default=""):
         return self.env.get(k, default)
+
+    @property
+    def build_host(self):
+        """BENCH_BUILD_HOST, or '' when this machine compiles."""
+        return self.env.get("BENCH_BUILD_HOST", "")
 
     @property
     def local_build(self):

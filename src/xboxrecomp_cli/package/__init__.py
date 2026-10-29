@@ -887,7 +887,9 @@ def package_plan(a, imp=None):
     if needs:
         plan.append(("setup", ", ".join(needs)))
     if not a.no_build:
-        if setup.TOOLKIT_NEEDS & set(needs):
+        if getattr(a, "stale_gen_ok", False):
+            pass
+        elif setup.TOOLKIT_NEEDS & set(needs):
             plan.append(("generate", "checked after setup"))
         elif importing:
             plan.append(("generate", "checked after import"))

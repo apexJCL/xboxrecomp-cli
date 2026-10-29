@@ -339,6 +339,12 @@ def _cfg_package(p):
         help="never run setup, even when something is missing (own toolchain)",
     )
     p.add_argument(
+        "--stale-gen-ok",
+        action="store_true",
+        help="package gen/ as it is, never regenerating it (a build host: gen/ came from "
+        "the machine that has the analysis)",
+    )
+    p.add_argument(
         "--reconfigure", action="store_true", help="configure the packaging build tree afresh"
     )
     p.add_argument(
