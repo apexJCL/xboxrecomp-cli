@@ -7,6 +7,23 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-29
+
+### Added
+- Packages and patches carry a game's present shaders: the `shaders/`
+  tree (the slang presets and librashader's licence) and the librashader
+  library that the build put beside the exe. On macOS `shaders/` goes to
+  `Resources/` and the dylib to `Frameworks/`; on Windows and SteamOS both
+  sit beside the exe. A build without them ships neither. They are part
+  of the stage key, so a changed preset restages the package.
+- `present.shader` is a built-in stock key (stock `none`): a golden run
+  with a present shader on fails the stock check.
+
+### Fixed
+- SteamOS patches built on a Windows build host name their tar entries
+  with `/`. With `\` every file two folders deep was left out of the
+  patch.
+
 ## [0.14.0] - 2026-10-28
 
 ### Added
@@ -610,7 +627,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.11.0...v0.12.0
