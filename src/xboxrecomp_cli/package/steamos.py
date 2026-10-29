@@ -105,6 +105,13 @@ def patch_path(out, version, base_version):
     )
 
 
+def tar_rel(dirpath, payload, path=os.path):
+    """dirpath's tar name below payload. Tar names use '/' on every build
+    host: a Windows relpath (shaders\\crt) would match no patch path and
+    drop the folder's files. path: the os.path module (ntpath in tests)."""
+    return path.relpath(dirpath, payload).replace(path.sep, "/")
+
+
 def wrap_steamos(payload, version, exe, out, top=None, choice=None):
     """One tar, written by tarfile with explicit modes, uid/gid 0 and no
     owner names (no account name leaks), the exe's mtime on every member and
@@ -153,7 +160,7 @@ def wrap_steamos(payload, version, exe, out, top=None, choice=None):
         t.addfile(info(top, payload, True))
         for dirpath, dirnames, filenames in os.walk(payload):
             dirnames.sort()
-            rel = os.path.relpath(dirpath, payload)
+            rel = tar_rel(dirpath, payload)
             for d in dirnames:
                 p = os.path.join(dirpath, d)
                 if os.path.islink(p):

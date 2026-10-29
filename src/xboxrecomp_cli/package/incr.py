@@ -217,7 +217,7 @@ def dylib_shas(exe, lib):
     from . import macos
 
     try:
-        plan = lib.dylib_plan(exe, macos.companions())
+        plan = lib.dylib_plan(exe, macos.companions(exe))
     except (OSError, ValueError, subprocess.CalledProcessError, host.CliError):
         return "unknown"
     return {d["name"]: _sha(d["src"]) for d in plan["libs"]}
@@ -277,8 +277,31 @@ def stage_name(target):
     return "stage:" + target
 
 
-def stage_inputs(target, version, enhance, seed, hud_sha, lib, exe_sha):
+# present.shader (toolkit cmake/librashader.cmake): the presets and the
+# librashader library the game's build put beside its executable. The
+# package carries them as they are; a build without them ships neither.
+SHADER_DIR = "shaders"
+SHADER_LIBS = {
+    "macos": "librashader.dylib",
+    "windows": "librashader.dll",
+    "steamos": "librashader.dll",
+}
+
+
+def present_shader_files(target, exe):
+    """(library path or None, shaders/ path or None) beside exe."""
+    d = os.path.dirname(exe) if exe else ""
+    lib = os.path.join(d, SHADER_LIBS[target]) if d and target in SHADER_LIBS else ""
+    shaders = os.path.join(d, SHADER_DIR) if d else ""
+    return (
+        lib if lib and os.path.isfile(lib) else None,
+        shaders if shaders and os.path.isdir(shaders) else None,
+    )
+
+
+def stage_inputs(target, version, enhance, seed, hud_sha, lib, exe_sha, exe=None):
     G = g()
+    shader_lib, shaders = present_shader_files(target, exe)
     return {
         "target": target,
         # README.txt and the launcher carry it.
@@ -287,6 +310,7 @@ def stage_inputs(target, version, enhance, seed, hud_sha, lib, exe_sha):
         "seed": buildstate.digest(seed) if seed is not None else "",
         "hud": hud_sha or "",
         "exe": exe_sha,
+        "present_shaders": {"lib": _sha(shader_lib), "shaders": content_digest(shaders)},
         "packaging": content_digest(G.content),
         "templates": content_digest(G.templates),
         "license": {n: _sha(os.path.join(G.root, n)) for n in ("LICENSE", "NOTICE")},

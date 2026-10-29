@@ -377,6 +377,7 @@ TOOLKIT_ENHANCE_KEYS = (
     "display.overscan",
     "present.pacing",
     "textures.pack",
+    "present.shader",
     "menu.enabled",
     "overlay.stats",
 )

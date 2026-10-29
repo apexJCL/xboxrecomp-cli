@@ -1202,6 +1202,9 @@ ENHANCE_STOCK = (
     ("display.overscan", ENHANCE_OVERSCAN_RE, "0"),
     ("present.pacing", ENHANCE_PACING_RE, "spin"),
     ("textures.pack", ENHANCE_PACK_RE, "none"),
+    # Logged only when on; the goldens read the frame before the present,
+    # but a golden run is stock all the same.
+    ("present.shader", game_key_re("present.shader"), "none"),
     ("menu.enabled", game_key_re("menu.enabled"), "off"),
     ("overlay.stats", game_key_re("overlay.stats"), "off"),
 )
@@ -1226,7 +1229,7 @@ def enhance_nonstock(log, allow=()):
     Goldens always run at the title's stock resolution, aspect, pacing and
     frame rate: a render.scale other than 1, a render.aniso other than 0,
     a display.aspect other than 4:3, a display.overscan other than 0, a
-    present.pacing other than spin, the menu or the stats strip on
+    present.pacing other than spin, a present.shader other than none, the menu or the stats strip on
     (menu.enabled, overlay.stats) or an fps.mode other than lock30 (asked
     for, even where the game falls back) makes the run unusable as a
     golden, whatever its frames look like. No [ENHANCE] line (a build

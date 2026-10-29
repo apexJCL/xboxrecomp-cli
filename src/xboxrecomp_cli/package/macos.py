@@ -38,11 +38,18 @@ def brew_prefix_lib(formula, name):
     return p if r.returncode == 0 and os.path.isfile(p) else None
 
 
-def companions():
+def companions(exe=None):
     """package.dylib_companions (NAME=brew:FORMULA): libraries the game
     loads with dlopen, so otool cannot see them, as NAME=PATH for the plan.
-    One whose formula is not installed is left out, as before."""
+    One whose formula is not installed is left out, as before. With exe,
+    also librashader.dylib when the build put it beside the exe
+    (present.shader); the runtime finds it in Frameworks/."""
+    from . import incr
+
     out = []
+    shader_lib, _ = incr.present_shader_files("macos", exe)
+    if shader_lib:
+        out.append("%s=%s" % (os.path.basename(shader_lib), shader_lib))
     for c in host.g().package["dylib_companions"]:
         name, src = c.split("=", 1)
         if not src.startswith("brew:"):
@@ -220,7 +227,7 @@ def wrap_macos(
         {"VERSION": version, "SHORT_VERSION": short, "NAME": lib.PRODUCT_NAME},
         os.path.join(c, "Info.plist"),
     )
-    plan = lib.dylib_plan(exe, companions())
+    plan = lib.dylib_plan(exe, companions(exe))
     for dylib in plan["libs"]:
         dst = os.path.join(c, "Frameworks", dylib["name"])
         shutil.copy2(dylib["src"], dst)

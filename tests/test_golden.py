@@ -424,6 +424,20 @@ def test_enhance_pack_none_or_refused_passes():
         assert rc == 0 and "EXACT" in out, out
 
 
+def test_enhance_shader_fails():
+    """present.shader is logged only when on; the goldens read the frame
+    before the present, but such a run is still not stock."""
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, out = enhance_case(tmp, [STOCK, "[ENHANCE] present.shader=crt-lottes"])
+        assert rc == 1 and "present.shader=crt-lottes" in out, out
+    with tempfile.TemporaryDirectory() as tmp:
+        # present.shader_lib= on the same line is not present.shader=.
+        rc, out = enhance_case(
+            tmp, [STOCK, "[ENHANCE] present.shader=none present.shader_lib=x.dll"]
+        )
+        assert rc == 0 and "EXACT" in out, out
+
+
 def test_enhance_no_line_passes():
     with tempfile.TemporaryDirectory() as tmp:
         rc, out = enhance_case(tmp, [])

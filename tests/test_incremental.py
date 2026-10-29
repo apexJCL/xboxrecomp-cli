@@ -384,6 +384,61 @@ def test_reproducible_built_time(game):
         pl.build_time((G.root,), env={"SOURCE_DATE_EPOCH": "soon"})
 
 
+def test_present_shaders_beside_the_exe_are_staged(game):
+    """present.shader: the shaders/ tree and librashader.dll the build put
+    beside the exe go into the bundle, and a change to them restages."""
+    G, calls = game["G"], game["calls"]
+    game["run"]()
+    (b,) = bundles(G)
+    files = {f["path"] for f in tar_manifest(G.path("dist", b))["files"]}
+    assert not any(p.startswith("shaders/") for p in files) and "librashader.dll" not in files
+    d = os.path.dirname(G.exe(game["bdir"], "windows"))
+    write(os.path.join(d, "librashader.dll"), "dll")
+    write(os.path.join(d, "shaders", "crt-lottes.slangp"), "#reference x\n")
+    write(os.path.join(d, "shaders", "LICENSE-librashader.txt"), "MPL\n")
+    out = game["run"]()
+    assert "present.shader: shaders/ and librashader.dll staged" in out, out
+    assert calls["build"] == 1 and calls["tar"] == 2, out
+    b = sorted(bundles(G))[-1]
+    files = {f["path"] for f in tar_manifest(G.path("dist", b))["files"]}
+    assert {
+        "librashader.dll",
+        "shaders/crt-lottes.slangp",
+        "shaders/LICENSE-librashader.txt",
+    } <= files
+    out = game["run"]()
+    assert "stage: current" in out and calls["tar"] == 2, out
+    write(os.path.join(d, "shaders", "crt-lottes.slangp"), "#reference y\n")
+    out = game["run"]()
+    assert "stage: current" not in out and calls["tar"] == 3, out
+
+
+def test_present_shader_files(d):
+    exe = os.path.join(d, "bin", "game.exe")
+    write(exe, "exe")
+    assert incr.present_shader_files("windows", exe) == (None, None)
+    write(os.path.join(d, "bin", "librashader.dylib"), "dylib")
+    write(os.path.join(d, "bin", "shaders", "a.slangp"), "x")
+    lib, shaders = incr.present_shader_files("windows", exe)
+    assert lib is None and shaders == os.path.join(d, "bin", "shaders")
+    lib, _ = incr.present_shader_files("macos", exe)
+    assert lib == os.path.join(d, "bin", "librashader.dylib")
+    assert incr.present_shader_files("macos", None) == (None, None)
+
+
+def test_macos_companions_add_librashader(d, monkeypatch):
+    from xboxrecomp_cli.package import macos
+
+    monkeypatch.setattr(host, "g", lambda: type("G", (), {"package": {"dylib_companions": []}})())
+    exe = os.path.join(d, "MacOS", "game")
+    write(exe, "exe")
+    assert macos.companions(exe) == [] and macos.companions() == []
+    write(os.path.join(d, "MacOS", "librashader.dylib"), "dylib")
+    assert macos.companions(exe) == [
+        "librashader.dylib=%s" % os.path.join(d, "MacOS", "librashader.dylib")
+    ]
+
+
 def test_touched_game_file_restages_and_keeps_the_bundle(game):
     G, calls = game["G"], game["calls"]
     game["run"]()

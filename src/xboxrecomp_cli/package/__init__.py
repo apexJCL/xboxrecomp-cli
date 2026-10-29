@@ -1014,6 +1014,25 @@ def run_plan_prefix(a, plan):
             host.say("gen/ is current")
 
 
+def stage_present_shaders(payload, target, exe):
+    """present.shader's files from beside the exe into the payload:
+    shaders/ (the presets and librashader's licence) at the payload's top,
+    which is the exe's directory on Windows and SteamOS and Resources/ on
+    macOS, where the runtime looks too; the Windows library beside the
+    exe. The macOS dylib goes to Frameworks/ with the other dylibs
+    (macos.companions)."""
+    shader_lib, shaders = incr.present_shader_files(target, exe)
+    if shaders:
+        shutil.copytree(shaders, os.path.join(payload, incr.SHADER_DIR))
+    if shader_lib and target != "macos":
+        shutil.copy2(shader_lib, os.path.join(payload, os.path.basename(shader_lib)))
+    names = [
+        n for n, p in (("shaders/", shaders), (os.path.basename(shader_lib or ""), shader_lib)) if p
+    ]
+    if names:
+        host.say("present.shader: %s staged" % " and ".join(names))
+
+
 def stage_files(a, stage, payload, version, exe, lib, hud_pack, seed, enhance):
     """The payload, in place: skipped whole when its key (the exe, the
     icon, the HUD pack, the game files, the content and the CLI's
@@ -1031,7 +1050,7 @@ def stage_files(a, stage, payload, version, exe, lib, hud_pack, seed, enhance):
     cstage = incr.compile_stage(build_target(target))
     exe_sha = incr.output_sha(st, cstage, exe) or buildstate.sha256_file(exe)
     hud_sha = host.sha256_path(hud_pack["path"]) if hud_pack else ""
-    inputs = incr.stage_inputs(target, version, enhance, seed, hud_sha, lib, exe_sha)
+    inputs = incr.stage_inputs(target, version, enhance, seed, hud_sha, lib, exe_sha, exe)
     up = {"compile": st.key_of(cstage), "icon": st.key_of("icon"), "import": st.key_of("import")}
     key = buildstate.stage_key(inputs, up)
     why = st.check(sname, key, inputs, up)
@@ -1054,6 +1073,7 @@ def stage_files(a, stage, payload, version, exe, lib, hud_pack, seed, enhance):
     nxt = os.path.join(stage, ".next")
     os.makedirs(nxt)
     pacing = write_common(nxt, target, version, lib, hud_pack, seed, enhance, game_files=False)
+    stage_present_shaders(nxt, target, exe)
     if target != "macos":
         shutil.copy2(exe, os.path.join(nxt, G.exe_name + ".exe"))
         pdb = os.path.join(os.path.dirname(exe), G.exe_name + ".pdb")

@@ -6,7 +6,9 @@ exits there, as a kill or a power loss would.
 """
 
 import json
+import ntpath
 import os
+import posixpath
 import shutil
 import tarfile
 
@@ -118,6 +120,25 @@ def test_patch_tar_holds_only_what_changed(il, d):
     doc = json.loads(read(os.path.join(p, "patch.json")))
     assert doc["base_version"] == V1 and doc["version"] == V2 and not doc["game_data"]
     assert [e["path"] for e in doc["changed"]] == [EXE + ".exe"]
+
+
+def test_patch_tar_ships_nested_new_files(il, d):
+    # A folder two levels down (the present shaders' crt/shaders/) reaches
+    # the tar.
+    nested = {"shaders/crt.slangp": b"p", "shaders/crt/shaders/crt.slang": b"s"}
+    v1, v2 = bundles(d, v2_extra={PACK: b"pack 1", **nested})
+    p = make_patch(d, v1, v2)
+    for rel, data in nested.items():
+        assert read(os.path.join(p, *rel.split("/"))) == data
+
+
+def test_tar_rel_uses_slash_on_windows():
+    # The PC build host: ntpath's relpath gives shaders\\crt\\shaders.
+    assert steamos.tar_rel("D:\\b\\pay\\shaders\\crt\\shaders", "D:\\b\\pay", ntpath) == (
+        "shaders/crt/shaders"
+    )
+    assert steamos.tar_rel("D:\\b\\pay", "D:\\b\\pay", ntpath) == "."
+    assert steamos.tar_rel("/b/pay/shaders/crt", "/b/pay", posixpath) == "shaders/crt"
 
 
 def test_patch_tar_deterministic(il, d):

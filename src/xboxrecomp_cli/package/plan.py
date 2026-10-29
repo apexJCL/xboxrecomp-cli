@@ -205,7 +205,7 @@ def make_plan(a, lib, imp=None, enhance=True, seed=None, into=None):
     else:
         layer, _cache = config_layer(enhance, lib, target)
         exe_sha = incr.output_sha(st, cstage, exe) or buildstate.sha256_file(exe)
-        inputs = incr.stage_inputs(target, version, layer, seed, hud_sha, lib, exe_sha)
+        inputs = incr.stage_inputs(target, version, layer, seed, hud_sha, lib, exe_sha, exe)
         up = {"compile": compile_key, "icon": icon_key, "import": imp_key}
         key = buildstate.stage_key(inputs, up)
         why = st.check(sname, key, inputs, up)
