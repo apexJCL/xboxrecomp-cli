@@ -7,6 +7,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-28
+
 ### Added
 - A native Windows build host: with `BENCH_BUILD_HOST` (and
   `BENCH_BUILD_DIR`), bench commands build the Windows exe on that PC under
@@ -608,7 +610,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.10.1...v0.11.0
