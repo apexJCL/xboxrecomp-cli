@@ -524,6 +524,45 @@ def test_macos_defaults_in_resources(d, monkeypatch):
         assert not os.path.exists(os.path.join(res, "enhance.toml.default"))
 
 
+def test_macos_dylib_licences_in_manifest(d, monkeypatch):
+    """wrap_macos stages each bundled dylib's licence before the manifest
+    is made, so the manifest (and a patch made from it) lists them."""
+    from xboxrecomp_cli.package import macos
+
+    with game2_tree(d):
+        host.g().m["package"] = dict(PKG2)
+        k = os.path.join(d, "brew", "Cellar", "libepoxy", "1.5.10")
+        write(os.path.join(k, "COPYING"), "mit")
+        write(os.path.join(k, "lib", "libepoxy.0.dylib"), "dylib")
+        src = os.path.join(k, "lib", "libepoxy.0.dylib")
+        monkeypatch.setattr(macos, "templates", lambda: d)
+        monkeypatch.setattr(macos, "render", lambda src, vals, dst, *m: write(dst, ""))
+        listed = []
+
+        def manifest(root, *a, **k):
+            listed.extend(sorted(os.listdir(os.path.join(root, "LICENSES"))))
+
+        monkeypatch.setattr(macos, "write_manifest", manifest)
+        monkeypatch.setattr(macos, "_otool", lambda f: "")
+        monkeypatch.setattr(host, "run", lambda *a, **k: None)
+        monkeypatch.setattr(macos, "companions", lambda exe: [])
+        monkeypatch.setattr(
+            pl,
+            "dylib_plan",
+            lambda exe, comp: {"libs": [{"name": "libepoxy.0.dylib", "src": src}], "changes": []},
+        )
+        exe = os.path.join(d, "exe")
+        write(exe, "exe")
+        icns = os.path.join(d, "a.icns")
+        write(icns, "icns")
+        stage = os.path.join(d, "stage")
+        os.makedirs(os.path.join(stage, "payload"))
+        macos.wrap_macos(stage, os.path.join(stage, "payload"), "v", exe, d, [], pl, icns)
+        assert listed == ["BUNDLED-LIBRARIES.md", "libepoxy-COPYING"]
+        # The payload stays as it was: the licences go in the app's copy.
+        assert not os.path.exists(os.path.join(stage, "payload", "LICENSES"))
+
+
 def test_macos_dmg_rerun(d, monkeypatch):
     """hdiutil create refuses an existing file, so a same-version re-run
     (the wizard's Retry, or a second build into one output folder) needs

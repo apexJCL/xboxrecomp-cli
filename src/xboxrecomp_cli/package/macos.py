@@ -9,7 +9,7 @@ import subprocess
 
 from .. import host
 from ..host import CliError
-from . import DEFAULTS, app, render, templates, write_manifest
+from . import DEFAULTS, app, copy_lf, render, templates, write_manifest
 
 DEFAULTS_MACOS = os.path.join(DEFAULTS, "macos")
 
@@ -26,6 +26,134 @@ def brew_origin(src):
         i = parts.index("Cellar")
         return "%s %s" % (parts[i + 1], parts[i + 2])
     return os.path.basename(src)
+
+
+def brew_keg(src):
+    """(formula, version, keg dir) of a dylib's resolved Cellar path, or
+    None when it is not a Homebrew file."""
+    parts = src.split("/")
+    if "Cellar" in parts and len(parts) > parts.index("Cellar") + 3:
+        i = parts.index("Cellar")
+        return parts[i + 1], parts[i + 2], "/".join(parts[: i + 3])
+    return None
+
+
+# The keg-root names Homebrew keeps a formula's licence under (libepoxy
+# has COPYING, sdl3 and openssl LICENSE.txt). NOTICE too: Apache-2.0 4(d)
+# asks for a NOTICE file to ship with the binary.
+LICENCE_STEMS = ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE")
+
+# Homebrew formula (without @N) -> its credits.THIRD_PARTY name, so the
+# notice gives the licence and the project the wizard's Credits give.
+CREDIT_NAMES = {"sdl3": "SDL", "sdl2": "SDL", "openssl": "OpenSSL", "libepoxy": "libepoxy"}
+
+# Notices a keg does not carry, for code vendored into the formula's
+# library whose licence asks for its notice beside binaries: formula
+# (without @N) -> files in templates/macos/licences/, staged as they are.
+EXTRA_NOTICES = {
+    # SDL's YUV converters (yuv420_rgb24_std and friends in libSDL3) are
+    # Adrien Descamps' yuv2rgb, BSD-3-Clause. The text is SDL's
+    # src/video/yuv2rgb/LICENSE at tag release-3.4.18 (829a65d), verbatim.
+    # SDL's other vendored code asks for no notice in binaries: stb_image
+    # is taken under its public-domain alternative, HIDAPI's original
+    # licence keeps only the source notices, and libm is the system's on
+    # macOS (SDL_scalbn and the rest call it).
+    "sdl3": ("sdl3-yuv2rgb-BSD-3-Clause.txt",),
+}
+
+# Bundled libraries from outside Homebrew, each with the licence file the
+# toolkit's LICENSES/ (staged before the wrap) must hold for it.
+# librashader.dylib is incr.SHADER_LIBS["macos"], from present.shader.
+COVERED = {"librashader.dylib": "MPL-2.0-librashader.txt"}
+
+
+def keg_licences(keg):
+    return sorted(
+        n
+        for n in os.listdir(keg)
+        if n.upper().startswith(LICENCE_STEMS) and os.path.isfile(os.path.join(keg, n))
+    )
+
+
+def stage_dylib_licences(resources, libs, covered=None):
+    """Each bundled Homebrew library's licence into Resources/LICENSES/ as
+    <formula>-<file>, with its EXTRA_NOTICES, and BUNDLED-LIBRARIES.md
+    naming each library, its version and its files. The app ships copies
+    of these libraries, and libepoxy (MIT), OpenSSL (Apache-2.0, 4(a)) and
+    SDL's yuv2rgb (BSD-3-Clause) require their licence beside every copy.
+    covered: dylib name -> the file Resources/LICENSES/ must already hold
+    for it (COVERED by default). Anything that cannot be licensed stops
+    the build before a file is written, so a new dependency cannot ship
+    without one and no licence is overwritten."""
+    from .. import credits
+
+    covered = COVERED if covered is None else covered
+    dst = os.path.join(resources, "LICENSES")
+    by_name = {c["name"]: c for c in credits.THIRD_PARTY}
+    kegs, problems = {}, []
+    for dylib in libs:
+        if dylib["name"] in covered:
+            need = covered[dylib["name"]]
+            if not os.path.isfile(os.path.join(dst, need)):
+                problems.append(
+                    "%s: its licence LICENSES/%s is not staged (an older toolkit, "
+                    "or the file was renamed)" % (dylib["name"], need)
+                )
+            continue
+        k = brew_keg(dylib["src"])
+        files = keg_licences(k[2]) if k and os.path.isdir(k[2]) else []
+        if not files:
+            problems.append(
+                "%s (%s): no licence file. A Homebrew keg should hold a LICENSE "
+                "or COPYING file; a library from outside Homebrew needs its "
+                "licence in the toolkit's LICENSES/ and a row in "
+                "package.macos.COVERED" % (dylib["name"], dylib["src"])
+            )
+            continue
+        kegs.setdefault(k, (files, []))[1].append(dylib["name"])
+    formulas = {}
+    for formula, version, _ in kegs:
+        formulas.setdefault(formula, []).append(version)
+    for formula, versions in sorted(formulas.items()):
+        if len(versions) > 1:
+            problems.append(
+                "two %s kegs are bundled (%s): their licences would share a name"
+                % (formula, ", ".join(sorted(versions)))
+            )
+    copies = []  # (src, staged name)
+    for (formula, _, keg), (files, _) in sorted(kegs.items()):
+        copies += [(os.path.join(keg, n), "%s-%s" % (formula, n)) for n in files]
+        copies += [
+            (os.path.join(DEFAULTS_MACOS, "licences", n), n)
+            for n in EXTRA_NOTICES.get(formula.split("@")[0], ())
+        ]
+    for _, n in copies:
+        if os.path.exists(os.path.join(dst, n)):
+            problems.append("LICENSES/%s is already staged (by the toolkit?)" % n)
+    if problems:
+        raise CliError("cannot license the bundled libraries: " + "; ".join(problems))
+    if not kegs:
+        return
+    os.makedirs(dst, exist_ok=True)
+    for src, n in copies:
+        copy_lf(src, os.path.join(dst, n))
+    lines = [
+        "# Bundled macOS libraries\n",
+        "\n",
+        "`Contents/Frameworks` holds copies of these Homebrew libraries, changed only\n",
+        "in their install names (@rpath) and ad hoc signatures. Each one's licence\n",
+        "is here, as Homebrew installed it, with the notices of code vendored into it.\n",
+        "\n",
+    ]
+    for (formula, version, _), (files, names) in sorted(kegs.items()):
+        c = by_name.get(CREDIT_NAMES.get(formula.split("@")[0]))
+        head = "%s %s" % (c["name"] if c else formula, version)
+        if c:
+            head += " (%s, %s)" % (c["license"], c["url"])
+        lines.append("- %s: `%s`\n" % (head, "`, `".join(sorted(names))))
+        lines += ["  - `%s-%s`\n" % (formula, n) for n in files]
+        lines += ["  - `%s`\n" % n for n in EXTRA_NOTICES.get(formula.split("@")[0], ())]
+    _text(os.path.join(dst, "BUNDLED-LIBRARIES.md"), "".join(lines))
 
 
 def brew_prefix_lib(formula, name):
@@ -237,6 +365,7 @@ def wrap_macos(
         f = main_exe if ch["file"] == "@exe" else os.path.join(c, "Frameworks", ch["file"])
         host.run(["install_name_tool", "-change", ch["old"], ch["new"], f])
     host.run(["install_name_tool", "-add_rpath", "@executable_path/../Frameworks", main_exe])
+    stage_dylib_licences(os.path.join(c, "Resources"), plan["libs"])
     leftovers = []
     for f in [main_exe] + [os.path.join(c, "Frameworks", dylib["name"]) for dylib in plan["libs"]]:
         for dep in lib.parse_otool(_otool(f)):
