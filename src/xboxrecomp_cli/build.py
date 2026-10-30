@@ -69,6 +69,17 @@ def stock_cmake_args():
     return ("-DCMAKE_BUILD_TYPE=Release",) + tuple(host.g().m["build"]["stock_cmake"])
 
 
+def dsp56300_cache():
+    """Where every tree of this game keeps the toolkit's dsp56300 download
+    (XBOXRECOMP_DSP56300_CACHE): the JIT is on by default, so without it a
+    fresh tree and every start_afresh would fetch the archive again. The
+    toolkit extracts into it race-free, so trees configuring at once can
+    share it. Named on stock and first configures only (the cache keeps it
+    after that); a tree configured before keeps its own _deps copy until
+    its next one (docs/manifest.md, stock_cmake)."""
+    return os.path.join(host.g().third_party, "dsp56300")
+
+
 def toolchain_file():
     return host.g().toolchain_file
 
@@ -330,6 +341,7 @@ def configure_and_compile(
             bdir,
             "-DCMAKE_BUILD_TYPE=Release",
             "-DXBOXRECOMP_DIR=" + tk,
+            "-DXBOXRECOMP_DSP56300_CACHE=" + dsp56300_cache(),
         ]
         if ninja:
             cfg += ["-G", "Ninja", "-DCMAKE_MAKE_PROGRAM=" + ninja]

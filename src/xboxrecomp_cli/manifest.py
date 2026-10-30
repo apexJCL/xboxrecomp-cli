@@ -103,7 +103,7 @@ SPEC = {
         "windows_dir": (STR, "build-win"),
         "macos_dir": (STR, "build"),
         "toolchain_file": (STR, ""),
-        "stock_cmake": (STRS, ["-DXBOXRECOMP_ENHANCE=ON"]),
+        "stock_cmake": (STRS, ["-DXBOXRECOMP_ENHANCE=ON", "-DXBOXRECOMP_APU_DSP=ON"]),
         "nonstock_vars": (STRS, []),
         "icon_var": (STR, ""),
     },

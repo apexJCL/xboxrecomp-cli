@@ -53,7 +53,7 @@ THIRD_PARTY = (
     ),
     _c(
         "dsp56300",
-        "the APU's DSP, in games built with XBOXRECOMP_APU_DSP",
+        "the APU's DSP",
         "MIT",
         "https://github.com/xemu-project/dsp56300",
     ),

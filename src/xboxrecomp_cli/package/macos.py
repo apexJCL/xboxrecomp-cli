@@ -390,6 +390,10 @@ def wrap_macos(
         host.run(
             ["codesign", "--force", "--sign", "-", os.path.join(c, "Frameworks", dylib["name"])]
         )
+    # Ad hoc, without the hardened runtime: that is what lets the APU's
+    # DSP JIT (dsp56300, on by default) map executable memory. Signing
+    # with --options runtime (notarisation) needs the
+    # com.apple.security.cs.allow-jit entitlement, or the JIT cannot run.
     host.run(["codesign", "--force", "--sign", "-", main_exe])
     host.run(["codesign", "--force", "--sign", "-", bundle])
     host.run(["codesign", "--verify", "--deep", "--strict", bundle])

@@ -706,6 +706,9 @@ def test_other_toolkit_reset(d, monkeypatch, capsys):
         assert not os.path.exists(os.path.join(bdir, "CMakeFiles"))
         assert runs[0][:5] == ["cmake", "-S", G.root, "-B", bdir]
         assert "-DXBOXRECOMP_DIR=" + tk in runs[0]
+        # Every tree of the game shares one dsp56300 download.
+        cache_arg = "-DXBOXRECOMP_DSP56300_CACHE=" + os.path.join(G.third_party, "dsp56300")
+        assert cache_arg in runs[0]
         assert runs[1][:3] == ["cmake", "--build", bdir]
 
 

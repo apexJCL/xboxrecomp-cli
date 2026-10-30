@@ -50,7 +50,7 @@ def test_minimal_defaults():
     assert m["pipeline"]["disasm"] == {"text_only": False, "extra_sections": []}
     assert m["build"]["targets"] == ["windows"]
     assert m["toolchain"] == {"llvm_mingw": "", "nsis": "3.13", "sdl3": ""}
-    assert m["build"]["stock_cmake"] == ["-DXBOXRECOMP_ENHANCE=ON"]
+    assert m["build"]["stock_cmake"] == ["-DXBOXRECOMP_ENHANCE=ON", "-DXBOXRECOMP_APU_DSP=ON"]
     assert m["data"]["dir_env"] == "SOME_GAME_DATA_DIR"
     assert m["data"]["steamos"] == "~/Games/some-game"
     assert m["golden"] == {"json": "", "frames": "", "audio": "", "enhance_stock": {}}

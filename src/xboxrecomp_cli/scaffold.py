@@ -104,8 +104,9 @@ exe = "@EXE@"
 # windows builds on every host (llvm-mingw); macos builds on a Mac (Apple
 # clang). Drop one to stop `build` offering it.
 targets = ["windows", "macos"]
-# No enhancements layer: the stock build is the plain one.
-stock_cmake = []
+# No enhancements layer: the stock build is the plain one, with the APU's
+# DSP JIT (the toolkit's default where it has an archive for the target).
+stock_cmake = ["-DXBOXRECOMP_APU_DSP=ON"]
 
 # How much memory one generated-code compile job takes sets how many run
 # at once. Unset, it is estimated (140 MiB per MB of the largest gen/

@@ -122,6 +122,8 @@ def test_offline_scaffold_loads_and_names_what_is_left(d, tk, game):
     assert (G.slug, G.name, G.exe_name) == ("my-game", "my-game", "my_game_recomp")
     assert G.m["cli"]["commit"] == CLI and G.m["toolkit"]["commit"] == TK
     assert G.m["build"]["targets"] == ["windows", "macos"]
+    # No enhancements layer, but the APU's DSP JIT is stock.
+    assert G.m["build"]["stock_cmake"] == ["-DXBOXRECOMP_APU_DSP=ON"]
     assert G.m["pipeline"]["icall_seeds"] is False
     assert G.m["xbe"]["title_id"] == 0 and "package" not in G.m
     assert wrapper.check(G) == (True, [])

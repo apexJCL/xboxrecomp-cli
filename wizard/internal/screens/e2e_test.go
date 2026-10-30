@@ -8,6 +8,11 @@
 //	XBR_E2E_DUMP=<disc> XBR_E2E_OUT=<dir> XBR_E2E_ROOT=<dir> \
 //	go test -tags e2e -run TestE2E -timeout 3h ./internal/screens
 //
+// TestE2EOffline (the same variables) is a fresh tree with no network: the
+// toolkit's dsp56300 download fails at the first configure, and its error
+// must reach the player's Done page. It deletes the clone's package build
+// trees and its dsp56300 cache, so a TestE2E run after it downloads again.
+//
 // The keep step commits an empty change to XBR_E2E_GAME, so it must be a
 // scratch clone: an update needs a new version, and the version comes from
 // the commits. The test refuses a checkout without the marker
@@ -59,7 +64,10 @@ type e2eRun struct {
 	Err     string     `json:"error,omitempty"`
 }
 
-func TestE2E(t *testing.T) {
+// e2eSetup is the wizard both tests drive, over the scratch clone, and its
+// config.
+func e2eSetup(t *testing.T) (w *Wizard, cfg *gamecfg.Config, game, dump, out string) {
+	t.Helper()
 	game, cfgPath := e2eEnv(t, "XBR_E2E_GAME"), e2eEnv(t, "XBR_E2E_CONFIG")
 	dump, out, root := e2eEnv(t, "XBR_E2E_DUMP"), e2eEnv(t, "XBR_E2E_OUT"), e2eEnv(t, "XBR_E2E_ROOT")
 	if _, err := os.Stat(filepath.Join(game, ".git", e2eMarker)); err != nil {
@@ -69,7 +77,7 @@ func TestE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := gamecfg.Parse(b)
+	cfg, err = gamecfg.Parse(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,8 +89,8 @@ func TestE2E(t *testing.T) {
 	// CLI keep the real one (uv's cache, the toolchains).
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	a := test.NewApp()
-	defer a.Quit()
-	w := New(a, Options{Cfg: cfg, Pins: pins, Version: "e2e", Root: root, DevGame: game,
+	t.Cleanup(a.Quit)
+	w = New(a, Options{Cfg: cfg, Pins: pins, Version: "e2e", Root: root, DevGame: game,
 		NoDialog: true, NoUpdateCheck: true})
 	w.async = func(f func()) { f() }
 	env, err := Prepare(t.Context(), cfg, pins, root, game, nil, func(s string) { t.Log(s) }, nil)
@@ -91,6 +99,11 @@ func TestE2E(t *testing.T) {
 	}
 	w.env = env
 	w.setOut(out)
+	return w, cfg, game, dump, out
+}
+
+func TestE2E(t *testing.T) {
+	w, cfg, game, dump, out := e2eSetup(t)
 	var runs []e2eRun
 	defer func() {
 		j, _ := json.MarshalIndent(runs, "", "  ")
@@ -161,6 +174,39 @@ func TestE2E(t *testing.T) {
 	}
 }
 
+func TestE2EOffline(t *testing.T) {
+	w, _, game, dump, out := e2eSetup(t)
+	// A fresh tree: no package build tree and no shared download (the CLI's
+	// XBOXRECOMP_DSP56300_CACHE). Prepare has run, so only the build steps
+	// lose the network: CMake's download and uv both honour the proxy.
+	for _, d := range []string{"build-pkg-win", "build-pkg-macos", filepath.Join("third_party", "dsp56300")} {
+		if err := os.RemoveAll(filepath.Join(game, d)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dead := "http://127.0.0.1:9"
+	w.env.Runner.Env = append(slices.Clone(w.env.Runner.Env), "UV_OFFLINE=1",
+		"https_proxy="+dead, "HTTPS_PROXY="+dead, "http_proxy="+dead, "HTTP_PROXY="+dead, "ALL_PROXY="+dead)
+	w.setPath(model.PathFresh)
+	w.st.Target, w.st.Dump = "steamos", dump
+	w.show(pSummary)
+	r, err := e2eRunSteps(t, w, "offline", "")
+	j, _ := json.MarshalIndent([]e2eRun{r}, "", "  ")
+	if werr := os.WriteFile(filepath.Join(out, "e2e-offline.json"), j, 0o644); werr != nil {
+		t.Error(werr)
+	}
+	if err == nil {
+		t.Fatalf("offline: the build passed with no network:\n%s", r.Done)
+	}
+	// The player's error view names the download, the offline copy and
+	// the opt-out, as cmake/dsp56300.cmake's error does.
+	for _, want := range []string{"dsp56300", "XBOXRECOMP_DSP56300_ARCHIVE", "XBOXRECOMP_APU_DSP=OFF"} {
+		if !strings.Contains(r.Done, want) {
+			t.Errorf("offline: the Done page does not say %q:\n%s\n%s", want, r.Done, r.Err)
+		}
+	}
+}
+
 func hudLabel(t *testing.T, cfg *gamecfg.Config) string {
 	t.Helper()
 	for _, o := range cfg.Options {
@@ -203,10 +249,35 @@ func e2eDisc(w *Wizard, dump string) {
 	}
 }
 
-// e2eBuild presses Build on a ready Summary and runs the steps as the
-// Build page does, here on the test's goroutine; then the Done page, and
-// the update ID of the bundle made, the newest build the Base page lists.
+// e2eBuild runs a build that has to pass (e2eRunSteps), then the update
+// ID of the bundle made, the newest build the Base page lists.
 func e2eBuild(t *testing.T, w *Wizard, name, base string) e2eRun {
+	t.Helper()
+	r, err := e2eRunSteps(t, w, name, base)
+	if err != nil {
+		t.Fatalf("%s: %s\n%s", name, r.Err, r.Done)
+	}
+	newest := (*runner.PlanBase)(nil)
+	w.show(pBase)
+	if w.basePlan != nil {
+		for i := range w.basePlan.Bases {
+			if b := &w.basePlan.Bases[i]; newest == nil || b.Made > newest.Made {
+				newest = b
+			}
+		}
+	}
+	if newest == nil {
+		t.Fatalf("%s: no build listed after it", name)
+	}
+	r.ID = newest.ID
+	t.Logf("%s: %s, update ID %s", name, r.Bundle, r.ID)
+	return r
+}
+
+// e2eRunSteps presses Build on a ready Summary and runs the steps as the
+// Build page does, here on the test's goroutine, then fills the Done page.
+// The error is the build's.
+func e2eRunSteps(t *testing.T, w *Wizard, name, base string) (e2eRun, error) {
 	t.Helper()
 	if !w.pages[pSummary].ready() {
 		t.Fatalf("%s: the Summary is not ready:\n%s", name, shown(w.pages[pSummary].obj))
@@ -229,23 +300,8 @@ func e2eBuild(t *testing.T, w *Wizard, name, base string) e2eRun {
 		if f, ok := err.(*buildFailure); ok {
 			r.Err += "\n" + strings.Join(f.Tail, "\n")
 		}
-		t.Fatalf("%s: %s\n%s", name, r.Err, r.Done)
 	}
-	newest := (*runner.PlanBase)(nil)
-	w.show(pBase)
-	if w.basePlan != nil {
-		for i := range w.basePlan.Bases {
-			if b := &w.basePlan.Bases[i]; newest == nil || b.Made > newest.Made {
-				newest = b
-			}
-		}
-	}
-	if newest == nil {
-		t.Fatalf("%s: no build listed after it", name)
-	}
-	r.ID = newest.ID
-	t.Logf("%s: %s, update ID %s", name, r.Bundle, r.ID)
-	return r
+	return r, err
 }
 
 func e2eHas(steps [][]string, words ...string) bool {
