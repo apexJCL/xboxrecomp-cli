@@ -123,6 +123,10 @@ def test_enhance_hud_table():
     assert m["enhance"]["hud"] == {
         "archives": ["media"],
         "textures": ["dds/ui_*"],
+        "exclude": [],
+        "source": "ipk",
+        "hook": "",
+        "pow2": False,
         "scale": 4,
         "max_texels": 0,
         "font_atlas": "",
@@ -166,6 +170,19 @@ def test_enhance_hud_table():
         ("languages = { us = [] }\n", "enhance.hud.languages.us: names no archive"),
         ('languages = { us = ["a"], uk = ["a"] }\n', "languages.uk: a is us's already"),
         ('languages = { us = "a" }\n', "enhance.hud.languages: must be a table of string lists"),
+        ('source = "crf"\n', "enhance.hud.source: one of ipk, hook"),
+        ('source = "hook"\n', 'enhance.hud.hook: required with source = "hook"'),
+        ('hook = "scripts/x.py"\n', 'enhance.hud.hook: only with source = "hook"'),
+        ('source = "hook"\nhook = "../x.py"\n', "enhance.hud.hook: '../x.py' must not hold .."),
+        ('source = "hook"\nhook = "/abs/x.py"\n', "enhance.hud.hook: '/abs/x.py' must be relative"),
+        ('source = "hook"\nhook = "C:/x.py"\n', "enhance.hud.hook: 'C:/x.py' must be relative"),
+        ('source = "hook"\nhook = "s\\\\x.py"\n', "enhance.hud.hook: .* must use / separators"),
+        ('languages = { us = ["../lng"] }\n', "enhance.hud.archives: '../lng' must not hold .."),
+        ('source = "hook"\nhook = "./x.py"\n', "enhance.hud.hook: './x.py' must not hold \\."),
+        ('source = "hook"\nhook = "s//x.py"\n', "enhance.hud.hook: 's//x.py' must not hold"),
+        ('languages = { us = ["lng/"] }\n', "enhance.hud.archives: 'lng/' must not hold"),
+        ('pow2 = "yes"\n', "enhance.hud.pow2: must be a boolean"),
+        ('exclude = "a"\n', "enhance.hud.exclude: must be a list of strings"),
     ):
         with pytest.raises(manifest.ManifestError, match=key):
             parse(MINIMAL + hud + extra)

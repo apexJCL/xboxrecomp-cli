@@ -210,11 +210,22 @@ SPEC = {
     # table has no HUD set to build.
     "enhance": {},
     "enhance.hud": {
-        # IPK1 archives (basenames under data.game_files) to scan, and the
-        # entry-name patterns (fnmatch, '/' separators, lower case) of the
-        # UI set to upscale.
+        # The archives to scan, and the entry-name patterns (fnmatch, '/'
+        # separators, lower case) of the UI set to upscale; exclude drops
+        # entries textures matched.
         "archives": (STRS, []),
         "textures": (STRS, []),
+        "exclude": (STRS, []),
+        # The archive reader (enhance/sources.py): "ipk", IPK1 pairs, each
+        # archive a basename under data.game_files; or "hook", a stdlib
+        # script at the repo-relative path `hook` that prints an archive's
+        # index, each archive a path under data.game_files.
+        "source": (STR, "ipk"),
+        "hook": (STR, ""),
+        # Skip textures whose sides are not powers of two: the NV2A samples
+        # DXT only at those sizes, so the engine resizes such a file before
+        # upload and the guest copy never hashes like it.
+        "pow2": (BOOL, False),
         "scale": (INT, 4),
         # Textures over this many guest texels are left out (0: no limit):
         # full-screen backgrounds are not HUD, and a 1024x512 one at 4x is
@@ -718,6 +729,25 @@ def _hint_link_errors(name, link):
     return errors
 
 
+HUD_SOURCES = ("ipk", "hook")
+
+
+def rel_path_problem(path):
+    """Why path is not a relative path with '/' and no '..', or ""."""
+    if not path:
+        return "is empty"
+    if os.path.isabs(path) or path.startswith(("/", "~")) or re.match(r"^[A-Za-z]:", path):
+        return "must be relative"
+    if "\\" in path:
+        return "must use / separators"
+    parts = path.split("/")
+    if ".." in parts:
+        return "must not hold .."
+    if "." in parts or "" in parts:
+        return "must not hold ., // or a trailing /"
+    return ""
+
+
 def builds_enhance(m):
     """Whether the stock build turns the toolkit's enhancements layer on,
     before any build exists: the toolkit's option defaults OFF, so a game
@@ -835,6 +865,21 @@ def _check_values(m):
             )
     hud = m.get("enhance", {}).get("hud")
     if hud:
+        if hud["source"] not in HUD_SOURCES:
+            errors.append("enhance.hud.source: one of %s" % ", ".join(HUD_SOURCES))
+        if hud["source"] == "hook":
+            if not hud["hook"]:
+                errors.append('enhance.hud.hook: required with source = "hook"')
+            else:
+                why = rel_path_problem(hud["hook"])
+                if why:
+                    errors.append("enhance.hud.hook: %r %s" % (hud["hook"], why))
+        elif hud["hook"]:
+            errors.append('enhance.hud.hook: only with source = "hook"')
+        for arc in hud["archives"] + [a for arcs in hud["languages"].values() for a in arcs]:
+            why = rel_path_problem(arc)
+            if why:
+                errors.append("enhance.hud.archives: %r %s" % (arc, why))
         if hud["scale"] not in (2, 4):
             errors.append("enhance.hud.scale: 2 or 4")
         if hud["max_texels"] < 0:

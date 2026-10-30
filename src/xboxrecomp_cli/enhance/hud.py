@@ -20,6 +20,7 @@ scale given, raw. The MIX container alone does not make an entry text:
 the game keeps pictures in .mix files too.
 """
 
+import collections
 import concurrent.futures
 import fnmatch
 import hashlib
@@ -29,7 +30,7 @@ import time
 
 from .. import host, resources
 from ..host import CliError
-from . import atlas, bc3, dds, font, ipk, pack, scaler, texhash, xpr
+from . import atlas, bc3, dds, font, pack, scaler, sources, texhash, xpr
 
 # Its duration in build-logs/timings.json, for package's plan estimate.
 TIMING_LABEL = "enhance hud"
@@ -147,19 +148,22 @@ def archives(cfg, langs):
     return list(dict.fromkeys(names))
 
 
-def select(game_files, cfg, only=(), langs=None):
-    """[(archive, entry)] of the set, in archive and index order."""
+def select(game_files, cfg, only=(), langs=None, repo=None):
+    """[(archive, entry)] of the set, in archive and index order. repo: the
+    game's root, where a hook source's script is (default the game's)."""
     patterns = [p.lower().replace("\\", "/") for p in cfg["textures"]]
+    exclude = [p.lower().replace("\\", "/") for p in cfg.get("exclude", [])]
     only = [p.lower().replace("\\", "/") for p in only]
     out = []
     names = archives(cfg, languages(cfg) if langs is None else langs)
+    repo = repo or host.g().root
     for name in names:
         try:
-            arc = ipk.Archive(game_files, name)
-        except (OSError, ipk.ArchiveError) as e:
-            raise CliError("%s: %s" % (os.path.join(game_files, name + ".iph"), e)) from e
+            arc = sources.open_source(game_files, name, cfg, repo)
+        except (OSError, sources.SourceError) as e:
+            raise CliError("%s: %s" % (sources.label(game_files, name, cfg), e)) from e
         for e in arc.entries:
-            if not _match(e.path, patterns):
+            if not _match(e.path, patterns) or _match(e.path, exclude):
                 continue
             if only and not (_match(e.path, only) or _match(os.path.basename(e.path), only)):
                 continue
@@ -214,12 +218,20 @@ def policy(it, art_scale):
     return art_scale, False
 
 
-def _check(it, d, max_texels):
+def _pow2(n):
+    return n > 0 and n & (n - 1) == 0
+
+
+def _check(it, d, max_texels, pow2=False):
     """Set it.dds and it.hash, or it.note with why the texture is left out."""
     if not d.dxt:
         it.note = "skipped: not DXT (%s)" % (d.fourcc.decode("latin-1") or "uncompressed")
     elif d.levels != 1:
         it.note = "skipped: %d mip levels" % d.levels
+    elif pow2 and not (_pow2(d.width) and _pow2(d.height)):
+        # The engine resizes it before upload: the guest copy never hashes
+        # like the file.
+        it.note = "skipped: %dx%d is not a power of two (pow2)" % (d.width, d.height)
     elif max_texels and d.width * d.height > max_texels:
         it.note = "skipped: %dx%d is over max_texels %d" % (d.width, d.height, max_texels)
     else:
@@ -227,7 +239,7 @@ def _check(it, d, max_texels):
         it.hash = texhash.tex_hash(d.data)
 
 
-def load_items(selected, max_texels=0):
+def load_items(selected, max_texels=0, pow2=False):
     items = []
     for arc, e in selected:
         try:
@@ -239,17 +251,17 @@ def load_items(selected, max_texels=0):
                     if d is None:
                         it.note = note
                     else:
-                        _check(it, d, max_texels)
+                        _check(it, d, max_texels, pow2)
                     items.append(it)
                 continue
             d = dds.parse(data)
-        except (ipk.ArchiveError, dds.DdsError, xpr.XprError) as ex:
+        except (sources.SourceError, dds.DdsError, xpr.XprError) as ex:
             it = Item(arc, e)
             it.note = "skipped: %s" % ex
             items.append(it)
             continue
         it = Item(arc, e)
-        _check(it, d, max_texels)
+        _check(it, d, max_texels, pow2)
         items.append(it)
     return items
 
@@ -290,25 +302,41 @@ def _pool_task(args):
 
 
 def upscale_all(items, s, jobs):
-    """Each item's rgba at its scale (s: one for all, or one per item), in
-    item order whatever the job count. jobs 0: as many workers as the free
+    """Yield each item's rgba at its scale (s: one for all, or one per
+    item), in item order whatever the job count. Each item is decoded (its
+    guest rgba in it.rgba) only when its task is sent, and at most two
+    tasks per worker are in flight, so the parent holds a window of
+    results, never the whole set. jobs 0: as many workers as the free
     memory holds (resources.hud_jobs)."""
     scales = s if isinstance(s, (list, tuple)) else [s] * len(items)
-    work = []
-    for it, si in zip(items, scales):
+
+    def task(i):
+        it = items[i]
         w, h, rgba = dds.decode(it.dds)
         it.rgba = (w, h, rgba)
-        work.append((w, h, rgba, si))
-    if not jobs and len(work) > 1:
-        jobs = resources.hud_jobs(len(work))
-    if jobs == 1 or len(work) <= 1:
-        return [_scale_task(a) for a in work]
+        return (w, h, rgba, scales[i])
+
+    n = len(items)
+    if not jobs and n > 1:
+        jobs = resources.hud_jobs(n)
+    if jobs == 1 or n <= 1:
+        for i in range(n):
+            yield _scale_task(task(i))
+        return
+    peaks = []
     with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as ex:
-        got = list(ex.map(_pool_task, work, chunksize=1))
-    peaks = [p for _r, p in got if p]
+        pending = collections.deque()
+        nxt = 0
+        while nxt < n or pending:
+            while nxt < n and len(pending) < 2 * jobs:
+                pending.append(ex.submit(_pool_task, task(nxt)))
+                nxt += 1
+            r, p = pending.popleft().result()
+            if p:
+                peaks.append(p)
+            yield r
     if peaks:
         resources.record("hud:worker", max(peaks), jobs)
-    return [r for r, _p in got]
 
 
 def render_font(it, up, cfg, font_path, face, s):
@@ -340,6 +368,48 @@ def render_font(it, up, cfg, font_path, face, s):
     return rgba, n, info
 
 
+def _upscale_into(usable, plans, s, a, cfg, font_path, face, spill):
+    """(entries, font info or None): the pack's entries, each payload in
+    the spill file. The guest rgba of each item is dropped once its entry
+    is made; the font atlas keeps its own."""
+    font_info = None
+    ups = upscale_all(usable, [p[0] for p in plans], a.jobs)
+    entries = []
+    for it, up, (si, want_bc3) in zip(usable, ups, plans):
+        w, h, _ = it.rgba
+        rgba = up
+        source = "xbr"
+        if it.kind == pack.KIND_FONT and font_path:
+            rgba, n, font_info = render_font(it, up, cfg, font_path, face, si)
+            source = "font (%d glyphs)" % n
+            host.say(
+                "%s: %d glyphs rendered from %s"
+                % (it.entry.path, n, font_info.get("face") or font_info["name"])
+            )
+        uw, uh = w * si, h * si
+        # The runtime takes BC3 in whole blocks only.
+        use_bc3 = want_bc3 and uw % 4 == 0 and uh % 4 == 0
+        if want_bc3 and not use_bc3:
+            host.say("%s: %dx%d is not whole BC3 blocks, kept raw" % (it.label, uw, uh))
+        texels = bc3.encode(uw, uh, rgba) if use_bc3 else pack.rgba_to_argb(rgba)
+        e = pack.PackEntry(
+            it.hash,
+            uw,
+            uh,
+            None,
+            name=it.name,
+            source=source,
+            guest=(w, h),
+            kind=it.kind,
+            bc3=use_bc3,
+        )
+        spill.add(e, texels)
+        entries.append(e)
+        if it.kind != pack.KIND_FONT:
+            it.rgba = None
+    return entries, font_info
+
+
 def run(a):
     from .. import __version__
 
@@ -368,7 +438,9 @@ def run(a):
             return 0
         resources.check_disk([resources.hud_need(out_dir)], getattr(a, "ignore_disk_space", False))
         st.begin("hud")
-    items = load_items(select(G.game_files, cfg, a.only, langs), cfg["max_texels"])
+    items = load_items(
+        select(G.game_files, cfg, a.only, langs), cfg["max_texels"], cfg.get("pow2", False)
+    )
     assign_kinds(items, cfg)
     usable = [it for it in items if it.dds]
     if a.list:
@@ -405,7 +477,6 @@ def run(a):
             host.say("%s: %s" % (it.label, it.note))
     font_atlas = cfg.get("font_atlas", "").lower().replace("\\", "/")
     usable = dedupe(usable, font_atlas)
-    font_info = None
     font_path, face = resolve_font(a.font, cfg.get("font", ""))
     if font_path is None:
         host.say(font_hint(face))
@@ -417,42 +488,18 @@ def run(a):
         "upscaling %d textures (%s): art and font %dx, %d text %dx%s..."
         % (len(usable), scaler.KERNEL, s, n_text, TEXT_SCALE, " BC3" if TEXT_BC3 else "")
     )
-    ups = upscale_all(usable, [p[0] for p in plans], a.jobs)
-    entries = []
-    for it, up, (si, want_bc3) in zip(usable, ups, plans):
-        w, h, _ = it.rgba
-        rgba = up
-        source = "xbr"
-        if it.kind == pack.KIND_FONT and font_path:
-            rgba, n, font_info = render_font(it, up, cfg, font_path, face, si)
-            source = "font (%d glyphs)" % n
-            host.say(
-                "%s: %d glyphs rendered from %s"
-                % (it.entry.path, n, font_info.get("face") or font_info["name"])
-            )
-        uw, uh = w * si, h * si
-        # The runtime takes BC3 in whole blocks only.
-        use_bc3 = want_bc3 and uw % 4 == 0 and uh % 4 == 0
-        if want_bc3 and not use_bc3:
-            host.say("%s: %dx%d is not whole BC3 blocks, kept raw" % (it.label, uw, uh))
-        texels = bc3.encode(uw, uh, rgba) if use_bc3 else pack.rgba_to_argb(rgba)
-        entries.append(
-            pack.PackEntry(
-                it.hash,
-                uw,
-                uh,
-                texels,
-                name=it.name,
-                source=source,
-                guest=(w, h),
-                kind=it.kind,
-                bc3=use_bc3,
-            )
-        )
-    text_scale = TEXT_SCALE if n_text else 0
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "hud.pack")
-    sha = pack.write(path, entries, s, text_scale)
+    # Each payload goes to the spill file as it is made; only the entries'
+    # metadata stays here (a 4x art set of 39 M guest texels is 2.5 GB).
+    spill = pack.Spill(path + ".payload.tmp")
+    try:
+        entries, font_info = _upscale_into(usable, plans, s, a, cfg, font_path, face, spill)
+        spill.close()
+        text_scale = TEXT_SCALE if n_text else 0
+        sha = pack.write(path, entries, s, text_scale, spill=spill.path)
+    finally:
+        spill.discard()
     with open(G.xbe, "rb") as f:
         xbe_sha = hashlib.sha256(f.read()).hexdigest()
     with open(os.path.join(out_dir, "hud-pack.toml"), "w", newline="\n") as f:
@@ -494,12 +541,21 @@ def run(a):
     return 0
 
 
+# Keys added after the first packs, with their defaults. A key at its
+# default is left out of the digest, so a table that does not use it
+# digests as it did before the key existed: a kept pack is not remade, nor
+# reported changed by package, over a CLI update.
+LATER_DEFAULTS = {"source": "ipk", "hook": "", "exclude": [], "pow2": False}
+
+
 def config_digest(cfg):
     """The [enhance.hud] table's digest: a pack is made again the same only
     while it is unchanged."""
     from .. import buildstate
 
-    return buildstate.digest(cfg)
+    return buildstate.digest(
+        {k: v for k, v in cfg.items() if k not in LATER_DEFAULTS or v != LATER_DEFAULTS[k]}
+    )
 
 
 def hud_record(a, cfg, scale, langs, out_dir, st=None, imp=None):
@@ -525,6 +581,13 @@ def hud_record(a, cfg, scale, langs, out_dir, st=None, imp=None):
         "out": st._store_path(out_dir),
         "cli": incr.tree_input(incr.cli_dir.source_dir(), lib),
     }
+    if cfg.get("source", "ipk") == "hook":
+        # The hook is code that picks the bytes: an edit remakes the pack.
+        inputs["source"] = "hook"
+        try:
+            inputs["hook"] = incr._sha(sources.hook_path(G.root, cfg["hook"]))
+        except sources.SourceError as e:
+            raise CliError(str(e)) from e
     if imp is None:
         imp = incr.record_import(st, lib)
     up = {"import": imp}

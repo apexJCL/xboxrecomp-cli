@@ -698,9 +698,11 @@ def build_need(bdir):
 
 
 def hud_need(out_dir):
-    """Twice the last pack (the pack and its store copy), else 512 MiB."""
+    """Three times the last pack, else 512 MiB: the spill file the payloads
+    go to as they are made and the new pack written from it are both on
+    disk while the last pack (or package's store copy of it) still is."""
     try:
-        n = 2 * os.path.getsize(os.path.join(out_dir, "hud.pack"))
+        n = 3 * os.path.getsize(os.path.join(out_dir, "hud.pack"))
     except OSError:
         n = 512 * MiB
     return Need("enhance hud", out_dir, n, "the HUD pack")

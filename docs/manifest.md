@@ -364,8 +364,12 @@ This table is optional. Without it, `enhance hud` says the game names no HUD set
 
 | Key | Default | Meaning |
 |---|---|---|
-| `archives` | required | The IPK1 archives to scan, as basenames under `data.game_files` (`["media"]` reads `media.iph` and `media.ipk`). |
+| `source` | `"ipk"` | The archive reader. `"ipk"`: IPK1 pairs. `"hook"`: a script in the game's repo prints each archive's index (below). |
+| `hook` | `""` | With `source = "hook"` (required there, refused otherwise): the script's path, relative to the game's root with `/`, no `..`. After symlinks it must be a regular file inside the repo. |
+| `archives` | required | The archives to scan. With `"ipk"`, basenames under `data.game_files` (`["media"]` reads `media.iph` and `media.ipk`). With `"hook"`, paths under `data.game_files` with `/` (`["Data/data4.dat"]`), matched case-insensitively part by part, since a dump copied from a disc or a Windows folder may spell `Data` or `data`. Never absolute, never `..`. |
 | `textures` | required | fnmatch patterns, `/` separators, lower case, of the entry names to upscale (`"dds/font_*"`). An entry is a DDS file, or a MIXF container (`.mix`) whose XPR0 textures each become an entry named `<entry>/<name in the MIX>`. Only DXT1/3/5 textures without mip chains are taken; the rest are listed as skipped. |
+| `exclude` | `[]` | Patterns like `textures`'; an entry they match is dropped even when `textures` matched it (`"data/interface/font_backup/*"`). |
+| `pow2` | `false` | Skip textures whose sides are not powers of two, with their own note in the report. The NV2A samples DXT only at power-of-two sizes, so a game that loads a 380x256 file resizes it before upload and the guest copy never hashes like the file: a pack entry for it would never hit. |
 | `scale` | `4` | The upscale factor, 2 or 4 (`--scale` overrides). |
 | `max_texels` | `0` | Entries over this many guest texels are left out; 0 is no limit. Full-screen backgrounds are not HUD, and a 1024x512 one at 4x is 32 MB of texels. |
 | `font_atlas` | `""` | The Latin font atlas's entry name. With a font (`font` or `--font`), it is re-rendered from the font instead of upscaled, at one scale for the whole font (the stock cap height times `scale`) so every glyph keeps the font's proportions and stroke weight. Each glyph is centred across on its stock ink box, on the stock baseline; a descender keeps it too. One that would leave the region its quad samples (`font_margin`) is shifted inside it, or shrunk by one factor on both axes; it is never enlarged. A mark the font draws clear of the baseline (a dash, an underscore, a quote) may move up or down instead. `enhance hud` names any glyph shrunk by more than 8%. `font_stretch` and `font_full_height` trade some of the even weight for the stock spacing and brackets. |
@@ -376,6 +380,15 @@ This table is optional. Without it, `enhance hud` says the game names no HUD set
 | `font` | `""` | The font the atlas is redrawn from, by its full name (`"PT Sans Narrow Bold"`): `enhance hud` looks for it in the host's font folders (a `.ttf`, or a face of a `.ttc` collection) when `--font` is not given. `--font` takes a file or another installed font's full name; in a collection file it picks this face. The user installs the font; the CLI never ships one. |
 | `languages` | `{}` | Per language, the archives holding its text: `{ us = ["lng_us"], jp = ["lng_jp"] }`. `enhance hud --language us` (repeatable; default the first listed) picks the languages built; an archive named here is read only when its language is picked, whether or not `archives` lists it. Every entry of a picked language's archives is text. |
 | `text` | `[]` | fnmatch patterns over `<entry>` or `<entry>/<name in the MIX>`, lower case, of baked text outside the language archives (`"dds/sm_*"`). A `.mix` is not text by itself: games keep pictures in them too. |
+
+**Hook protocol 1.** `enhance hud` runs `<its Python> -I <repo>/<hook> index <absolute archive path>` once per archive, in a fresh temporary folder (never the dump nor the repo), in isolated mode (no user site-packages, no `PYTHON*` variables): the hook may import only the standard library, and not the modules beside it either, since isolated mode leaves the script's folder off `sys.path`: keep a hook to one file. It prints one JSON object:
+
+```json
+{"xbr_archive_index": 1,
+ "entries": [{"name": "data\\interface\\efont.dds", "offset": 1234, "size": 524416}]}
+```
+
+Each name is non-empty and unique once lower-cased with `\` turned into `/` (the form the patterns match); each offset and size is a whole number, not negative, and the range lies inside the archive. The CLI reads the ranges itself. The hook has 60 s and 64 MB of output; a nonzero exit, either limit or a bad entry stops `enhance hud` with the hook's name and the end of its stderr. The hook's sha256 is an input of the pack: an edited hook makes it again.
 
 Each pack entry has a kind the runtime switches off on its own (`textures.font`, `textures.text`): the `font_atlas` entry is **font**, the language archives' entries and the `text` patterns' are **text**, the rest is **art**. Text is built at 2x in BC3 (a quarter of the raw bytes; the sources are DXT already), art and the atlas at `scale` as A8R8G8B8. `hud-pack.toml` beside the pack gives per kind the entries, scale, BC3 count and bytes.
 

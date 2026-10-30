@@ -176,7 +176,11 @@ when memory or disk is low (never a problem: doctor builds nothing).
 parts and what it lacks: the env table, the enhancements layer (which
 reads `config.toml`), the D3D11 and Metal renderers and recomp's
 `--spin-waits`. Upstream xboxrecomp has none of them, so a build on its
-pin runs on the CPU rasteriser with stock settings. Exit 1 when the game's
+pin runs on the CPU rasteriser with stock settings. A warning names a
+build tree whose CMake cache keeps `XBOXRECOMP_ENHANCE` off while
+`build.stock_cmake` turns it on (a tree configured before the game did:
+`build` configures a tree once), with the `build -- -DXBOXRECOMP_ENHANCE=ON`
+that turns it on. Exit 1 when the game's
 steamos target is blocked, or when anything is missing for a game without
 one.
 
@@ -249,6 +253,13 @@ Needs `[enhance.hud]` in `game.toml`.
 | `--only PATTERN` | narrow the set to matching entries (repeatable) |
 | `--language LANG` | a language of `[enhance.hud] languages` to build the text of (repeatable; default: the first listed) |
 | `--list` | print the set and its hashes, write nothing |
+
+The archives are read by `[enhance.hud] source`: IPK1 pairs, or a hook
+script in the game's repo that prints each archive's index
+([manifest.md](manifest.md#enhancehud)). Each payload goes to
+`hud.pack.payload.tmp` beside the pack as it is made and is copied into
+`hud.pack` at the end, so memory holds the entries' metadata, not the
+pack; the disk needs about three times the last pack.
 
 A pack is made from game data and is never published; `package --hud-pack`
 puts it in the owner's private bundle.

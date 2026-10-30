@@ -33,7 +33,8 @@ FLAG_BC3 = 0x10
 class PackEntry:
     """`texels` is A8R8G8B8 little-endian bytes for every level, level 0
     first, or BC3 blocks of one level when `bc3`; `name` and `source` are
-    for the manifest only."""
+    for the manifest only. An entry Spill.add wrote has texels None and
+    its payload's place in the spill file instead."""
 
     __slots__ = (
         "hash",
@@ -46,6 +47,7 @@ class PackEntry:
         "guest",
         "kind",
         "bc3",
+        "spilled",
     )
 
     def __init__(
@@ -71,10 +73,47 @@ class PackEntry:
         self.guest = guest
         self.kind = kind
         self.bc3 = bc3
+        self.spilled = None  # (offset, length, sha256) in the spill file
 
     @property
     def flags(self):
         return self.kind | (FLAG_BC3 if self.bc3 else 0)
+
+    @property
+    def nbytes(self):
+        return self.spilled[1] if self.spilled else len(self.texels)
+
+    @property
+    def texels_sha256(self):
+        return self.spilled[2] if self.spilled else hashlib.sha256(self.texels).hexdigest()
+
+
+class Spill:
+    """The payloads of a pack being made, appended in the order they are
+    made, so the entries can drop their texels; write(spill=) copies them
+    out in hash order."""
+
+    def __init__(self, path):
+        self.path = path
+        self._f = open(path, "wb")
+        self._off = 0
+
+    def add(self, entry, texels):
+        entry.spilled = (self._off, len(texels), hashlib.sha256(texels).hexdigest())
+        entry.texels = None
+        self._f.write(texels)
+        self._off += len(texels)
+
+    def close(self):
+        if not self._f.closed:
+            self._f.close()
+
+    def discard(self):
+        self.close()
+        try:
+            os.remove(self.path)
+        except FileNotFoundError:
+            pass
 
 
 def rgba_to_argb(rgba):
@@ -87,11 +126,14 @@ def rgba_to_argb(rgba):
     return bytes(out)
 
 
-def write(path, entries, scale, text_scale=0):
+def write(path, entries, scale, text_scale=0, spill=None):
     """Write the pack; returns its sha256. Entries are sorted by hash here,
     and two entries with one hash are an error (the index must be unique).
     `text_scale` is what text entries were upscaled by, 0 when it is
-    `scale`; the runtime only logs it."""
+    `scale`; the runtime only logs it. spill: the closed Spill file the
+    entries' payloads are in (each entry's `spilled`), copied in hash
+    order in COPY_CHUNK pieces, then removed; the bytes are the same as
+    from texels held in memory."""
     entries = sorted(entries, key=lambda e: e.hash)
     for a, b in zip(entries, entries[1:]):
         if a.hash == b.hash:
@@ -107,6 +149,23 @@ def write(path, entries, scale, text_scale=0):
     # A new file renamed over the old one, never the old one rewritten:
     # package's pack store may hold a hard link to it (a kept pack's bytes).
     tmp = path + ".tmp"
+    try:
+        _write_body(tmp, entries, scale, text_scale, spill, h, index_off, payload_off)
+        os.replace(tmp, path)
+    except BaseException:
+        # Disk full, a short spill file or Ctrl-C: a KUF-sized pack.tmp is
+        # gigabytes, so it never outlives the failed write.
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+    if spill is not None:
+        os.remove(spill)
+    return h.hexdigest()
+
+
+def _write_body(tmp, entries, scale, text_scale, spill, h, index_off, payload_off):
     with open(tmp, "wb") as f:
         head = HEADER.pack(MAGIC, VERSION, len(entries), scale, index_off, text_scale)
         f.write(head)
@@ -116,12 +175,29 @@ def write(path, entries, scale, text_scale=0):
             rec = ENTRY.pack(e.hash, e.width, e.height, e.levels, e.flags, off)
             f.write(rec)
             h.update(rec)
-            off += len(e.texels)
-        for e in entries:
-            f.write(e.texels)
-            h.update(e.texels)
-    os.replace(tmp, path)
-    return h.hexdigest()
+            off += e.nbytes
+        if spill is None:
+            for e in entries:
+                f.write(e.texels)
+                h.update(e.texels)
+        else:
+            with open(spill, "rb") as src:
+                for e in entries:
+                    _copy_range(src, e.spilled[0], e.spilled[1], f, h, e.name)
+
+
+COPY_CHUNK = 1 << 20
+
+
+def _copy_range(src, off, n, dst, h, name):
+    src.seek(off)
+    while n:
+        b = src.read(min(n, COPY_CHUNK))
+        if not b:
+            raise ValueError("spill file ends inside %s's payload" % name)
+        dst.write(b)
+        h.update(b)
+        n -= len(b)
 
 
 def read_header(path):
@@ -146,7 +222,7 @@ def kind_stats(entries):
         s = stats[KINDS[e.kind]]
         s[0] += 1
         s[1] += 1 if e.bc3 else 0
-        s[2] += len(e.texels)
+        s[2] += e.nbytes
     return {k: tuple(v) for k, v in stats.items()}
 
 
@@ -208,6 +284,6 @@ def manifest_text(
         lines.append('kind = "%s"' % KINDS[e.kind])
         if e.bc3:
             lines.append("bc3 = true")
-        lines.append('texels_sha256 = "%s"' % hashlib.sha256(e.texels).hexdigest())
+        lines.append('texels_sha256 = "%s"' % e.texels_sha256)
         lines.append("")
     return "\n".join(lines)

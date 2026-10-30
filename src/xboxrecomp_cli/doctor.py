@@ -206,6 +206,36 @@ FEATURES = [None]
 RESOURCES = [None]
 
 
+def enhance_off_warnings(g, slug):
+    """A build tree of this checkout configured with the enhancements layer
+    off while game.toml's stock build turns it on. CMake keeps a cached
+    value and `build` configures a tree only once, so a tree made before
+    the game set ON (or by a CMakeLists without an ON default) stays off:
+    no render scale, no menu options of the layer, no HUD pack loader."""
+    from . import manifest
+    from .package import lib as pkg_lib
+
+    if not manifest.builds_enhance(g.m):
+        return []
+    out, seen = [], set()
+    for t in g.m["build"]["targets"]:
+        bdir = g.build_dir(t)
+        if bdir in seen:
+            continue
+        seen.add(bdir)
+        cache = os.path.join(bdir, "CMakeCache.txt")
+        if not os.path.isfile(cache):
+            continue
+        v = pkg_lib.read_cache(cache).get("XBOXRECOMP_ENHANCE")
+        if v is not None and not pkg_lib.enhance_on({"XBOXRECOMP_ENHANCE": v}):
+            out.append(
+                "%s caches XBOXRECOMP_ENHANCE=%s, so its build has no enhancements layer "
+                "(nor HUD pack): %s build %s -- -DXBOXRECOMP_ENHANCE=ON"
+                % (g.rel(bdir), v or '""', slug, t)
+            )
+    return out
+
+
 def doctor_report():
     """(lines, packageable targets, blocked {target: reason})."""
     from . import dump
@@ -314,6 +344,8 @@ def doctor_report():
         "gen/:       %s"
         % ("present" if gen_ok else "not generated yet (%s analyze, %s recomp)" % (slug, slug))
     )
+    for w in enhance_off_warnings(g, slug):
+        lines.append("warning:    " + w)
     envs = [g.m["game"][k] for k in ("env_header", "env_doc") if g.m["game"][k]]
     if envs:
         lines.append(

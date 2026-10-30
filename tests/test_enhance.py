@@ -1311,3 +1311,533 @@ def test_package_hud_pack(d):
         raises(pkg.stage_hud_pack, payload, "windows", info, match="already has a")
         write(os.path.join(payload, "config.default.toml"), '# [textures]\n# pack = "x"\n')
         assert pkg.stage_hud_pack(payload, "windows", info)["entries"] == 1
+
+
+# ---- archive sources: the hook, streaming, BLiNX 2 unchanged -----------------
+
+# What CLI 5ae107c (before sources, exclude, pow2 and the spill file)
+# made of hud_game's table without a font: a table that does not use the
+# new keys must make the same pack, manifest and digest.
+PIN_DIGEST = "e0f4d4219508fd44a38fca3c897dd7d124ed7ef64ee015cad77d30bc5580b022"
+PIN_PACK = "c4466c6d4c08bf46a5050fcefab9b63775febac13bf7b2dd3a98ad853c43395e"
+PIN_TOML = (
+    "# Texture pack manifest, written by xbr enhance hud. The pack is made\n"
+    "# from your own game files: keep it private.\nschema = 1\n"
+    'tool = "xboxrecomp-cli 0.16.0"\nscale = 2\nkernel = "xbr-lv2-int"\n'
+    'xbe_sha256 = "9410ab98ab7a3ef7346b85d11dd591cd101b8cd439bf72c0d07906de3148cf66"\n'
+    "languages = []\nentries = 2\n"
+    'pack_sha256 = "c4466c6d4c08bf46a5050fcefab9b63775febac13bf7b2dd3a98ad853c43395e"\n'
+    "only = []\n"
+    'config = "e0f4d4219508fd44a38fca3c897dd7d124ed7ef64ee015cad77d30bc5580b022"\n\n'
+    "[kinds.art]\nentries = 1\nscale = 2\nbc3 = 0\nbytes = 512\n\n"
+    "[kinds.font]\nentries = 1\nscale = 2\nbc3 = 0\nbytes = 16384\n\n"
+    "[kinds.text]\nentries = 0\nscale = 2\nbc3 = 0\nbytes = 0\n\n"
+    '[[entry]]\nhash = "32C9FCB162C88693"\nname = "media:dds/font_test.dds"\n'
+    'source = "xbr"\nguest = [32, 32]\nsize = [64, 64]\nlevels = 1\nkind = "font"\n'
+    'texels_sha256 = "515ea1f9157af05864a267b7005ab2133f2b3e2d68e1900dafd69c90956bf344"\n\n'
+    '[[entry]]\nhash = "BB6EE74B73A7A453"\nname = "media:dds/ui_bar.dds"\n'
+    'source = "xbr"\nguest = [8, 4]\nsize = [16, 8]\nlevels = 1\nkind = "art"\n'
+    'texels_sha256 = "b8644ab9d0b2bf3b8464322a2ea0a0c8c7ec3509de362ae7e16044b032795f20"\n'
+)
+
+
+# The same from kinds_game at jobs 3: the BLiNX 2 text path (language
+# archives, .mix pictures, BC3 text at 2x) and the worker pool.
+PIN_TEXT_DIGEST = "d8baa1046239738b8075a809fe14c4060806af6929cfc4895f32b150a12a8d6d"
+PIN_TEXT_PACK = "4dacd60257bc3208a0c72bf62ef0c92cead1fa002683b1427f7521d254b702ea"
+PIN_TEXT_TOML = (
+    "# Texture pack manifest, written by xbr enhance hud. The pack is made\n"
+    "# from your own game files: keep it private.\n"
+    "schema = 1\n"
+    'tool = "xboxrecomp-cli 0.16.0"\n'
+    "scale = 2\n"
+    'kernel = "xbr-lv2-int"\n'
+    'xbe_sha256 = "9410ab98ab7a3ef7346b85d11dd591cd101b8cd439bf72c0d07906de3148cf66"\n'
+    'languages = ["us"]\n'
+    "entries = 5\n"
+    'pack_sha256 = "4dacd60257bc3208a0c72bf62ef0c92cead1fa002683b1427f7521d254b702ea"\n'
+    "only = []\n"
+    'config = "d8baa1046239738b8075a809fe14c4060806af6929cfc4895f32b150a12a8d6d"\n'
+    "\n"
+    "[kinds.art]\n"
+    "entries = 2\n"
+    "scale = 2\n"
+    "bc3 = 0\n"
+    "bytes = 1536\n"
+    "\n"
+    "[kinds.font]\n"
+    "entries = 1\n"
+    "scale = 2\n"
+    "bc3 = 0\n"
+    "bytes = 16384\n"
+    "\n"
+    "[kinds.text]\n"
+    "entries = 2\n"
+    "scale = 2\n"
+    "bc3 = 2\n"
+    "bytes = 192\n"
+    "\n"
+    "[[entry]]\n"
+    'hash = "32C9FCB162C88693"\n'
+    'name = "media:dds/font_test.dds"\n'
+    'source = "xbr"\n'
+    "guest = [32, 32]\n"
+    "size = [64, 64]\n"
+    "levels = 1\n"
+    'kind = "font"\n'
+    'texels_sha256 = "515ea1f9157af05864a267b7005ab2133f2b3e2d68e1900dafd69c90956bf344"\n'
+    "\n"
+    "[[entry]]\n"
+    'hash = "4EA38A2101078B19"\n'
+    'name = "media:dds/ui_pic.mix/pic"\n'
+    'source = "xbr"\n'
+    "guest = [8, 8]\n"
+    "size = [16, 16]\n"
+    "levels = 1\n"
+    'kind = "art"\n'
+    'texels_sha256 = "b2f91d553bdd408c5c859d9985b717003a0185b02aeeef35456f457d133f6102"\n'
+    "\n"
+    "[[entry]]\n"
+    'hash = "728957F3030765A3"\n'
+    'name = "lng_us:mis/m.mix/m_us"\n'
+    'source = "xbr"\n'
+    "guest = [8, 4]\n"
+    "size = [16, 8]\n"
+    "levels = 1\n"
+    'kind = "text"\n'
+    "bc3 = true\n"
+    'texels_sha256 = "ea14f2795a3b60fc65c1bc42ed29d67f6d4db005977126f65eb19964e34b7175"\n'
+    "\n"
+    "[[entry]]\n"
+    'hash = "BB6EE74B73A7A453"\n'
+    'name = "media:dds/ui_bar.dds"\n'
+    'source = "xbr"\n'
+    "guest = [8, 4]\n"
+    "size = [16, 8]\n"
+    "levels = 1\n"
+    'kind = "art"\n'
+    'texels_sha256 = "b8644ab9d0b2bf3b8464322a2ea0a0c8c7ec3509de362ae7e16044b032795f20"\n'
+    "\n"
+    "[[entry]]\n"
+    'hash = "C6255F5FD09BCFF6"\n'
+    'name = "media:dds/ui_sm_go.dds"\n'
+    'source = "xbr"\n'
+    "guest = [4, 4]\n"
+    "size = [8, 8]\n"
+    "levels = 1\n"
+    'kind = "text"\n'
+    "bc3 = true\n"
+    'texels_sha256 = "046d35e4d941316dbabcde145e4272ef583fb0c30e355842aef2b1b6bb73d0d6"\n'
+)
+
+
+def _tool_line(text):
+    import re
+
+    return re.sub(r'(?m)^tool = ".*"$', 'tool = "T"', text)
+
+
+def test_hud_pinned_to_5ae107c(d):
+    """A table without the new keys (manifest fills their defaults in)
+    digests, packs and writes its manifest as CLI 5ae107c did, and package
+    does not call a pack 5ae107c made changed."""
+    from xboxrecomp_cli.package import tweaks
+
+    with fake_tree(d):
+        G = hud_game(d)
+        cfg = G.m["enhance"]["hud"]
+        assert cfg["source"] == "ipk" and cfg["pow2"] is False
+        assert hud.config_digest(cfg) == PIN_DIGEST
+        assert hud.run(hud_args()) == 0
+        out = os.path.join(G.dist, "enhance", "hud")
+        assert host.sha256_path(os.path.join(out, "hud.pack")) == PIN_PACK
+        assert not os.path.exists(os.path.join(out, "hud.pack.payload.tmp"))
+        with open(os.path.join(out, "hud-pack.toml"), newline="") as f:
+            assert _tool_line(f.read()) == _tool_line(PIN_TOML)
+        made = {"pack_sha256": PIN_PACK, "only": [], "config": PIN_DIGEST}
+        assert tweaks.remake_problem(made) == ("", None)
+        cfg["pow2"] = True
+        assert hud.config_digest(cfg) != PIN_DIGEST
+        assert tweaks.remake_problem(made)[0] == "the HUD settings changed"
+
+
+def test_hud_text_path_pinned_to_5ae107c(d):
+    """Language archives, .mix entries and BC3 text, made by three workers,
+    give 5ae107c's digest, pack and manifest."""
+    with fake_tree(d):
+        G, _ = kinds_game(d)
+        cfg = G.m["enhance"]["hud"]
+        assert hud.config_digest(cfg) == PIN_TEXT_DIGEST
+        assert hud.run(hud_args(jobs=3)) == 0
+        out = os.path.join(G.dist, "enhance", "hud")
+        assert host.sha256_path(os.path.join(out, "hud.pack")) == PIN_TEXT_PACK
+        with open(os.path.join(out, "hud-pack.toml"), newline="") as f:
+            assert _tool_line(f.read()) == _tool_line(PIN_TEXT_TOML)
+
+
+def test_both_pack_writers_agree(d):
+    """The spill-file writer gives the in-memory writer's bytes, whatever
+    order the payloads were spilled in."""
+
+    def entries():
+        return [
+            pack.PackEntry(9, 2, 1, b"\x01" * 8, name="b"),
+            pack.PackEntry(3, 4, 4, bytes(range(64)), name="a", kind=pack.KIND_TEXT, bc3=True),
+            pack.PackEntry(5, 1, 1, b"\x02\x03\x04\x05", name="c", kind=pack.KIND_FONT),
+        ]
+
+    mem = entries()
+    a = pack.write(os.path.join(d, "a.pack"), mem, 4, 2)
+    old = pack.COPY_CHUNK
+    pack.COPY_CHUNK = 5  # several pieces per payload
+    try:
+        sp = pack.Spill(os.path.join(d, "spill.tmp"))
+        meta = entries()
+        for e in meta:
+            sp.add(e, e.texels)
+        sp.close()
+        assert all(e.texels is None for e in meta)
+        b = pack.write(os.path.join(d, "b.pack"), meta, 4, 2, spill=sp.path)
+    finally:
+        pack.COPY_CHUNK = old
+    assert a == b
+    assert (
+        open(os.path.join(d, "a.pack"), "rb").read() == open(os.path.join(d, "b.pack"), "rb").read()
+    )
+    assert not os.path.exists(sp.path)
+    assert pack.kind_stats(meta) == pack.kind_stats(mem)
+    assert pack.manifest_text(meta, 4, "k", "t", "x" * 64) == pack.manifest_text(
+        mem, 4, "k", "t", "x" * 64
+    )
+
+
+def test_failed_pack_write_leaves_no_tmp(d):
+    """A spill file that ends early, or Ctrl-C mid-write, removes
+    hud.pack.tmp and keeps the old pack."""
+    path = os.path.join(d, "hud.pack")
+    with open(path, "wb") as f:
+        f.write(b"old")
+    sp = pack.Spill(os.path.join(d, "spill.tmp"))
+    e = pack.PackEntry(9, 2, 1, b"\x01" * 8, name="b")
+    sp.add(e, e.texels)
+    sp.close()
+    e.spilled = (e.spilled[0], e.spilled[1] + 4, e.spilled[2])
+    with pytest.raises(ValueError, match="spill file ends inside b"):
+        pack.write(path, [e], 4, spill=sp.path)
+    assert not os.path.exists(path + ".tmp")
+    assert open(path, "rb").read() == b"old"
+
+    old = pack._copy_range
+
+    def interrupted(*a):
+        raise KeyboardInterrupt
+
+    pack._copy_range = interrupted
+    try:
+        e.spilled = (e.spilled[0], e.spilled[1] - 4, e.spilled[2])
+        with pytest.raises(KeyboardInterrupt):
+            pack.write(path, [e], 4, spill=sp.path)
+    finally:
+        pack._copy_range = old
+    assert not os.path.exists(path + ".tmp")
+    assert open(path, "rb").read() == b"old"
+
+
+# A protocol 1 hook over the test's archive format: the payloads, then a
+# JSON list of [name, offset, size], then its length as 8 ASCII digits.
+HOOK = """\
+import json, sys
+
+assert sys.argv[1] == "index"
+with open(sys.argv[2], "rb") as f:
+    data = f.read()
+n = int(data[-8:])
+rows = json.loads(data[-8 - n : -8])
+print(json.dumps({"xbr_archive_index": 1,
+                  "entries": [{"name": a, "offset": b, "size": c} for a, b, c in rows]}))
+"""
+
+
+def write_dat(path, files):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    body, rows = bytearray(), []
+    for name, data in files:
+        rows.append([name, len(body), len(data)])
+        body += data + b"\xee" * 3
+    idx = __import__("json").dumps(rows).encode()
+    with open(path, "wb") as f:
+        f.write(bytes(body) + idx + b"%08d" % len(idx))
+
+
+HOOK_TOML = """
+[enhance.hud]
+source = "hook"
+hook = "scripts/dat_index.py"
+archives = ["Data/data4.dat"]
+textures = ["data/ui/*"]
+exclude = ["data/ui/backup/*"]
+pow2 = true
+scale = 2
+"""
+
+
+def hook_game(d, hook=HOOK):
+    """The fake game with a hook source: data/DATA4.DAT on disk (the table
+    spells it Data/data4.dat) holding the 8x4 UI bar, an excluded copy, a
+    12x4 texture pow2 skips, a mipped one and one outside the patterns."""
+    G = host.g()
+    G.m["enhance"] = manifest.parse_text(
+        open(os.path.join(G.root, "game.toml")).read() + HOOK_TOML
+    )["enhance"]
+    write(os.path.join(G.root, "scripts", "dat_index.py"), hook)
+    bar = dds_file(8, 4, b"DXT1", dxt1_blocks(8, 4))
+    write_dat(
+        os.path.join(G.game_files, "data", "DATA4.DAT"),
+        [
+            ("Data\\UI\\Bar.dds", bar),
+            ("data\\ui\\backup\\bar.dds", dds_file(8, 4, b"DXT1", dxt1_blocks(8, 4, 1))),
+            ("data\\ui\\wide.dds", dds_file(12, 4, b"DXT1", dxt1_blocks(12, 4, 2))),
+            ("data\\ui\\mip.dds", dds_file(8, 8, b"DXT1", dxt1_blocks(8, 8) * 2, mips=2)),
+            ("data\\other.dds", dds_file(4, 4, b"DXT1", dxt1_blocks(4, 4))),
+        ],
+    )
+    return G
+
+
+def test_hud_hook_source(d, capsys):
+    """The hook's index selects like an IPK1 one: exclude, pow2's own note,
+    the same hash as the IPK1 fixture's bar; an edited hook remakes the
+    pack, and the hook's sha256 is a stage input."""
+    with fake_tree(d):
+        G = hook_game(d)
+        assert hud.run(hud_args(list=True)) == 0
+        out = capsys.readouterr().out
+        bar_hash = texhash.tex_hash(dxt1_blocks(8, 4))
+        assert "%016X  data/ui/bar.dds" % bar_hash in out
+        assert "backup" not in out and "data/other.dds" not in out
+        assert "data/ui/wide.dds" in out and "12x4 is not a power of two (pow2)" in out
+        assert "skipped: 2 mip levels" in out
+        assert "3 entries, 1 usable" in out
+        assert hud.run(hud_args()) == 0
+        out_dir = os.path.join(G.dist, "enhance", "hud")
+        got = read_pack(os.path.join(out_dir, "hud.pack"))
+        assert list(got) == [bar_hash] and got[bar_hash][:2] == (16, 8)
+        man = open(os.path.join(out_dir, "hud-pack.toml")).read()
+        assert 'name = "Data/data4.dat:Data/UI/Bar.dds"' in man
+        st, (_key, inputs, _up) = hud.hud_record(hud_args(), G.m["enhance"]["hud"], 2, [], out_dir)
+        hook_file = os.path.join(G.root, "scripts", "dat_index.py")
+        assert inputs["source"] == "hook" and inputs["hook"] == host.sha256_path(hook_file)
+        capsys.readouterr()
+        hud.run(hud_args())
+        assert "is current" in capsys.readouterr().out
+        write(hook_file, HOOK + "# edited\n")
+        hud.run(hud_args())
+        assert "is current" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "doc,match",
+    [
+        ({"xbr_archive_index": 2, "entries": []}, "version 1"),
+        ({"entries": []}, "version 1"),
+        ({"xbr_archive_index": 1}, "no entries list"),
+        ({"xbr_archive_index": 1, "entries": [5]}, "entry 0 is not an object"),
+        ({"xbr_archive_index": 1, "entries": [{"name": "", "offset": 0, "size": 1}]}, "name"),
+        ({"xbr_archive_index": 1, "entries": [{"name": 3, "offset": 0, "size": 1}]}, "name"),
+        ({"xbr_archive_index": 1, "entries": [{"name": "a", "offset": True, "size": 1}]}, "offset"),
+        ({"xbr_archive_index": 1, "entries": [{"name": "a", "offset": 0, "size": False}]}, "size"),
+        ({"xbr_archive_index": 1, "entries": [{"name": "a", "offset": -1, "size": 1}]}, "offset"),
+        ({"xbr_archive_index": 1, "entries": [{"name": "a", "offset": 1.0, "size": 1}]}, "offset"),
+        (
+            {"xbr_archive_index": 1, "entries": [{"name": "a", "offset": 90, "size": 11}]},
+            "run past",
+        ),
+        (
+            {
+                "xbr_archive_index": 1,
+                "entries": [
+                    {"name": "A\\b.dds", "offset": 0, "size": 1},
+                    {"name": "a/B.dds", "offset": 1, "size": 1},
+                ],
+            },
+            "entry 1 .*same path as entry 0",
+        ),
+    ],
+)
+def test_hook_index_checks(doc, match):
+    from xboxrecomp_cli.enhance import sources
+
+    with pytest.raises(sources.SourceError, match=match):
+        sources.check_index(doc, 100)
+
+
+@pytest.mark.parametrize(
+    "hook,match",
+    [
+        ("import sys\nsys.stderr.write('boom\\n')\nsys.exit(3)\n", "exited 3:\n  boom"),
+        ("print('not json')\n", "not JSON"),
+        ('print(\'{"xbr_archive_index": 1, "entries": 4}\')\n', "no entries list"),
+        ("import time\ntime.sleep(30)\n", "no index after 1 s"),
+        ("import sys\nsys.stdout.write('x' * (3 << 20))\n", "printed more than 1 MB"),
+    ],
+)
+def test_hook_failures(d, hook, match, monkeypatch):
+    from xboxrecomp_cli.enhance import sources
+
+    monkeypatch.setattr(sources, "TIMEOUT", 1)
+    monkeypatch.setattr(sources, "STDOUT_MAX", 1 << 20)
+    with fake_tree(d):
+        hook_game(d, hook)
+        with pytest.raises(host.CliError, match="data4.dat.*hook scripts/dat_index.py.*" + match):
+            hud.run(hud_args())
+
+
+GRANDCHILD = """\
+import subprocess, sys, time
+# A child that inherits stdout and outlives the hook's own deadline.
+subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+sys.stdout.write(sys.argv[1] * int(sys.argv[2]))
+sys.stdout.flush()
+time.sleep(30)
+"""
+
+
+@pytest.mark.parametrize(
+    "n, why", [("0", "no index after 1 s"), (str(3 << 20), "printed more than 1 MB")]
+)
+def test_hook_tree_killed_with_a_grandchild_on_stdout(d, n, why):
+    """The timeout and the cap hold when a child of the hook keeps stdout
+    open: the whole group goes, not only the hook."""
+    import time
+
+    from xboxrecomp_cli.enhance import sources
+
+    script = os.path.join(d, "gc.py")
+    write(script, GRANDCHILD)
+    t0 = time.monotonic()
+    rc, _, _, got = sources.run_hook([sys.executable, "-I", script, "x", n], timeout=1, cap=1 << 20)
+    assert got == why
+    assert rc != 0
+    assert time.monotonic() - t0 < 10
+
+
+def test_hook_tree_killed_on_interrupt(d, monkeypatch):
+    """Ctrl-C while the hook runs kills its group too."""
+    import threading
+    import time
+
+    from xboxrecomp_cli.enhance import sources
+
+    script = os.path.join(d, "gc.py")
+    write(script, GRANDCHILD)
+    seen = {}
+    real = sources._kill_tree
+
+    def spy(p):
+        seen["pid"] = p.pid
+        real(p)
+
+    monkeypatch.setattr(sources, "_kill_tree", spy)
+    real_join = threading.Thread.join
+
+    def join(self, timeout=None):
+        if timeout == 30:
+            raise KeyboardInterrupt
+        return real_join(self, timeout)
+
+    monkeypatch.setattr(threading.Thread, "join", join)
+    t0 = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        sources.run_hook([sys.executable, "-I", script, "x", "0"], timeout=30)
+    assert time.monotonic() - t0 < 10
+    if os.name != "nt":
+        # The orphaned grandchild is reaped by init a moment later.
+        for _ in range(50):
+            try:
+                os.killpg(seen["pid"], 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("the hook's group outlived the interrupt")
+
+
+def test_hook_archive_not_a_file_or_unreadable(d):
+    """An archive that is a folder is refused by name; one that cannot be
+    read when a texture is read becomes that texture's skip note."""
+    from xboxrecomp_cli.enhance import sources
+
+    with fake_tree(d):
+        G = hook_game(d)
+        dat = os.path.join(G.game_files, "data", "DATA4.DAT")
+        os.rename(dat, dat + ".x")
+        os.makedirs(dat)
+        with pytest.raises(host.CliError, match="(?i)data/data4.dat: not a file"):
+            hud.run(hud_args())
+        os.rmdir(dat)
+        os.rename(dat + ".x", dat)
+        cfg = dict(G.m["enhance"]["hud"])
+        arc = sources.open_source(G.game_files, "Data/data4.dat", cfg, G.root)
+        os.remove(dat)
+        with pytest.raises(sources.SourceError, match="Bar.dds: .*No such file"):
+            arc.read(arc.entries[0])
+
+
+def test_hook_runs_isolated(d, capsys):
+    """The hook runs with -I in a fresh folder, never the repo or the dump."""
+    probe = (
+        "import json, os, sys\n"
+        "sys.stderr.write(json.dumps([os.getcwd(), sys.flags.isolated]))\n"
+        "sys.exit(1)\n"
+    )
+    with fake_tree(d):
+        G = hook_game(d, probe)
+        try:
+            hud.run(hud_args())
+        except host.CliError as e:
+            import json
+
+            cwd, isolated = json.loads(str(e).split("\n  ", 1)[1])
+        assert isolated == 1
+        assert not os.path.exists(cwd)
+        real = os.path.realpath(cwd)
+        for top in (G.root, G.game_files):
+            assert os.path.commonpath([real, os.path.realpath(top)]) != os.path.realpath(top)
+
+
+def test_hook_path_refusals(d):
+    from xboxrecomp_cli.enhance import sources
+
+    with fake_tree(d):
+        G = hook_game(d)
+        outside = os.path.join(os.path.dirname(G.root), "outside.py")
+        write(outside, HOOK)
+        os.symlink(outside, os.path.join(G.root, "scripts", "link.py"))
+        G.m["enhance"]["hud"]["hook"] = "scripts/link.py"
+        with pytest.raises(host.CliError, match="resolves outside the repo"):
+            hud.run(hud_args())
+        G.m["enhance"]["hud"]["hook"] = "../outside.py"
+        with pytest.raises(host.CliError, match="must not hold .."):
+            hud.run(hud_args())
+        G.m["enhance"]["hud"]["hook"] = "scripts/none.py"
+        with pytest.raises(host.CliError, match="no such file"):
+            hud.run(hud_args())
+        G.m["enhance"]["hud"]["hook"] = "scripts/dat_index.py"
+        G.m["enhance"]["hud"]["archives"] = ["Data/missing.dat"]
+        with pytest.raises(host.CliError, match="no such file"):
+            hud.run(hud_args())
+        with pytest.raises(sources.SourceError, match="must not hold"):
+            sources.HookArchive(G.game_files, "../x.dat", "scripts/dat_index.py", G.root)
+
+
+def test_ipk_errors_unchanged(d):
+    """An IPK1 failure reads as before the sources: the .iph path, the
+    archive module's text."""
+    with fake_tree(d):
+        G = hud_game(d)
+        write(os.path.join(G.game_files, "media.iph"), "XXXX" + "\0" * 12)
+        with pytest.raises(host.CliError, match=r"media\.iph: not an IPK1 index"):
+            hud.run(hud_args())
+        os.remove(os.path.join(G.game_files, "media.iph"))
+        with pytest.raises(host.CliError, match=r"media\.iph: .*No such file"):
+            hud.run(hud_args())

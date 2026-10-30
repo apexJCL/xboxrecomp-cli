@@ -393,8 +393,8 @@ def test_upscale_same_at_any_job_count(state):
         types.SimpleNamespace(dds=dds.parse(dds_file(8, 8, b"DXT1", dxt1_blocks(8, 8, i % 4))))
         for i in range(5)
     ]
-    one = hud.upscale_all(items, 2, 1)
-    three = hud.upscale_all(items, 2, 3)
+    one = list(hud.upscale_all(items, 2, 1))
+    three = list(hud.upscale_all(items, 2, 3))
     assert one == three and len(one) == 5
     assert resources.peak_of("hud:worker")
 

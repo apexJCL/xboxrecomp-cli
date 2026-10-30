@@ -1193,3 +1193,24 @@ def test_refusal_prints_its_code(monkeypatch):
         "g: --patch-from X (v1): another target; make the full bundle",
         "g: refused: target",
     ], err.getvalue()
+
+
+def test_doctor_warns_of_a_tree_with_enhance_off(d):
+    """A tree configured before the game turned the enhancements layer on
+    keeps its cached OFF (build configures a tree once): doctor says so and
+    how to turn it on."""
+    from xboxrecomp_cli import doctor as doctor_mod
+
+    with fake_tree(d):
+        G = host.g()
+        G.m["build"]["targets"] = ["windows", "macos"]
+        G.m["build"]["stock_cmake"] = ["-DXBOXRECOMP_ENHANCE=ON"]
+        win, mac = G.build_dir("windows"), G.build_dir("macos")
+        write(os.path.join(win, "CMakeCache.txt"), "XBOXRECOMP_ENHANCE:BOOL=OFF\n")
+        write(os.path.join(mac, "CMakeCache.txt"), "XBOXRECOMP_ENHANCE:BOOL=ON\n")
+        (w,) = doctor_mod.enhance_off_warnings(G, "xbr")
+        assert w.startswith(G.rel(win) + " caches XBOXRECOMP_ENHANCE=OFF")
+        assert w.endswith("xbr build windows -- -DXBOXRECOMP_ENHANCE=ON")
+        # A game whose stock build leaves the layer off is not warned.
+        G.m["build"]["stock_cmake"] = []
+        assert doctor_mod.enhance_off_warnings(G, "xbr") == []
