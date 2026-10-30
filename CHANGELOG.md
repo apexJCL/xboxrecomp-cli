@@ -7,6 +7,12 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Changed
+- `new` writes `[storage] ram_cache = true` in the game's
+  `config.default.toml`: the cache partition in memory, the toolkit's
+  default for every game from the release after blinx2-v0.9.0.
+  doctor no longer reports it as drift.
+
 ## [0.16.0] - 2026-10-29
 
 ### Added

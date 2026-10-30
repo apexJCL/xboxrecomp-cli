@@ -37,16 +37,16 @@ WANT = {
     "present.fullscreen": False,
     "present.pacing": "sleep",
     "present.surface": "auto",
+    "storage.ram_cache": True,
 }
 
 
 # Keys the private integration branch reads ahead of the public branch `new`
-# pins (Hor+, display.overscan, the RAM cache partition, present.shader): the
+# pins (Hor+, display.overscan, present.shader): the
 # template gains them in the push round that publishes them.
 AHEAD = {
     "display.movie",
     "display.overscan",
-    "storage.ram_cache",
     "present.shader",
     "present.shader_lib",
 }
