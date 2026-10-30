@@ -358,11 +358,20 @@ SPEC = {
         # upstream files): any other is a doctor note.
         "extra": (STRS, []),
     },
+    # hud-map (docs/commands.md): the game's HUD table for the toolkit's
+    # HUD layer, the scenarios check runs by default, and the mod id that
+    # switches the layer (capture --level 1 and check run it on and off).
+    "hud": {
+        "table": (STR, "config/hud.toml"),
+        "scenarios": (STRS, []),
+        "mod": (STR, ""),
+    },
 }
 # Optional tables: a game without them still sets up, generates, builds and
 # benches (package says the manifest has no [package]). A game without
-# [public] is not published; one without [layout] has the standard one.
-OPTIONAL = {"package", "enhance", "wizard", "public", "layout", "extract"}
+# [public] is not published; one without [layout] has the standard one;
+# one without [hud] has no HUD table.
+OPTIONAL = {"package", "enhance", "wizard", "public", "layout", "extract", "hud"}
 PUBLIC_MODES = ("export", "history")
 # "Name <email>", as git writes an identity.
 IDENTITY_RE = re.compile(r"^([^<>\n]*[^<>\s])\s+<([^<>\s]+@[^<>\s]+)>$")

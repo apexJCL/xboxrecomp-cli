@@ -443,6 +443,20 @@ Each `[[extract.stage]]` is one stage:
 | `root` | required | The root object's VA, or a list of VAs whose trees make up the stage. `extract --scan SECTION` lists candidates. |
 | `texlist` | `0` | The stage texlist's VA, or a list with one VA per `root` when each tree draws with its own (0: no textures; strips keep their colours). |
 
+## [hud]
+
+This table is optional: the game's HUD table for the toolkit's HUD layer,
+and what `hud-map` needs to make and check it
+([commands.md](commands.md#mygame-hud-map-captureproposereviewemitcheck)).
+Without it, `hud-map` reads `config/hud.toml` and `capture` and `check`
+need a `mod`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `table` | `"config/hud.toml"` | The HUD table, relative to the game's root: what `emit` writes and checks, and what the capture loads (`hud_capture_table`; a copy with `sig:` draws resolved when it has any). |
+| `scenarios` | `[]` | What `check` runs without a scenario argument: `golden.json` scenarios, or `@preset` input presets. |
+| `mod` | `""` | The id of the game's HUD mod: the `mods.<id>` key in the player's config, which runs the mod's init (not a `hud.enabled` setting). `capture --level 1` runs with it on; `check` runs it on and off. Each run gets its own config file, so the player's never changes. |
+
 ## [enhance.hud]
 
 This table is optional. Without it, `enhance hud` says the game names no HUD set. The pack it makes is the owner's own (made from their game files, never distributed; `package --hud-pack` puts it in their private bundle).

@@ -539,6 +539,7 @@ def test_command_table():
         "extract",
         "wizard",
         "public",
+        "hud-map",
     ], names
 
 

@@ -406,6 +406,91 @@ Exit 1 on a hit (no ref moves), 2 when a check cannot run: no private
 patterns, no network, an `XBR_PUBLIC_DIR` inside the work tree, no
 `rewrite` file in export mode, or a layout block that could not be checked.
 
+### `mygame hud-map <capture|propose|review|emit|check>`
+
+Developers: the game's HUD table for the toolkit's HUD layer, from runs of
+the game ([manifest.md](manifest.md#hud) has `[hud]`). The table's schema
+is the layer parser's (`src/enhance/hud_anchor.c` in the toolkit): version,
+canvas, layout, wrappers, groups, sites and `[capture] draws`.
+
+`[capture] draws` (level 0 of the toolkit's mapping capture) is either a
+short list of VAs, `"0x..."` and `"sig:NAME"` strings, or
+`[[capture.draws]]` rows, as the toolkit reads them:
+
+```toml
+[[capture.draws]]
+fn = 0x0004A3C0      # or va = ...; "0x..." or "sig:NAME"; or sig = "NAME"
+name = "draw_quad"
+vtx = "stack:0"      # "ecx", "edx" or "stack:N" (bytes past the return
+count = "stack:4"    # address, N a multiple of 4 below 4096); count and
+stride = 28          # stride may be numbers 0..65535; vtx and count go
+prim = 4             # together; prim 1..64
+```
+
+The toolkit skips a `sig:` draw (it needs the VA), so `capture` writes a
+copy of the table into the capture dir (`capture-table.toml`) with each
+`sig:` draw's VA from analyze's `hook_functions.json`, and runs with that.
+The capture's format (`capture.jsonl`, a frame line after its sprites,
+`[hud.capture] done:` on stderr) is the toolkit's (`docs/runtime/config.md`,
+"The mapping capture"). A capture with no frame canvas (run without a
+table) is refused; a frame with no picture shows grey in the sheets. An
+unlisted level-0 sprite is named by the draw's own return address: its
+chain is a stack scan that stale words can pass.
+
+**Frames only.** Captures, proposals' evidence, sheets and frame dumps hold
+the game's pixels: they stay on this machine, under `dist/hud-map/` by
+default, never in the repo or a bundle. The table they lead to holds
+addresses, names and kinds.
+
+| Action | Effect |
+|---|---|
+| `capture SCENARIO` | runs the macOS build at 4:3, headless and silent, under the Mac run lock, and records each HUD sprite's call chain, box and frame (`capture.jsonl` and BMPs); SCENARIO is a `golden.json` scenario or `@preset` |
+| `propose CAPTURE...` | a proposal (`proposal.toml` beside the capture): one site per address the layer names a sprite by, a kind from where its boxes sit while on the canvas (`stretch` spanning it, `world` moving freely past its edges, else the third it sits in), group candidates of touching boxes one function draws; every new row `proposed = true` with its evidence, rows the table has copied as they are |
+| `review PROPOSAL` | a static HTML sheet beside the capture: each frame at 4:3 with boxes coloured by kind and labelled, and a preview at `--ratio` with each element moved by its kind |
+| `emit [PROPOSAL]` | merges the proposal into `[hud] table`, keeping its comments, after the checks below; without PROPOSAL checks the table as it is |
+| `check [SCENARIO...]` | per ratio, a run with the mod on (`RECOMP_TRACE=hud,aspect`) and one with it off, each dumping frames; a sheet per scenario and ratio (`check-WxH.html`) with the frames side by side and the trace's unlisted, skew and skip sites and lifted batches past the 4:3 columns |
+
+emit's checks: everything the layer parser refuses (all errors, not the
+first), then the row test against the analysis (`analyze` first): each
+`ret_va` follows a direct call to a function in `[mods] hook_functions` or a
+listed wrapper (a call reaching it through a thunk or a tail jump is
+refused: the hook sees the thunk's return address, not the site's), and
+none lies inside a wrapper's body; every wrapper and every
+`[capture] draws` entry is in `[mods] hook_functions` and is a row the
+capture can use (the toolkit skips the others with a line); and the text is one
+the toolkit's TOML reader takes (no inline tables, no nested arrays, no
+`[[capture.draws]]` beside a `[capture]` table: draws given as tables are
+written as `[[capture.draws]]` blocks). It refuses rows still
+`proposed = true` that would change the table, unless `--accept-proposed`,
+and refuses to write without the analysis (`disasm/`) unless
+`--no-analysis`; `--check` then only warns. Comments in a changed block
+stay where they are, a changed key keeps its trailing comment. The merge
+splits the table at its header lines, so a table with a header-like line
+inside a `"""` string, a quoted header or a dotted key before the first
+header is refused with an error rather than merged.
+
+A lifted batch in `check`'s sheet is explained when any row of the table
+has the kind that would lift it there: the test is table-wide, not per
+site, since the aspect trace's `[aspect.program]` line names no site.
+
+| Option | Effect |
+|---|---|
+| `--level 0\|1` | `capture`: 1 (default) records through the game's HUD mod (`[hud] mod`); 0 runs it off and records at the table's `[capture] draws` |
+| `--frames FROM:COUNT` | `capture`: the guest frames recorded, counted from 1 (default `600:120`, COUNT up to 10000) |
+| `--ratio W:H` | `review`: the preview's ratio (default `16:9`) |
+| `--capture DIR` | `review`: a capture to draw (repeatable; default the paths under the proposal's `Captures` line, one per line) |
+| `--check` | `emit`: check only, write nothing |
+| `--accept-proposed` | `emit`: take rows still marked proposed |
+| `--no-analysis` | `emit`: write without `disasm/`, the row test skipped |
+| `--ratios LIST` | `check`: default `16:9,16:10,21:9` |
+| `--at FLIPS` | `check`: host flips to dump (default every 120 from 300, at most 12) |
+| `--out PATH` | where the capture, proposal, sheet or check goes |
+| `--exe PATH`, `--secs N`, `--lock-wait N` | `capture`, `check`: the executable (default the macOS build), the run's limit (default twice the scenario's seconds), the wait for the run lock |
+
+Exit 1 when `capture` stops before its last frame, when `emit` refuses,
+and when `check` finds a skip, an unexplained lifted batch or a run that
+did not reach its last dump.
+
 ### `xbr new DIR`
 
 Start another game: `game.toml`, the bootstrap and its wrappers, the tools

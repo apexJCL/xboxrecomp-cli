@@ -569,6 +569,24 @@ def register():
         "maintainers: the public repo (init, export, pr, audit; docs/layout.md)",
         _cfg_public,
     )(cmd_public)
+    command(
+        "hud-map",
+        "developers: the game's HUD table for the HUD layer (capture, propose, review, "
+        "emit, check; docs/commands.md)",
+        _cfg_hudmap,
+    )(cmd_hudmap)
+
+
+def _cfg_hudmap(p):
+    from . import hudmap
+
+    hudmap.configure(p)
+
+
+def cmd_hudmap(a):
+    from . import hudmap
+
+    return hudmap.run(a)
 
 
 def _cfg_public(p):

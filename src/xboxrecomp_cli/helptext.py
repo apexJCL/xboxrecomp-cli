@@ -46,6 +46,8 @@ Developer commands:
                                         (dist/wizard/; config, check)
   @slug@ public init|export|pr|audit    maintainers: the public repo (one commit
                                         per round; docs/layout.md)
+  @slug@ hud-map <action>               the HUD table: capture, propose, review,
+                                        emit, check (frames stay on this machine)
   @slug@ workflow --check               the CI workflows against the CLI's
                                         templates
   @slug@ new DIR                        start another game: a manifest, bootstrap
