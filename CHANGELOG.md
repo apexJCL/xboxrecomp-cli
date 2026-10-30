@@ -7,6 +7,34 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-29
+
+### Added
+- The macOS app ships the licences of the dylibs it bundles: each one's
+  Homebrew keg licence (and NOTICE) in `Resources/LICENSES`, SDL's
+  vendored yuv2rgb BSD-3-Clause notice, and `BUNDLED-LIBRARIES.md` with
+  their versions. The build stops when a bundled dylib has no licence,
+  two kegs share a formula, a name would clash or the toolkit did not
+  stage librashader's MPL text.
+- benchdb's `[pending]` table (or `plan --states FILE`): a citation pins a
+  run only while the work it belongs to is open. Each citation is matched
+  to the tracker items and OpenSpec changes of its table row, list item
+  or paragraph, its headings and its file's path; one that maps to no item
+  keeps pinning. `golden.json` always pins. `[clean] guard_hours` gives
+  unpinned passing runs a shorter age (the runs root keeps 24 hours at
+  least), and `plan --frames` plans only the frame dumps of passed runs.
+
+### Changed
+- A passing `golden run` or `bench golden` drops its frame dumps, since a
+  clean pass needs none to diagnose it (`--keep-frames` or
+  `BENCH_KEEP_FRAMES` keeps them). A pass with known divergences keeps
+  the images its check read, and a failure keeps all.
+
+### Fixed
+- The Windows installer's finish page shows its whole text: the install
+  folder, the saves path and the private-copy notice each sit on their
+  own line, wrapped at spaces, also at 150% scaling.
+
 ## [0.15.0] - 2026-10-29
 
 ### Added
@@ -627,7 +655,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.12.0...v0.13.0
