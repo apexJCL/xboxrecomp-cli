@@ -9,9 +9,9 @@ reads and validates it on every command:
   The error names the key.
 - Paths are relative to the game root, written with `/`, and must stay
   inside it.
-- Tables other than `[package]`, `[enhance]`, `[wizard]`, `[public]` and
-  `[layout]` are always present in effect: a table you leave out takes its
-  defaults.
+- Tables other than `[package]`, `[enhance]`, `[extract]`, `[wizard]`,
+  `[public]` and `[layout]` are always present in effect: a table you
+  leave out takes its defaults.
 
 The CLI never writes this file, except once: `xbr new DIR` writes a starter
 one (every required key filled in, the defaults written out with their
@@ -417,6 +417,31 @@ This table is optional: where the repo differs from the standard layout
 |---|---|---|
 | `main` | `"src/main.c"` | The main C source. |
 | `extra` | `[]` | Top-level tracked names beyond the standard ones (a fork's upstream files, such as `regen.sh` or `tools`); doctor notes any other. |
+
+## [extract]
+
+This table is optional. Without it, `extract` says the game names no stages to extract. The project it makes is the owner's own (made from their game files, never distributed): keep `out` gitignored.
+
+The stages are Ninja chunk-model trees (`NJS_OBJECT`) in the XBE's sections. The keys below are what tells one game's dialect of the format from another's; the CLI holds no game's values.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `out` | `"dist/extract"` | The Godot project's folder, relative to the game root (`--out` overrides). |
+| `vertex_header` | `8` | Bytes from a vertex chunk's start to its first vertex: 8 or more, a multiple of 4. |
+| `packed_normals` | `false` | The float-normal vertex types (41-47) carry one packed normal (11/11/10 bits) instead of three floats, so their stride is 8 bytes shorter. |
+| `angles` | `"bams"` | How a node's rotation is stored: `"bams"` (three ints, 0x10000 a full turn) or `"radians"` (three floats). |
+| `up` | `"y"` | The world's up axis: `"y"`, or `"-y"` for a world whose floors face -Y in the data, which turns each stage half a turn about X. A Y flip in the game's view matrix is not a Y-down world: check the floors' normals in the data, not the draws. |
+| `texname_size` | `32` | Bytes per texture name in a texlist. |
+| `textures` | required | Where a texlist name's DDS file is: a path under `data.game_files` with `{name}` (`"media/{name}.dds"`, matched case-insensitively), or `"ipk:<archive>:<entry>"` for an entry of an IPK1 pair (`"ipk:media:dds/{name}.dds"`). |
+
+Each `[[extract.stage]]` is one stage:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name` | required | The scene's name: letters, digits, `_` and `-`, unique. `--stage` picks by it. |
+| `section` | `""` | The XBE section the stage lives in; shown by `--list`. |
+| `root` | required | The root object's VA, or a list of VAs whose trees make up the stage. `extract --scan SECTION` lists candidates. |
+| `texlist` | `0` | The stage texlist's VA, or a list with one VA per `root` when each tree draws with its own (0: no textures; strips keep their colours). |
 
 ## [enhance.hud]
 

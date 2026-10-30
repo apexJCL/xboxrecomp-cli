@@ -536,6 +536,7 @@ def test_command_table():
         "import",
         "fingerprint",
         "enhance",
+        "extract",
         "wizard",
         "public",
     ], names

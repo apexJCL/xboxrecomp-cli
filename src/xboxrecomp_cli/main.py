@@ -493,6 +493,18 @@ def cmd_enhance(a):
     return hud.run(a)
 
 
+def _cfg_extract(p):
+    from .extract import cli
+
+    cli.configure(p)
+
+
+def cmd_extract(a):
+    from .extract import cli
+
+    return cli.run(a)
+
+
 def register():
     """The command table, in --help order (the old blinx2.py's)."""
     COMMANDS.clear()
@@ -542,6 +554,11 @@ def register():
         "owner-made enhancement assets from your own dump (enhance hud: the HUD texture pack)",
         _cfg_enhance,
     )(cmd_enhance)
+    command(
+        "extract",
+        "your dump's stages as a local Godot project (game.toml [extract]); never share it",
+        _cfg_extract,
+    )(cmd_extract)
     command(
         "wizard",
         "maintainers: the player's build wizard (config, build, check; docs/wizard.md)",

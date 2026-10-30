@@ -328,6 +328,29 @@ SPEC = {
         "st0": (STRS, []),
         "no_st0": (STRS, []),
     },
+    # Stages from the owner's dump to a local Godot project (xbr extract;
+    # extract/). Every per-game value of the Ninja reader lives here.
+    "extract": {
+        # Under the game root; gitignored (dist/).
+        "out": (STR, "dist/extract"),
+        # Bytes of a vertex chunk's header: 8 in Ninja, 16 in ports that
+        # widened it (BLiNX 1).
+        "vertex_header": (INT, 8),
+        # Float normals packed into NORMPACKED3 in the VN_* vertex chunks.
+        "packed_normals": (BOOL, False),
+        # NJS_OBJECT angles: "bams" (int32, 0x10000 a turn) or "radians" (f32).
+        "angles": (STR, "bams"),
+        # The world's up axis: "y", or "-y" for a world whose floors face -Y
+        # in the data (turned a half turn about X into glTF's Y-up). Not for
+        # a flip the game's view matrix applies at draw time.
+        "up": (STR, "y"),
+        # Bytes of one texlist name.
+        "texname_size": (INT, 32),
+        # Where a texlist name's DDS is: a pattern under data.game_files
+        # ("media/{name}.dds", any case) or "ipk:<archive>:<entry pattern>".
+        "textures": (STR, REQUIRED),
+        "stage": (TABLES, []),
+    },
     # Where the layout differs from the standard one (docs/layout.md).
     "layout": {
         "main": (STR, "src/main.c"),
@@ -339,7 +362,7 @@ SPEC = {
 # Optional tables: a game without them still sets up, generates, builds and
 # benches (package says the manifest has no [package]). A game without
 # [public] is not published; one without [layout] has the standard one.
-OPTIONAL = {"package", "enhance", "wizard", "public", "layout"}
+OPTIONAL = {"package", "enhance", "wizard", "public", "layout", "extract"}
 PUBLIC_MODES = ("export", "history")
 # "Name <email>", as git writes an identity.
 IDENTITY_RE = re.compile(r"^([^<>\n]*[^<>\s])\s+<([^<>\s]+@[^<>\s]+)>$")
@@ -383,6 +406,19 @@ WIZARD_CREDIT = {
     "url": (STR, REQUIRED),
     "own": (BOOL, False),
 }
+# [[extract.stage]]: a stage's name (its file and scene names), the XBE
+# section its data lives in (for --list and --scan), the NJS_OBJECT
+# tree(s) to draw (a VA or a list of VAs) and its texlist's VA (0: none),
+# or one texlist per root when the parts of a stage each have their own.
+EXTRACT_STAGE = {
+    "name": (STR, REQUIRED),
+    "section": (STR, ""),
+    "root": (None, REQUIRED),
+    "texlist": (None, 0),
+}
+EXTRACT_ANGLES = ("bams", "radians")
+EXTRACT_UP = ("y", "-y")
+STAGE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 # An SPDX licence expression, loosely: ids joined by AND, OR and WITH.
 SPDX_RE = re.compile(r"^[A-Za-z0-9.+()-]+(?: (?:AND|OR|WITH) [A-Za-z0-9.+()-]+)*$")
 # An entry key whose spec default is this stays absent when unset.
@@ -549,6 +585,17 @@ def _derive(m):
         m["wizard"]["fetch"] = [_entry(e, WIZARD_FETCH) for e in m["wizard"]["fetch"]]
         m["wizard"]["option"] = [_entry(e, WIZARD_OPTION) for e in m["wizard"]["option"]]
         m["wizard"]["credit"] = [_entry(e, WIZARD_CREDIT) for e in m["wizard"]["credit"]]
+    if "extract" in m:
+        stages = []
+        for e in m["extract"]["stage"]:
+            e = _entry(e, EXTRACT_STAGE)
+            if isinstance(e.get("root"), int) and not isinstance(e["root"], bool):
+                e["root"] = [e["root"]]
+            t = e.get("texlist")
+            if isinstance(e.get("root"), list) and isinstance(t, int) and not isinstance(t, bool):
+                e["texlist"] = [t] * len(e["root"])
+            stages.append(e)
+        m["extract"]["stage"] = stages
 
 
 def _entry(e, spec):
@@ -598,6 +645,63 @@ def _check_public(m):
         errors.append("public.upstream: %r starts with '-'" % p["upstream"])
     # A [wizard] repo naming another repo is doctor's layout problem, not
     # a load error: the game still builds while it moves.
+    return errors
+
+
+def _check_extract(m):
+    x = m.get("extract")
+    if not x:
+        return []
+    errors = []
+    if x["vertex_header"] < 8 or x["vertex_header"] % 4:
+        errors.append("extract.vertex_header: 8 or more, a multiple of 4")
+    if x["angles"] not in EXTRACT_ANGLES:
+        errors.append("extract.angles: one of %s" % ", ".join(EXTRACT_ANGLES))
+    if x["up"] not in EXTRACT_UP:
+        errors.append("extract.up: one of %s" % ", ".join(EXTRACT_UP))
+    if x["texname_size"] <= 0:
+        errors.append("extract.texname_size: must be positive")
+    why = rel_path_problem(x["out"])
+    if why:
+        errors.append("extract.out: %r %s" % (x["out"], why))
+    from .extract.textures import parse_source
+
+    try:
+        parse_source(x["textures"])
+    except ValueError as e:
+        errors.append("extract.textures: %s" % e)
+    seen = set()
+    for i, e in enumerate(x["stage"]):
+        name = "extract.stage[%d]" % i
+        for k in e:
+            if k not in EXTRACT_STAGE:
+                errors.append("%s.%s: unknown key" % (name, k))
+        for k, (kind, _default) in EXTRACT_STAGE.items():
+            if k not in e:
+                errors.append("%s.%s: required" % (name, k))
+            elif kind is not None and not _type_ok(kind, e[k]):
+                errors.append("%s.%s: must be a %s" % (name, k, kind))
+        n = e.get("name")
+        if isinstance(n, str):
+            if not STAGE_NAME.match(n):
+                errors.append("%s.name: letters, digits, '_' and '-' only" % name)
+            elif n in seen:
+                errors.append("%s.name: %r twice" % (name, n))
+            seen.add(n)
+        r = e.get("root")
+        if "root" in e and (
+            not isinstance(r, list)
+            or not r
+            or not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in r)
+        ):
+            errors.append("%s.root: a VA or a list of VAs" % name)
+        t = e.get("texlist")
+        if isinstance(r, list) and (
+            not isinstance(t, list)
+            or len(t) != len(r)
+            or not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in t)
+        ):
+            errors.append("%s.texlist: a VA, or one VA per root (0: none)" % name)
     return errors
 
 
@@ -958,6 +1062,7 @@ def _check_values(m):
     errors += _check_wizard(m)
     errors += _check_public(m)
     errors += _check_mods(m)
+    errors += _check_extract(m)
     for s in m["xbe"]["sha256"]:
         if not re.match(r"^[0-9a-f]{64}$", s):
             errors.append("xbe.sha256: %r is not a sha256" % s)

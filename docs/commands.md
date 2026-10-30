@@ -264,6 +264,29 @@ pack; the disk needs about three times the last pack.
 A pack is made from game data and is never published; `package --hud-pack`
 puts it in the owner's private bundle.
 
+### `mygame extract`
+
+The owner's stages as a local Godot 4 project, into `dist/extract/`: one
+glTF per stage (`stages/<name>/`, with its textures as PNG), a scene per
+stage and a viewer that frames it. Needs `[extract]` in `game.toml`.
+
+| Option | Effect |
+|---|---|
+| `--stage NAME` | extract only this stage (repeatable) |
+| `--out OUT` | output directory (default: `[extract] out`) |
+| `--import` | run Godot's headless import over the project and fail on any error line (log in `import.log`) |
+| `--list` | print the stages, write nothing |
+| `--scan SECTION` | list the object trees and texlists a section holds, to find a stage's `root` and `texlist` |
+
+Each stage prints its meshes, triangles, materials and textures, then
+what it met and did not convert (a chunk type, a blend mode, an
+environment-mapped strip), counted: those are left out, never fatal.
+
+`--import` uses the pinned Godot (4.7.2), fetched once into
+`third_party/` and checked by sha256, or the binary `XBR_GODOT` names
+(its `--version` must be 4.7.2). The CLI never runs a Godot export. The
+project is made from game data and is never published.
+
 ### `mygame clean [--bundles] [--build] [--all] [--yes]`
 
 Free space in the game folder. It lists each path with its size and

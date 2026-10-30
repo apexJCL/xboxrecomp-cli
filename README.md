@@ -200,6 +200,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | `mygame golden <subcommand>` | Records and checks golden frames; `golden run` on the Mac |
 | `mygame bench <command>` | Builds and runs on a Proton host over ssh: runs, goldens, pacing |
 | `mygame enhance hud` | Makes a HUD texture pack from your own dump |
+| `mygame extract` | Turns your dump's stages into a local Godot project |
 | `mygame pins refresh` | Moves the toolchain pins and lock, and names newer releases |
 
 ## Documentation
