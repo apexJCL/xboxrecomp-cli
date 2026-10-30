@@ -300,10 +300,11 @@ pin. Ends with `doctor`.
 
 | Command | Stage |
 |---|---|
-| `mygame analyze` | `parse`, `disasm`, `funcid`, `abi`, then `names` when a Ghidra export exists |
+| `mygame analyze` | `parse`, `disasm`, `funcid`, `abi`, `names` when a Ghidra export exists, then `hooks` when `[mods]` lists hook functions |
 | `mygame recomp` | lift x86 to C into `pipeline.gen` |
 | `mygame all [--system-tools] [--jobs N]` | `analyze`, `recomp`, then `build` for the host's default target |
 | `mygame parse\|disasm\|funcid\|abi\|ghidra\|names [-- ARGS]` | one stage; extra arguments go to the stage's tool |
+| `mygame hooks` | resolve `[mods] hook_functions` into `config/hook_functions.json` ([manifest](manifest.md#mods)) |
 
 `src/recomp/gen.key.json` records what `gen/` was generated from (the XBE,
 the toolkit's tools, the seed files, the stage commands). `build` refuses a

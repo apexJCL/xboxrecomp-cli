@@ -500,7 +500,9 @@ def register():
     for name, fn, help_ in pipeline.stages():
         command(name, help_, _cfg_stage)(_stage_cmd(fn))
     command(
-        "analyze", "parse, disasm, funcid, abi, then names if a Ghidra export exists", _cfg_analyze
+        "analyze",
+        "parse, disasm, funcid, abi, names if a Ghidra export exists, then hooks if game.toml lists any",
+        _cfg_analyze,
     )(cmd_analyze)
     command("all", "analyze, recomp, then build for this host's default target", _cfg_all)(cmd_all)
     command(

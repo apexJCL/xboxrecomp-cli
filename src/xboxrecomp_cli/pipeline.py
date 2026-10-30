@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 
-from . import doctor, host, resources, toolkit
+from . import doctor, hooks, host, resources, toolkit
 from .host import CliError
 
 
@@ -244,7 +244,12 @@ def recomp_cmds(extra=()):
     # spins on another's store hands the one guest CPU on. It is how the
     # fork's toolkit lifted before the flag existed, so gen/ stays the same.
     args = ["--all", "--split", split_size(), "--gen-dir", G.gen]
-    if G.recomp_manual:
+    # With [mods] hook slots recomp scans the manual file plus the slots'
+    # wrap declarations (hooks.write_scan), so it emits each hooked body as
+    # sub_X_gen; without any the argv is what it always was.
+    if hooks.entries(G.m):
+        args += ["--exclude-manual", hooks.scan_path(G)]
+    elif G.recomp_manual:
         args += ["--exclude-manual", G.recomp_manual]
     args += [
         "--game-name",
@@ -418,6 +423,48 @@ def maybe_names():
         stage_names()
 
 
+def stage_hooks(extra=()):
+    """[mods] hook_functions -> config/hook_functions.json: each entry's VA,
+    ret_pop and x87 return, checked against the disassembly and the manual
+    file. Runs in analyze only when the list is not empty."""
+    host.step("hooks")
+    if [x for x in extra if x != "--"]:
+        raise CliError("hooks runs no tool, so it takes no extra arguments")
+    begin_stage("hooks")
+    G = g()
+    host.require(os.path.join(G.out, "disasm", "functions.json"), "disasm")
+    slots = hooks.resolve(G)
+    hooks.write_json(G.hook_functions, slots, G.m)
+    host.say("%d hook slot(s) -> %s" % (len(slots), G.rel(G.hook_functions)))
+    # Like the seeds, the file is the game's: a fresh clone recomps from
+    # it, so it belongs in the repo.
+    if hooks.untracked(G.root, G.hook_functions):
+        host.say(
+            "warning: %s is not tracked by git; commit it with game.toml" % G.rel(G.hook_functions)
+        )
+
+
+def write_hook_slots():
+    """Before recomp: the scan file its --exclude-manual reads. Returns the
+    slots for after_recomp_hooks. Without slots, a stale slot file goes."""
+    G = g()
+    if not hooks.entries(G.m):
+        stale = os.path.join(G.gen, hooks.SLOTS_C)
+        if os.path.exists(stale):
+            os.remove(stale)
+        return []
+    slots = hooks.load_json(G)
+    header = os.path.join(toolkit.toolkit_dir(), *hooks.RUNTIME_HEADER_PATH)
+    if not os.path.isfile(header):
+        raise CliError(
+            "game.toml lists [mods] hook_functions, but the toolkit at %s has no %s "
+            "(the hook slot runtime): move the toolkit pin to one that has it, or "
+            "empty the list" % (toolkit.toolkit_dir(), "/".join(hooks.RUNTIME_HEADER_PATH))
+        )
+    hooks.write_scan(G, slots)
+    return slots
+
+
 def stage_recomp(extra=()):
     """gen/ is half-written while this runs; bench sync and the build
     refuse while the marker exists. It is removed only on success, so a
@@ -429,10 +476,14 @@ def stage_recomp(extra=()):
     marker = g().regen_marker
     os.makedirs(os.path.dirname(marker), exist_ok=True)
     open(marker, "a").close()
+    slots = write_hook_slots()
     # -v makes the translator print "[i/n] Translating" every 500 functions,
     # the progress view's only signal in a 10-20 minute step. It changes no
     # output, so it is left out of the argv the generation key hashes.
     run_cmds(recomp_cmds(("-v",) + tuple(extra)))
+    if slots:
+        with open(os.path.join(g().gen, hooks.SLOTS_C), "w", newline="\n") as f:
+            f.write(hooks.slots_c(slots))
     os.remove(marker)
     write_gen_key()
 
@@ -445,7 +496,7 @@ def analyze_stages():
         ("funcid", stage_funcid),
         ("abi", stage_abi),
         ("names", maybe_names),
-    ]
+    ] + ([("hooks", stage_hooks)] if hooks.entries(g().m) else [])
 
 
 def analyze():
@@ -518,11 +569,19 @@ def gen_inputs():
     G = g()
     files = list(G.seeds) + [icall_db(), G.recomp_manual, G.spin_waits]
     files += list(G.names_hooks) + [G.ghidra_export]
-    return {
+    # Only with slots, so a game without [mods] keeps its key. The table
+    # itself is an input too: an edited list stales gen/ before analyze
+    # rewrites the json.
+    if hooks.entries(G.m):
+        files.append(G.hook_functions)
+    out = {
         _placeholders(p): (host.sha256_path(p) if os.path.isfile(p) else "absent")
         for p in files
         if p
     }
+    if hooks.entries(G.m):
+        out["game.toml [mods]"] = hooks.mods_digest(G.m)
+    return out
 
 
 def stage_argv():
@@ -621,5 +680,10 @@ def stages():
             "optional: headless Ghidra names (slow, cached) -> %s/ghidra/" % out,
         ),
         ("names", stage_names, "write Ghidra's names into functions.json"),
+        (
+            "hooks",
+            stage_hooks,
+            "resolve [mods] hook_functions -> %s" % G.rel(G.hook_functions),
+        ),
         ("recomp", stage_recomp, "lift x86 to C -> %s/" % G.rel(G.gen)),
     )

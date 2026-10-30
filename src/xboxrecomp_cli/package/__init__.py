@@ -1004,11 +1004,7 @@ def run_plan_prefix(a, plan):
             host.say("generate: %s" % ", ".join(why))
             resources.warn_tools()
             pipeline.reset_stage_extras()
-            pipeline.stage_parse()
-            pipeline.stage_disasm()
-            pipeline.stage_funcid()
-            pipeline.stage_abi()
-            pipeline.maybe_names()
+            pipeline.analyze()
             pipeline.stage_recomp()
         else:
             host.say("gen/ is current")

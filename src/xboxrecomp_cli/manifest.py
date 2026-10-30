@@ -34,7 +34,10 @@ FLOAT = "number"
 STRMAP = "table of strings"
 # The same with a list of strings per key: enhance.hud.languages.
 STRSMAP = "table of string lists"
-MAPS = (STRMAP, STRSMAP)
+# A table of names to tables of string keys to string values:
+# mods.signatures, one row per name.
+STRMAPS = "table of string tables"
+MAPS = (STRMAP, STRSMAP, STRMAPS)
 # An array of tables ([[wizard.option]]), each checked by its own rules
 # (_check_wizard): held as one key, a list of dicts.
 TABLES = "array of tables"
@@ -311,6 +314,20 @@ SPEC = {
         # <date> round".
         "message": (STR, ""),
     },
+    # Mod hook slots (mod-connectivity-layer D3): the functions recomp
+    # wraps with a pre and post dispatch, by VA ("0x0003B180") or by a
+    # signature ("sig:<name>", a [mods.signatures] row). analyze resolves
+    # them into config/hook_functions.json (hooks.py).
+    "mods": {
+        "hook_functions": (STRS, []),
+        # name -> {pattern, section}: hex bytes with ?? wildcards, matched
+        # exactly once in that XBE section.
+        "signatures": (STRMAPS, {}),
+        # hook_functions entries whose float return analyze's walk cannot
+        # settle: st0 returns one in st0, no_st0 does not.
+        "st0": (STRS, []),
+        "no_st0": (STRS, []),
+    },
     # Where the layout differs from the standard one (docs/layout.md).
     "layout": {
         "main": (STR, "src/main.c"),
@@ -421,6 +438,10 @@ def _type_ok(kind, v):
         return isinstance(v, dict) and all(
             isinstance(k, str) and _type_ok(STRS, x) for k, x in v.items()
         )
+    if kind == STRMAPS:
+        return isinstance(v, dict) and all(
+            isinstance(k, str) and _type_ok(STRMAP, x) for k, x in v.items()
+        )
     if kind == TABLES:
         return isinstance(v, list) and all(isinstance(x, dict) for x in v)
     if kind is None:
@@ -476,6 +497,8 @@ def validate(doc):
                     dst[k] = {n: list(x) for n, x in t[k].items()}
                 elif kind == STRMAP:
                     dst[k] = dict(t[k])
+                elif kind == STRMAPS:
+                    dst[k] = {n: dict(x) for n, x in t[k].items()}
                 elif kind == TABLES:
                     dst[k] = [dict(x) for x in t[k]]
                 else:
@@ -934,6 +957,7 @@ def _check_values(m):
         errors.append("pipeline.split: must be positive")
     errors += _check_wizard(m)
     errors += _check_public(m)
+    errors += _check_mods(m)
     for s in m["xbe"]["sha256"]:
         if not re.match(r"^[0-9a-f]{64}$", s):
             errors.append("xbe.sha256: %r is not a sha256" % s)
@@ -952,6 +976,54 @@ def _check_values(m):
             errors.append("%s: must stay inside the game root" % name)
     if errors:
         raise ManifestError("; ".join(errors))
+
+
+# A hook_functions entry: a VA, or a [mods.signatures] row by name.
+HOOK_VA = re.compile(r"^0x[0-9A-Fa-f]{1,8}$")
+HOOK_SIG = re.compile(r"^sig:([A-Za-z0-9_.-]+)$")
+SIG_KEYS = ("pattern", "section")
+
+
+def _check_mods(m):
+    from . import hooks
+
+    errors = []
+    mods = m["mods"]
+    seen = set()
+    for e in mods["hook_functions"]:
+        if HOOK_VA.match(e):
+            key = int(e, 16)
+        elif HOOK_SIG.match(e):
+            key = e
+            if e[4:] not in mods["signatures"]:
+                errors.append("mods.hook_functions: %r has no [mods.signatures.%s]" % (e, e[4:]))
+        else:
+            errors.append("mods.hook_functions: %r is neither a VA (0x...) nor sig:<name>" % e)
+            continue
+        if key in seen:
+            errors.append("mods.hook_functions: %r is listed twice" % e)
+        seen.add(key)
+    for key in ("st0", "no_st0"):
+        for e in mods[key]:
+            if e not in mods["hook_functions"]:
+                errors.append("mods.%s: %r is not in hook_functions" % (key, e))
+    for e in sorted(set(mods["st0"]) & set(mods["no_st0"])):
+        errors.append("mods: %r is in both st0 and no_st0" % e)
+    for name, row in mods["signatures"].items():
+        where = "mods.signatures.%s" % name
+        if not HOOK_SIG.match("sig:" + name):
+            errors.append("%s: a name of letters, digits, '_', '.' and '-'" % where)
+        for k in sorted(set(row) - set(SIG_KEYS)):
+            errors.append("%s.%s: unknown key" % (where, k))
+        for k in SIG_KEYS:
+            if not row.get(k):
+                errors.append("%s.%s: required" % (where, k))
+        if row.get("pattern"):
+            try:
+                hooks.pattern_regex(row["pattern"])
+            except ValueError as e:
+                errors.append("%s.pattern: %s" % (where, e))
+    return errors
 
 
 def _paths(m):
@@ -1069,6 +1141,8 @@ class Game:
         self.names_hooks = [j(s) for s in p["names_hooks"]]
         self.recomp_manual = j(p["exclude_manual"]) if p["exclude_manual"] else ""
         self.spin_waits = j(p["spin_waits"]) if p["spin_waits"] else ""
+        # analyze's resolved hook slots, beside the seeds; recomp reads it.
+        self.hook_functions = j("config", "hook_functions.json")
         self.pins = j("config", "setup-pins.json")
         self.uv_lock = j("uv.lock")
         self.dist = j("dist")

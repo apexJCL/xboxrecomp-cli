@@ -110,6 +110,66 @@ and the wizard leaves out the config options (see
 | `text_only` | `false` | `--text-only` when true. The default sweeps every executable section except the PE data sections (`.data`, `.rdata`, `.idata`, `.reloc` …, which are skipped by name whatever their flags), as Burnout 3 does: the XDK libraries (D3D, DSOUND, XGRPH, XPP, ...) sit in sections of their own, and with `.text` alone they have no function boundaries, so every call inside them becomes a stub that returns without running. Upstream's README passes `--text-only`, which is why a title made that way stubs its libraries. Set it true when the XBE flags data sections executable (BLiNX 2's model sections), which would otherwise be swept into phantom functions, and list the code sections in `extra_sections`. |
 | `extra_sections` | `[]` | `--extra-sections`: code sections swept besides `.text`. Read with `text_only = true` (BLiNX 2 lists the XDK libraries and its middleware), or for a section the sweep would otherwise skip. |
 
+## [mods]
+
+The functions a mod may hook (the toolkit's mod API, `hook()`). The
+recompiler cannot put a hook check in every function, so the game lists
+the ones it offers; each gets a slot that costs one load and a predicted
+branch while no mod hooks it. An empty list (the default) generates the
+same code as a game without this table.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `hook_functions` | `[]` | Each entry is a function's VA (`"0x0003B180"`) or `"sig:<name>"`, a row of `[mods.signatures]`. The order is the slot order. |
+| `st0`, `no_st0` | `[]` | `hook_functions` entries that return a float in st0, or do not. Use them for the entries whose float return `analyze` cannot work out. An entry named here is not checked. |
+
+### [mods.signatures]
+
+One table per signature, named by the `sig:<name>` entries that use it.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `pattern` | required | The function's first bytes, as hex pairs with `??` for any byte: `"55 8B EC 83 E4 F8 ?? ?? ?? ?? 56"`. |
+| `section` | required | The XBE section searched (`".text"`). The pattern must match exactly once there. |
+
+`analyze` resolves the list into `config/hook_functions.json` (the `hooks`
+stage, which runs only when the list is not empty) and fails when an entry:
+- is a signature that matches no place, or more than one, in its section;
+- is not a function start in the disassembly (seed it first), or starts
+  inside another function, which could run it without calling it;
+- names a function the `exclude_manual` file defines or wraps by hand: one
+  function has one owner, so either a mod hooks it or the game's C does;
+- has `ret n` instructions that pop different byte counts, since a skipped
+  call must leave the stack as the body would;
+- has a float return that the disassembly does not settle, and is not
+  named in `st0` or `no_st0`. The x87 stack depth at its returns must agree,
+  and no path may return straight after a call or jump that `analyze` cannot
+  follow (an indirect call, a virtual call, or a jump into another function).
+  A caller that uses st0 right after the call is taken as proof of a float
+  return.
+
+The file records each slot's VA, `ret_pop` (the `n` of its `ret n`),
+whether it returns a float in st0 and whether that came from an override.
+Commit it with `game.toml`, like the seed files: `recomp` reads it, and
+`analyze` warns when git does not track it. `recomp` then emits each listed
+body as `sub_X_gen` and writes `gen/recomp_hook_slots.c`, where `sub_X` is
+the slot (`RECOMP_HOOK_CALL` from the toolkit's `src/kernel/recomp_hook.h`;
+`recomp` fails on a toolkit without it). Both the file and the `[mods]`
+table are inputs of the generation key, so a changed list, signature or
+override stales `gen/` until `analyze` and `recomp` run again.
+
+```toml
+[mods]
+hook_functions = ["0x0003B180", "sig:hud_draw", "0x00041A20"]
+
+# A virtual call ends 0x00041A20, so analyze cannot tell its return.
+no_st0 = ["0x00041A20"]
+
+[mods.signatures.hud_draw]
+pattern = "55 8B EC 83 E4 F8 ?? ?? ?? ?? 56"
+section = ".text"
+```
+
 ## [build]
 
 | Key | Default | Meaning |

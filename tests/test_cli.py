@@ -524,6 +524,7 @@ def test_command_table():
         "abi",
         "ghidra",
         "names",
+        "hooks",
         "recomp",
         "analyze",
         "all",
