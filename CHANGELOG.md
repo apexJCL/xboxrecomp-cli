@@ -7,6 +7,32 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-31
+
+### Added
+- `extract`: Ninja's additive blend (source alpha, one) exports with the
+  extra `xbr_blend=add`, and a tool script on each stage's glTF instance
+  makes those materials additive in Godot, so glows draw as glows.
+- `extract`: `[[extract.stage]]` roots take an optional transform (scale,
+  translation) about the world origin in the game's axes, for mirrored
+  copies such as a reflected sky or floor. A mirrored root can carry
+  `backdrop = [r,g,b]`, an unlit box open on the mirror plane, so a
+  reflection's open side shows the game's clear colour.
+- `extract`: `[extract] textured_colour = "white"` colours textured and
+  environment-mapped strips white, as a chunk drawer that ignores the
+  material diffuse does; the default `"diffuse"` keeps stock output.
+- `extract`: a per-stage `texture_alpha` table makes named textures
+  translucent, for floors alpha-blended over a reflection. Names that
+  match no texture are reported.
+
+### Changed
+- `bench`: the `RECOMP_HDD_DIR` comment names the toolkit's per-title
+  default disk.
+
+### Fixed
+- `extract`: an opacity of 1 no longer forces BLEND, and accessor bounds
+  come from the stored float32 values.
+
 ## [0.17.0] - 2026-10-30
 
 ### Added
@@ -702,7 +728,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.14.0...v0.15.0
