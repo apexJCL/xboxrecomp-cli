@@ -303,7 +303,9 @@ def test_uncompressed_dds_by_masks():
     assert label == "A16" and rgba == bytes((0x00, 0xAA, 0x55, 0xFF))
     assert textures.alpha_kind(rgba) == "opaque"
     assert textures.alpha_kind(bytes((0, 0, 0, 0, 0, 0, 0, 255))) == "mask"
-    assert textures.alpha_kind(bytes((0, 0, 0, 7))) == "blend"
+    assert textures.alpha_kind(bytes((0, 0, 0, 7))) == "translucent"
+    assert textures.alpha_kind(bytes((0, 0, 0, 250, 0, 0, 0, 255))) == "near-opaque"
+    assert textures.alpha_kind(bytes((0, 0, 0, 7, 0, 0, 0, 0))) == "blend"
 
 
 def test_png_is_valid():
@@ -344,7 +346,7 @@ def test_gltf_is_valid_and_complete(tmp_path):
     class Src:
         def read(self, name):
             assert name == "Tex0"
-            return dds_raw(2, 1, 32, ARGB8, [0xFFFF0000, 0x8000FF00])
+            return dds_raw(2, 1, 32, ARGB8, [0xFFFF0000, 0x0000FF00])
 
     names = textures.texlist(img, SEC + 0x300, 32)
     assert names == ["Tex0"]
@@ -372,7 +374,10 @@ def test_gltf_is_valid_and_complete(tmp_path):
     assert f == pytest.approx([0xC0 / 255, 0x80 / 255, 0x40 / 255, 1.0])
     tex = j["textures"][mat["pbrMetallicRoughness"]["baseColorTexture"]["index"]]
     smp = j["samplers"][tex["sampler"]]
-    assert (smp["wrapS"], smp["wrapT"]) == (gltf.CLAMP, gltf.REPEAT)
+    # U is clamped, V repeats, both stay inside [0, 1]: one wrap for both,
+    # clamp, so Godot's one repeat flag cannot bleed an edge in.
+    assert (smp["wrapS"], smp["wrapT"]) == (gltf.CLAMP, gltf.CLAMP)
+    assert s.approximated == {"texture wrap kept inside [0, 1] (written as the other axis's)": 1}
     assert j["images"][tex["source"]]["uri"] == "textures/Tex0.png"
     assert os.path.isfile(os.path.join(out, "textures", "Tex0.png"))
     # The scene's top node turns the Y-down world into Y-up.
@@ -497,6 +502,132 @@ def test_wraps_mirror_wins_over_clamp():
     assert gltf.wraps(0) == (gltf.REPEAT, gltf.REPEAT)
 
 
+def _one_strip_writer(tex_alpha=0xFF):
+    """The b2 quad with its one strip, a Writer over a 1x1 texture."""
+    roots = read("b2")[1]
+    (strip,) = roots[0].children[0].model.strips
+
+    class Src:
+        def read(self, name):
+            return dds_raw(1, 1, 32, ARGB8, [tex_alpha << 24 | 0xFFFFFF])
+
+    return roots, strip, gltf.Writer("M", ["Tex0"], Src())
+
+
+def _sampler_of(w, mat=0):
+    j = w.doc.j
+    tex = j["textures"][j["materials"][mat]["pbrMetallicRoughness"]["baseColorTexture"]["index"]]
+    smp = j["samplers"][tex["sampler"]]
+    return smp["wrapS"], smp["wrapT"]
+
+
+def _scaled(strip, su, sv):
+    strip.tris = [tuple((vi, u * su, v * sv) for vi, u, v in t) for t in strip.tris]
+
+
+KEPT_INSIDE = "texture wrap kept inside [0, 1] (written as the other axis's)"
+DIFFER = "texture wraps differ per axis (Godot uses one)"
+MIRRORED = "mirrored texture wrap (Godot repeats it)"
+
+
+def _wrapped(tmp_path, tflags, su, sv):
+    """The quad with these tiny-chunk flags and UVs scaled to [0, su] by
+    [0, sv]: its sampler's wraps and the Summary."""
+    roots, strip, w = _one_strip_writer()
+    strip.tflags = tflags << 16
+    _scaled(strip, su, sv)
+    w.add_tree(SEC, roots)
+    s = w.write(str(tmp_path))
+    return _sampler_of(w), s
+
+
+def test_wrap_inside_the_unit_range_takes_the_other_axis(tmp_path):
+    # tunagi: clamp U (U stays in [0, 1]), V tiles to 2: both repeat.
+    got, s = _wrapped(tmp_path, 0x20, 1, 2)
+    assert got == (gltf.REPEAT, gltf.REPEAT) and not s.unsupported
+    assert s.approximated == {KEPT_INSIDE: 1}
+
+
+def test_clamp_on_both_axes_stays_clamp(tmp_path):
+    # Repeat would bleed the opposite edge in under bilinear and mips.
+    got, s = _wrapped(tmp_path, 0x30, 1, 1)
+    assert got == (gltf.CLAMP, gltf.CLAMP)
+    assert not s.unsupported and not s.approximated
+    got, s = _wrapped(tmp_path, 0x30, 1, 2)
+    assert got == (gltf.CLAMP, gltf.CLAMP)
+    assert not s.unsupported and not s.approximated
+
+
+def test_clamp_past_the_range_wins_over_repeat_inside(tmp_path):
+    got, s = _wrapped(tmp_path, 0x20, 3, 1)
+    assert got == (gltf.CLAMP, gltf.CLAMP) and not s.unsupported
+    assert s.approximated == {KEPT_INSIDE: 1}
+
+
+def test_mirror_past_the_range_wins_and_is_counted(tmp_path):
+    got, s = _wrapped(tmp_path, 0x80, 3, 1)
+    assert got == (gltf.MIRROR, gltf.MIRROR) and not s.unsupported
+    assert s.approximated == {KEPT_INSIDE: 1, MIRRORED: 1}
+
+
+def test_wraps_differing_per_axis_are_counted(tmp_path):
+    # Clamp U past 1, V tiles: Godot's one flag cannot say it.
+    got, s = _wrapped(tmp_path, 0x20, 3, 2)
+    assert got == (gltf.CLAMP, gltf.REPEAT)
+    assert s.unsupported == {DIFFER: 1}
+
+
+def test_env_mapped_strip_gets_uvs_from_its_normals(tmp_path):
+    roots, strip, w = _one_strip_writer()
+    strip.flags |= ninja.STRIP_FLAG_ENV_MAP
+    strip.uv = False  # kind 64: no UVs in the data
+    w.add_tree(SEC, roots)
+    s = w.write(str(tmp_path))
+    j = w.doc.j
+    assert "baseColorTexture" in j["materials"][0]["pbrMetallicRoughness"]
+    prim = j["meshes"][0]["primitives"][0]
+    uv = j["accessors"][prim["attributes"]["TEXCOORD_0"]]
+    view = j["bufferViews"][uv["bufferView"]]
+    got = struct.unpack_from("<2f", w.doc.bin, view["byteOffset"])
+    # The quad's normals are +Y: the middle of the map's top row.
+    assert got == pytest.approx((0.5, 0.0))
+    assert s.approximated["environment map (UVs from model-space normals)"] == 1
+    assert not s.unsupported
+
+
+def test_env_mapped_strip_with_uvs_keeps_them(tmp_path):
+    roots, strip, w = _one_strip_writer()
+    strip.flags |= ninja.STRIP_FLAG_ENV_MAP
+    assert strip.uv
+    w.add_tree(SEC, roots)
+    s = w.write(str(tmp_path))
+    j = w.doc.j
+    uv = j["accessors"][j["meshes"][0]["primitives"][0]["attributes"]["TEXCOORD_0"]]
+    view = j["bufferViews"][uv["bufferView"]]
+    got = struct.unpack_from("<%df" % (2 * uv["count"]), w.doc.bin, view["byteOffset"])
+    assert sorted(zip(got[::2], got[1::2])) == [(0, 0), (0, 1), (1, 0), (1, 1)]
+    assert s.approximated["environment map (the strip's own UVs)"] == 1
+    assert "environment map (UVs from model-space normals)" not in s.approximated
+
+
+def test_translucent_texture_blends_without_the_use_alpha_flag(tmp_path):
+    roots, strip, w = _one_strip_writer(tex_alpha=0x77)
+    assert not strip.flags & ninja.STRIP_FLAG_USE_ALPHA
+    w.add_tree(SEC, roots)
+    s = w.write(str(tmp_path))
+    assert w.doc.j["materials"][0]["alphaMode"] == "BLEND"
+    assert s.approximated["translucent texture blended without use-alpha"] == 1
+
+
+@pytest.mark.parametrize("alpha", [240, 250])
+def test_near_opaque_texture_stays_opaque(tmp_path, alpha):
+    roots, strip, w = _one_strip_writer(tex_alpha=alpha)
+    w.add_tree(SEC, roots)
+    s = w.write(str(tmp_path))
+    assert "alphaMode" not in w.doc.j["materials"][0]
+    assert "translucent texture blended without use-alpha" not in s.approximated
+
+
 def test_hidden_node_keeps_the_node_not_the_mesh():
     img = Image(xbe([("MAP11", SEC, stage_section("b1"))]))
     roots = ninja.Reader(img, ninja.Format(16, "bams", True)).tree(SEC)
@@ -582,6 +713,29 @@ def test_extract_writes_the_project(game, capsys):
     proj = open(os.path.join(root, "project.godot")).read()
     assert 'run/main_scene="res://MAP11.tscn"' in proj and 'driver/driver="Dummy"' in proj
     assert not [p for p in os.listdir(root) if p.endswith(".pck")]
+    rep = json.load(open(os.path.join(root, "stages", "MAP11", "report.json")))
+    assert rep["trees"] == [{"root": "0x00020000", "texlist": "0x00020300"}]
+    assert (rep["meshes"], rep["triangles"], rep["missing"]) == (1, 2, [])
+    txt = open(os.path.join(root, "report.txt")).read()
+    assert txt.startswith("MAP11: 1 meshes, 2 triangles") and "approximated:" in txt
+
+
+def test_report_txt_keeps_every_stage(game, capsys):
+    # A second stage over the same tree; re-running one keeps both.
+    toml = os.path.join(game.root, "game.toml")
+    with open(toml, "a") as f:
+        f.write('[[extract.stage]]\nname = "MAP12"\nsection = "MAP11"\n')
+        f.write("root = 0x20000\ntexlist = 0x20300\n")
+    manifest.use(manifest.load(game.root))
+    assert cli.run(Args()) == 0
+    assert cli.run(Args(stage=["MAP12"])) == 0
+    out = os.path.join(game.root, "dist", "extract")
+    txt = open(os.path.join(out, "report.txt")).read()
+    assert "MAP11: 1 meshes" in txt and "MAP12: 1 meshes" in txt
+    os.remove(os.path.join(out, "stages", "MAP11", "report.json"))
+    assert cli.run(Args(stage=["MAP12"])) == 0
+    txt = open(os.path.join(out, "report.txt")).read()
+    assert "MAP11: no report (re-extract)\n" in txt and "MAP12: 1 meshes" in txt
 
 
 def test_extract_list_and_unknown_stage(game, capsys):

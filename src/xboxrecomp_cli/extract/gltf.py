@@ -7,6 +7,22 @@ flip and clamp bits as glTF wraps), the diffuse colour, the strip's
 double-sided and ignore-light flags (KHR_materials_unlit) and an alpha
 mode from the texture's alpha and the strip's use-alpha flag. A hidden
 object keeps its node and loses its mesh.
+
+Approximations, counted in the summary's `approximated`:
+- an environment-mapped strip carries no UVs; the game looks its texture
+  up from the view-space normal each frame. A static scene has no view,
+  so its UVs come from the model-space normal (a sphere map frozen at
+  the identity view).
+- Godot's glTF importer keeps one repeat flag per material, taken from
+  wrapT, so a texture clamped on one axis and repeated on the other
+  smears or tiles on both. When the two wraps differ, an axis whose UVs
+  stay inside [0, 1] takes the other axis's wrap (both inside: clamp);
+  wraps that agree are kept, since repeat bleeds the opposite edge under
+  bilinear filtering where clamp does not. The wraps that still differ
+  per axis are counted as unsupported. Godot cannot mirror either, so a
+  mirrored axis that leaves [0, 1] repeats and is counted.
+- a texture whose alpha never reaches 0 but dips below 240 is glass and
+  blends even without the strip's use-alpha flag.
 """
 
 import json
@@ -40,18 +56,7 @@ class Summary:
         self.textures = 0
         self.missing = []
         self.unsupported = Counter()
-
-    def line(self):
-        s = "%s: %d meshes, %d triangles, %d materials, %d textures" % (
-            self.name,
-            self.meshes,
-            self.triangles,
-            self.materials,
-            self.textures,
-        )
-        if self.missing:
-            s += ", %d missing" % len(self.missing)
-        return s
+        self.approximated = Counter()
 
 
 class _Doc:
@@ -108,6 +113,16 @@ def _normalize(n):
     return (n[0] / ln, n[1] / ln, n[2] / ln)
 
 
+def _env_uv(n):
+    """A sphere-map lookup at the identity view: the normal's X and Y
+    across the texture, centre at (0.5, 0.5)."""
+    return 0.5 + 0.5 * n[0], 0.5 - 0.5 * n[1]
+
+
+def _in_unit(lo, hi):
+    return lo >= -1e-4 and hi <= 1.0 + 1e-4
+
+
 def wraps(tflags):
     hf = tflags >> 16
     s = MIRROR if hf & TINY_FLIP_U else (CLAMP if hf & TINY_CLAMP_U else REPEAT)
@@ -132,6 +147,10 @@ class Writer:
         self._mats, self._samplers, self._meshes = {}, {}, {}
         self._by_name, self._alpha = {}, {}
         self._pngs = {}
+        # texture index: [glTF wraps, umin, umax, vmin, vmax] over every
+        # primitive that samples it; write() picks the sampler from it.
+        self._tex_uv = {}
+        self._mat_tex = {}
 
     def _tex_name(self, ti):
         """The texlist's name for texture ti, or None past its end."""
@@ -164,8 +183,7 @@ class Writer:
         self._by_name[key] = img
         return img
 
-    def _sampler(self, tflags):
-        k = wraps(tflags)
+    def _sampler(self, k):
         if k not in self._samplers:
             self._samplers[k] = self.doc.add(
                 "samplers",
@@ -179,8 +197,9 @@ class Writer:
         return self._samplers[k]
 
     def _material(self, s):
-        nm = self._tex_name(s.tex) if s.uv else None
-        key = (nm and nm.lower(), s.tflags if s.uv else 0, s.flags, s.diffuse, s.blend)
+        textured = s.uv or s.flags & ninja.STRIP_FLAG_ENV_MAP
+        nm = self._tex_name(s.tex) if textured else None
+        key = (nm and nm.lower(), s.tflags if textured else 0, s.flags, s.diffuse, s.blend)
         if key in self._mats:
             return self._mats[key]
         b, g, r, a = s.diffuse or b"\xff\xff\xff\xff"
@@ -196,12 +215,26 @@ class Writer:
         if nm is not None and self.source is not None:
             img = self._image(nm)
             if img is not None:
-                tex = self.doc.add("textures", {"source": img, "sampler": self._sampler(s.tflags)})
+                tex = self.doc.add("textures", {"source": img})
+                self._tex_uv[tex] = [wraps(s.tflags), None, None, None, None]
+                self._mat_tex[len(self.doc.j["materials"])] = tex
                 mat["pbrMetallicRoughness"]["baseColorTexture"] = {"index": tex}
                 kind = self._alpha[nm.lower()]
-                if kind == "mask" or (kind == "blend" and not s.flags & ninja.STRIP_FLAG_USE_ALPHA):
+                use_alpha = s.flags & ninja.STRIP_FLAG_USE_ALPHA
+                # Alpha that never reaches 0 and dips well below opaque is
+                # see-through glass, not a cut-out: an alpha test would
+                # punch holes in it, so it blends whatever the use-alpha
+                # flag says. Near-opaque alpha passes any alpha test, so
+                # without the flag it is opaque.
+                if kind == "translucent":
+                    mat["alphaMode"] = "BLEND"
+                    if not use_alpha:
+                        self.summary.approximated[
+                            "translucent texture blended without use-alpha"
+                        ] += 1
+                elif kind == "mask" or (kind == "blend" and not use_alpha):
                     mat["alphaMode"] = "MASK"
-                elif kind == "blend":
+                elif kind in ("blend", "near-opaque") and use_alpha:
                     mat["alphaMode"] = "BLEND"
         if a < 255 and s.flags & ninja.STRIP_FLAG_USE_ALPHA:
             mat["alphaMode"] = "BLEND"
@@ -227,6 +260,13 @@ class Writer:
         for mi, strips in groups.items():
             remap, pos, nrm, uvs, idx = {}, [], [], [], []
             for s in strips:
+                # The game looks an environment map up from the view-space
+                # normal; a strip with UVs of its own keeps them here.
+                env = s.flags & ninja.STRIP_FLAG_ENV_MAP and not s.uv
+                if env:
+                    self.summary.approximated["environment map (UVs from model-space normals)"] += 1
+                elif s.flags & ninja.STRIP_FLAG_ENV_MAP:
+                    self.summary.approximated["environment map (the strip's own UVs)"] += 1
                 for tri in s.tris:
                     for vi, _u, _v in tri:
                         if vi not in model.verts:
@@ -234,15 +274,26 @@ class Writer:
                             break
                     else:
                         for vi, u, v in tri:
+                            n = _normalize(model.normals.get(vi, (0.0, 1.0, 0.0)))
+                            if env:
+                                u, v = _env_uv(n)
                             k = (vi, u, v)
                             if k not in remap:
                                 remap[k] = len(pos)
                                 pos.append(model.verts[vi])
-                                nrm.append(_normalize(model.normals.get(vi, (0.0, 1.0, 0.0))))
+                                nrm.append(n)
                                 uvs.append((u, v))
                             idx.append((remap[k],))
             if not idx:
                 continue
+            if mi in self._mat_tex:
+                r = self._tex_uv[self._mat_tex[mi]]
+                us, vs = [t[0] for t in uvs], [t[1] for t in uvs]
+                lo = (min(us), max(us), min(vs), max(vs))
+                r[1] = lo[0] if r[1] is None else min(r[1], lo[0])
+                r[2] = lo[1] if r[2] is None else max(r[2], lo[1])
+                r[3] = lo[2] if r[3] is None else min(r[3], lo[2])
+                r[4] = lo[3] if r[4] is None else max(r[4], lo[3])
             d = self.doc
             prims.append(
                 {
@@ -292,8 +343,39 @@ class Writer:
             top["rotation"] = rot
         self.doc.j["scenes"][0]["nodes"].append(self.doc.add("nodes", top))
 
+    def _samplers_by_range(self):
+        for tex, (k, u0, u1, v0, v1) in self._tex_uv.items():
+            s, t = k
+            u_in = u0 is not None and _in_unit(u0, u1)
+            v_in = v0 is not None and _in_unit(v0, v1)
+            # Godot keeps one wrap per material. Only wraps that differ per
+            # axis need a choice: an axis whose UVs stay inside [0, 1] takes
+            # the other axis's wrap, which tiles the same there. A
+            # clamp is never turned into repeat when both axes agree: under
+            # bilinear and mips, repeat bleeds the opposite edge into a
+            # sky's horizon or a sign's border.
+            if s != t:
+                if u_in and v_in:
+                    s = t = CLAMP
+                elif u_in:
+                    s = t
+                elif v_in:
+                    t = s
+                if s != t:
+                    self.summary.unsupported["texture wraps differ per axis (Godot uses one)"] += 1
+                else:
+                    self.summary.approximated[
+                        "texture wrap kept inside [0, 1] (written as the other axis's)"
+                    ] += 1
+            # Godot's 3D materials cannot mirror: a mirrored axis that leaves
+            # [0, 1] repeats instead.
+            if (s == MIRROR and not u_in) or (t == MIRROR and not v_in):
+                self.summary.approximated["mirrored texture wrap (Godot repeats it)"] += 1
+            self.doc.j["textures"][tex]["sampler"] = self._sampler((s, t))
+
     def write(self, out_dir):
         """Writes the files; returns the Summary."""
+        self._samplers_by_range()
         j = dict(self.doc.j)
         # glTF refuses empty top-level arrays and zero-length buffers, so a
         # stage with nothing drawn keeps only its nodes and scene.

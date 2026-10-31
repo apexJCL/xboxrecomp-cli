@@ -91,13 +91,22 @@ def png(w, h, rgba):
     )
 
 
+# Alpha at or above this is an edge or compression artefact on opaque art,
+# not glass: within 6% of opaque, and the M13 glass floor bottoms out at 119.
+TRANSLUCENT_BELOW = 240
+
+
 def alpha_kind(rgba):
-    """'opaque', 'mask' (alpha only 0 or 255) or 'blend'."""
+    """'opaque', 'mask' (alpha only 0 or 255), 'translucent' (never 0,
+    somewhere below TRANSLUCENT_BELOW), 'near-opaque' (never 0, never below
+    it) or 'blend'."""
     a = set(rgba[3::4])
     if a <= {255}:
         return "opaque"
     if a <= {0, 255}:
         return "mask"
+    if 0 not in a:
+        return "translucent" if min(a) < TRANSLUCENT_BELOW else "near-opaque"
     return "blend"
 
 

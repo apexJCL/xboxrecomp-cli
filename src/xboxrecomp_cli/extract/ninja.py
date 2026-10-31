@@ -18,7 +18,8 @@ force when it is read.
 
 Everything the glTF writer cannot express goes into the reader's
 `unsupported` counter, which the summary prints per stage, instead of
-being guessed.
+being guessed. Environment-mapped strips (flag 0x40) are read like any
+other; the writer approximates their map.
 """
 
 import math
@@ -286,8 +287,6 @@ class Reader:
         s.diffuse, s.blend = state["diffuse"], state["blend"]
         uv_div = STRIP_UV.get(t) or STRIP_UV2.get(t)
         s.uv = uv_div is not None
-        if fl & STRIP_FLAG_ENV_MAP:
-            self.unsupported["environment-mapped strip"] += 1
         hdr = struct.unpack_from("<H", body, 0)[0]
         nstrips, user = hdr & 0x3FFF, hdr >> 14
         tris = []

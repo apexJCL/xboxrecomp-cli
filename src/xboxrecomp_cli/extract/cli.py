@@ -5,10 +5,14 @@
 
 Writes <out>/stages/<name>/<name>.gltf (+ .bin, textures/), one
 <name>.tscn per stage and project.godot; the default out is [extract]
-out, under the game's gitignored dist/. --import then imports the
+out, under the game's gitignored dist/. Each stage also gets
+stages/<name>/report.json (its counts, what was left out and what was
+approximated), and <out>/report.txt gathers every stage's report in the
+words the run prints. --import then imports the
 project headless with the pinned Godot and fails on any Godot error.
 """
 
+import json
 import os
 import shutil
 from collections import Counter
@@ -69,15 +73,71 @@ def extract_stage(image, cfg, stage, source, out_dir):
     os.makedirs(out_dir)
     s = w.write(out_dir)
     s.unsupported.update(reader.unsupported)
+    _write_report(s, stage, out_dir)
     return s
 
 
-def _summary(s):
-    host.say(s.line())
-    for k, n in sorted(s.unsupported.items()):
-        host.say("    unsupported: %s (%d)" % (k, n))
-    if s.missing:
-        host.say("    missing textures: %s" % ", ".join(sorted(set(s.missing))[:10]))
+def _write_report(s, stage, out_dir):
+    rep = {
+        "stage": s.name,
+        "trees": [
+            {"root": "0x%08X" % r, "texlist": "0x%08X" % t}
+            for r, t in zip(stage["root"], stage["texlist"])
+        ],
+        "meshes": s.meshes,
+        "triangles": s.triangles,
+        "materials": s.materials,
+        "textures": s.textures,
+        "missing": sorted(set(s.missing)),
+        "unsupported": dict(sorted(s.unsupported.items())),
+        "approximated": dict(sorted(s.approximated.items())),
+    }
+    with open(os.path.join(out_dir, "report.json"), "w") as f:
+        json.dump(rep, f, indent=1)
+        f.write("\n")
+
+
+def _report_lines(rep):
+    s = "%s: %d meshes, %d triangles, %d materials, %d textures" % (
+        rep["stage"],
+        rep["meshes"],
+        rep["triangles"],
+        rep["materials"],
+        rep["textures"],
+    )
+    if rep["missing"]:
+        s += ", %d missing" % len(rep["missing"])
+    lines = [s]
+    for k, n in rep["unsupported"].items():
+        lines.append("    unsupported: %s (%d)" % (k, n))
+    for k, n in rep["approximated"].items():
+        lines.append("    approximated: %s (%d)" % (k, n))
+    if rep["missing"]:
+        lines.append("    missing textures: %s" % ", ".join(rep["missing"][:10]))
+    return lines
+
+
+def _summary(out_dir):
+    with open(os.path.join(out_dir, "report.json")) as f:
+        for line in _report_lines(json.load(f)):
+            host.say(line)
+
+
+def write_report_txt(out, names):
+    """<out>/report.txt: every stage extracted under out, so a run over one
+    stage keeps the others' lines. A stage written before reports existed
+    says so rather than vanishing from the list."""
+    lines = []
+    for n in names:
+        sdir = os.path.join(out, "stages", n)
+        p = os.path.join(sdir, "report.json")
+        if os.path.isfile(p):
+            with open(p) as f:
+                lines += _report_lines(json.load(f))
+        elif os.path.isdir(sdir):
+            lines.append("%s: no report (re-extract)" % n)
+    with open(os.path.join(out, "report.txt"), "w") as f:
+        f.write("".join(line + "\n" for line in lines))
 
 
 def _scan(G, cfg, section):
@@ -128,21 +188,24 @@ def run(a):
     host.step("extract %d stage(s) to %s" % (len(picked), out))
     totals = Counter()
     for st in picked:
+        sdir = os.path.join(out, "stages", st["name"])
         try:
-            s = extract_stage(image, cfg, st, source, os.path.join(out, "stages", st["name"]))
+            s = extract_stage(image, cfg, st, source, sdir)
         except (ImageError, textures.TextureError) as e:
             raise CliError("%s: %s" % (st["name"], e)) from e
-        _summary(s)
+        _summary(sdir)
         totals.update(meshes=s.meshes, triangles=s.triangles, stages=1)
     godot.write_project(
         out,
         "%s (extracted)" % G.name,
         [st["name"] for st in stages if os.path.isdir(os.path.join(out, "stages", st["name"]))],
     )
+    write_report_txt(out, [st["name"] for st in stages])
     host.say(
         "%d stage(s), %d meshes, %d triangles: %s"
         % (totals["stages"], totals["meshes"], totals["triangles"], out)
     )
+    host.say("what each stage leaves out or approximates: %s" % os.path.join(out, "report.txt"))
     host.say("game data from your own dump: never commit or share it")
     if a.do_import:
         host.step("Godot %s import (headless)" % godot.VERSION)

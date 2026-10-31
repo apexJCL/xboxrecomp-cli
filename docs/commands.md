@@ -279,8 +279,22 @@ stage and a viewer that frames it. Needs `[extract]` in `game.toml`.
 | `--scan SECTION` | list the object trees and texlists a section holds, to find a stage's `root` and `texlist` |
 
 Each stage prints its meshes, triangles, materials and textures, then
-what it met and did not convert (a chunk type, a blend mode, an
-environment-mapped strip), counted: those are left out, never fatal.
+what it met and did not convert (a chunk type, a blend mode), counted:
+those are left out, never fatal. What is approximated is counted apart:
+
+- an environment-mapped strip without UVs takes them from its
+  model-space normals (a sphere map at a fixed view);
+- Godot's importer keeps one texture repeat flag per material. When a
+  texture's two wraps differ, an axis whose UVs stay inside [0, 1] takes
+  the other axis's wrap (clamp when both stay inside); wraps that agree
+  are kept, since repeat would bleed the opposite edge in. The wraps that
+  still differ per axis are listed as unsupported. Godot cannot mirror,
+  so a mirrored axis that leaves [0, 1] repeats;
+- a texture whose alpha never reaches 0 but dips below 240 (glass)
+  blends even without the strip's use-alpha flag.
+
+The same lines go to `report.txt` in the project folder, and each stage
+also gets `stages/<name>/report.json` with its trees and counts.
 
 `--import` uses the pinned Godot (4.7.2), fetched once into
 `third_party/` and checked by sha256, or the binary `XBR_GODOT` names
