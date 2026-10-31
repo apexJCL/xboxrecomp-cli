@@ -119,6 +119,9 @@ class _Doc:
             "type": typ,
         }
         if minmax:
+            # From the packed values: a float64 row (a computed box corner)
+            # rounds when packed, and glTF wants the bounds of what's stored.
+            rows = list(struct.iter_unpack("<" + fmt * comps, data))
             a["min"] = [min(r[i] for r in rows) for i in range(comps)]
             a["max"] = [max(r[i] for r in rows) for i in range(comps)]
         return self.add("accessors", a)
@@ -133,6 +136,45 @@ def _env_uv(n):
     """A sphere-map lookup at the identity view: the normal's X and Y
     across the texture, centre at (0.5, 0.5)."""
     return 0.5 + 0.5 * n[0], 0.5 - 0.5 * n[1]
+
+
+def _qrot(q, p):
+    """p rotated by the unit quaternion q (x, y, z, w)."""
+    x, y, z, w = q
+    tx = 2 * (y * p[2] - z * p[1])
+    ty = 2 * (z * p[0] - x * p[2])
+    tz = 2 * (x * p[1] - y * p[0])
+    return (
+        p[0] + w * tx + y * tz - z * ty,
+        p[1] + w * ty + z * tx - x * tz,
+        p[2] + w * tz + x * ty - y * tx,
+    )
+
+
+def _tree_bounds(roots):
+    """The bounds (lo, hi) of the drawn vertices of a tree in its root's
+    space, nodes placed as _node writes them; (None, None) if none."""
+    lo, hi = [float("inf")] * 3, [float("-inf")] * 3
+
+    def walk(n, place):
+        def here(p, n=n):
+            p = tuple(p[i] * n.scl[i] for i in range(3))
+            p = _qrot(ninja.quat(n.ang, n.flags), p)
+            return place(tuple(p[i] + n.pos[i] for i in range(3)))
+
+        if n.model and not n.flags & ninja.EVAL_HIDE:
+            for v in n.model.verts.values():
+                w = here(v)
+                for i in range(3):
+                    lo[i], hi[i] = min(lo[i], w[i]), max(hi[i], w[i])
+        for c in n.children:
+            walk(c, here)
+
+    for n in roots:
+        walk(n, lambda p: p)
+    if lo[0] == float("inf"):
+        return None, None
+    return lo, hi
 
 
 def _in_unit(lo, hi):
@@ -162,6 +204,10 @@ class Writer:
         # Texture name (lower case) to the opacity a blend pass of the
         # game's own gives its surfaces ([[extract.stage]] texture_alpha).
         self.texture_alpha = {k.lower(): v for k, v in (texture_alpha or {}).items()}
+        # The names as the stage spells them, for the report of the ones no
+        # strip drew with (a typo, or a texture of another texlist).
+        self._ta_names = {k.lower(): k for k in texture_alpha or {}}
+        self._ta_matched = set()
         self.doc = _Doc()
         self.summary = Summary(name)
         self._mats, self._samplers, self._meshes = {}, {}, {}
@@ -273,10 +319,17 @@ class Writer:
         if nm is not None and nm.lower() in self.texture_alpha:
             # A surface the game covers with a blend pass of its own (a
             # floor under its planar reflection) that the static scene
-            # stands in for by letting what lies below show through.
-            mat["alphaMode"] = "BLEND"
-            mat["pbrMetallicRoughness"]["baseColorFactor"][3] *= self.texture_alpha[nm.lower()]
-            self.summary.approximated["blend pass as a translucent texture (texture_alpha)"] += 1
+            # stands in for by letting what lies below show through. An
+            # opacity of 1 hides nothing, so the surface keeps its own
+            # alpha mode: BLEND would only cost it depth sorting.
+            self._ta_matched.add(nm.lower())
+            op = self.texture_alpha[nm.lower()]
+            if op < 1:
+                mat["alphaMode"] = "BLEND"
+                mat["pbrMetallicRoughness"]["baseColorFactor"][3] *= op
+                self.summary.approximated[
+                    "blend pass as a translucent texture (texture_alpha)"
+                ] += 1
         if s.blend == ninja.BLEND_ADD:
             # Additive light never cuts out or hides what is behind it.
             mat["alphaMode"] = "BLEND"
@@ -399,11 +452,92 @@ class Writer:
             xf["name"] = name + "_transform"
             xf["children"] = kids
             kids = [self.doc.add("nodes", xf)]
+        if transform and transform.get("backdrop") is not None:
+            box = self._backdrop(name, roots, transform)
+            if box is not None:
+                kids.append(box)
         top = {"name": name, "children": kids}
         rot = UP_ROTATION[self.up]
         if rot:
             top["rotation"] = rot
         self.doc.j["scenes"][0]["nodes"].append(self.doc.add("nodes", top))
+
+    def _backdrop(self, name, roots, transform):
+        """The render target's clear colour behind a mirrored tree: the
+        game draws the reflection into a target cleared to that colour, so
+        wherever the mirrored room has no surface (its open top, once
+        mirrored below the floor) the floor shows the colour, not the sky
+        or whatever lies further down. An unlit box, open on the mirror
+        plane's side, faces inward around the tree's mirrored bounds."""
+        lo, hi = _tree_bounds(roots)
+        if lo is None:
+            return None
+        scale = [float(v) for v in transform.get("scale", (1, 1, 1))]
+        move = [float(v) for v in transform.get("translation", (0, 0, 0))]
+        a = next(i for i in range(3) if scale[i] < 0)
+        ends = [sorted((lo[i] * scale[i] + move[i], hi[i] * scale[i] + move[i])) for i in range(3)]
+        # The plane the mirror keeps in place: x = s*x + t.
+        plane = move[a] / (1 - scale[a])
+        # A margin keeps the box off the tree's own outermost faces (the
+        # mirrored ceiling would z-fight with its bottom).
+        pad = 0.01 * max(e[1] - e[0] for e in ends) or 1.0
+        box = [[e[0] - pad, e[1] + pad] for e in ends]
+        # On the mirror's axis the box runs from the plane to the tree's
+        # far side, so the gap between the plane and the tree is covered.
+        far = 0 if plane > (ends[a][0] + ends[a][1]) / 2 else 1
+        box[a] = sorted((box[a][far], plane))
+        open_side = box[a].index(plane)
+        pos, nrm, idx = [], [], []
+        for b in range(3):
+            u, v = (b + 1) % 3, (b + 2) % 3
+            for side in (0, 1):
+                if b == a and side == open_side:
+                    continue
+                n = [0.0, 0.0, 0.0]
+                n[b] = 1.0 if side == 0 else -1.0
+                base = len(pos)
+                for cu, cv in ((0, 0), (1, 0), (1, 1), (0, 1)):
+                    p = [0.0, 0.0, 0.0]
+                    p[b], p[u], p[v] = box[b][side], box[u][cu], box[v][cv]
+                    pos.append(tuple(p))
+                    nrm.append(tuple(n))
+                # e_u x e_v = e_b: counter-clockwise faces +b, the low
+                # face's inside; the high face winds the other way.
+                quad = (0, 1, 2, 0, 2, 3) if side == 0 else (0, 2, 1, 0, 3, 2)
+                idx += [(base + i,) for i in quad]
+        r, g, b_ = (float(c) for c in transform["backdrop"])
+        mat = self.doc.add(
+            "materials",
+            {
+                "name": "m%d_backdrop" % len(self.doc.j["materials"]),
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [r, g, b_, 1.0],
+                    "metallicFactor": 0.0,
+                    "roughnessFactor": 1.0,
+                },
+                "extensions": {UNLIT: {}},
+            },
+        )
+        if UNLIT not in self.doc.j["extensionsUsed"]:
+            self.doc.j["extensionsUsed"].append(UNLIT)
+        d = self.doc
+        prim = {
+            "attributes": {
+                "POSITION": d.accessor("f", 3, pos, "VEC3", ARRAY_BUFFER, minmax=True),
+                "NORMAL": d.accessor("f", 3, nrm, "VEC3", ARRAY_BUFFER),
+            },
+            "indices": d.accessor("I", 1, idx, "SCALAR", ELEMENT_ARRAY_BUFFER),
+            "material": mat,
+        }
+        mesh = d.add("meshes", {"name": name + "_backdrop", "primitives": [prim]})
+        self.summary.meshes += 1
+        self.summary.triangles += len(idx) // 3
+        self.summary.approximated["render target clear colour as a backdrop box"] += 1
+        return d.add("nodes", {"name": name + "_backdrop", "mesh": mesh})
+
+    def unmatched_texture_alpha(self):
+        """texture_alpha names no strip of the stage drew with."""
+        return sorted(v for k, v in self._ta_names.items() if k not in self._ta_matched)
 
     def _samplers_by_range(self):
         for tex, (k, u0, u1, v0, v1) in self._tex_uv.items():

@@ -82,7 +82,7 @@ def extract_stage(image, cfg, stage, source, out_dir):
     s = w.write(out_dir)
     s.unsupported.update(reader.unsupported)
     s.supported.update(reader.supported)
-    _write_report(s, stage, out_dir)
+    _write_report(s, stage, out_dir, w.unmatched_texture_alpha())
     return s
 
 
@@ -94,12 +94,12 @@ def transforms(stage):
 def _xf_text(xf):
     return " ".join(
         "%s(%s)" % (k, ", ".join("%g" % v for v in xf[k]))
-        for k in ("scale", "translation")
+        for k in ("scale", "translation", "backdrop")
         if k in xf
     )
 
 
-def _write_report(s, stage, out_dir):
+def _write_report(s, stage, out_dir, unmatched=()):
     trees = []
     for r, t, xf in zip(stage["root"], stage["texlist"], transforms(stage)):
         tree = {"root": "0x%08X" % r, "texlist": "0x%08X" % t}
@@ -120,6 +120,8 @@ def _write_report(s, stage, out_dir):
     }
     if stage.get("texture_alpha"):
         rep["texture_alpha"] = dict(sorted(stage["texture_alpha"].items()))
+    if unmatched:
+        rep["texture_alpha_unmatched"] = list(unmatched)
     with open(os.path.join(out_dir, "report.json"), "w") as f:
         json.dump(rep, f, indent=1)
         f.write("\n")
@@ -145,6 +147,13 @@ def _report_lines(rep):
         lines.append("    supported: %s (%d)" % (k, n))
     if rep["missing"]:
         lines.append("    missing textures: %s" % ", ".join(rep["missing"][:10]))
+    # A name no strip drew with changes nothing: a typo, or a texture the
+    # stage's texlists do not hold.
+    if rep.get("texture_alpha_unmatched"):
+        lines.append(
+            "    warning: texture_alpha matched no texture: %s"
+            % ", ".join(rep["texture_alpha_unmatched"])
+        )
     return lines
 
 

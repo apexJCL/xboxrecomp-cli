@@ -1206,3 +1206,216 @@ def test_manifest_texture_alpha_errors(table, why):
     )
     with pytest.raises(manifest.ManifestError, match=r"extract\.stage\[1\]\." + why):
         manifest.parse_text(bad)
+
+
+def test_texture_alpha_of_one_keeps_the_alpha_mode(tmp_path):
+    # Fully opaque hides nothing below: no BLEND, nothing approximated.
+    roots, _, w = _one_strip_writer()
+    w = gltf.Writer("M", ["Tex0"], w.source, texture_alpha={"tex0": 1})
+    w.add_tree(SEC, roots)
+    w.write(str(tmp_path))
+    (mat,) = w.doc.j["materials"]
+    assert "alphaMode" not in mat
+    assert mat["pbrMetallicRoughness"]["baseColorFactor"][3] == 1
+    assert "blend pass as a translucent texture (texture_alpha)" not in w.summary.approximated
+    assert w.unmatched_texture_alpha() == []
+
+
+def test_texture_alpha_lists_the_names_no_strip_drew_with(tmp_path):
+    roots, _, w = _one_strip_writer()
+    w = gltf.Writer("M", ["Tex0"], w.source, texture_alpha={"TEX0": 0.5, "Floor9": 0.4})
+    w.add_tree(SEC, roots)
+    w.write(str(tmp_path))
+    assert w.unmatched_texture_alpha() == ["Floor9"]
+
+
+def test_extract_warns_of_an_unmatched_texture_alpha(game):
+    with open(os.path.join(game.root, "game.toml"), "a") as f:
+        f.write(FLOOR.replace("{tex0 = 0.5}", "{tex0 = 0.5, Floor9 = 0.4}"))
+    manifest.use(manifest.load(game.root))
+    assert cli.run(Args(stage=["FLOOR", "MAP11"])) == 0
+    rep = json.load(open(game.path("dist", "extract", "stages", "FLOOR", "report.json")))
+    assert rep["texture_alpha_unmatched"] == ["Floor9"]
+    txt = open(game.path("dist", "extract", "report.txt")).read()
+    assert "warning: texture_alpha matched no texture: Floor9" in txt
+    plain = json.load(open(game.path("dist", "extract", "stages", "MAP11", "report.json")))
+    assert "texture_alpha_unmatched" not in plain
+
+
+# ---- backdrop (a render target's clear colour behind a mirrored tree) ------
+
+
+def _backdrop(tmp_path, transform):
+    roots, _, w = _one_strip_writer()
+    w.add_tree(SEC, roots, transform=transform)
+    w.write(str(tmp_path))
+    j = w.doc.j
+    (mesh,) = [m for m in j["meshes"] if m["name"].endswith("_backdrop")]
+    (prim,) = mesh["primitives"]
+    return w, j, prim
+
+
+def test_backdrop_boxes_the_mirrored_tree_open_on_the_plane(tmp_path):
+    # The quad lies at y = 2; mirrored about y = 1 it lands at y = 0.
+    w, j, prim = _backdrop(
+        tmp_path, {"scale": [1, -1, 1], "translation": [0, 2, 0], "backdrop": [0, 0, 0.5]}
+    )
+    pos = j["accessors"][prim["attributes"]["POSITION"]]
+    assert pos["max"][1] == 1.0 and pos["min"][1] < 0
+    assert pos["min"][0] < 3 and pos["max"][0] > 4
+    assert j["accessors"][prim["indices"]]["count"] == 30  # five faces, no lid
+    mat = j["materials"][prim["material"]]
+    assert mat["pbrMetallicRoughness"]["baseColorFactor"] == [0, 0, 0.5, 1]
+    assert gltf.UNLIT in mat["extensions"] and gltf.UNLIT in j["extensionsUsed"]
+    assert w.summary.approximated["render target clear colour as a backdrop box"] == 1
+    assert w.summary.triangles == 2 + 10
+    # The box sits beside the mirrored tree, in the game's space.
+    top = j["nodes"][j["scenes"][0]["nodes"][0]]
+    names = [j["nodes"][k]["name"] for k in top["children"]]
+    assert names == ["M_00020000_transform", "M_00020000_backdrop"]
+
+
+def _rows(tmp_path, j, acc, n):
+    """An accessor's rows as M.bin stores them."""
+    with open(os.path.join(str(tmp_path), "M.bin"), "rb") as f:
+        raw = f.read()
+    a = j["accessors"][acc]
+    bv = j["bufferViews"][a["bufferView"]]
+    fmt = "<" + ("f" if a["componentType"] == gltf.FLOAT else "I") * n
+    size = struct.calcsize(fmt)
+    return [struct.unpack_from(fmt, raw, bv["byteOffset"] + i * size) for i in range(a["count"])]
+
+
+# The b2 quad spans x 3..4, y 2, z -2..-1. Each case mirrors one axis about
+# translation / 2: the plane above the copy (y 2, y -0.1), below it (y 6,
+# x 20, open on the low side), or through it (z -3.3).
+MIRRORS = [(1, 2), (1, 6), (1, -0.1), (0, 20), (2, -3.3)]
+
+
+@pytest.mark.parametrize("axis, move", MIRRORS)
+def test_backdrop_is_open_on_the_plane_and_faces_inward(tmp_path, axis, move):
+    scale, tr = [1, 1, 1], [0, 0, 0]
+    scale[axis], tr[axis] = -1, move
+    _, j, prim = _backdrop(tmp_path, {"scale": scale, "translation": tr, "backdrop": [0, 0, 0]})
+    pos = _rows(tmp_path, j, prim["attributes"]["POSITION"], 3)
+    idx = [i for (i,) in _rows(tmp_path, j, prim["indices"], 1)]
+    assert len(idx) == 30  # five faces, no lid
+    lo, hi = gltf._tree_bounds(read("b2")[1])
+    ends = [sorted((lo[i] * scale[i] + tr[i], hi[i] * scale[i] + tr[i])) for i in range(3)]
+    box = [(min(p[i] for p in pos), max(p[i] for p in pos)) for i in range(3)]
+    for i in range(3):
+        if i != axis:
+            assert box[i][0] < ends[i][0] and box[i][1] > ends[i][1]
+    plane = move / 2
+    open_low = plane < (ends[axis][0] + ends[axis][1]) / 2
+    assert open_low == (move in (6, 20))
+    shut = box[axis][1] if open_low else box[axis][0]
+    assert box[axis][0 if open_low else 1] == pytest.approx(plane, abs=1e-5)
+    faces = [pos[k : k + 4] for k in range(0, len(pos), 4)]
+    at = [f[0][axis] for f in faces if len({p[axis] for p in f}) == 1]
+    assert at == [shut]  # the far face only; the plane's side is open
+    centre = [(box[i][0] + box[i][1]) / 2 for i in range(3)]
+    for t in range(0, len(idx), 3):
+        a, b, c = (pos[k] for k in idx[t : t + 3])
+        u = [b[i] - a[i] for i in range(3)]
+        v = [c[i] - a[i] for i in range(3)]
+        n = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+        # Counter-clockwise front faces point at the box's inside.
+        assert sum(n[i] * (centre[i] - a[i]) for i in range(3)) > 0
+
+
+@pytest.mark.parametrize("axis, move", MIRRORS)
+def test_backdrop_bounds_are_the_stored_values(tmp_path, axis, move):
+    # glTF's POSITION min/max must match the float32s in the buffer, not
+    # the float64 corners they were packed from.
+    scale, tr = [1, 1, 1], [0, 0, 0]
+    scale[axis], tr[axis] = -1, move
+    _, j, prim = _backdrop(tmp_path, {"scale": scale, "translation": tr, "backdrop": [0, 0, 0]})
+    acc = prim["attributes"]["POSITION"]
+    pos = _rows(tmp_path, j, acc, 3)
+    assert j["accessors"][acc]["min"] == [min(p[i] for p in pos) for i in range(3)]
+    assert j["accessors"][acc]["max"] == [max(p[i] for p in pos) for i in range(3)]
+
+
+def _node(pos=(0, 0, 0), ang=(0, 0, 0), scl=(1, 1, 1), flags=0, verts=None, children=()):
+    n = ninja.Node()
+    n.va, n.flags, n.pos, n.ang, n.scl = 0, flags, pos, ang, scl
+    n.children = list(children)
+    n.model = None
+    if verts:
+        n.model = ninja.Model()
+        n.model.verts = dict(enumerate(verts))
+    return n
+
+
+def test_tree_bounds_places_children_and_skips_hidden_nodes():
+    # The root turns 90 degrees about Y (x -> -z, z -> x) and moves by
+    # (10, 0, 0); its child adds (0, 5, 0) and doubles its vertex. A hidden
+    # node's vertices, far off, count for nothing, its children still do.
+    child = _node(pos=(0, 5, 0), scl=(2, 2, 2), verts=[(1, 0, 0)])
+    hidden = _node(
+        flags=ninja.EVAL_HIDE, verts=[(1000, 1000, 1000)], children=[_node(verts=[(0, 0, 1)])]
+    )
+    root = _node(
+        pos=(10, 0, 0), ang=(0, math.pi / 2, 0), verts=[(0, 0, 0)], children=[child, hidden]
+    )
+    lo, hi = gltf._tree_bounds([root])
+    # Root vertex -> (10, 0, 0); the child's (2, 5, 0) turned -> (0, 5, -2),
+    # + (10, 0, 0); hidden's child (0, 0, 1) turned -> (1, 0, 0), + (10, 0, 0).
+    assert lo == pytest.approx([10, 0, -2])
+    assert hi == pytest.approx([11, 5, 0])
+    assert gltf._tree_bounds([_node(flags=ninja.EVAL_HIDE, verts=[(1, 1, 1)])]) == (None, None)
+
+
+def test_extract_reports_the_backdrop(game):
+    with open(os.path.join(game.root, "game.toml"), "a") as f:
+        f.write(FLOOR.replace("{scale = [1, -1, 1]}", "{scale = [1, -1, 1], backdrop = [0, 0, 0]}"))
+    manifest.use(manifest.load(game.root))
+    assert cli.run(Args(stage=["FLOOR"])) == 0
+    out = game.path("dist", "extract")
+    rep = json.load(open(os.path.join(out, "stages", "FLOOR", "report.json")))
+    assert rep["approximated"]["render target clear colour as a backdrop box"] == 1
+    assert rep["trees"][1]["transform"]["backdrop"] == [0, 0, 0]
+    txt = open(os.path.join(out, "report.txt")).read()
+    assert "approximated: render target clear colour as a backdrop box (1)" in txt
+
+
+def test_no_backdrop_without_the_key(tmp_path):
+    roots, _, w = _one_strip_writer()
+    w.add_tree(SEC, roots, transform={"scale": [1, -1, 1], "translation": [0, 2, 0]})
+    w.write(str(tmp_path))
+    assert not any(m["name"].endswith("_backdrop") for m in w.doc.j["meshes"])
+
+
+@pytest.mark.parametrize(
+    "xf, why",
+    [
+        ("{scale = [1, -1, 1], backdrop = [0, 0]}", "backdrop: an RGB colour"),
+        ("{scale = [1, -1, 1], backdrop = [0, 0, 2]}", "backdrop: an RGB colour"),
+        ("{backdrop = [0, 0, 0]}", "backdrop: needs a scale that mirrors one axis"),
+        ("{scale = [-1, -1, 1], backdrop = [0, 0, 0]}", "backdrop: needs a scale"),
+    ],
+)
+def test_manifest_backdrop_errors(xf, why):
+    bad = (GAME_TOML + EXTRACT_B1 + FLOOR).replace("{scale = [1, -1, 1]}", xf)
+    with pytest.raises(
+        manifest.ManifestError, match=r"extract\.stage\[1\]\.transform\[1\]\." + why
+    ):
+        manifest.parse_text(bad)
+
+
+def test_manifest_backdrop_leaves_a_bad_scale_its_own_error():
+    bad = (GAME_TOML + EXTRACT_B1 + FLOOR).replace(
+        "{scale = [1, -1, 1]}", "{scale = [1, 0, 1], backdrop = [0, 0, 0]}"
+    )
+    with pytest.raises(manifest.ManifestError) as e:
+        manifest.parse_text(bad)
+    assert "transform[1].scale: three finite non-zero numbers" in str(e.value)
+    assert "needs a scale" not in str(e.value)
+
+
+def test_manifest_takes_a_backdrop():
+    ok = (GAME_TOML + EXTRACT_B1 + FLOOR).replace(
+        "{scale = [1, -1, 1]}", "{scale = [1, -1, 1], backdrop = [0, 0, 0]}"
+    )
+    manifest.parse_text(ok)

@@ -426,10 +426,11 @@ WIZARD_CREDIT = {
 # or one texlist per root when the parts of a stage each have their own,
 # and optionally one transform per root: the scale and translation the
 # game's draw code applies around a tree (a sky drawn again mirrored in
-# Y is the same root twice, the second with scale [1, -1, 1]), and
-# optionally a texture_alpha table: texture names whose surfaces the game
-# blends with an opacity of its own, such as a floor a planar reflection
-# shows through.
+# Y is the same root twice, the second with scale [1, -1, 1]; a mirrored
+# tree drawn into a render target may name the target's clear colour as a
+# backdrop), and optionally a texture_alpha table: texture names whose
+# surfaces the game blends with an opacity of its own, such as a floor a
+# planar reflection shows through.
 EXTRACT_STAGE = {
     "name": (STR, REQUIRED),
     "section": (STR, ""),
@@ -438,7 +439,7 @@ EXTRACT_STAGE = {
     "transform": (None, None),  # absent unless set (OPTIONAL_ENTRY)
     "texture_alpha": (None, None),  # likewise
 }
-EXTRACT_TRANSFORM_KEYS = ("scale", "translation")
+EXTRACT_TRANSFORM_KEYS = ("scale", "translation", "backdrop")
 EXTRACT_ANGLES = ("bams", "radians")
 EXTRACT_UP = ("y", "-y")
 EXTRACT_TEXTURED_COLOURS = ("diffuse", "white")
@@ -786,6 +787,17 @@ def _check_transform(name, t, roots, texlists):
             errors.append("%s.scale: three finite non-zero numbers" % at)
         if "translation" in x and not _vec3(x["translation"]):
             errors.append("%s.translation: three finite numbers" % at)
+        if "backdrop" in x:
+            b = x["backdrop"]
+            if not _vec3(b) or not all(0 <= c <= 1 for c in b):
+                errors.append("%s.backdrop: an RGB colour, three numbers from 0 to 1" % at)
+            # The box closes the mirrored side and leaves the plane open,
+            # so it needs exactly one mirrored axis to know which is which.
+            # A scale that failed above has its own error already.
+            sc = x.get("scale")
+            bad_scale = "scale" in x and not _vec3(sc, nonzero=True)
+            if not bad_scale and (sc is None or sum(c < 0 for c in sc) != 1):
+                errors.append("%s.backdrop: needs a scale that mirrors one axis" % at)
     if errors or n is None:
         return errors
     return _check_repeats(name, roots, texlists, t)
