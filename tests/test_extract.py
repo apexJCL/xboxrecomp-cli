@@ -503,14 +503,14 @@ def test_wraps_mirror_wins_over_clamp():
     assert gltf.wraps(0) == (gltf.REPEAT, gltf.REPEAT)
 
 
-def _one_strip_writer(tex_alpha=0xFF, textured_colour="diffuse"):
-    """The b2 quad with its one strip, a Writer over a 1x1 texture."""
+def _one_strip_writer(tex_alpha=0xFF, textured_colour="diffuse", size=(1, 1)):
+    """The b2 quad with its one strip, a Writer over a size texture (1x1)."""
     roots = read("b2")[1]
     (strip,) = roots[0].children[0].model.strips
 
     class Src:
         def read(self, name):
-            return dds_raw(1, 1, 32, ARGB8, [tex_alpha << 24 | 0xFFFFFF])
+            return dds_raw(*size, 32, ARGB8, [tex_alpha << 24 | 0xFFFFFF] * (size[0] * size[1]))
 
     return roots, strip, gltf.Writer("M", ["Tex0"], Src(), textured_colour=textured_colour)
 
@@ -527,7 +527,6 @@ def _scaled(strip, su, sv):
 
 
 KEPT_INSIDE = "texture wrap kept inside [0, 1] (written as the other axis's)"
-DIFFER = "texture wraps differ per axis (Godot uses one)"
 MIRRORED = "mirrored texture wrap (Godot repeats it)"
 
 
@@ -571,11 +570,146 @@ def test_mirror_past_the_range_wins_and_is_counted(tmp_path):
     assert s.approximated == {KEPT_INSIDE: 1, MIRRORED: 1}
 
 
-def test_wraps_differing_per_axis_are_counted(tmp_path):
-    # Clamp U past 1, V tiles: Godot's one flag cannot say it.
-    got, s = _wrapped(tmp_path, 0x20, 3, 2)
-    assert got == (gltf.CLAMP, gltf.REPEAT)
-    assert s.unsupported == {DIFFER: 1}
+CUT = "clamped axis cut into the mesh (Godot keeps one wrap)"
+
+
+def _prim_uvs(w):
+    j = w.doc.j
+    prim = j["meshes"][0]["primitives"][0]
+    acc = j["accessors"][prim["attributes"]["TEXCOORD_0"]]
+    view = j["bufferViews"][acc["bufferView"]]
+    return list(struct.iter_unpack("<2f", w.doc.bin[view["byteOffset"] :][: view["byteLength"]]))
+
+
+def _cut_quad(tmp_path, tflags, su, sv, size):
+    roots, strip, w = _one_strip_writer(size=size)
+    strip.tflags = tflags << 16
+    _scaled(strip, su, sv)
+    w.add_tree(SEC, roots)
+    return w, w.write(str(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "tflags, su, sv, axis, size, centres",
+    [
+        # A 4x2 texture: the clamped axis's own size sets its edge texels.
+        (0x20, 3, 2, 0, (4, 2), [0.125, 0.875]),
+        (0x10, 2, 3, 1, (4, 2), [0.25, 0.75]),
+        # One texel across: clamp samples it everywhere, so it is pinned
+        # whole and nothing is cut.
+        (0x20, 3, 2, 0, (1, 1), [0.5]),
+    ],
+)
+def test_clamp_past_the_range_is_cut_when_the_other_axis_tiles(
+    tmp_path, tflags, su, sv, axis, size, centres
+):
+    # M34's walls: U tiles to 7, V clamps and dips just past 0. Godot's one
+    # wrap would clamp U too and smear the wall into bands, so the mesh
+    # carries V's clamp and the material repeats.
+    w, s = _cut_quad(tmp_path, tflags, su, sv, size)
+    assert _sampler_of(w) == (gltf.REPEAT, gltf.REPEAT)
+    assert not s.unsupported
+    assert s.approximated[CUT] == 2 and s.approximated[KEPT_INSIDE] == 1
+    # The quad's corners all sit past the edge texels: what is left on the
+    # axis is the cut at each centre (the inside piece runs between them)
+    # and the pins, never the half texel where repeat blends the far edge.
+    got = sorted({round(uv[axis], 6) for uv in _prim_uvs(w)})
+    assert got == centres
+    assert (s.triangles > 2) == (len(centres) > 1)
+
+
+def test_mirror_and_clamp_is_cut_and_mirrors(tmp_path):
+    # Flip U, clamp V: V is cut, then sits inside and takes U's mirror.
+    w, s = _cut_quad(tmp_path, 0x80 | 0x10, 3, 2, (4, 2))
+    assert _sampler_of(w) == (gltf.MIRROR, gltf.MIRROR)
+    assert not s.unsupported
+    assert s.approximated[CUT] == 2 and s.approximated[MIRRORED] == 1
+    assert sorted({round(uv[1], 6) for uv in _prim_uvs(w)}) == [0.25, 0.75]
+
+
+def test_clamp_past_the_range_with_the_other_axis_inside_is_not_cut(tmp_path):
+    # One clamp for both axes samples like the game: nothing to cut.
+    got, s = _wrapped(tmp_path, 0x20, 3, 1)
+    assert got == (gltf.CLAMP, gltf.CLAMP) and CUT not in s.approximated
+    assert s.triangles == 2
+
+
+def _area(poly):
+    (x0, y0), (x1, y1) = poly[0][3], poly[1][3]
+    a = 0.0
+    for i in range(1, len(poly) - 1):
+        (x1, y1), (x2, y2) = poly[i][3], poly[i + 1][3]
+        a += (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
+    return a / 2
+
+
+def _corner(i, u, v, n=(0.0, 1.0, 0.0)):
+    return ((i, u, v), (u * 10, 0.0, v * 10), n, (u, v))
+
+
+def _parea(poly):
+    return _area([(None, None, None, (c[1][0], c[1][2])) for c in poly])
+
+
+def test_bake_cuts_at_both_edges_and_pins_the_outside():
+    tri = [_corner(0, -0.5, 0.0), _corner(1, 1.5, 0.0), _corner(2, 0.5, 1.0)]
+    below, inside, above = gltf._bake(tri, 0, 0.125, 0.875)
+    assert {c[3][0] for c in below} == {0.125}
+    assert {c[3][0] for c in above} == {0.875}
+    assert all(0.125 <= c[3][0] <= 0.875 for c in inside)
+    # The pieces tile the triangle (positions, which keep the cut's area)
+    # and keep its winding.
+    assert sum(_parea(p) for p in (below, inside, above)) == pytest.approx(_parea(tri))
+    assert all(_parea(p) > 0 for p in (below, inside, above))
+
+
+def test_bake_welds_a_shared_cut_edge():
+    # Two triangles share the edge 1-2, which crosses both cut lines. Every
+    # cut point must come out at one position from the pieces on either
+    # side of its line, within a triangle and across the two (one key, one
+    # index, between the triangles), whatever clip order made it: the inside piece cuts at 0.875 an
+    # edge already cut at 0.125, and is cut on the whole edge all the same.
+    p = [_corner(0, -0.4, 0.0), _corner(1, 1.3, 0.1), _corner(2, -0.2, 0.9), _corner(3, 1.1, 1.0)]
+
+    def cuts(tri):
+        below, inside, above = gltf._bake(tri, 0, 0.125, 0.875)
+
+        def on(piece, at):
+            # A pinned cut keeps the cut's position and UV under its own key.
+            return {(pos, uv) for k, pos, _n, uv in piece if "cut" in k[:2] and uv[0] == at}
+
+        assert on(below, 0.125) == on(inside, 0.125)
+        assert on(above, 0.875) == on(inside, 0.875)
+        return on(inside, 0.125) | on(inside, 0.875)
+
+    shared = cuts([p[0], p[1], p[2]]) & cuts([p[2], p[1], p[3]])
+    assert {uv[0] for _pos, uv in shared} == {0.125, 0.875}
+
+
+@pytest.mark.parametrize("u", [0.125, 0.125 + 5e-5, 0.125 - 5e-5])
+def test_bake_corner_on_the_cut_line_makes_no_sliver(u):
+    tri = [_corner(0, -0.5, 0.0), _corner(1, u, 0.0), _corner(2, 0.5, 1.0)]
+    pieces = gltf._bake(tri, 0, 0.125, 0.875)
+    for piece in pieces:
+        assert len(piece) >= 3 and _parea(piece) > 1e-3
+        corners = [(c[1], c[3]) for c in piece]
+        assert len(set(corners)) == len(corners)
+    assert sum(_parea(q) for q in pieces) == pytest.approx(_parea(tri), abs=1e-2)
+
+
+def test_corner_inside_with_tolerance_is_not_cut():
+    tri = [_corner(0, 0.125 - 5e-5, 0.0), _corner(1, 0.5, 0.0), _corner(2, 0.875 + 5e-5, 1.0)]
+    assert not gltf._needs_bake(tri, 0, 0.125, 0.875)
+    assert gltf._needs_bake(tri, 0, 0.25, 0.75)
+
+
+def test_lerp_corner_is_the_same_from_either_end_and_unit_normal():
+    up, down = (0.0, 1.0, 0.0), (0.0, -1.0, 0.0)
+    a, b = _corner(0, -0.5, 0.0, up), _corner(1, 1.5, 0.0, down)
+    c = gltf._lerp_corner(a, b, 0, 0.5)
+    assert c == gltf._lerp_corner(b, a, 0, 0.5)
+    # Opposed normals cancel at the midpoint; glTF needs a unit normal.
+    assert sum(x * x for x in c[2]) == pytest.approx(1.0)
 
 
 def test_env_mapped_strip_gets_uvs_from_its_normals(tmp_path):

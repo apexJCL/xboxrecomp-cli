@@ -17,8 +17,15 @@ Approximations, counted in the summary's `approximated`:
   the identity view).
 - Godot's glTF importer keeps one repeat flag per material, taken from
   wrapT, so a texture clamped on one axis and repeated on the other
-  smears or tiles on both. When the two wraps differ, an axis whose UVs
-  stay inside [0, 1] takes the other axis's wrap (both inside: clamp);
+  smears or tiles on both (M34's walls: V clamped, U tiled to 7, drawn
+  as horizontal bands). When the two wraps differ and both axes leave
+  [0, 1], the clamped axis is cut into the mesh: a triangle whose UVs
+  pass an edge texel's centre on it is cut there, and the pieces outside
+  take that centre, which is what clamp-to-edge samples past it. That
+  axis then stays between the two centres, where repeat and clamp sample
+  alike at mip 0; smaller mips still blend in the opposite edge, which
+  clamp would not. An axis whose UVs stay inside [0, 1]
+  takes the other axis's wrap (both inside: clamp);
   wraps that agree are kept, since repeat bleeds the opposite edge under
   bilinear filtering where clamp does not. The wraps that still differ
   per axis are counted as unsupported. Godot cannot mirror either, so a
@@ -181,6 +188,105 @@ def _in_unit(lo, hi):
     return lo >= -1e-4 and hi <= 1.0 + 1e-4
 
 
+# A UV this close to a cut line is on it: snapped there before the cut, so
+# a corner on the line makes no sliver or near-duplicate corner.
+CUT_SNAP = 1e-4
+
+
+def _lerp_corner(a, b, axis, at):
+    """The point where the edge a-b crosses UV axis = at. Interpolated from
+    the lower end (by position, then UV), so the two triangles sharing an
+    edge cut it at the very same point and no crack opens."""
+    for c in (a, b):
+        if c[3][axis] == at:
+            return c
+    if (b[1], b[3]) < (a[1], a[3]):
+        a, b = b, a
+    t = (at - a[3][axis]) / (b[3][axis] - a[3][axis])
+
+    def mix(p, q):
+        return tuple(x + (y - x) * t for x, y in zip(p, q))
+
+    uv = list(mix(a[3], b[3]))
+    uv[axis] = at
+    n = mix(a[2], b[2])
+    # Opposed normals cancel; glTF wants unit normals, so take an end's.
+    n = _normalize(n) if sum(x * x for x in n) > 1e-12 else a[2]
+    p, uv = mix(a[1], b[1]), tuple(uv)
+    return (("cut",) + p + uv, p, n, uv)
+
+
+def _clip(poly, axis, at, below, origin):
+    """Sutherland-Hodgman: the part of a convex polygon (corner list) on
+    one side of UV axis = at, its winding kept. origin maps a cut
+    corner's key to the triangle edge it lies on: an edge from it to that
+    edge's end is cut on the whole edge, the same as the piece across the
+    line cuts it, so the two meet."""
+    out = []
+    for i, c in enumerate(poly):
+        d = poly[i - 1]
+        cin = c[3][axis] <= at if below else c[3][axis] >= at
+        din = d[3][axis] <= at if below else d[3][axis] >= at
+        if cin != din:
+            e0, e1 = d, c
+            for x, y in ((d, c), (c, d)):
+                edge = origin.get(x[0])
+                if edge and y in edge:
+                    e0, e1 = edge
+            cut = _lerp_corner(e0, e1, axis, at)
+            if cut[0][0] == "cut":
+                origin.setdefault(cut[0], (e0, e1))
+            out.append(cut)
+        if cin:
+            out.append(c)
+    # A corner on the line comes back once more as its own cut point.
+    out = [c for i, c in enumerate(out) if (c[1], c[3]) != (out[i - 1][1], out[i - 1][3])]
+    return out if len(out) >= 3 else []
+
+
+def _bake(corners, axis, lo, hi):
+    """A triangle's pieces with clamp-to-edge applied on one UV axis: cut
+    at the edge texel centres lo and hi, the pieces outside pinned there,
+    which is what clamp-to-edge samples past them. The piece inside keeps
+    its UVs, so the material's repeat never reaches the half texel where
+    it would blend in the opposite edge. Each piece is a convex polygon
+    of corners (key, position, normal, uv)."""
+
+    def pin(poly, at):
+        out = []
+        for k, p, n, uv in poly:
+            uv = tuple(at if i == axis else x for i, x in enumerate(uv))
+            out.append((("pin",) + tuple(k) + uv, p, n, uv))
+        return out
+
+    snapped = []
+    for k, p, n, uv in corners:
+        x = uv[axis]
+        at = lo if abs(x - lo) <= CUT_SNAP else hi if abs(x - hi) <= CUT_SNAP else x
+        if at != x:
+            uv = tuple(at if i == axis else y for i, y in enumerate(uv))
+            k = ("snap",) + tuple(k) + uv
+        snapped.append((k, p, n, uv))
+    if hi <= lo:
+        # One texel across: clamp samples it everywhere.
+        return [pin(snapped, lo)]
+    origin = {}
+    inside = _clip(_clip(snapped, axis, lo, False, origin), axis, hi, True, origin)
+    return [
+        piece
+        for piece in (
+            pin(_clip(snapped, axis, lo, True, origin), lo),
+            inside,
+            pin(_clip(snapped, axis, hi, False, origin), hi),
+        )
+        if piece
+    ]
+
+
+def _needs_bake(corners, axis, lo, hi):
+    return any(not lo - CUT_SNAP <= c[3][axis] <= hi + CUT_SNAP for c in corners)
+
+
 def wraps(tflags):
     hf = tflags >> 16
     s = MIRROR if hf & TINY_FLIP_U else (CLAMP if hf & TINY_CLAMP_U else REPEAT)
@@ -211,7 +317,14 @@ class Writer:
         self.doc = _Doc()
         self.summary = Summary(name)
         self._mats, self._samplers, self._meshes = {}, {}, {}
-        self._by_name, self._alpha = {}, {}
+        self._by_name, self._alpha, self._size = {}, {}, {}
+        # material index: (axis, edge texel centres) of a clamped axis
+        # the mesh carries (see _bake).
+        self._bake = {}
+        # material index: [[umin, umax], [vmin, vmax]] of its UVs as read.
+        self._raw_uv = {}
+        # Buffer writes in the order the meshes were added (write()).
+        self._pending = []
         self._pngs = {}
         # texture index: [glTF wraps, umin, umax, vmin, vmax] over every
         # primitive that samples it; write() picks the sampler from it.
@@ -245,6 +358,7 @@ class Writer:
             else:
                 self._pngs[nm + ".png"] = textures.png(w, h, rgba)
                 self._alpha[key] = textures.alpha_kind(rgba)
+                self._size[key] = (w, h)
                 uri = "textures/%s.png" % urllib.parse.quote(nm)
                 img = self.doc.add("images", {"uri": uri, "name": nm})
         self._by_name[key] = img
@@ -298,6 +412,13 @@ class Writer:
             tex = self.doc.add("textures", {"source": img})
             self._tex_uv[tex] = [wraps(s.tflags), None, None, None, None]
             self._mat_tex[len(self.doc.j["materials"])] = tex
+            ws = wraps(s.tflags)
+            if ws[0] != ws[1] and CLAMP in ws:
+                # The game clamps this axis alone; Godot's one wrap per
+                # material cannot, so the mesh does (_bake).
+                axis = ws.index(CLAMP)
+                size = self._size[nm.lower()][axis]
+                self._bake[len(self.doc.j["materials"])] = (axis, 0.5 / size, 1 - 0.5 / size)
             mat["pbrMetallicRoughness"]["baseColorTexture"] = {"index": tex}
             kind = self._alpha[nm.lower()]
             use_alpha = s.flags & ninja.STRIP_FLAG_USE_ALPHA
@@ -351,10 +472,9 @@ class Writer:
         groups = {}
         for s in model.strips:
             groups.setdefault(self._material(s), []).append(s)
-        prims = []
-        tris = 0
+        plan = []
         for mi, strips in groups.items():
-            remap, pos, nrm, uvs, idx = {}, [], [], [], []
+            tris = []
             for s in strips:
                 # The game looks an environment map up from the view-space
                 # normal; a strip with UVs of its own keeps them here.
@@ -369,19 +489,51 @@ class Writer:
                             self.summary.unsupported["strip index without a vertex"] += 1
                             break
                     else:
+                        corners = []
                         for vi, u, v in tri:
                             n = _normalize(model.normals.get(vi, (0.0, 1.0, 0.0)))
                             if env:
                                 u, v = _env_uv(n)
-                            k = (vi, u, v)
+                            corners.append(((vi, u, v), model.verts[vi], n, (u, v)))
+                        tris.append(corners)
+            if not tris:
+                continue
+            r = self._raw_uv.setdefault(mi, [[], []])
+            for axis in (0, 1):
+                xs = [c[3][axis] for t in tris for c in t]
+                r[axis] = [min(xs + r[axis][:1]), max(xs + r[axis][1:])]
+            plan.append((mi, tris))
+        mesh = None
+        if plan:
+            # The buffers wait for write(): whether a clamped axis is cut
+            # into the mesh depends on every primitive of its material.
+            m = {"name": "mdl_%08x" % model.va, "primitives": []}
+            mesh = self.doc.add("meshes", m)
+            self.summary.meshes += 1
+            self._pending.append(lambda: self._primitives(m, plan))
+        self._meshes[mkey] = mesh
+        return mesh
+
+    def _primitives(self, mesh, plan):
+        for mi, tris in plan:
+            remap, pos, nrm, uvs, idx = {}, [], [], [], []
+            bake = self._bake.get(mi)
+            for corners in tris:
+                pieces = [corners]
+                if bake and _needs_bake(corners, *bake):
+                    pieces = _bake(corners, *bake)
+                    self.summary.approximated[
+                        "clamped axis cut into the mesh (Godot keeps one wrap)"
+                    ] += 1
+                for poly in pieces:
+                    for i in range(1, len(poly) - 1):
+                        for k, p, n, uv in (poly[0], poly[i], poly[i + 1]):
                             if k not in remap:
                                 remap[k] = len(pos)
-                                pos.append(model.verts[vi])
+                                pos.append(p)
                                 nrm.append(n)
-                                uvs.append((u, v))
+                                uvs.append(uv)
                             idx.append((remap[k],))
-            if not idx:
-                continue
             if mi in self._mat_tex:
                 r = self._tex_uv[self._mat_tex[mi]]
                 us, vs = [t[0] for t in uvs], [t[1] for t in uvs]
@@ -391,7 +543,7 @@ class Writer:
                 r[3] = lo[2] if r[3] is None else min(r[3], lo[2])
                 r[4] = lo[3] if r[4] is None else max(r[4], lo[3])
             d = self.doc
-            prims.append(
+            mesh["primitives"].append(
                 {
                     "attributes": {
                         "POSITION": d.accessor("f", 3, pos, "VEC3", ARRAY_BUFFER, minmax=True),
@@ -402,14 +554,17 @@ class Writer:
                     "material": mi,
                 }
             )
-            tris += len(idx) // 3
-        mesh = None
-        if prims:
-            mesh = self.doc.add("meshes", {"name": "mdl_%08x" % model.va, "primitives": prims})
-            self.summary.meshes += 1
-            self.summary.triangles += tris
-        self._meshes[mkey] = mesh
-        return mesh
+            self.summary.triangles += len(idx) // 3
+
+    def _settle_bakes(self):
+        """Keeps the cut only for materials that need it: a clamped axis
+        that leaves [0, 1] while the other axis does too. With the other
+        axis inside, one clamp for both already samples like the game
+        (_samplers_by_range), and an axis inside has nothing to cut."""
+        for mi, (axis, _lo, _hi) in list(self._bake.items()):
+            r = self._raw_uv.get(mi)
+            if r is None or _in_unit(*r[axis]) or _in_unit(*r[1 - axis]):
+                del self._bake[mi]
 
     def _node(self, n):
         nd = {"name": "obj_%08x" % n.va}
@@ -521,15 +676,22 @@ class Writer:
         if UNLIT not in self.doc.j["extensionsUsed"]:
             self.doc.j["extensionsUsed"].append(UNLIT)
         d = self.doc
-        prim = {
-            "attributes": {
-                "POSITION": d.accessor("f", 3, pos, "VEC3", ARRAY_BUFFER, minmax=True),
-                "NORMAL": d.accessor("f", 3, nrm, "VEC3", ARRAY_BUFFER),
-            },
-            "indices": d.accessor("I", 1, idx, "SCALAR", ELEMENT_ARRAY_BUFFER),
-            "material": mat,
-        }
-        mesh = d.add("meshes", {"name": name + "_backdrop", "primitives": [prim]})
+        m = {"name": name + "_backdrop", "primitives": []}
+
+        def prim():
+            m["primitives"].append(
+                {
+                    "attributes": {
+                        "POSITION": d.accessor("f", 3, pos, "VEC3", ARRAY_BUFFER, minmax=True),
+                        "NORMAL": d.accessor("f", 3, nrm, "VEC3", ARRAY_BUFFER),
+                    },
+                    "indices": d.accessor("I", 1, idx, "SCALAR", ELEMENT_ARRAY_BUFFER),
+                    "material": mat,
+                }
+            )
+
+        self._pending.append(prim)
+        mesh = d.add("meshes", m)
         self.summary.meshes += 1
         self.summary.triangles += len(idx) // 3
         self.summary.approximated["render target clear colour as a backdrop box"] += 1
@@ -571,6 +733,10 @@ class Writer:
 
     def write(self, out_dir):
         """Writes the files; returns the Summary."""
+        self._settle_bakes()
+        for fill in self._pending:
+            fill()
+        self._pending = []
         self._samplers_by_range()
         j = dict(self.doc.j)
         # glTF refuses empty top-level arrays and zero-length buffers, so a
