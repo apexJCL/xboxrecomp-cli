@@ -7,10 +7,35 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-30
+
+### Added
+- `extract`: the owner's stages, from the game's own XBE sections, as a
+  local Godot 4 project (glTF models with decoded textures, one scene per
+  stage). The game's constants come from its `[extract]` table. Texture
+  wraps Godot can show, sphere-map UVs for environment-mapped strips,
+  translucent floors, and a `report.json` per stage and `report.txt` per
+  run listing what is approximated. Nothing it writes is shared.
+- `hud-map`: capture, propose, review, emit and check the per-game HUD
+  anchor table that the toolkit's HUD layer reads, from a mapping capture.
+- `[mods] hook_functions`: mods hook recompiled functions through slots
+  the generated code declares. `hooks` (and analyze's hooks stage) resolve
+  them by VA or `sig:` into `config/hook_functions.json`, and recomp wraps
+  each one and writes `gen/recomp_hook_slots.c`. An empty list leaves the
+  generated code byte-identical.
+- `enhance hud` reads textures from a game's own archives through a
+  manifest-declared hook script, and the pack writer streams its payloads,
+  so packs of several GB fit.
+- `golden check` fails a run whose `[ENHANCE] mods=` token names a mod at
+  work; a stock run logs `mods=none`, and a toolkit without the token logs
+  no line, which stays stock.
+
 ### Changed
+- New games build the dsp56300 APU JIT by default, from one shared
+  tarball cache instead of a download per tree.
 - `new` writes `[storage] ram_cache = true` in the game's
   `config.default.toml`: the cache partition in memory, the toolkit's
-  default for every game from the release after blinx2-v0.9.0.
+  default for every game from blinx2-v0.10.0.
   doctor no longer reports it as drift.
 
 ### Fixed
@@ -677,7 +702,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.13.0...v0.14.0
