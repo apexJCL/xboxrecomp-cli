@@ -431,6 +431,7 @@ The stages are Ninja chunk-model trees (`NJS_OBJECT`) in the XBE's sections. The
 | `packed_normals` | `false` | The float-normal vertex types (41-47) carry one packed normal (11/11/10 bits) instead of three floats, so their stride is 8 bytes shorter. |
 | `angles` | `"bams"` | How a node's rotation is stored: `"bams"` (three ints, 0x10000 a full turn) or `"radians"` (three floats). |
 | `up` | `"y"` | The world's up axis: `"y"`, or `"-y"` for a world whose floors face -Y in the data, which turns each stage half a turn about X. A Y flip in the game's view matrix is not a Y-down world: check the floors' normals in the data, not the draws. |
+| `textured_colour` | `"diffuse"` | The colour of a textured strip: `"diffuse"`, the material's diffuse times the texture (stock Ninja), or `"white"`, the texture alone, for an engine whose drawer gives a strip with UVs or an environment map its own constant colour (white, alpha included) and keeps the diffuse for the rest. Such a drawer may only know kinds 64 and 65; other kinds are coloured like the one of the two that matches their UVs, and `"white"` counts them under approximations in the report. |
 | `texname_size` | `32` | Bytes per texture name in a texlist. |
 | `textures` | required | Where a texlist name's DDS file is: a path under `data.game_files` with `{name}` (`"media/{name}.dds"`, matched case-insensitively), or `"ipk:<archive>:<entry>"` for an entry of an IPK1 pair (`"ipk:media:dds/{name}.dds"`). |
 

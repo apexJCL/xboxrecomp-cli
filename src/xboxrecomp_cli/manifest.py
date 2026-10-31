@@ -345,6 +345,10 @@ SPEC = {
         # in the data (turned a half turn about X into glTF's Y-up). Not for
         # a flip the game's view matrix applies at draw time.
         "up": (STR, "y"),
+        # A textured strip's colour: "diffuse" (stock Ninja, the material
+        # modulates the texture) or "white" (an engine that draws UV and
+        # environment-mapped strips with its own constant colour).
+        "textured_colour": (STR, "diffuse"),
         # Bytes of one texlist name.
         "texname_size": (INT, 32),
         # Where a texlist name's DDS is: a pattern under data.game_files
@@ -433,6 +437,7 @@ EXTRACT_STAGE = {
 EXTRACT_TRANSFORM_KEYS = ("scale", "translation")
 EXTRACT_ANGLES = ("bams", "radians")
 EXTRACT_UP = ("y", "-y")
+EXTRACT_TEXTURED_COLOURS = ("diffuse", "white")
 STAGE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 # An SPDX licence expression, loosely: ids joined by AND, OR and WITH.
 SPDX_RE = re.compile(r"^[A-Za-z0-9.+()-]+(?: (?:AND|OR|WITH) [A-Za-z0-9.+()-]+)*$")
@@ -675,6 +680,8 @@ def _check_extract(m):
         errors.append("extract.angles: one of %s" % ", ".join(EXTRACT_ANGLES))
     if x["up"] not in EXTRACT_UP:
         errors.append("extract.up: one of %s" % ", ".join(EXTRACT_UP))
+    if x["textured_colour"] not in EXTRACT_TEXTURED_COLOURS:
+        errors.append("extract.textured_colour: one of %s" % ", ".join(EXTRACT_TEXTURED_COLOURS))
     if x["texname_size"] <= 0:
         errors.append("extract.texname_size: must be positive")
     why = rel_path_problem(x["out"])

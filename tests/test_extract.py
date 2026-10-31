@@ -6,6 +6,7 @@ No test reads game files.
   uv run pytest tests/test_extract.py
 """
 
+import copy
 import json
 import math
 import os
@@ -502,7 +503,7 @@ def test_wraps_mirror_wins_over_clamp():
     assert gltf.wraps(0) == (gltf.REPEAT, gltf.REPEAT)
 
 
-def _one_strip_writer(tex_alpha=0xFF):
+def _one_strip_writer(tex_alpha=0xFF, textured_colour="diffuse"):
     """The b2 quad with its one strip, a Writer over a 1x1 texture."""
     roots = read("b2")[1]
     (strip,) = roots[0].children[0].model.strips
@@ -511,7 +512,7 @@ def _one_strip_writer(tex_alpha=0xFF):
         def read(self, name):
             return dds_raw(1, 1, 32, ARGB8, [tex_alpha << 24 | 0xFFFFFF])
 
-    return roots, strip, gltf.Writer("M", ["Tex0"], Src())
+    return roots, strip, gltf.Writer("M", ["Tex0"], Src(), textured_colour=textured_colour)
 
 
 def _sampler_of(w, mat=0):
@@ -628,6 +629,111 @@ def test_near_opaque_texture_stays_opaque(tmp_path, alpha):
     assert "translucent texture blended without use-alpha" not in s.approximated
 
 
+def _colour(tmp_path, textured_colour, black=False, **strip):
+    """The quad's one material colour (and whether it is textured) under
+    this textured_colour, its material chunk's diffuse black (BLiNX 2's
+    M121) or the fixture's 0x40, 0x80, 0xC0."""
+    roots, s, w = _one_strip_writer(textured_colour=textured_colour)
+    if black:
+        s.diffuse = bytes((0, 0, 0, 0xFF))
+    for k, v in strip.items():
+        setattr(s, k, v)
+    w.add_tree(SEC, roots)
+    w.write(str(tmp_path))
+    (mat,) = w.doc.j["materials"]
+    pbr = mat["pbrMetallicRoughness"]
+    return pbr["baseColorFactor"], "baseColorTexture" in pbr
+
+
+def test_textured_strip_takes_the_diffuse_by_default(tmp_path):
+    f, textured = _colour(tmp_path, "diffuse", black=True)
+    assert textured and f == [0.0, 0.0, 0.0, 1.0]
+
+
+def test_textured_strip_draws_white_when_the_engine_ignores_the_diffuse(tmp_path):
+    # M121's materials: black diffuse, drawn fully textured in the game.
+    f, textured = _colour(tmp_path, "white", black=True)
+    assert textured and f == [1.0, 1.0, 1.0, 1.0]
+    f, _ = _colour(tmp_path, "white")
+    assert f == [1.0, 1.0, 1.0, 1.0]
+
+
+def test_white_covers_environment_mapped_strips(tmp_path):
+    # The drawer's env-map flag takes the constant colour on both kinds:
+    # 64 (no UVs) and 65 (UVs).
+    for kind, uv in ((64, False), (65, True)):
+        f, textured = _colour(
+            tmp_path, "white", black=True, kind=kind, uv=uv, flags=ninja.STRIP_FLAG_ENV_MAP
+        )
+        assert textured and f == [1.0, 1.0, 1.0, 1.0]
+
+
+def test_white_drops_the_diffuse_alpha_of_a_use_alpha_strip(tmp_path):
+    # The constant's alpha replaces the diffuse's, so a see-through diffuse
+    # no longer blends an opaque texture; the texture's own alpha still
+    # sets the mode.
+    roots, s, w = _one_strip_writer(textured_colour="white")
+    s.diffuse = bytes((0xC0, 0x80, 0x40, 0x80))
+    s.flags |= ninja.STRIP_FLAG_USE_ALPHA
+    w.add_tree(SEC, roots)
+    w.write(str(tmp_path))
+    (mat,) = w.doc.j["materials"]
+    assert mat["pbrMetallicRoughness"]["baseColorFactor"] == [1.0, 1.0, 1.0, 1.0]
+    assert "alphaMode" not in mat
+    roots, s, w = _one_strip_writer(tex_alpha=0x00, textured_colour="white")
+    s.flags |= ninja.STRIP_FLAG_USE_ALPHA
+    w.add_tree(SEC, roots)
+    w.write(str(tmp_path))
+    assert w.doc.j["materials"][0].get("alphaMode") in ("MASK", "BLEND")
+
+
+def test_white_counts_strip_kinds_the_drawer_does_not_know(tmp_path):
+    roots, s, w = _one_strip_writer(textured_colour="white")
+    s.kind = 66
+    w.add_tree(SEC, roots)
+    w.write(str(tmp_path))
+    assert w.summary.approximated["strip kind other than 64 and 65 coloured like its UV twin"] == 1
+    roots, s, w = _one_strip_writer()
+    s.kind = 66
+    w.add_tree(SEC, roots)
+    assert not w.summary.approximated
+
+
+def test_white_keeps_the_diffuse_where_no_texture_is_sampled(tmp_path):
+    # Kind 64 without a map: untextured, the diffuse.
+    f, textured = _colour(tmp_path, "white", uv=False, kind=64)
+    assert not textured and f == pytest.approx([0xC0 / 255, 0x80 / 255, 0x40 / 255, 1.0])
+    # A texlist of 0 (no textures): strips keep their colours.
+    roots, s, _ = _one_strip_writer()
+    w = gltf.Writer("M", [], None, textured_colour="white")
+    w.add_tree(SEC, roots)
+    w.write(str(tmp_path))
+    f = w.doc.j["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"]
+    assert f == pytest.approx([0xC0 / 255, 0x80 / 255, 0x40 / 255, 1.0])
+
+
+def test_white_merges_materials_that_differ_only_in_diffuse(tmp_path):
+    roots, s, w = _one_strip_writer(textured_colour="white")
+    model = roots[0].children[0].model
+    other = copy.copy(s)
+    other.diffuse = bytes((0, 0, 0, 0xFF))
+    model.strips = [s, other]
+    w.add_tree(SEC, roots)
+    w.write(str(tmp_path))
+    assert len(w.doc.j["materials"]) == 1
+
+
+def test_extract_passes_textured_colour_to_the_writer(game, capsys):
+    toml = os.path.join(game.root, "game.toml")
+    body = open(toml).read().replace("[extract]\n", '[extract]\ntextured_colour = "white"\n')
+    with open(toml, "w") as f:
+        f.write(body)
+    manifest.use(manifest.load(game.root))
+    assert cli.run(Args()) == 0
+    j = json.load(open(game.path("dist", "extract", "stages", "MAP11", "MAP11.gltf")))
+    assert j["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"] == [1.0, 1.0, 1.0, 1.0]
+
+
 def test_hidden_node_keeps_the_node_not_the_mesh():
     img = Image(xbe([("MAP11", SEC, stage_section("b1"))]))
     roots = ninja.Reader(img, ninja.Format(16, "bams", True)).tree(SEC)
@@ -644,6 +750,7 @@ def test_manifest_extract_defaults_and_root_list():
     m = manifest.parse_text(GAME_TOML + EXTRACT_B1)
     x = m["extract"]
     assert x["out"] == "dist/extract" and x["angles"] == "bams" and x["up"] == "y"
+    assert x["textured_colour"] == "diffuse"
     assert x["texname_size"] == 32
     assert x["stage"] == [
         {"name": "MAP11", "section": "MAP11", "root": [0x20000], "texlist": [0x20300]}
@@ -656,6 +763,7 @@ def test_manifest_extract_defaults_and_root_list():
     [
         ('angles = "degrees"', "extract.angles: one of bams, radians"),
         ('up = "z"', "extract.up"),
+        ('textured_colour = "grey"', "extract.textured_colour: one of diffuse, white"),
         ("vertex_header = 6", "extract.vertex_header"),
         ('out = "../x"', "extract.out"),
     ],

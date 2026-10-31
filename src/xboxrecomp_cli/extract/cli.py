@@ -64,7 +64,7 @@ def fmt_of(cfg):
 def extract_stage(image, cfg, stage, source, out_dir):
     """Writes one stage under out_dir; returns its gltf.Summary."""
     reader = ninja.Reader(image, fmt_of(cfg))
-    w = gltf.Writer(stage["name"], [], source, cfg["up"])
+    w = gltf.Writer(stage["name"], [], source, cfg["up"], cfg["textured_colour"])
     lists = {}
     for va, tl, xf in zip(stage["root"], stage["texlist"], transforms(stage)):
         if tl not in lists:

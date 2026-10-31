@@ -3,7 +3,9 @@
 Each Ninja object is a node (translation, rotation, scale); each model a
 mesh with one primitive per material, its vertices de-duplicated by
 (vertex, u, v). A material is a texture and its sampler (the tiny chunk's
-flip and clamp bits as glTF wraps), the diffuse colour, the strip's
+flip and clamp bits as glTF wraps), a colour (the diffuse, or white for a
+strip with UVs or an environment map and a texture under [extract]
+textured_colour = "white"), the strip's
 double-sided and ignore-light flags (KHR_materials_unlit) and an alpha
 mode from the texture's alpha and the strip's use-alpha flag. A hidden
 object keeps its node and loses its mesh.
@@ -145,12 +147,13 @@ class Writer:
     Textures are shared by name, so two texlists naming one file make
     one image."""
 
-    def __init__(self, name, names, source, up="y"):
+    def __init__(self, name, names, source, up="y", textured_colour="diffuse"):
         self.name = name
         self.names = names
         self._tlkey = tuple(n.lower() for n in names)
         self.source = source
         self.up = up
+        self.textured_colour = textured_colour
         self.doc = _Doc()
         self.summary = Summary(name)
         self._mats, self._samplers, self._meshes = {}, {}, {}
@@ -209,10 +212,25 @@ class Writer:
     def _material(self, s):
         textured = s.uv or s.flags & ninja.STRIP_FLAG_ENV_MAP
         nm = self._tex_name(s.tex) if textured else None
-        key = (nm and nm.lower(), s.tflags if textured else 0, s.flags, s.diffuse, s.blend)
+        img = self._image(nm) if nm is not None and self.source is not None else None
+        diffuse = s.diffuse
+        # Stock Ninja modulates the texture by the diffuse. BLiNX 2's drawer
+        # gives a UV or environment-mapped strip the engine's constant
+        # colour (white unless a fade sets it, alpha included) and keeps the
+        # diffuse for the rest: M121's materials are all black diffuse and
+        # draw fully textured. The drawer only knows kinds 64 and 65, so
+        # other kinds follow whichever of the two has UVs like them.
+        if self.textured_colour == "white":
+            if s.kind not in (64, 65):
+                self.summary.approximated[
+                    "strip kind other than 64 and 65 coloured like its UV twin"
+                ] += 1
+            if img is not None:
+                diffuse = None
+        key = (nm and nm.lower(), s.tflags if textured else 0, s.flags, diffuse, s.blend)
         if key in self._mats:
             return self._mats[key]
-        b, g, r, a = s.diffuse or b"\xff\xff\xff\xff"
+        b, g, r, a = diffuse or b"\xff\xff\xff\xff"
         tname = nm or "untextured"
         mat = {
             "name": "m%d_%s" % (len(self.doc.j["materials"]), tname),
@@ -222,30 +240,26 @@ class Writer:
                 "roughnessFactor": 1.0,
             },
         }
-        if nm is not None and self.source is not None:
-            img = self._image(nm)
-            if img is not None:
-                tex = self.doc.add("textures", {"source": img})
-                self._tex_uv[tex] = [wraps(s.tflags), None, None, None, None]
-                self._mat_tex[len(self.doc.j["materials"])] = tex
-                mat["pbrMetallicRoughness"]["baseColorTexture"] = {"index": tex}
-                kind = self._alpha[nm.lower()]
-                use_alpha = s.flags & ninja.STRIP_FLAG_USE_ALPHA
-                # Alpha that never reaches 0 and dips well below opaque is
-                # see-through glass, not a cut-out: an alpha test would
-                # punch holes in it, so it blends whatever the use-alpha
-                # flag says. Near-opaque alpha passes any alpha test, so
-                # without the flag it is opaque.
-                if kind == "translucent":
-                    mat["alphaMode"] = "BLEND"
-                    if not use_alpha:
-                        self.summary.approximated[
-                            "translucent texture blended without use-alpha"
-                        ] += 1
-                elif kind == "mask" or (kind == "blend" and not use_alpha):
-                    mat["alphaMode"] = "MASK"
-                elif kind in ("blend", "near-opaque") and use_alpha:
-                    mat["alphaMode"] = "BLEND"
+        if img is not None:
+            tex = self.doc.add("textures", {"source": img})
+            self._tex_uv[tex] = [wraps(s.tflags), None, None, None, None]
+            self._mat_tex[len(self.doc.j["materials"])] = tex
+            mat["pbrMetallicRoughness"]["baseColorTexture"] = {"index": tex}
+            kind = self._alpha[nm.lower()]
+            use_alpha = s.flags & ninja.STRIP_FLAG_USE_ALPHA
+            # Alpha that never reaches 0 and dips well below opaque is
+            # see-through glass, not a cut-out: an alpha test would
+            # punch holes in it, so it blends whatever the use-alpha
+            # flag says. Near-opaque alpha passes any alpha test, so
+            # without the flag it is opaque.
+            if kind == "translucent":
+                mat["alphaMode"] = "BLEND"
+                if not use_alpha:
+                    self.summary.approximated["translucent texture blended without use-alpha"] += 1
+            elif kind == "mask" or (kind == "blend" and not use_alpha):
+                mat["alphaMode"] = "MASK"
+            elif kind in ("blend", "near-opaque") and use_alpha:
+                mat["alphaMode"] = "BLEND"
         if a < 255 and s.flags & ninja.STRIP_FLAG_USE_ALPHA:
             mat["alphaMode"] = "BLEND"
         if s.blend == ninja.BLEND_ADD:
