@@ -534,6 +534,30 @@ def test_enhance_menu_and_stats_built_in():
         G.GAME_ENHANCE = saved
 
 
+def test_enhance_mods_token():
+    """mods= is the toolkit's key: a run with a mod at work fails whatever
+    the game's table says; none, or a toolkit too old to log it, is stock.
+    The value is a comma list, read whole, and a game key ending in mods
+    does not match it."""
+    saved = dict(G.GAME_ENHANCE)
+    G.GAME_ENHANCE = {}
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out = enhance_case(tmp, [STOCK, "[ENHANCE] mods=camera.free,wide-cull"])
+            assert rc == 1 and "mods=camera.free,wide-cull" in out, out
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out = enhance_case(tmp, [STOCK, "[ENHANCE] mods=none"])
+            assert rc == 0 and "EXACT" in out, out
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out = enhance_case(tmp, [STOCK])
+            assert rc == 0 and "EXACT" in out, out
+    finally:
+        G.GAME_ENHANCE = saved
+    rx = G.game_key_re("mods")
+    assert rx.search("[ENHANCE] hud.mods=on") is None
+    assert rx.search("[ENHANCE] mods=none").group(1) == "none"
+
+
 def test_enhance_stock_flags_configure():
     saved = (G.GOLDEN_JSON, G.FRAMES_DIR, G.REPO, G.GOLDEN_DIR, dict(G.GAME_ENHANCE))
     try:

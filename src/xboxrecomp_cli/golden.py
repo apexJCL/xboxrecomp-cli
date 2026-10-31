@@ -1207,6 +1207,10 @@ ENHANCE_STOCK = (
     ("present.shader", game_key_re("present.shader"), "none"),
     ("menu.enabled", game_key_re("menu.enabled"), "off"),
     ("overlay.stats", game_key_re("overlay.stats"), "off"),
+    # The mods that change what the game draws or runs: "none" unless one
+    # is on, its follows key is set and it has not reported itself idle
+    # (api->active); a toolkit without the token logs nothing, which is stock.
+    ("mods", game_key_re("mods"), "none"),
 )
 
 
@@ -1230,7 +1234,7 @@ def enhance_nonstock(log, allow=()):
     frame rate: a render.scale other than 1, a render.aniso other than 0,
     a display.aspect other than 4:3, a display.overscan other than 0, a
     present.pacing other than spin, a present.shader other than none, the menu or the stats strip on
-    (menu.enabled, overlay.stats) or an fps.mode other than lock30 (asked
+    (menu.enabled, overlay.stats), a mod at work (mods= other than none) or an fps.mode other than lock30 (asked
     for, even where the game falls back) makes the run unusable as a
     golden, whatever its frames look like. No [ENHANCE] line (a build
     without the layer) is stock.

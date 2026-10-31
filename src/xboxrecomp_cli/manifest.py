@@ -453,6 +453,7 @@ TOOLKIT_ENHANCE_KEYS = (
     "present.shader",
     "menu.enabled",
     "overlay.stats",
+    "mods",
 )
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # The bootstrap reads [cli] with a line parser, and the help without uv
