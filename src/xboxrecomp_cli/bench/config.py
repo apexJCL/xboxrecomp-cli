@@ -9,7 +9,6 @@ keep a literal ~ so the host's shell expands it.
 """
 
 import os
-import posixpath
 import re
 
 from .. import manifest
@@ -105,6 +104,24 @@ def load_game(root, game_dir):
 WINDOWS_PATHS = ("BENCH_DIR", "BENCH_GAME_FILES", "BENCH_LOCK")
 
 
+# The PC's one lock, the file every session's runs and builds take and
+# benchdb's clean waits for (benchdb/clean.py lock_path). One file for the
+# whole host, never derived from a directory or its drive: a scratch
+# BENCH_DIR (D:/xbr/scratch/<task>) once put the lock beside the scratch,
+# so its runs stopped queueing with the others and two goldens ran at once.
+# BENCH_LOCK and BENCH_BUILD_LOCK move it, explicitly.
+PC_LOCK = "D:/xbr/.bench-lock"
+
+
+def drive_root(k, v, env):
+    """A drive root (D:/) is no directory to keep runs or builds in: its
+    trailing / stripped, it would read as D:, a drive's current directory."""
+    if re.match(r"^[A-Za-z]:$", v):
+        raise ConfigError(
+            "%s=%s: name a directory on the drive (D:/xbr/bench), not its root" % (k, env[k])
+        )
+
+
 def windows_paths(env):
     """A Windows host's paths: drive paths, given (BENCH_DIR and
     BENCH_GAME_FILES have POSIX defaults, ~/xbox-recomp, which mean nothing
@@ -123,6 +140,7 @@ def windows_paths(env):
         if not v:
             continue
         v = v.replace("\\", "/").rstrip("/")
+        drive_root(k, v, env)
         if "~" in v or '"' in v or not re.match(r"^[A-Za-z]:/", v):
             raise ConfigError(
                 '%s=%s: a Windows host takes a drive path (D:/...), without ~ or "' % (k, env[k])
@@ -133,8 +151,10 @@ def windows_paths(env):
 def build_host(env):
     """BENCH_BUILD_HOST: the native Windows machine that compiles what
     BENCH_BUILD=local would compile here (bench/buildhost.py). Its
-    BENCH_BUILD_DIR is a drive path, given; its lock defaults to the
-    .bench-lock beside that directory, the file the PC's runs take."""
+    BENCH_BUILD_DIR is a drive path, given; its lock defaults to the PC's
+    one lock (PC_LOCK), the file the PC's runs take, or to an explicit
+    BENCH_LOCK when the run host is this same PC: its runs and builds
+    queue on one file, and BENCH_LOCK_HELD=1 covers both."""
     if not env.get("BENCH_BUILD_HOST"):
         return
     if env["BENCH_BUILD"] != "local":
@@ -152,13 +172,20 @@ def build_host(env):
         if not v:
             continue
         v = v.replace("\\", "/").rstrip("/")
+        drive_root(k, v, env)
         if "~" in v or '"' in v or "'" in v or not re.match(r"^[A-Za-z]:/", v):
             raise ConfigError(
                 "%s=%s: a build host takes a drive path (D:/...), without ~ or quotes" % (k, env[k])
             )
         env[k] = v
     if not env.get("BENCH_BUILD_LOCK"):
-        env["BENCH_BUILD_LOCK"] = posixpath.dirname(env["BENCH_BUILD_DIR"]) + "/.bench-lock"
+        same_pc = (
+            env.get("BENCH_HOST_OS") == "windows"
+            and env.get("BENCH_HOST") == env["BENCH_BUILD_HOST"]
+        )
+        env["BENCH_BUILD_LOCK"] = (
+            env["BENCH_LOCK"] if same_pc and env.get("BENCH_LOCK") else PC_LOCK
+        )
 
 
 class Config:
@@ -210,9 +237,12 @@ class Config:
                 % env["BENCH_BUILD"]
             )
         build_host(env)
-        # Beside the bench directory, not in it: every bench directory under
-        # one root (and the hand-run legs) shares the one PC lock.
-        default("BENCH_LOCK", posixpath.dirname(env["BENCH_DIR"]) + "/.bench-lock")
+        # The PC's one lock whatever BENCH_DIR names: every bench
+        # directory, scratch or not (and the hand-run legs), queues on the
+        # one lock. Only an explicit BENCH_LOCK moves it. A POSIX host's lock
+        # is the host script's own (~/.recomp-run.lock), not this key.
+        if env["BENCH_HOST_OS"] == "windows":
+            default("BENCH_LOCK", PC_LOCK)
         # The game's directory on the host. With BENCH_BUILD=local the host
         # scripts run in one of its runs/<id>/ (ship.resolve, ship.ship),
         # and it is named after the game, not the checkout, so every

@@ -13,6 +13,22 @@ a release by its tag in `game.toml`'s `[cli]` table.
   default for every game from the release after blinx2-v0.9.0.
   doctor no longer reports it as drift.
 
+### Fixed
+- `bench` on a Windows host takes the PC's one lock, `D:/xbr/.bench-lock`
+  (`PC_LOCK`, also benchdb's), whatever `BENCH_DIR` or `BENCH_BUILD_DIR`
+  names or which drive they are on. Only an explicit `BENCH_LOCK` or
+  `BENCH_BUILD_LOCK` moves it, and when the run host is the build host an
+  explicit `BENCH_LOCK` is the build lock too. A scratch `BENCH_DIR` used
+  to put the lock beside itself, so its runs ran alongside other
+  sessions'. A run's leftover-task sweep now removes only a
+  task whose run is gone: each task carries its run's lock text, and an
+  older CLI's task goes only once it has stopped. A drive root
+  (`BENCH_DIR=D:/`) is refused with a clear error.
+  Rollout: a game pinned to an older CLI still takes the private lock and
+  still sweeps every `xbr-bench-*` task, live or not. Move every game's
+  `[cli]` pin to this release together; until then, set
+  `BENCH_LOCK=D:/xbr/.bench-lock` by hand in the command's environment.
+
 ## [0.16.0] - 2026-10-29
 
 ### Added

@@ -105,9 +105,20 @@ if ($p.lock_held) {
 }
 
 $task = "xbr-bench-$($p.stamp)"
-# Under the lock no other bench run is going on, so another xbr-bench task
-# was left by a run killed before its finally.
+# Another xbr-bench task was left by a run killed before its finally, or
+# belongs to a live run holding another lock (an explicit BENCH_LOCK, or
+# a CLI from before the shared default, where this cleanup once ended
+# a live golden's task). Each task's description is its run's lock text
+# (pid and start time), so only a task whose run is gone is removed. A
+# task without one (an older CLI's) is removed only once it has stopped.
 Get-ScheduledTask -TaskName 'xbr-bench-*' -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -ne $task } | ForEach-Object {
+    $d = "$($_.Description)".Trim()
+    if ($d) { $gone = Test-StaleLock $d }
+    else { $gone = "$($_.State)" -ne 'Running' }
+    if (-not $gone) {
+        Write-Host "bench: keeping $($_.TaskName): its run is live ($(if ($d) { $d } else { 'running' }))"
+        return
+    }
     Write-Host "bench: removing a task left by a killed run: $($_.TaskName)"
     Stop-ScheduledTask -TaskName $_.TaskName -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false -ErrorAction SilentlyContinue
@@ -183,7 +194,9 @@ try {
     # maps to no account.
     $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive
-    Register-ScheduledTask -TaskName $task -Action $action -Principal $principal -Force | Out-Null
+    # The description names this run (its lock text), so another run's
+    # cleanup above leaves the task alone while this PowerShell lives.
+    Register-ScheduledTask -TaskName $task -Action $action -Principal $principal -Description $mine -Force | Out-Null
     $t0 = Get-Date
     Start-ScheduledTask -TaskName $task
     $gpid = $null

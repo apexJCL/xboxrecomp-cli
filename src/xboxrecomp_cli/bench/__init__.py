@@ -174,7 +174,7 @@ this machine's home, as it did when bench.sh sourced the file:
                    doctor and symbolize refused)               (posix)
   BENCH_LOCK       windows: the lock file every PC run creates and deletes
                    (BENCH_LOCK_HELD=1: the caller holds it)
-                   (.bench-lock beside BENCH_DIR)
+                   (D:/xbr/.bench-lock, whatever BENCH_DIR says)
   BENCH_JOBS       local builds: compile jobs        (0: as memory allows)
   BENCH_BUILD_HOST ssh target of a native Windows machine that compiles
                    what BENCH_BUILD=local would compile here: the game,
@@ -185,7 +185,8 @@ this machine's home, as it did when bench.sh sourced the file:
   BENCH_BUILD_DIR  build host: its trees, one per game (a drive path,
                    required with BENCH_BUILD_HOST, e.g. D:/xbr/build-bench)
   BENCH_BUILD_LOCK build host: the lock file its builds take
-                   (.bench-lock beside BENCH_BUILD_DIR); BENCH_LOCK_HELD=1
+                   (BENCH_LOCK when BENCH_HOST is this PC, else
+                   D:/xbr/.bench-lock); BENCH_LOCK_HELD=1
                    skips it only when it is the PC run host's BENCH_LOCK
   BENCH_BUILD_CLI  build host: the CLI tree it builds with (this CLI)
   BENCH_BUILD_GAME_FILES  build host: its own game files (a drive path),

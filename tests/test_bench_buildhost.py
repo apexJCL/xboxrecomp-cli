@@ -94,6 +94,13 @@ def test_config_paths_and_lock(bh):
     # The lock the PC's runs take, beside the build trees.
     assert c["BENCH_BUILD_LOCK"] == "D:/xbr/.bench-lock"
     assert not config(bh, BENCH_BUILD_HOST="").build_host
+    # A build tree off the usual root still takes the PC's one lock,
+    # unless BENCH_BUILD_LOCK names another.
+    for d in ("D:/xbr/scratch/x-build", "E:/build"):
+        c = config(bh, **dict(HOST, BENCH_BUILD_DIR=d))
+        assert c["BENCH_BUILD_LOCK"] == "D:/xbr/.bench-lock"
+    c = config(bh, **dict(HOST, BENCH_BUILD_LOCK="D:/l/.lock"))
+    assert c["BENCH_BUILD_LOCK"] == "D:/l/.lock"
 
 
 def test_snapshot_clean_dirty_and_untracked(bh):
@@ -423,7 +430,8 @@ def test_gen_moved_twice_fails(bh, monkeypatch, capsys):
             },
             True,
         ),
-        # The same PC with another lock file: the build takes its own.
+        # The same PC with only another BENCH_LOCK: the build lock follows
+        # it, so the PC's runs and builds still queue on one file.
         (
             {
                 "BENCH_LOCK_HELD": "1",
@@ -431,7 +439,28 @@ def test_gen_moved_twice_fails(bh, monkeypatch, capsys):
                 "BENCH_BUILD_HOST": "fakehost",
                 "BENCH_LOCK": "D:/other/.bench-lock",
             },
+            True,
+        ),
+        # An explicit BENCH_BUILD_LOCK of another file: the build takes it.
+        (
+            {
+                "BENCH_LOCK_HELD": "1",
+                "BENCH_HOST_OS": "windows",
+                "BENCH_BUILD_HOST": "fakehost",
+                "BENCH_LOCK": "D:/other/.bench-lock",
+                "BENCH_BUILD_LOCK": "D:/xbr/.bench-lock",
+            },
             False,
+        ),
+        # Bench and build trees on two drives: still the PC's one lock.
+        (
+            {
+                "BENCH_LOCK_HELD": "1",
+                "BENCH_HOST_OS": "windows",
+                "BENCH_BUILD_HOST": "fakehost",
+                "BENCH_DIR": "E:/bench",
+            },
+            True,
         ),
         (
             {
@@ -445,7 +474,7 @@ def test_gen_moved_twice_fails(bh, monkeypatch, capsys):
 )
 def test_lock_held_only_for_the_build_hosts_own_lock(bh, env, held):
     if env.get("BENCH_HOST_OS"):
-        env = dict(env, BENCH_DIR="D:/xbr/bench", BENCH_GAME_FILES="D:/xbr/gf")
+        env = dict({"BENCH_DIR": "D:/xbr/bench", "BENCH_GAME_FILES": "D:/xbr/gf"}, **env)
     c = config(bh, **dict(HOST, **env))
     assert buildhost.BuildHost(Bench(c)).params("build")["lock_held"] is held
 

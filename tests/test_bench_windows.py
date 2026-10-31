@@ -9,12 +9,16 @@ files sent, the pulls asked for. The scripts themselves run only on the PC.
 
 import json
 import os
+import pathlib
 
 import pytest
 from test_bench_ship import run, tree  # noqa: F401 (the fixture)
 
+from xboxrecomp_cli import bench as bench_pkg
 from xboxrecomp_cli.bench.config import Config, ConfigError
 from xboxrecomp_cli.bench.hosts import REFUSED, game_env, script_digest, sftp_batch
+
+BENCH_PKG = pathlib.Path(bench_pkg.__file__).parent
 
 # ssh: the script check answers FAKE_SCRIPTS_RC (3: not there yet), ship.ps1
 # lists FAKE_NEED, Get-FileHash answers FAKE_EXE_SHA, run_game.ps1 exits
@@ -148,11 +152,55 @@ def test_config_windows_paths(win):
     c = config(win, **dict(WIN, BENCH_DIR="D:\\bench\\bench\\", BENCH_LOCK="E:\\locks\\pc"))
     assert c.windows and c["BENCH_DIR"] == "D:/bench/bench" and c.base == "D:/bench/bench/blinx2"
     assert c["BENCH_LOCK"] == "E:/locks/pc"
-    assert config(win, **WIN)["BENCH_LOCK"] == "D:/bench/.bench-lock"
+    assert config(win, **WIN)["BENCH_LOCK"] == "D:/xbr/.bench-lock"
     # The POSIX host is the default and unchanged.
     bench_env(win)
     p = config(win)
     assert not p.windows and p["BENCH_HOST_OS"] == "posix" and p["BENCH_DIR"] == "~/bench-test"
+
+
+@pytest.mark.parametrize(
+    "bench_dir,lock",
+    [
+        ("D:/xbr/bench", "D:/xbr/.bench-lock"),
+        # A scratch bench directory once put the lock beside itself.
+        ("D:/xbr/scratch/kuf-mac-offset-bench", "D:/xbr/.bench-lock"),
+        ("D:\\xbr\\scratch\\a\\b\\", "D:/xbr/.bench-lock"),
+        # Another drive: still the PC's one lock, not E:'s.
+        ("E:/elsewhere", "D:/xbr/.bench-lock"),
+    ],
+)
+def test_config_lock_is_the_shared_one_whatever_bench_dir(win, bench_dir, lock):
+    assert config(win, **dict(WIN, BENCH_DIR=bench_dir))["BENCH_LOCK"] == lock
+
+
+@pytest.mark.parametrize("root", ["D:/", "D:\\", "E:"])
+def test_config_refuses_a_drive_root(win, root):
+    with pytest.raises(ConfigError, match="not its root"):
+        config(win, **dict(WIN, BENCH_DIR=root))
+
+
+def test_benchdb_names_the_same_lock():
+    from xboxrecomp_cli.benchdb.clean import lock_path
+
+    assert lock_path(None, []) == "D:\\xbr\\.bench-lock"
+
+
+def test_config_explicit_lock_wins(win):
+    c = config(win, **dict(WIN, BENCH_DIR="D:/xbr/scratch/x", BENCH_LOCK="D:/xbr/scratch/.l"))
+    assert c["BENCH_LOCK"] == "D:/xbr/scratch/.l"
+
+
+def test_run_game_cleanup_spares_live_runs_tasks():
+    """The leftover-task sweep removes only a task whose run is gone: each
+    task carries its run's lock text, checked like a stale lock."""
+    ps = (BENCH_PKG / "host" / "windows" / "run_game.ps1").read_text()
+    assert "-Description $mine" in ps
+    sweep = ps.split("Get-ScheduledTask -TaskName 'xbr-bench-*'")[1].split("\ntry {")[0]
+    assert "Test-StaleLock $d" in sweep and "-match" not in sweep
+    assert sweep.index("if (-not $gone)") < sweep.index("Unregister-ScheduledTask")
+    # An older CLI's task (no description) goes only once it has stopped.
+    assert "$_.State)\" -ne 'Running'" in sweep
 
 
 def test_game_env_joins_lists_and_resolves_run():
@@ -259,7 +307,7 @@ def test_run_sends_env_and_pulls_logs(win, monkeypatch, capsys):
     env = dict(p["env"])
     assert env["RECOMP_SAVE_DIR"].endswith("\\bench-logs\\%s\\save" % p["stamp"])
     assert env["RECOMP_TRACE"] == "flip" and env["RECOMP_WINDOW_QUIT_AFTER"] == "30"
-    assert p["timeout"] == 30 and p["lock"] == "D:/bench/.bench-lock" and not p["lock_held"]
+    assert p["timeout"] == 30 and p["lock"] == "D:/xbr/.bench-lock" and not p["lock_held"]
     assert p["expect_sha"] == params(cs, "ship.ps1")["files"][0][2]
     assert p["exe_rel"] == "build-win/cat_recomp.exe" and p["game_files"] == "D:/bench/gf"
     assert p["owner"].startswith("bench blinx2 %s " % p["stamp"])
@@ -274,7 +322,7 @@ def test_run_sends_env_and_pulls_logs(win, monkeypatch, capsys):
 @pytest.mark.parametrize(
     "rc,msg",
     [
-        (75, "D:/bench/.bench-lock was held for an hour; nothing ran"),
+        (75, "D:/xbr/.bench-lock was held for an hour; nothing ran"),
         (76, "is no longer the one this command shipped"),
         (2, "the host did not start the game (exit 2"),
     ],

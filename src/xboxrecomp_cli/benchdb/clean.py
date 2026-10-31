@@ -36,6 +36,7 @@ import subprocess
 import time
 import unicodedata
 
+from ..bench.config import PC_LOCK
 from . import config, ingest, pending, retain, store
 from . import refs as refs_mod
 from .store import DbError, flock, now_iso
@@ -1430,10 +1431,9 @@ def apply_script(h, items, roots, never, owner, extra_floor=()):
 
 
 def lock_path(h, roots):
-    """The PC's run lock: D:\\xbr\\.bench-lock, beside its bench tree (the
-    drive of the first root)."""
-    drive = roots[0].path[:2] if roots and roots[0].path[1:2] == ":" else "D:"
-    return drive + "\\xbr\\.bench-lock"
+    """The PC's run lock, the one file its bench runs and builds take
+    (bench.config.PC_LOCK), in Windows spelling."""
+    return PC_LOCK.replace("/", "\\")
 
 
 def ps_stdin():
