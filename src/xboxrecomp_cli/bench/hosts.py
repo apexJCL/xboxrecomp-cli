@@ -108,8 +108,9 @@ def game_env(env_text, log_dir, game_files, frames, timeout, cache_dir=None):
         if lists[k]:
             out[k] = ",".join(lists[k])
     out["RECOMP_STDIO_LOG"] = log + "\\game-stdio.log"
-    # A fresh emulated disk per run: the default is the player's own
-    # (%LOCALAPPDATA%\xboxrecomp), which no Wine prefix stands in for here.
+    # A fresh emulated disk per run: the default is the player's own, one per
+    # title (%LOCALAPPDATA%\xboxrecomp\<title id>, copied once from the shared
+    # %LOCALAPPDATA%\xboxrecomp root), which no Wine prefix stands in for here.
     out.setdefault("RECOMP_HDD_DIR", log + "\\hdd")
     # The shader cache defaults to the HDD dir, which would make every run
     # compile cold; a Deck run keeps its prefix's cache warm. Compile
