@@ -68,9 +68,14 @@ STRIP_FLAG_IGNORE_LIGHT = 0x01
 STRIP_FLAG_USE_ALPHA = 0x08
 STRIP_FLAG_DOUBLE_SIDE = 0x10
 STRIP_FLAG_ENV_MAP = 0x40
-# Ninja's blend byte (src << 3 | dst): source alpha over inverse source
-# alpha, the one mode glTF has; the material's default.
+# Ninja's blend byte (src << 3 | dst; 1 one, 4 source alpha, 5 inverse
+# source alpha): source alpha over inverse source alpha, the one mode glTF
+# has and the material's default, and the additive glows (source alpha,
+# one), which the glTF writer marks for the Godot scene to apply.
 BLEND_ALPHA = 0x25
+BLEND_ADD = 0x21
+BLENDS = (BLEND_ALPHA, BLEND_ADD)
+SUPPORTED_ADD = "blend mode 0x21 (additive, set by the Godot scene)"
 
 ANGLES = ("bams", "radians")
 
@@ -133,14 +138,16 @@ class Strip:
 
 
 class Reader:
-    """Reads object trees from an Image; `stats` counts what was read and
-    `unsupported` what the output leaves out."""
+    """Reads object trees from an Image; `stats` counts what was read,
+    `unsupported` what the output leaves out and `supported` what it
+    carries beyond plain glTF (the report names it)."""
 
     def __init__(self, image, fmt):
         self.x = image
         self.fmt = fmt
         self.stats = Counter()
         self.unsupported = Counter()
+        self.supported = Counter()
         self.models = {}
 
     def tree(self, va):
@@ -266,8 +273,10 @@ class Reader:
             self.unsupported["specular colour"] += 1
         if t & 8:
             self.unsupported["material type %d" % t] += 1
-        if fl != BLEND_ALPHA:
+        if fl not in BLENDS:
             self.unsupported["blend mode 0x%02X" % fl] += 1
+        elif fl == BLEND_ADD:
+            self.supported[SUPPORTED_ADD] += 1
 
     def _strip_len(self, t, va):
         hdr = struct.unpack("<H", self.x.read(va, 2))[0]

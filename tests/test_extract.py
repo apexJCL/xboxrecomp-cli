@@ -830,3 +830,196 @@ def test_each_tree_draws_with_its_own_texlist():
     w.add_tree(SEC, tree, ["Other"])
     assert w.summary.meshes == 2 and len(w.doc.j["images"]) == 2
     assert len(w.doc.j["materials"]) == 2
+
+
+def test_additive_blend_is_supported_not_unsupported():
+    # Material chunk with Ninja blend 0x21 (source alpha, one) before a
+    # second copy of the strip: the reader counts it as supported.
+    strip = struct.pack("<Hh", 1, 3) + b"".join(struct.pack("<Hhh", i, 0, 0) for i in range(3))
+    extra = struct.pack("<BBH", 17, ninja.BLEND_ADD, 2) + bytes((0, 0, 0, 0xFF))
+    extra += struct.pack("<BBH", 65, 0, len(strip) // 2) + strip
+    r, roots = read("b2", extra)
+    assert "blend mode 0x21" not in r.unsupported
+    assert r.supported == {ninja.SUPPORTED_ADD: 1}
+    strips = roots[0].children[0].model.strips
+    assert [s.blend for s in strips] == [ninja.BLEND_ALPHA, ninja.BLEND_ADD]
+
+
+def test_additive_strip_marks_its_material_for_godot(tmp_path):
+    roots, strip, w = _one_strip_writer()
+    strip.blend = ninja.BLEND_ADD
+    w.add_tree(SEC, roots)
+    w.write(str(tmp_path))
+    (mat,) = w.doc.j["materials"]
+    assert mat["alphaMode"] == "BLEND"
+    assert mat["extras"] == {gltf.EXTRA_BLEND: "add"}
+    # The Godot side reads the same key.
+    assert '"%s"' % gltf.EXTRA_BLEND in godot.STAGE_GD
+    assert "BLEND_MODE_ADD" in godot.STAGE_GD
+
+
+def test_alpha_blend_strip_has_no_extras(tmp_path):
+    roots, _strip, w = _one_strip_writer()
+    w.add_tree(SEC, roots)
+    w.write(str(tmp_path))
+    assert "extras" not in w.doc.j["materials"][0]
+
+
+def test_stage_scene_applies_stage_gd(tmp_path):
+    godot.write_project(str(tmp_path), "T", ["S1"])
+    assert os.path.isfile(tmp_path / "stage.gd")
+    tscn = (tmp_path / "S1.tscn").read_text()
+    assert 'path="res://stage.gd"' in tscn
+    # The script sits on the glTF instance, not the viewer root.
+    assert tscn.rstrip().endswith('instance=ExtResource("2")]\nscript = ExtResource("3")')
+
+
+def test_report_lists_supported():
+    rep = {
+        "stage": "S",
+        "meshes": 1,
+        "triangles": 2,
+        "materials": 1,
+        "textures": 1,
+        "missing": [],
+        "unsupported": {},
+        "approximated": {},
+        "supported": {ninja.SUPPORTED_ADD: 3},
+    }
+    assert "    supported: %s (3)" % ninja.SUPPORTED_ADD in cli._report_lines(rep)
+    del rep["supported"]  # a report from before the key
+    assert len(cli._report_lines(rep)) == 1
+
+
+# ---- per-root transforms (a root the game draws again, scaled) ------------
+
+SKY_TWICE = """
+[[extract.stage]]
+name = "SKY"
+section = "MAP11"
+root = [0x20000, 0x20000]
+texlist = 0x20300
+transform = [{}, {scale = [1, -1, 1], translation = [0, 5, 0]}]
+"""
+
+
+def test_manifest_transform_one_table_per_root():
+    m = manifest.parse_text(GAME_TOML + EXTRACT_B1 + SKY_TWICE)
+    plain, sky = m["extract"]["stage"]
+    assert "transform" not in plain
+    assert sky["transform"] == [{}, {"scale": [1, -1, 1], "translation": [0, 5, 0]}]
+
+
+@pytest.mark.parametrize(
+    "transform, why",
+    [
+        ("[{}]", "transform: one table per root"),
+        ("{scale = [1, 1, 1]}", "transform: one table per root"),
+        ('[{}, "x"]', r"transform\[1\]: a table"),
+        ("[{}, {scale = [1, 0, 1]}]", r"transform\[1\]\.scale: three finite non-zero numbers"),
+        ("[{}, {scale = [1, -1]}]", r"transform\[1\]\.scale: three finite non-zero numbers"),
+        (
+            "[{}, {translation = [0, true, 0]}]",
+            r"transform\[1\]\.translation: three finite numbers",
+        ),
+        ("[{}, {rotation = [0, 0, 0]}]", r"transform\[1\]\.rotation: unknown key"),
+        # NaN and inf would reach the glTF as JSON it may not hold.
+        ("[{}, {scale = [1, nan, 1]}]", r"transform\[1\]\.scale: three finite"),
+        ("[{}, {scale = [1, -inf, 1]}]", r"transform\[1\]\.scale: three finite"),
+        ("[{}, {translation = [0, nan, 0]}]", r"transform\[1\]\.translation: three finite"),
+        ("[{}, {translation = [inf, 0, 0]}]", r"transform\[1\]\.translation: three finite"),
+        # The same draw twice: {} and a unit scale are the same matrix.
+        ("[{}, {}]", r"root\[1\]: 0x00020000 drawn again .* as root\[0\]"),
+        ("[{}, {scale = [1, 1, 1]}]", r"root\[1\]: 0x00020000 drawn again .* as root\[0\]"),
+        ("[{}, {translation = [0, 0, 0.0]}]", r"root\[1\]: 0x00020000 drawn again"),
+    ],
+)
+def test_manifest_transform_errors(transform, why):
+    bad = (GAME_TOML + EXTRACT_B1 + SKY_TWICE).replace(
+        "transform = [{}, {scale = [1, -1, 1], translation = [0, 5, 0]}]",
+        "transform = %s" % transform,
+    )
+    with pytest.raises(manifest.ManifestError, match=r"extract\.stage\[1\]\." + why):
+        manifest.parse_text(bad)
+
+
+def test_transform_wraps_the_tree_inside_the_up_turn(tmp_path):
+    img = Image(xbe([("MAP11", SEC, stage_section("b2"))]))
+    tree = ninja.Reader(img, ninja.Format(8, "radians")).tree(SEC)
+    w = gltf.Writer("M", ["Tex0"], None, up="-y")
+    w.add_tree(SEC, tree, transform={"scale": [1, 1, 1]})  # identity: no extra node
+    w.add_tree(SEC, tree, transform={"scale": [1, -1, 1], "translation": [0, 5, 0]})
+    w.add_tree(SEC, tree, transform={"translation": [0, 0, 7]})
+    nodes = w.doc.j["nodes"]
+    a, b, c = (nodes[i] for i in w.doc.j["scenes"][0]["nodes"])
+    assert [a["name"], b["name"], c["name"]] == ["M_00020000", "M_00020000_2", "M_00020000_3"]
+    # The up turn stays outermost; the game's scale and translation sit
+    # under it, around the tree's own nodes, which are unchanged.
+    assert b["rotation"] == a["rotation"] == gltf.UP_ROTATION["-y"]
+    (xf,) = (nodes[i] for i in b["children"])
+    assert xf["scale"] == [1.0, -1.0, 1.0] and xf["translation"] == [0.0, 5.0, 0.0]
+    (xf3,) = (nodes[i] for i in c["children"])
+    assert "scale" not in xf3 and xf3["translation"] == [0.0, 0.0, 7.0]
+
+    def names(n):
+        return [nodes[i]["name"] for i in n["children"]]
+
+    assert names(xf) == names(xf3) == names(a) == ["obj_00020000"]
+    # The mirrored copy reuses the mesh: one model, one mesh.
+    assert w.summary.meshes == 1
+
+
+def test_extract_reports_and_lists_the_transform(game, capsys):
+    with open(os.path.join(game.root, "game.toml"), "a") as f:
+        f.write(SKY_TWICE)
+    manifest.use(manifest.load(game.root))
+    assert cli.run(Args(list=True)) == 0
+    assert "0x00020000/0x00020300 scale(1, -1, 1) translation(0, 5, 0)" in capsys.readouterr().out
+    assert cli.run(Args(stage=["SKY"])) == 0
+    root = game.path("dist", "extract")
+    rep = json.load(open(os.path.join(root, "stages", "SKY", "report.json")))
+    assert rep["trees"] == [
+        {"root": "0x00020000", "texlist": "0x00020300"},
+        {
+            "root": "0x00020000",
+            "texlist": "0x00020300",
+            "transform": {"scale": [1, -1, 1], "translation": [0, 5, 0]},
+        },
+    ]
+    j = json.load(open(os.path.join(root, "stages", "SKY", "SKY.gltf")))
+    assert any(n.get("scale") == [1.0, -1.0, 1.0] for n in j["nodes"])
+
+
+def test_single_root_takes_a_transform(game):
+    with open(os.path.join(game.root, "game.toml"), "a") as f:
+        f.write(
+            '[[extract.stage]]\nname = "ONE"\nsection = "MAP11"\nroot = 0x20000\n'
+            "texlist = 0x20300\ntransform = [{scale = [2, 2, 2]}]\n"
+        )
+    manifest.use(manifest.load(game.root))
+    assert cli.run(Args(stage=["ONE"])) == 0
+    root = game.path("dist", "extract", "stages", "ONE")
+    rep = json.load(open(os.path.join(root, "report.json")))
+    assert rep["trees"] == [
+        {"root": "0x00020000", "texlist": "0x00020300", "transform": {"scale": [2, 2, 2]}}
+    ]
+    j = json.load(open(os.path.join(root, "ONE.gltf")))
+    assert any(n.get("scale") == [2.0, 2.0, 2.0] for n in j["nodes"])
+
+
+def test_extract_reports_an_additive_strip_as_supported(game):
+    # The same b1 stage with a 0x21 material chunk and a second strip:
+    # report.json carries the reader's supported count.
+    strip = struct.pack("<Hh", 1, 3) + b"".join(struct.pack("<Hhh", i, 0, 0) for i in range(3))
+    extra = struct.pack("<BBH", 17, ninja.BLEND_ADD, 2) + bytes((0, 0, 0, 0xFF))
+    extra += struct.pack("<BBH", 65, 0, len(strip) // 2) + strip
+    write(
+        os.path.join(game.root, "game_files", "default.xbe"),
+        xbe([("MAP11", SEC, stage_section("b1", extra))]),
+    )
+    assert cli.run(Args(stage=["MAP11"])) == 0
+    out = game.path("dist", "extract")
+    rep = json.load(open(os.path.join(out, "stages", "MAP11", "report.json")))
+    assert rep["supported"] == {ninja.SUPPORTED_ADD: 1}
+    assert "blend mode 0x21" not in rep["unsupported"]
+    assert "supported: %s (1)" % ninja.SUPPORTED_ADD in open(os.path.join(out, "report.txt")).read()

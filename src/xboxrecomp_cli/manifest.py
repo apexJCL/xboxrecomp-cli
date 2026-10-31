@@ -8,6 +8,7 @@ to build from blinx2.py's ROOT. use(game) makes it the current game for the
 modules that act on one (current()).
 """
 
+import math
 import os
 import re
 import tomllib
@@ -418,13 +419,18 @@ WIZARD_CREDIT = {
 # [[extract.stage]]: a stage's name (its file and scene names), the XBE
 # section its data lives in (for --list and --scan), the NJS_OBJECT
 # tree(s) to draw (a VA or a list of VAs) and its texlist's VA (0: none),
-# or one texlist per root when the parts of a stage each have their own.
+# or one texlist per root when the parts of a stage each have their own,
+# and optionally one transform per root: the scale and translation the
+# game's draw code applies around a tree (a sky drawn again mirrored in
+# Y is the same root twice, the second with scale [1, -1, 1]).
 EXTRACT_STAGE = {
     "name": (STR, REQUIRED),
     "section": (STR, ""),
     "root": (None, REQUIRED),
     "texlist": (None, 0),
+    "transform": (None, None),  # absent unless set (OPTIONAL_ENTRY)
 }
+EXTRACT_TRANSFORM_KEYS = ("scale", "translation")
 EXTRACT_ANGLES = ("bams", "radians")
 EXTRACT_UP = ("y", "-y")
 STAGE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
@@ -686,9 +692,10 @@ def _check_extract(m):
         for k in e:
             if k not in EXTRACT_STAGE:
                 errors.append("%s.%s: unknown key" % (name, k))
-        for k, (kind, _default) in EXTRACT_STAGE.items():
+        for k, (kind, default) in EXTRACT_STAGE.items():
             if k not in e:
-                errors.append("%s.%s: required" % (name, k))
+                if default is not OPTIONAL_ENTRY:
+                    errors.append("%s.%s: required" % (name, k))
             elif kind is not None and not _type_ok(kind, e[k]):
                 errors.append("%s.%s: must be a %s" % (name, k, kind))
         n = e.get("name")
@@ -712,6 +719,74 @@ def _check_extract(m):
             or not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in t)
         ):
             errors.append("%s.texlist: a VA, or one VA per root (0: none)" % name)
+        if "transform" in e:
+            errors += _check_transform(name, e["transform"], r, t)
+        elif isinstance(r, list):
+            errors += _check_repeats(name, r, t, None)
+    return errors
+
+
+def _vec3(v, nonzero=False):
+    return (
+        isinstance(v, list)
+        and len(v) == 3
+        and all(
+            isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in v
+        )
+        and (not nonzero or all(x != 0 for x in v))
+    )
+
+
+def _check_transform(name, t, roots, texlists):
+    """[[extract.stage]] transform: one table per root, each with an
+    optional scale (no zero axis) and translation, three numbers each."""
+    n = len(roots) if isinstance(roots, list) else None
+    if not isinstance(t, list) or (n is not None and len(t) != n):
+        return ["%s.transform: one table per root ({} for none)" % name]
+    errors = []
+    for i, x in enumerate(t):
+        at = "%s.transform[%d]" % (name, i)
+        if not isinstance(x, dict):
+            errors.append("%s: a table with scale and/or translation" % at)
+            continue
+        for k in x:
+            if k not in EXTRACT_TRANSFORM_KEYS:
+                errors.append("%s.%s: unknown key" % (at, k))
+        if "scale" in x and not _vec3(x["scale"], nonzero=True):
+            errors.append("%s.scale: three finite non-zero numbers" % at)
+        if "translation" in x and not _vec3(x["translation"]):
+            errors.append("%s.translation: three finite numbers" % at)
+    if errors or n is None:
+        return errors
+    return _check_repeats(name, roots, texlists, t)
+
+
+def _xf_key(x):
+    """A transform table as the matrix it gives: absent keys are the
+    identity, so {} and {scale = [1, 1, 1]} are the same draw."""
+    return (
+        tuple(float(v) for v in x.get("scale", (1, 1, 1))),
+        tuple(float(v) for v in x.get("translation", (0, 0, 0))),
+    )
+
+
+def _check_repeats(name, roots, texlists, t):
+    """A root listed again must be drawn differently: the same root,
+    texlist and transform twice writes the same geometry twice, one copy
+    z-fighting the other."""
+    if not isinstance(texlists, list) or len(texlists) != len(roots):
+        return []  # reported as a texlist error
+    if not all(isinstance(v, int) for v in roots):
+        return []  # reported as a root error
+    errors, seen = [], {}
+    for i, key in enumerate(zip(roots, texlists, (_xf_key(x) for x in t or [{}] * len(roots)))):
+        if key in seen:
+            errors.append(
+                "%s.root[%d]: 0x%08X drawn again with the same texlist and transform as root[%d]"
+                % (name, i, key[0], seen[key])
+            )
+        else:
+            seen[key] = i
     return errors
 
 

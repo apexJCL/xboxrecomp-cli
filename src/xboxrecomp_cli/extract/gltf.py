@@ -23,6 +23,12 @@ Approximations, counted in the summary's `approximated`:
   mirrored axis that leaves [0, 1] repeats and is counted.
 - a texture whose alpha never reaches 0 but dips below 240 is glass and
   blends even without the strip's use-alpha flag.
+
+glTF has no additive blend. A strip drawn with Ninja blend 0x21 (source
+alpha, one: the lamp glows) is written as BLEND with the material extra
+`"xbr_blend": "add"`, which the Godot stage scene turns into its
+material's additive blend mode (godot.py's STAGE_GD). Other glTF readers
+show it as plain alpha blending.
 """
 
 import json
@@ -38,6 +44,8 @@ ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER = 34962, 34963
 REPEAT, CLAMP, MIRROR = 10497, 33071, 33648
 LINEAR, LINEAR_MIPMAP_LINEAR = 9729, 9987
 UNLIT = "KHR_materials_unlit"
+# The material extra the Godot stage scene reads (godot.py STAGE_GD).
+EXTRA_BLEND = "xbr_blend"
 # Tiny chunk flag bits (the byte above the texture id word).
 TINY_FLIP_U, TINY_FLIP_V, TINY_CLAMP_U, TINY_CLAMP_V = 0x80, 0x40, 0x20, 0x10
 # up = "-y": the game's world is Y-down (its floors face -Y in the data);
@@ -57,6 +65,7 @@ class Summary:
         self.missing = []
         self.unsupported = Counter()
         self.approximated = Counter()
+        self.supported = Counter()
 
 
 class _Doc:
@@ -151,6 +160,7 @@ class Writer:
         # primitive that samples it; write() picks the sampler from it.
         self._tex_uv = {}
         self._mat_tex = {}
+        self._tree_names = Counter()
 
     def _tex_name(self, ti):
         """The texlist's name for texture ti, or None past its end."""
@@ -238,6 +248,10 @@ class Writer:
                     mat["alphaMode"] = "BLEND"
         if a < 255 and s.flags & ninja.STRIP_FLAG_USE_ALPHA:
             mat["alphaMode"] = "BLEND"
+        if s.blend == ninja.BLEND_ADD:
+            # Additive light never cuts out or hides what is behind it.
+            mat["alphaMode"] = "BLEND"
+            mat["extras"] = {EXTRA_BLEND: "add"}
         if s.flags & ninja.STRIP_FLAG_DOUBLE_SIDE:
             mat["doubleSided"] = True
         if s.flags & ninja.STRIP_FLAG_IGNORE_LIGHT:
@@ -333,11 +347,30 @@ class Writer:
             self.doc.j["nodes"][me]["children"] = kids
         return me
 
-    def add_tree(self, va, roots, names=None):
-        """Adds one tree, drawn with names (default: the stage's texlist)."""
+    def add_tree(self, va, roots, names=None, transform=None):
+        """Adds one tree, drawn with names (default: the stage's texlist).
+        transform: the scale and translation the game's draw code puts
+        around the tree, in the game's axes ({"scale": [x, y, z],
+        "translation": [x, y, z]}, both optional): the tree goes under a
+        node carrying them, inside the up turn. A root drawn twice (the
+        second time mirrored) is added twice, so the node names count."""
         if names is not None:
             self.names, self._tlkey = names, tuple(n.lower() for n in names)
-        top = {"name": "%s_%08x" % (self.name, va), "children": [self._node(n) for n in roots]}
+        name = "%s_%08x" % (self.name, va)
+        self._tree_names[name] += 1
+        if self._tree_names[name] > 1:
+            name += "_%d" % self._tree_names[name]
+        kids = [self._node(n) for n in roots]
+        xf = {}
+        if transform and transform.get("translation") and any(transform["translation"]):
+            xf["translation"] = [float(v) for v in transform["translation"]]
+        if transform and transform.get("scale") and list(transform["scale"]) != [1, 1, 1]:
+            xf["scale"] = [float(v) for v in transform["scale"]]
+        if xf:
+            xf["name"] = name + "_transform"
+            xf["children"] = kids
+            kids = [self.doc.add("nodes", xf)]
+        top = {"name": name, "children": kids}
         rot = UP_ROTATION[self.up]
         if rot:
             top["rotation"] = rot

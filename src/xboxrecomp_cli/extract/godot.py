@@ -164,29 +164,61 @@ func _process(_delta):
 		get_tree().quit(0)
 """
 
+# What glTF cannot say, applied to the imported stage when it enters the
+# tree (and in the editor, as a tool script): a material the writer marked
+# with the extra "xbr_blend": "add" (Ninja blend 0x21, source alpha plus
+# one) blends additively. Godot's importer keeps a material's glTF extras
+# as its "extras" metadata. The viewer is a separate script, so a scene
+# that swaps it keeps this. It only looks at the mesh's own surface
+# materials: a material_override or surface_override_material, or a glTF
+# root type set to plain Node (this script extends Node3D), is not handled.
+# The project ships with Godot's default import settings, which set none of
+# them; whoever changes them in the editor owns the result.
+STAGE_GD = """\
+@tool
+extends Node3D
+
+
+func _ready():
+	for mi in find_children("*", "MeshInstance3D", true, false):
+		var mesh: Mesh = mi.mesh
+		if mesh == null:
+			continue
+		for i in mesh.get_surface_count():
+			var mat := mesh.surface_get_material(i) as BaseMaterial3D
+			if mat == null or not mat.has_meta("extras"):
+				continue
+			var x = mat.get_meta("extras")
+			if x is Dictionary and x.get("xbr_blend", "") == "add":
+				mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+"""
+
 SCENE = """\
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://view.gd" id="1"]
 [ext_resource type="PackedScene" path="res://stages/{name}/{name}.gltf" id="2"]
+[ext_resource type="Script" path="res://stage.gd" id="3"]
 
 [node name="{name}" type="Node3D"]
 script = ExtResource("1")
 
 [node name="stage" parent="." instance=ExtResource("2")]
+script = ExtResource("3")
 """
 
 GITIGNORE = "# Game data made by xbr extract: never commit it.\n*\n"
 
 
 def write_project(out, title, stages):
-    """project.godot, view.gd and one <stage>.tscn per stage; the glTF
-    files are under stages/<name>/."""
+    """project.godot, view.gd, stage.gd and one <stage>.tscn per stage;
+    the glTF files are under stages/<name>/."""
     os.makedirs(out, exist_ok=True)
     main = (stages[0] + ".tscn") if stages else ""
     files = {
         "project.godot": PROJECT.format(title=title.replace('"', "'"), main=main),
         "view.gd": VIEW_GD,
+        "stage.gd": STAGE_GD,
         ".gitignore": GITIGNORE,
     }
     for name in stages:

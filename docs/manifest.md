@@ -442,6 +442,7 @@ Each `[[extract.stage]]` is one stage:
 | `section` | `""` | The XBE section the stage lives in; shown by `--list`. |
 | `root` | required | The root object's VA, or a list of VAs whose trees make up the stage. `extract --scan SECTION` lists candidates. |
 | `texlist` | `0` | The stage texlist's VA, or a list with one VA per `root` when each tree draws with its own (0: no textures; strips keep their colours). |
+| `transform` | none | A list with one table per `root`, each with an optional `scale` (three finite, non-zero numbers) and `translation` (three finite numbers), for a tree the game draws again under a matrix of its own, such as a sky mirrored in Y (`{scale = [1, -1, 1]}`). The scale is applied first, then the translation, both in the game's space, before the turn to Y up. `{}` leaves that tree as it is. A root may be listed twice, once per draw. A negative scale mirrors the tree. glTF keeps the vertex order and reads a negative determinant as clockwise front faces, and Godot follows that by inverting face culling for the instance, as the game flips its cull mode for the mirrored draw. A root may not be listed again with the same texlist and transform (`{}` and `scale = [1, 1, 1]` are the same), since that writes the same geometry twice. |
 
 ## [hud]
 

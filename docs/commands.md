@@ -293,6 +293,13 @@ those are left out, never fatal. What is approximated is counted apart:
 - a texture whose alpha never reaches 0 but dips below 240 (glass)
   blends even without the strip's use-alpha flag.
 
+What goes beyond plain glTF is listed as supported: glTF has no additive
+blend, so a strip drawn with Ninja blend 0x21 (source alpha plus one: the
+lamp glows) is written as alpha blend with the material extra
+`"xbr_blend": "add"`, and the project's `stage.gd`, on every stage scene's
+glTF instance, sets those materials to Godot's additive blend mode (in
+the editor too). Opened without it, they blend as plain alpha.
+
 The same lines go to `report.txt` in the project folder, and each stage
 also gets `stages/<name>/report.json` with its trees and counts.
 

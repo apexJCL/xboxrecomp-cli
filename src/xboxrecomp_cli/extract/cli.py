@@ -6,10 +6,11 @@
 Writes <out>/stages/<name>/<name>.gltf (+ .bin, textures/), one
 <name>.tscn per stage and project.godot; the default out is [extract]
 out, under the game's gitignored dist/. Each stage also gets
-stages/<name>/report.json (its counts, what was left out and what was
-approximated), and <out>/report.txt gathers every stage's report in the
-words the run prints. --import then imports the
-project headless with the pinned Godot and fails on any Godot error.
+stages/<name>/report.json (its counts, what was left out, what was
+approximated and what goes beyond plain glTF), and <out>/report.txt
+gathers every stage's report in the words the run prints. --import then
+imports the project headless with the pinned Godot and fails on any
+Godot error.
 """
 
 import json
@@ -65,25 +66,42 @@ def extract_stage(image, cfg, stage, source, out_dir):
     reader = ninja.Reader(image, fmt_of(cfg))
     w = gltf.Writer(stage["name"], [], source, cfg["up"])
     lists = {}
-    for va, tl in zip(stage["root"], stage["texlist"]):
+    for va, tl, xf in zip(stage["root"], stage["texlist"], transforms(stage)):
         if tl not in lists:
             lists[tl] = textures.texlist(image, tl, cfg["texname_size"])
-        w.add_tree(va, reader.tree(va), lists[tl])
+        w.add_tree(va, reader.tree(va), lists[tl], xf)
     shutil.rmtree(out_dir, ignore_errors=True)
     os.makedirs(out_dir)
     s = w.write(out_dir)
     s.unsupported.update(reader.unsupported)
+    s.supported.update(reader.supported)
     _write_report(s, stage, out_dir)
     return s
 
 
+def transforms(stage):
+    """The stage's per-root transforms ({} where it names none)."""
+    return stage.get("transform") or [{}] * len(stage["root"])
+
+
+def _xf_text(xf):
+    return " ".join(
+        "%s(%s)" % (k, ", ".join("%g" % v for v in xf[k]))
+        for k in ("scale", "translation")
+        if k in xf
+    )
+
+
 def _write_report(s, stage, out_dir):
+    trees = []
+    for r, t, xf in zip(stage["root"], stage["texlist"], transforms(stage)):
+        tree = {"root": "0x%08X" % r, "texlist": "0x%08X" % t}
+        if xf:
+            tree["transform"] = xf
+        trees.append(tree)
     rep = {
         "stage": s.name,
-        "trees": [
-            {"root": "0x%08X" % r, "texlist": "0x%08X" % t}
-            for r, t in zip(stage["root"], stage["texlist"])
-        ],
+        "trees": trees,
         "meshes": s.meshes,
         "triangles": s.triangles,
         "materials": s.materials,
@@ -91,6 +109,7 @@ def _write_report(s, stage, out_dir):
         "missing": sorted(set(s.missing)),
         "unsupported": dict(sorted(s.unsupported.items())),
         "approximated": dict(sorted(s.approximated.items())),
+        "supported": dict(sorted(s.supported.items())),
     }
     with open(os.path.join(out_dir, "report.json"), "w") as f:
         json.dump(rep, f, indent=1)
@@ -112,6 +131,9 @@ def _report_lines(rep):
         lines.append("    unsupported: %s (%d)" % (k, n))
     for k, n in rep["approximated"].items():
         lines.append("    approximated: %s (%d)" % (k, n))
+    # Reports written before the key existed have none.
+    for k, n in rep.get("supported", {}).items():
+        lines.append("    supported: %s (%d)" % (k, n))
     if rep["missing"]:
         lines.append("    missing textures: %s" % ", ".join(rep["missing"][:10]))
     return lines
@@ -163,7 +185,10 @@ def run(a):
     stages = cfg["stage"]
     if a.list:
         for st in stages:
-            parts = ", ".join("0x%08X/0x%08X" % p for p in zip(st["root"], st["texlist"]))
+            parts = ", ".join(
+                "0x%08X/0x%08X" % (r, t) + (" " + _xf_text(xf) if xf else "")
+                for r, t, xf in zip(st["root"], st["texlist"], transforms(st))
+            )
             host.say("%-10s %-8s root/texlist %s" % (st["name"], st["section"] or "-", parts))
         return 0
     # Stage names match whatever case the player types (map11, MAP11).
