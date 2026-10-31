@@ -42,9 +42,12 @@ WANT = {
 
 
 # Keys the private integration branch reads ahead of the public branch `new`
-# pins (Hor+, display.overscan, present.shader): the
-# template gains them in the push round that publishes them.
+# pins (Hor+, display.overscan, present.shader, the HUD anchors'
+# display.hud_aspect and display.hud_margin): the template gains them in the
+# push round that publishes them.
 AHEAD = {
+    "display.hud_aspect",
+    "display.hud_margin",
     "display.movie",
     "display.overscan",
     "present.shader",
