@@ -64,7 +64,14 @@ def fmt_of(cfg):
 def extract_stage(image, cfg, stage, source, out_dir):
     """Writes one stage under out_dir; returns its gltf.Summary."""
     reader = ninja.Reader(image, fmt_of(cfg))
-    w = gltf.Writer(stage["name"], [], source, cfg["up"], cfg["textured_colour"])
+    w = gltf.Writer(
+        stage["name"],
+        [],
+        source,
+        cfg["up"],
+        cfg["textured_colour"],
+        stage.get("texture_alpha"),
+    )
     lists = {}
     for va, tl, xf in zip(stage["root"], stage["texlist"], transforms(stage)):
         if tl not in lists:
@@ -111,6 +118,8 @@ def _write_report(s, stage, out_dir):
         "approximated": dict(sorted(s.approximated.items())),
         "supported": dict(sorted(s.supported.items())),
     }
+    if stage.get("texture_alpha"):
+        rep["texture_alpha"] = dict(sorted(stage["texture_alpha"].items()))
     with open(os.path.join(out_dir, "report.json"), "w") as f:
         json.dump(rep, f, indent=1)
         f.write("\n")

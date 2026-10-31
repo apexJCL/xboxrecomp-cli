@@ -1131,3 +1131,78 @@ def test_extract_reports_an_additive_strip_as_supported(game):
     assert rep["supported"] == {ninja.SUPPORTED_ADD: 1}
     assert "blend mode 0x21" not in rep["unsupported"]
     assert "supported: %s (1)" % ninja.SUPPORTED_ADD in open(os.path.join(out, "report.txt")).read()
+
+
+# ---- texture_alpha (a floor a planar reflection shows through) -------------
+
+FLOOR = """
+[[extract.stage]]
+name = "FLOOR"
+section = "MAP11"
+root = [0x20000, 0x20000]
+texlist = 0x20300
+transform = [{}, {scale = [1, -1, 1]}]
+texture_alpha = {tex0 = 0.5}
+"""
+
+
+def test_texture_alpha_blends_the_named_texture(tmp_path):
+    # The texlist says Tex0; the table matches it in any case.
+    roots, _, w = _one_strip_writer()
+    w.texture_alpha = {"tex0": 0.5}
+    w.add_tree(SEC, roots)
+    w.write(str(tmp_path))
+    (mat,) = w.doc.j["materials"]
+    assert mat["alphaMode"] == "BLEND"
+    assert mat["pbrMetallicRoughness"]["baseColorFactor"][3] == 0.5
+    assert w.summary.approximated["blend pass as a translucent texture (texture_alpha)"] == 1
+
+
+def test_texture_alpha_scales_the_white_constant_and_leaves_others_alone(tmp_path):
+    roots, _, _ = _one_strip_writer()
+    src = _one_strip_writer()[2].source
+    w = gltf.Writer("M", ["Tex0"], src, textured_colour="white", texture_alpha={"TEX0": 0.25})
+    w.add_tree(SEC, roots)
+    w.write(str(tmp_path))
+    assert w.doc.j["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"] == [1, 1, 1, 0.25]
+    roots, _, w = _one_strip_writer()
+    w.texture_alpha = {"other": 0.5}
+    w.add_tree(SEC, roots)
+    w.write(str(tmp_path))
+    assert "alphaMode" not in w.doc.j["materials"][0]
+    assert "blend pass as a translucent texture (texture_alpha)" not in w.summary.approximated
+
+
+def test_extract_reports_the_texture_alpha(game):
+    with open(os.path.join(game.root, "game.toml"), "a") as f:
+        f.write(FLOOR)
+    manifest.use(manifest.load(game.root))
+    assert cli.run(Args(stage=["FLOOR", "MAP11"])) == 0
+    root = game.path("dist", "extract", "stages", "FLOOR")
+    rep = json.load(open(os.path.join(root, "report.json")))
+    assert rep["texture_alpha"] == {"tex0": 0.5}
+    j = json.load(open(os.path.join(root, "FLOOR.gltf")))
+    (mat,) = j["materials"]
+    assert mat["alphaMode"] == "BLEND" and mat["pbrMetallicRoughness"]["baseColorFactor"][3] == 0.5
+    plain = json.load(open(game.path("dist", "extract", "stages", "MAP11", "report.json")))
+    assert "texture_alpha" not in plain
+
+
+@pytest.mark.parametrize(
+    "table, why",
+    [
+        ("0.5", "texture_alpha: a table of texture names"),
+        ("{tex0 = 1.5}", r"texture_alpha\.tex0: an opacity from 0 to 1"),
+        ("{tex0 = -0.1}", r"texture_alpha\.tex0: an opacity from 0 to 1"),
+        ('{tex0 = "half"}', r"texture_alpha\.tex0: an opacity from 0 to 1"),
+        ("{tex0 = true}", r"texture_alpha\.tex0: an opacity from 0 to 1"),
+        ("{tex0 = nan}", r"texture_alpha\.tex0: an opacity from 0 to 1"),
+        ("{tex0 = 0.5, TEX0 = 0.4}", r"texture_alpha\.TEX0: the same texture as tex0"),
+    ],
+)
+def test_manifest_texture_alpha_errors(table, why):
+    bad = (GAME_TOML + EXTRACT_B1 + FLOOR).replace(
+        "texture_alpha = {tex0 = 0.5}", "texture_alpha = %s" % table
+    )
+    with pytest.raises(manifest.ManifestError, match=r"extract\.stage\[1\]\." + why):
+        manifest.parse_text(bad)

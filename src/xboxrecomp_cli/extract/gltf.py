@@ -25,6 +25,11 @@ Approximations, counted in the summary's `approximated`:
   mirrored axis that leaves [0, 1] repeats and is counted.
 - a texture whose alpha never reaches 0 but dips below 240 is glass and
   blends even without the strip's use-alpha flag.
+- a texture named in the stage's texture_alpha blends at that opacity:
+  the game covers such a surface with a pass of its own (a planar
+  reflection drawn into a render target and blended over the floor),
+  which a static scene stands in for with a mirrored copy of the room
+  below a see-through floor.
 
 glTF has no additive blend. A strip drawn with Ninja blend 0x21 (source
 alpha, one: the lamp glows) is written as BLEND with the material extra
@@ -147,13 +152,16 @@ class Writer:
     Textures are shared by name, so two texlists naming one file make
     one image."""
 
-    def __init__(self, name, names, source, up="y", textured_colour="diffuse"):
+    def __init__(self, name, names, source, up="y", textured_colour="diffuse", texture_alpha=None):
         self.name = name
         self.names = names
         self._tlkey = tuple(n.lower() for n in names)
         self.source = source
         self.up = up
         self.textured_colour = textured_colour
+        # Texture name (lower case) to the opacity a blend pass of the
+        # game's own gives its surfaces ([[extract.stage]] texture_alpha).
+        self.texture_alpha = {k.lower(): v for k, v in (texture_alpha or {}).items()}
         self.doc = _Doc()
         self.summary = Summary(name)
         self._mats, self._samplers, self._meshes = {}, {}, {}
@@ -262,6 +270,13 @@ class Writer:
                 mat["alphaMode"] = "BLEND"
         if a < 255 and s.flags & ninja.STRIP_FLAG_USE_ALPHA:
             mat["alphaMode"] = "BLEND"
+        if nm is not None and nm.lower() in self.texture_alpha:
+            # A surface the game covers with a blend pass of its own (a
+            # floor under its planar reflection) that the static scene
+            # stands in for by letting what lies below show through.
+            mat["alphaMode"] = "BLEND"
+            mat["pbrMetallicRoughness"]["baseColorFactor"][3] *= self.texture_alpha[nm.lower()]
+            self.summary.approximated["blend pass as a translucent texture (texture_alpha)"] += 1
         if s.blend == ninja.BLEND_ADD:
             # Additive light never cuts out or hides what is behind it.
             mat["alphaMode"] = "BLEND"

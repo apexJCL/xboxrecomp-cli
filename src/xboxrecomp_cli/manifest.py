@@ -426,13 +426,17 @@ WIZARD_CREDIT = {
 # or one texlist per root when the parts of a stage each have their own,
 # and optionally one transform per root: the scale and translation the
 # game's draw code applies around a tree (a sky drawn again mirrored in
-# Y is the same root twice, the second with scale [1, -1, 1]).
+# Y is the same root twice, the second with scale [1, -1, 1]), and
+# optionally a texture_alpha table: texture names whose surfaces the game
+# blends with an opacity of its own, such as a floor a planar reflection
+# shows through.
 EXTRACT_STAGE = {
     "name": (STR, REQUIRED),
     "section": (STR, ""),
     "root": (None, REQUIRED),
     "texlist": (None, 0),
     "transform": (None, None),  # absent unless set (OPTIONAL_ENTRY)
+    "texture_alpha": (None, None),  # likewise
 }
 EXTRACT_TRANSFORM_KEYS = ("scale", "translation")
 EXTRACT_ANGLES = ("bams", "radians")
@@ -730,6 +734,25 @@ def _check_extract(m):
             errors += _check_transform(name, e["transform"], r, t)
         elif isinstance(r, list):
             errors += _check_repeats(name, r, t, None)
+        if "texture_alpha" in e:
+            errors += _check_texture_alpha(name, e["texture_alpha"])
+    return errors
+
+
+def _check_texture_alpha(name, ta):
+    """[[extract.stage]] texture_alpha: texture names to an opacity from 0
+    to 1. Names match texlist names in any case, so two spellings of one
+    name would give it two opacities."""
+    at = "%s.texture_alpha" % name
+    if not isinstance(ta, dict):
+        return ["%s: a table of texture names to an opacity from 0 to 1" % at]
+    errors, seen = [], {}
+    for k, v in ta.items():
+        if not isinstance(v, (int, float)) or isinstance(v, bool) or not 0 <= v <= 1:
+            errors.append("%s.%s: an opacity from 0 to 1" % (at, k))
+        if k.lower() in seen:
+            errors.append("%s.%s: the same texture as %s" % (at, k, seen[k.lower()]))
+        seen.setdefault(k.lower(), k)
     return errors
 
 
