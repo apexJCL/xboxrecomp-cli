@@ -7,6 +7,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-01
+
 ### Added
 - `[pipeline] symbols`: a game's symbol map (`docs/symbols.md`). `names`
   writes its function names into functions.json, so recomp uses them as
@@ -17,10 +19,27 @@ a release by its tag in `game.toml`'s `[cli]` table.
   address. A game without the key keeps its gen key and gen. Names the
   lifter or runtime use (C keywords, x86 registers, `_`, `g_`, `recomp_`,
   `sub_`/`loc_`) are refused.
+- `extract --collision`: a stage's collision trees, the ones the game
+  tests the player against and never draws, baked into
+  `<name>_col.gltf` with one node per surface class, plus
+  `collision.json`, so the walls and floors can be checked in Godot next
+  to the render meshes. Stages name their roots with `collision`;
+  `[extract] collision_skip` leaves out classes the game never tests.
+- `extract --placements`: what each stage spawns at load (enemies, items,
+  gimmicks, emitters, props), read from the tables named in
+  `[[extract.placement_set]]` and drawn with the models in
+  `[[extract.placement_model]]`, or a marker where none is known, into
+  `<stage>_placements.gltf` and `placements.json` (each record's raw
+  bytes too). The scene instances them as a `placements` node.
+  `placement_world = "-y"` puts the game's half turn on that node, as its
+  draw code does. A per-stage `placement_layers` table covers stages that
+  load other layers than the set's own, and `--list` shows the layers
+  each stage reads. Unreadable records are reported and skipped.
+  Without either flag the output is unchanged.
 
 ### Changed
 - `xbr new`'s `packaging/config.default.toml` gains the keys the toolkit's
-  next public release reads: `render.snap_2d`, `display.movie`,
+  `blinx2-v0.12.0` release reads: `render.snap_2d`, `display.movie`,
   `display.overscan`, `display.hud_aspect`, `display.hud_margin` and
   `present.shader_lines` at their stock values, and `present.shader`,
   `present.profile` and `present.shader_lib` as commented lines (their stock
@@ -29,6 +48,13 @@ a release by its tag in `game.toml`'s `[cli]` table.
   while the toolkit's default stays off. doctor's `defaults:` line names a
   game that turns the menu off against the ports' value
   (`menu.enabled = false (new games true)`).
+
+### Fixed
+- `extract`: a texture that repeats on one axis and clamps on the other
+  no longer smears its opposite edge across the surface in bands. Godot
+  takes one repeat flag per material, so the clamped axis is now cut into
+  the mesh at the edge texels; stages without such a texture come out
+  byte for byte the same.
 
 ## [0.18.0] - 2026-10-31
 
@@ -751,7 +777,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.15.0...v0.16.0
