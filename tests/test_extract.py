@@ -7,6 +7,7 @@ No test reads game files.
 """
 
 import copy
+import hashlib
 import json
 import math
 import os
@@ -18,7 +19,7 @@ import pytest
 
 from xboxrecomp_cli import host, manifest
 from xboxrecomp_cli.enhance import dds, ipk
-from xboxrecomp_cli.extract import cli, collision, gltf, godot, ninja, scan, textures
+from xboxrecomp_cli.extract import cli, collision, gltf, godot, ninja, placements, scan, textures
 from xboxrecomp_cli.extract.image import Image, ImageError
 
 BASE = 0x10000
@@ -182,7 +183,7 @@ texlist = 0x20300
 class Args:
     def __init__(self, **kw):
         self.stage, self.out, self.do_import, self.list, self.scan = [], None, False, False, None
-        self.collision = False
+        self.collision = self.placements = False
         self.__dict__.update(kw)
 
 
@@ -1691,3 +1692,370 @@ def test_manifest_extract_collision_keys():
     flag = GAME_TOML + EXTRACT_B1.replace("[extract]\n", "[extract]\ncollision_skip = [true]\n")
     with pytest.raises(manifest.ManifestError, match="extract.collision_skip"):
         manifest.parse_text(flag)
+
+
+# ---- the placements layer ---------------------------------------------------
+
+DATA = 0x30000
+TURNS = 3 * 2 * math.pi  # record angles may run many turns
+
+
+def data_section():
+    """Placement tables: a set table indexed by stage (stage 1 -> a list of
+    two 0x20-byte records; stage 1 + layer 1 -> three more), a variant
+    table for class 1 whose variant 1 is stage_section's tree, a pair for
+    class 3 where only the flagged table names it, and an object whose
+    model pointer leads nowhere."""
+    d = bytearray(0x300)
+    struct.pack_into("<3I", d, 0, 0, DATA + 0x40, DATA + 0x48)
+    struct.pack_into("<2I", d, 0x40, 2, DATA + 0x80)
+    # class dword, pos, a 1.0 (as the game's records hold), rotation.
+    struct.pack_into("<I3ff3f", d, 0x80, 0x0101, 1, 2, 3, 1, 0, math.pi / 2 + TURNS, 0)
+    struct.pack_into("<I3ff3f", d, 0xA0, 0x01000002, 4, 5, 6, 1, 0, 0, 0)
+    struct.pack_into("<4I", d, 0x100, 0, 0, SEC, SEC + 0x300)
+    # Layer 1: a flagged class 3, variant 1; a fixed class 4; class 5,
+    # whose tree cannot be read.
+    struct.pack_into("<2I", d, 0x48, 3, DATA + 0x140)
+    struct.pack_into("<I3ff3f", d, 0x140, 0x01000103, 7, 8, 9, 1, 0, 0, 0)
+    struct.pack_into("<I3ff3f", d, 0x160, 0x04, 0, 0, 0, 1, 0, 0, 0)
+    struct.pack_into("<I3ff3f", d, 0x180, 0x05, 0, 0, 0, 1, 0, 0, 0)
+    struct.pack_into("<4I", d, 0x1C0, 0, 0, SEC, SEC + 0x300)  # class 3, flagged
+    struct.pack_into("<2I", d, 0x200, 0, 0x7FFF0000)  # eval flags, a model nowhere
+    return bytes(d)
+
+
+PLACEMENTS = """
+[[extract.placement_set]]
+name = "enemy"
+table = 0x30000
+stride = 0x20
+pos_at = 4
+rot_at = 0x14
+[[extract.placement_model]]
+set = "enemy"
+class = 1
+table = 0x30100
+stride = 8
+"""
+# Layer 1's classes: a flagged table, a fixed object, a tree that derails.
+PLACEMENTS_L1 = """
+[[extract.placement_model]]
+set = "enemy"
+class = 3
+table = 0x301A0
+table_flagged = 0x301C0
+stride = 8
+[[extract.placement_model]]
+set = "enemy"
+class = 4
+object = 0x%X
+texlist = 0x%X
+[[extract.placement_model]]
+set = "enemy"
+class = 5
+object = 0x30200
+texlist = 0
+""" % (SEC, SEC + 0x300)
+
+
+def _pl_cfg(world="y", up="y", extra=""):
+    toml = GAME_TOML + EXTRACT_B1.replace(
+        "[extract]\n", '[extract]\nup = "%s"\nplacement_world = "%s"\n' % (up, world)
+    )
+    return manifest.parse_text(toml + "placements = 1\n" + PLACEMENTS + extra)["extract"]
+
+
+def _pl_image(data=None):
+    return Image(xbe([("MAP11", SEC, stage_section("b1")), ("DATA", DATA, data or data_section())]))
+
+
+def test_placements_read_records_and_resolve_models():
+    cfg = _pl_cfg()
+    img = _pl_image()
+    ps, errors = placements.read(img, cfg["placement_set"], 1)
+    assert errors == []
+    assert [(p.cls, p.variant, p.flags, p.pos) for p in ps] == [
+        (1, 1, 0, (1, 2, 3)),
+        (2, 0, 1, (4, 5, 6)),
+    ]
+    assert ps[0].name == "enemy_l0_000_cls101"
+    assert placements.resolve(img, cfg["placement_model"], ps) == [("enemy", 2)]
+    assert (ps[0].model, ps[0].texlist) == (SEC, SEC + 0x300)
+    assert ps[1].model == 0
+    # Stage 0's entry is empty: nothing, not an error.
+    assert placements.read(img, cfg["placement_set"], 0) == ([], [])
+
+
+def test_placements_gltf_draws_rigid_models_and_marks_the_rest(tmp_path):
+    cfg = _pl_cfg()
+    stage = cfg["stage"][0]
+    rep = placements.extract(_pl_image(), cli.fmt_of(cfg), cfg, stage, None, str(tmp_path))
+    assert rep["sets"] == {
+        "enemy": {"records": 2, "drawn": 1, "skinned": 0, "unreadable": 0, "marker": 1}
+    }
+    assert rep["classes_without_model"] == ["enemy 0x02"]
+    j = json.load(open(tmp_path / "MAP11_placements.gltf"))
+    nodes = {n["name"]: n for n in j["nodes"]}
+    top = j["nodes"][j["scenes"][0]["nodes"][0]]
+    assert top["name"] == "enemy" and "rotation" not in top
+    a = nodes["enemy_l0_000_cls101"]
+    assert a["translation"] == [1, 2, 3]
+    # The many turns fold away: a quarter turn about Y.
+    s = math.sqrt(0.5)
+    assert a["rotation"] == pytest.approx([0, s, 0, s])
+    assert a["extras"]["model"] == "0x%08X" % SEC and a["extras"]["skinned"] is False
+    model = j["nodes"][a["children"][0]]
+    assert model["name"] == "enemy_l0_000_cls101_model" and "rotation" not in model
+    assert j["nodes"][model["children"][0]]["name"] == "obj_%08x" % SEC
+    b = nodes["enemy_l0_001_cls2"]
+    marker = j["nodes"][b["children"][0]]
+    assert marker["name"] == "enemy_l0_001_cls2_marker"
+    assert j["meshes"][marker["mesh"]]["name"] == "marker_enemy"
+    rows = json.load(open(tmp_path / "placements.json"))["placements"]
+    assert rows[1]["raw"] == data_section()[0xA0:0xC0].hex()
+
+
+@pytest.mark.parametrize(
+    "world, up, top, model",
+    [
+        ("y", "y", False, False),
+        ("-y", "y", True, True),
+        ("-y", "-y", False, True),
+        ("y", "-y", True, False),
+    ],
+)
+def test_placements_turn_the_world_back_into_the_data(world, up, top, model):
+    t, m = placements._turns(_pl_cfg(world, up))
+    half = gltf.UP_ROTATION["-y"]
+    assert (t == half, m == half) == (top, model)
+    assert (t is None) != top and (m is None) != model
+
+
+def test_placements_call_weighted_models_skinned():
+    r = ninja.Reader(_pl_image(), ninja.Format(16, "bams", True))
+    r.tree(SEC)
+    assert not placements.skinned(r)
+    r.stats["vertex chunk VN_NF"] += 1
+    assert placements.skinned(r)
+    r = ninja.Reader(_pl_image(), ninja.Format(16, "bams", True))
+    r.unsupported["cached polygon list"] += 1
+    assert placements.skinned(r)
+
+
+def test_placements_skip_a_list_too_long():
+    d = bytearray(data_section())
+    struct.pack_into("<I", d, 0x40, placements.MAX_RECORDS + 1)
+    ps, errors = placements.read(_pl_image(bytes(d)), _pl_cfg()["placement_set"], 1)
+    assert ps == [] and len(errors) == 1
+    assert errors[0][:2] == ("enemy", 0) and "not a placement list" in errors[0][2]
+
+
+def test_placements_carry_on_past_a_bad_layer(tmp_path):
+    """A table entry that points nowhere is its layer's error; the other
+    layer is still exported."""
+    d = bytearray(data_section())
+    struct.pack_into("<I", d, 4, 0x7FFF0000)  # stage 1, layer 0
+    cfg = _pl_cfg(extra=PLACEMENTS_L1)
+    cfg["placement_set"][0]["layers"] = [0, 1]
+    rep = placements.extract(
+        _pl_image(bytes(d)), cli.fmt_of(cfg), cfg, cfg["stage"][0], None, str(tmp_path)
+    )
+    c = rep["sets"]["enemy"]
+    assert c["records"] == 3 and len(c["errors"]) == 1
+    assert c["errors"][0].startswith("layer 0: ")
+    assert json.load(open(tmp_path / "placements.json"))["sets"] == rep["sets"]
+
+
+def test_placements_layers_flagged_tables_fixed_objects_and_bad_trees(tmp_path):
+    cfg = _pl_cfg(extra=PLACEMENTS_L1)
+    cfg["placement_set"][0]["layers"] = [0, 1]
+    rep = placements.extract(
+        _pl_image(), cli.fmt_of(cfg), cfg, cfg["stage"][0], None, str(tmp_path)
+    )
+    assert rep["sets"]["enemy"] == {
+        "records": 5,
+        "drawn": 3,
+        "skinned": 0,
+        "unreadable": 1,
+        "marker": 1,
+    }
+    rows = {r["name"]: r for r in rep["placements"]}
+    # The flags byte picks table_flagged: the plain table names nothing.
+    flagged = rows["enemy_l1_000_cls103"]
+    assert (flagged["layer"], flagged["flags"], flagged["model"]) == (1, 1, "0x%08X" % SEC)
+    assert rows["enemy_l1_001_cls4"]["model"] == "0x%08X" % SEC
+    bad = rows["enemy_l1_002_cls5"]
+    assert bad["unreadable"] is True and bad["model"] == "0x00030200"
+    j = json.load(open(tmp_path / "MAP11_placements.gltf"))
+    nodes = {n["name"]: n for n in j["nodes"]}
+    assert nodes["enemy_l1_000_cls103"]["translation"] == [7, 8, 9]
+    assert "enemy_l1_002_cls5_marker" in nodes and "enemy_l1_002_cls5_model" not in nodes
+
+
+@pytest.mark.parametrize("at, value", [(0x08, float("nan")), (0x1C, float("inf"))])
+def test_placements_without_a_finite_transform_are_unreadable(tmp_path, at, value):
+    d = bytearray(data_section())
+    struct.pack_into("<f", d, 0x80 + at, value)
+    cfg = _pl_cfg()
+    rep = placements.extract(
+        _pl_image(bytes(d)), cli.fmt_of(cfg), cfg, cfg["stage"][0], None, str(tmp_path)
+    )
+    a = rep["placements"][0]
+    assert a["unreadable"] is True and "model" in a
+    assert a["raw"] == bytes(d[0x80:0xA0]).hex()
+    assert None in a["position"] + a["rotation_radians"]
+    assert rep["sets"]["enemy"]["unreadable"] == 1
+    # Strict JSON both: no bare NaN or Infinity.
+    for f in ("placements.json", "MAP11_placements.gltf"):
+        json.loads(open(tmp_path / f).read(), parse_constant=pytest.fail)
+    j = json.load(open(tmp_path / "MAP11_placements.gltf"))
+    n = {n["name"]: n for n in j["nodes"]}["enemy_l0_000_cls101"]
+    assert "translation" not in n and "rotation" not in n
+    assert j["nodes"][n["children"][0]]["name"] == "enemy_l0_000_cls101_marker"
+
+
+def test_placements_variant_past_the_table_is_a_marker(tmp_path):
+    cfg = _pl_cfg(extra="")
+    cfg["placement_model"][0]["variants"] = 1
+    rep = placements.extract(
+        _pl_image(), cli.fmt_of(cfg), cfg, cfg["stage"][0], None, str(tmp_path)
+    )
+    a = rep["placements"][0]
+    assert a["variant"] == 1 and a["variant_out_of_range"] is True and "model" not in a
+    assert rep["sets"]["enemy"]["marker"] == 2
+
+
+def test_godot_scene_adds_the_placements_layer(monkeypatch):
+    assert godot.scene("S") == godot.SCENE.format(name="S")
+    assert godot.scene("S", True) == godot.SCENE_COLLISION.format(name="S")
+    # The id and step count follow the template, not its line count.
+    extra = '[ext_resource type="Script" path="res://x.gd" id="9"]\n'
+    monkeypatch.setattr(
+        godot,
+        "SCENE",
+        godot.SCENE.replace("load_steps=4", "load_steps=5").replace(
+            "\n[node ", extra + "\n[node ", 1
+        ),
+    )
+    t = godot.scene("S", False, True)
+    assert "load_steps=6 " in t and 'S_placements.gltf" id="10"]' in t
+    monkeypatch.undo()
+    for col, n in ((False, 4), (True, 6)):
+        t = godot.scene("S", col, True)
+        assert t.startswith("[gd_scene load_steps=%d " % (n + 1))
+        assert 'path="res://stages/S/S_placements.gltf" id="%d"]' % n in t
+        assert t.endswith('[node name="placements" parent="." instance=ExtResource("%d")]\n' % n)
+
+
+@pytest.fixture
+def pl_game(game):
+    write(
+        game.xbe,
+        xbe([("MAP11", SEC, stage_section("b1")), ("DATA", DATA, data_section())]),
+    )
+    toml = os.path.join(game.root, "game.toml")
+    with open(toml, "a") as f:
+        f.write("placements = 1\n" + PLACEMENTS)
+    G = manifest.load(game.root)
+    manifest.use(G)
+    return G
+
+
+def test_extract_placements_is_opt_in(pl_game, capsys):
+    root = pl_game.path("dist", "extract")
+    sdir = os.path.join(root, "stages", "MAP11")
+    assert cli.run(Args()) == 0
+    assert not os.path.exists(os.path.join(sdir, "MAP11_placements.gltf"))
+    assert cli.run(Args(placements=True)) == 0
+    out = capsys.readouterr().out
+    assert "MAP11 placements: enemy 2 (1 drawn, 0 skinned, 0 unreadable, 1 markers)" in out
+    for rel in ("MAP11_placements.gltf", "MAP11_placements.bin", "placements.json"):
+        assert os.path.isfile(os.path.join(sdir, rel)), rel
+    assert open(os.path.join(root, "MAP11.tscn")).read() == godot.scene("MAP11", False, True)
+    assert cli.run(Args()) == 0
+    assert open(os.path.join(root, "MAP11.tscn")).read() == godot.SCENE.format(name="MAP11")
+    assert cli.run(Args(list=True)) == 0
+    assert "; placements 1" in capsys.readouterr().out
+
+
+def _tree_shas(d, skip=()):
+    out = {}
+    for base, _, files in os.walk(d):
+        for f in files:
+            rel = os.path.relpath(os.path.join(base, f), d)
+            if f not in skip:
+                out[rel] = hashlib.sha256(open(os.path.join(base, f), "rb").read()).hexdigest()
+    return out
+
+
+def test_extract_placements_leave_the_stage_as_it_was(pl_game):
+    sdir = pl_game.path("dist", "extract", "stages", "MAP11")
+    assert cli.run(Args()) == 0
+    before = _tree_shas(sdir)
+    assert cli.run(Args(placements=True)) == 0
+    skip = ("MAP11_placements.gltf", "MAP11_placements.bin", "placements.json")
+    assert _tree_shas(sdir, skip) == before
+
+
+def test_extract_placements_warn_on_a_bad_layer(pl_game, capsys):
+    d = bytearray(data_section())
+    struct.pack_into("<I", d, 4, 0x7FFF0000)
+    write(pl_game.xbe, xbe([("MAP11", SEC, stage_section("b1")), ("DATA", DATA, bytes(d))]))
+    assert cli.run(Args(placements=True)) == 0
+    out = capsys.readouterr().out
+    assert "MAP11 placements: enemy 0 (" in out
+    assert "warning: enemy layer 0: " in out and ", skipped" in out
+
+
+@pytest.mark.parametrize(
+    "edit, why",
+    [
+        (("stride = 0x20", "stride = 0x10"), r"placement_set\[0\]\.rot_at: 12 bytes inside"),
+        (('set = "enemy"', 'set = "item"'), r"placement_model\[0\]\.set: no \[\[extract"),
+        (("table = 0x30100", "table = 0x30100\nobject = 1"), "a table or an object"),
+        (("class = 1", "class = 0x101"), r"class: the class byte"),
+        (('name = "enemy"', 'name = "enemy"\ncolor = 1'), r"placement_set\[0\]\.color: unknown"),
+        (("pos_at = 4\n", ""), r"placement_set\[0\]\.pos_at: required"),
+        (("rot_at = 0x14\n", ""), r"placement_set\[0\]\.rot_at: required"),
+        (("stride = 0x20", "stride = 0x20\nlayers = [0, 1, 0]"), r"layers: an offset twice"),
+        (('name = "enemy"', 'name = "enemy-col"'), r"name: 'enemy-col' ends in a Godot import"),
+        (('name = "enemy"', 'name = "enemy_Rigid"'), r"ends in a Godot import hint"),
+        (("stride = 8", "stride = 8\ntexlist_at = 6"), r"texlist_at: 4 bytes inside the stride"),
+        (("stride = 8", "stride = 8\nobject_at = 8"), r"object_at: 4 bytes inside the stride"),
+        (("table = 0x30100", "table = -1"), r"placement_model\[0\]\.table: a VA, 0 or more"),
+        (("stride = 8", "stride = 8\ntable_flagged = -4"), r"table_flagged: a VA, 0 or more"),
+        (("stride = 8", "stride = 8\nvariants = 0"), r"variants: must be positive"),
+        (
+            ("table = 0x30100\nstride = 8", "object = -1\ntexlist = 0"),
+            r"placement_model\[0\]\.object: a VA, 0 or more",
+        ),
+        (
+            ("table = 0x30100\nstride = 8", "object = 1\ntexlist = -1"),
+            r"placement_model\[0\]\.texlist: a VA, 0 or more",
+        ),
+        (
+            ("table = 0x30100\nstride = 8", "object = 1\ntexlist = 0\ntable_flagged = 2"),
+            r"table_flagged: only with table, not object",
+        ),
+    ],
+)
+def test_manifest_placement_errors(edit, why):
+    assert edit[0] in PLACEMENTS
+    bad = GAME_TOML + EXTRACT_B1 + "placements = 1\n" + PLACEMENTS.replace(*edit, 1)
+    with pytest.raises(manifest.ManifestError, match=why):
+        manifest.parse_text(bad)
+
+
+def test_manifest_placement_defaults_and_a_lone_index():
+    x = manifest.parse_text(GAME_TOML + EXTRACT_B1 + "placements = 1\n" + PLACEMENTS)["extract"]
+    p = x["placement_set"][0]
+    assert (p["layers"], p["class_at"]) == ([0], 0)
+    assert "colour" not in p and x["placement_world"] == "y"
+    assert "variants" not in x["placement_model"][0]
+    with pytest.raises(manifest.ManifestError, match=r"stage\[0\]\.placements: no \[\[extract"):
+        manifest.parse_text(GAME_TOML + EXTRACT_B1 + "placements = 1\n")
+    with pytest.raises(manifest.ManifestError, match=r"stage\[0\]\.placements: an index of 0"):
+        manifest.parse_text(GAME_TOML + EXTRACT_B1 + "placements = -1\n" + PLACEMENTS)
+    bad = GAME_TOML + EXTRACT_B1.replace("[extract]\n", '[extract]\nplacement_world = "z"\n')
+    with pytest.raises(manifest.ManifestError, match="extract.placement_world"):
+        manifest.parse_text(bad)

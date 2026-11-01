@@ -359,6 +359,14 @@ SPEC = {
         # ("media/{name}.dds", any case) or "ipk:<archive>:<entry pattern>".
         "textures": (STR, REQUIRED),
         "stage": (TABLES, []),
+        # The game world placements live in, against the stage trees' data
+        # (extract --placements): "y" the same axes, "-y" the data turned a
+        # half turn about X before the game draws it.
+        "placement_world": (STR, "y"),
+        # Per-stage placement tables and the models of their classes, which
+        # only extract --placements reads (EXTRACT_PLACEMENT_SET below).
+        "placement_set": (TABLES, []),
+        "placement_model": (TABLES, []),
     },
     # Where the layout differs from the standard one (docs/layout.md).
     "layout": {
@@ -435,7 +443,9 @@ WIZARD_CREDIT = {
 # backdrop), and optionally a texture_alpha table: texture names whose
 # surfaces the game blends with an opacity of its own, such as a floor a
 # planar reflection shows through. collision names the stage's collision
-# trees (a VA or a list), which only extract --collision reads.
+# trees (a VA or a list), which only extract --collision reads;
+# placements is the stage's index into the [[extract.placement_set]] tables,
+# which only extract --placements reads.
 EXTRACT_STAGE = {
     "name": (STR, REQUIRED),
     "section": (STR, ""),
@@ -444,12 +454,58 @@ EXTRACT_STAGE = {
     "transform": (None, None),  # absent unless set (OPTIONAL_ENTRY)
     "texture_alpha": (None, None),  # likewise
     "collision": (None, None),  # likewise
+    "placements": (INT, None),  # likewise
+}
+# [[extract.placement_set]]: one set of what a stage spawns at load
+# (enemies, items, props). table: a VA of u32 pointers indexed by the
+# stage's placements index plus each of layers; each points to a u32 count
+# and a u32 pointer to stride-byte records, with the class dword, position
+# and rotation (f32 radians) at the given offsets. The class dword is the
+# one record shape the CLI reads: byte 0 the class, byte 1 the variant,
+# byte 3 flags. pos_at and rot_at have no default: they are the game's.
+# size and colour: the marker box drawn where a class has no model (half
+# its edge; 0xRRGGBB, default by set order).
+EXTRACT_PLACEMENT_SET = {
+    "name": (STR, REQUIRED),
+    "table": (INT, REQUIRED),
+    "stride": (INT, REQUIRED),
+    "layers": (INTS, [0]),
+    "class_at": (INT, 0),
+    "pos_at": (INT, REQUIRED),
+    "rot_at": (INT, REQUIRED),
+    "size": (FLOAT, 4.0),
+    "colour": (INT, None),
+}
+# [[extract.placement_model]]: the model a set's class (the class dword's
+# low byte) is drawn with. Either a variant table (table, one stride-byte
+# record per variant; table_flagged for records whose flags byte is set),
+# whose records hold the NJS_OBJECT and texlist pointers at object_at and
+# texlist_at, or a fixed object and texlist. variants: the table's record
+# count; a variant past it is drawn as a marker.
+EXTRACT_PLACEMENT_MODEL = {
+    "set": (STR, REQUIRED),
+    "class": (INT, REQUIRED),
+    "table": (INT, None),
+    "table_flagged": (INT, None),
+    "stride": (INT, 0),
+    "object_at": (INT, 0),
+    "texlist_at": (INT, 4),
+    "variants": (INT, None),
+    "object": (INT, None),
+    "texlist": (INT, None),
 }
 EXTRACT_TRANSFORM_KEYS = ("scale", "translation", "backdrop")
 EXTRACT_ANGLES = ("bams", "radians")
 EXTRACT_UP = ("y", "-y")
 EXTRACT_TEXTURED_COLOURS = ("diffuse", "white")
 STAGE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+# A node name ending in one of Godot's import hints ("-col", "_rigid",
+# ...) becomes a body or is dropped on import: a placement set's top node
+# must not read as one.
+GODOT_HINT = re.compile(
+    r"[-_$](noimp|col|colonly|convcol|convcolonly|navmesh|rigid|vcol|loop|cycle|occ|occonly)$",
+    re.I,
+)
 # An SPDX licence expression, loosely: ids joined by AND, OR and WITH.
 SPDX_RE = re.compile(r"^[A-Za-z0-9.+()-]+(?: (?:AND|OR|WITH) [A-Za-z0-9.+()-]+)*$")
 # An entry key whose spec default is this stays absent when unset.
@@ -629,6 +685,12 @@ def _derive(m):
                 e["texlist"] = [t] * len(e["root"])
             stages.append(e)
         m["extract"]["stage"] = stages
+        m["extract"]["placement_set"] = [
+            _entry(e, EXTRACT_PLACEMENT_SET) for e in m["extract"]["placement_set"]
+        ]
+        m["extract"]["placement_model"] = [
+            _entry(e, EXTRACT_PLACEMENT_MODEL) for e in m["extract"]["placement_model"]
+        ]
 
 
 def _entry(e, spec):
@@ -692,6 +754,8 @@ def _check_extract(m):
         errors.append("extract.angles: one of %s" % ", ".join(EXTRACT_ANGLES))
     if x["up"] not in EXTRACT_UP:
         errors.append("extract.up: one of %s" % ", ".join(EXTRACT_UP))
+    if x["placement_world"] not in EXTRACT_UP:
+        errors.append("extract.placement_world: one of %s" % ", ".join(EXTRACT_UP))
     if x["textured_colour"] not in EXTRACT_TEXTURED_COLOURS:
         errors.append("extract.textured_colour: one of %s" % ", ".join(EXTRACT_TEXTURED_COLOURS))
     if x["texname_size"] <= 0:
@@ -713,15 +777,7 @@ def _check_extract(m):
     seen = set()
     for i, e in enumerate(x["stage"]):
         name = "extract.stage[%d]" % i
-        for k in e:
-            if k not in EXTRACT_STAGE:
-                errors.append("%s.%s: unknown key" % (name, k))
-        for k, (kind, default) in EXTRACT_STAGE.items():
-            if k not in e:
-                if default is not OPTIONAL_ENTRY:
-                    errors.append("%s.%s: required" % (name, k))
-            elif kind is not None and not _type_ok(kind, e[k]):
-                errors.append("%s.%s: must be a %s" % (name, k, kind))
+        errors += _entry_errors(name, e, EXTRACT_STAGE)
         n = e.get("name")
         if isinstance(n, str):
             if not STAGE_NAME.match(n):
@@ -755,6 +811,93 @@ def _check_extract(m):
             or not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in c)
         ):
             errors.append("%s.collision: a VA or a list of VAs" % name)
+        if "placements" in e:
+            if not x["placement_set"]:
+                errors.append("%s.placements: no [[extract.placement_set]] to index" % name)
+            if _type_ok(INT, e["placements"]) and e["placements"] < 0:
+                errors.append("%s.placements: an index of 0 or more" % name)
+    return errors + _check_placements(x)
+
+
+def _entry_errors(name, e, spec):
+    errors = []
+    for k in e:
+        if k not in spec:
+            errors.append("%s.%s: unknown key" % (name, k))
+    for k, (kind, default) in spec.items():
+        if k not in e:
+            if default is REQUIRED:
+                errors.append("%s.%s: required" % (name, k))
+        elif kind is not None and not _type_ok(kind, e[k]):
+            errors.append("%s.%s: must be a %s" % (name, k, kind))
+    return errors
+
+
+def _check_placements(x):
+    """[[extract.placement_set]] and [[extract.placement_model]]: unique
+    set names, sizes that fit a record, and a model entry that names a set,
+    with either a variant table or a fixed object."""
+    errors, sets = [], {}
+    for i, e in enumerate(x["placement_set"]):
+        name = "extract.placement_set[%d]" % i
+        bad = _entry_errors(name, e, EXTRACT_PLACEMENT_SET)
+        errors += bad
+        if bad:
+            continue
+        if not STAGE_NAME.match(e["name"]):
+            errors.append("%s.name: letters, digits, '_' and '-' only" % name)
+        elif GODOT_HINT.search(e["name"]):
+            errors.append("%s.name: %r ends in a Godot import hint" % (name, e["name"]))
+        elif e["name"] in sets:
+            errors.append("%s.name: %r twice" % (name, e["name"]))
+        sets[e["name"]] = e
+        if e["table"] <= 0 or e["stride"] <= 0:
+            errors.append("%s: table and stride must be positive" % name)
+        for k, n in (("class_at", 4), ("pos_at", 12), ("rot_at", 12)):
+            if not 0 <= e[k] <= e["stride"] - n:
+                errors.append("%s.%s: %d bytes inside the stride" % (name, k, n))
+        if any(v < 0 for v in e["layers"]) or not e["layers"]:
+            errors.append("%s.layers: offsets of 0 or more" % name)
+        elif len(set(e["layers"])) != len(e["layers"]):
+            errors.append("%s.layers: an offset twice" % name)
+        if e["size"] <= 0:
+            errors.append("%s.size: must be positive" % name)
+        if "colour" in e and not 0 <= e["colour"] <= 0xFFFFFF:
+            errors.append("%s.colour: a 0xRRGGBB colour" % name)
+    seen = set()
+    for i, e in enumerate(x["placement_model"]):
+        name = "extract.placement_model[%d]" % i
+        bad = _entry_errors(name, e, EXTRACT_PLACEMENT_MODEL)
+        errors += bad
+        if bad:
+            continue
+        if e["set"] not in sets:
+            errors.append("%s.set: no [[extract.placement_set]] named %r" % (name, e["set"]))
+        if not 0 <= e["class"] <= 0xFF:
+            errors.append("%s.class: the class byte, 0 to 0xFF" % name)
+        if (e["set"], e["class"]) in seen:
+            errors.append("%s: class 0x%02X of %s twice" % (name, e["class"], e["set"]))
+        seen.add((e["set"], e["class"]))
+        for k in ("table", "table_flagged", "object", "texlist"):
+            if k in e and e[k] < 0:
+                errors.append("%s.%s: a VA, 0 or more" % (name, k))
+        fixed = "object" in e
+        if fixed == ("table" in e):
+            errors.append("%s: a table or an object, one of the two" % name)
+        elif fixed:
+            if "texlist" not in e:
+                errors.append("%s.texlist: required with object (0: none)" % name)
+            for k in ("table_flagged", "variants"):
+                if k in e:
+                    errors.append("%s.%s: only with table, not object" % (name, k))
+        elif e["stride"] <= 0:
+            errors.append("%s.stride: required with table" % name)
+        else:
+            for k in ("object_at", "texlist_at"):
+                if not 0 <= e[k] <= e["stride"] - 4:
+                    errors.append("%s.%s: 4 bytes inside the stride" % (name, k))
+            if "variants" in e and e["variants"] <= 0:
+                errors.append("%s.variants: must be positive" % name)
     return errors
 
 

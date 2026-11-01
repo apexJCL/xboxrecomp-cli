@@ -591,13 +591,11 @@ class Writer:
         "translation": [x, y, z]}, both optional): the tree goes under a
         node carrying them, inside the up turn. A root drawn twice (the
         second time mirrored) is added twice, so the node names count."""
-        if names is not None:
-            self.names, self._tlkey = names, tuple(n.lower() for n in names)
         name = "%s_%08x" % (self.name, va)
         self._tree_names[name] += 1
         if self._tree_names[name] > 1:
             name += "_%d" % self._tree_names[name]
-        kids = [self._node(n) for n in roots]
+        kids = self.add_nodes(roots, names)
         xf = {}
         if transform and transform.get("translation") and any(transform["translation"]):
             xf["translation"] = [float(v) for v in transform["translation"]]
@@ -616,6 +614,74 @@ class Writer:
         if rot:
             top["rotation"] = rot
         self.doc.j["scenes"][0]["nodes"].append(self.doc.add("nodes", top))
+
+    def add_nodes(self, roots, names=None):
+        """The nodes of one tree, drawn with names (default: the last
+        texlist given), outside any scene and without the up turn: the
+        caller parents them (placements.py puts a model under each of its
+        placements)."""
+        if names is not None:
+            self.names, self._tlkey = names, tuple(n.lower() for n in names)
+        return [self._node(n) for n in roots]
+
+    def marker(self, name, half, rgb):
+        """An unlit box mesh (half its edge on each axis, a 0xRRGGBB
+        colour), made once per name: a stand-in where no model is drawn."""
+        key = ("marker", name)
+        if key in self._meshes:
+            return self._meshes[key]
+        pos, nrm, idx = [], [], []
+        for b in range(3):
+            u, v = (b + 1) % 3, (b + 2) % 3
+            for side in (-1.0, 1.0):
+                base = len(pos)
+                for cu, cv in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                    p = [0.0, 0.0, 0.0]
+                    p[b], p[u], p[v] = side * half, cu * half, cv * half
+                    pos.append(tuple(p))
+                    n = [0.0, 0.0, 0.0]
+                    n[b] = side
+                    nrm.append(tuple(n))
+                # e_u x e_v = e_b: counter-clockwise faces +b, outward on
+                # the high face; the low face winds the other way.
+                quad = (0, 1, 2, 0, 2, 3) if side > 0 else (0, 2, 1, 0, 3, 2)
+                idx += [(base + i,) for i in quad]
+        c = [((rgb >> s) & 0xFF) / 255.0 for s in (16, 8, 0)]
+        mat = self.doc.add(
+            "materials",
+            {
+                "name": "m%d_%s" % (len(self.doc.j["materials"]), name),
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": c + [1.0],
+                    "metallicFactor": 0.0,
+                    "roughnessFactor": 1.0,
+                },
+                "extensions": {UNLIT: {}},
+            },
+        )
+        if UNLIT not in self.doc.j["extensionsUsed"]:
+            self.doc.j["extensionsUsed"].append(UNLIT)
+        d = self.doc
+        m = {"name": name, "primitives": []}
+
+        def prim():
+            m["primitives"].append(
+                {
+                    "attributes": {
+                        "POSITION": d.accessor("f", 3, pos, "VEC3", ARRAY_BUFFER, minmax=True),
+                        "NORMAL": d.accessor("f", 3, nrm, "VEC3", ARRAY_BUFFER),
+                    },
+                    "indices": d.accessor("I", 1, idx, "SCALAR", ELEMENT_ARRAY_BUFFER),
+                    "material": mat,
+                }
+            )
+
+        self._pending.append(prim)
+        mesh = d.add("meshes", m)
+        self.summary.meshes += 1
+        self.summary.triangles += len(idx) // 3
+        self._meshes[key] = mesh
+        return mesh
 
     def _backdrop(self, name, roots, transform):
         """The render target's clear colour behind a mirrored tree: the

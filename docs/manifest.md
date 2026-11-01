@@ -435,6 +435,7 @@ The stages are Ninja chunk-model trees (`NJS_OBJECT`) in the XBE's sections. The
 | `textured_colour` | `"diffuse"` | The colour of a textured strip: `"diffuse"`, the material's diffuse times the texture (stock Ninja), or `"white"`, the texture alone, for an engine whose drawer gives a strip with UVs or an environment map its own constant colour (white, alpha included) and keeps the diffuse for the rest. Such a drawer may only know kinds 64 and 65; other kinds are coloured like the one of the two that matches their UVs, and `"white"` counts them under approximations in the report. |
 | `texname_size` | `32` | Bytes per texture name in a texlist. |
 | `collision_skip` | `[]` | Collision surface classes (`0xRRGGBB` diffuse colours) the game never tests, such as trigger volumes: `extract --collision` draws them in the debug mesh and gives them no shape. |
+| `placement_world` | `"y"` | The game world the placements live in, against the stage trees' data: `"y"`, the same axes, or `"-y"`, the data turned half a turn about X (a game that pushes that turn before it draws its stage trees). Check it on the floors: an item's record should sit on a collision floor. Only `extract --placements` reads it. |
 | `textures` | required | Where a texlist name's DDS file is: a path under `data.game_files` with `{name}` (`"media/{name}.dds"`, matched case-insensitively), or `"ipk:<archive>:<entry>"` for an entry of an IPK1 pair (`"ipk:media:dds/{name}.dds"`). |
 
 Each `[[extract.stage]]` is one stage:
@@ -448,6 +449,38 @@ Each `[[extract.stage]]` is one stage:
 | `transform` | none | A list with one table per `root`, each with an optional `scale` (three finite, non-zero numbers) and `translation` (three finite numbers), for a tree the game draws again under a matrix of its own, such as a sky mirrored in Y (`{scale = [1, -1, 1]}`). The scale is applied first, then the translation, both in the game's space, before the turn to Y up. `{}` leaves that tree as it is. A root may be listed twice, once per draw. A negative scale mirrors the tree. glTF keeps the vertex order and reads a negative determinant as clockwise front faces, and Godot follows that by inverting face culling for the instance, as the game flips its cull mode for the mirrored draw. A root may not be listed again with the same texlist and transform (`{}` and `scale = [1, 1, 1]` are the same), since that writes the same geometry twice. A mirrored tree the game draws into a render target may add `backdrop`, the target's clear colour (a linear RGB colour, as glTF's `baseColorFactor` takes it, three numbers from 0 to 1; it needs a `scale` that mirrors exactly one axis): the stage gets an unlit box of that colour around the tree's mirrored bounds, open on the mirror plane's side, so a floor that shows the reflection through shows the clear colour where the mirrored room has no surface (its open top) rather than whatever lies below. The report counts each box under approximations. |
 | `texture_alpha` | none | A table of texlist texture names (any case) to an opacity from 0 to 1: strips with that texture blend at that opacity. For a surface the game covers with a blend pass of its own that a static scene cannot draw, such as a floor under a planar reflection rendered to a texture: list the reflected tree again with a mirroring `transform` and let the floor show it through (`texture_alpha = {floor01 = 0.4}`). The report counts these materials under approximations. An opacity of 1 changes nothing and leaves the strips' alpha mode as it is. A name that no strip of the stage draws with is listed in `report.json` under `texture_alpha_unmatched` and printed as a warning. |
 | `collision` | none | The stage's collision trees: a VA or a list of VAs of Ninja object trees the game never draws, whose strips it bakes into world triangles and tests the player against; each strip's material diffuse is its surface class, and every strip with a diffuse is baked, textured or not. Only `extract --collision` reads them: it applies every node's transform whatever its eval flags (a collision root is usually hidden), always rotating X, then Y, then Z (the bake ignores the ZXY order) and writes `stages/<name>/<name>_col.gltf`, one node per class named `col_<rrggbb>-col` (Godot's importer makes each a `StaticBody3D` with a concave shape and keeps the mesh), a see-through debug mesh in the class's colour that `C` toggles in the scene, and `collision.json` with the triangles per class. |
+| `placements` | none | The stage's index (0 or more) into the `[[extract.placement_set]]` tables (the number the game indexes them by, not its position in this list). Only `extract --placements` reads it. |
+
+Each `[[extract.placement_set]]` is one set of what a stage spawns at load (enemies, items, props), read by `extract --placements`. The CLI reads one record shape: a class dword whose byte 0 is the class, byte 1 the variant and byte 3 flags (non-zero flags select a model's `table_flagged`), a position of three f32 and a rotation of three f32 radians, X applied first. A game whose records differ needs that shape made configurable first.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name` | required | The set's name: letters, digits, `_` and `-`, unique, and not ending in a Godot import hint (`-col`, `_rigid`, `-noimp`, `-navmesh`, `-vcol`, `-loop`, `-occ` and the like), which would turn its top node into a body or drop it. Its nodes are named `<name>_l<layer>_<index>_cls<class and variant, hex>`. |
+| `table` | required | The VA of a table of u32 pointers indexed by the stage's `placements` index. Each non-zero entry points to a u32 record count and a u32 pointer to the records. |
+| `stride` | required | Bytes per record. |
+| `layers` | `[0]` | Offsets added to the stage's index, each once: the entries the game loads for one stage (an area's own list beside the stage's). |
+| `class_at` | `0` | The class dword's offset. |
+| `pos_at` | required | The position's offset: three floats. |
+| `rot_at` | required | The rotation's offset: three floats in radians, X applied first, folded into one turn. |
+| `size` | `4.0` | Half the edge of the marker box drawn where a record has no model drawn. |
+| `colour` | by set order | The marker box's colour, `0xRRGGBB`. |
+
+Each `[[extract.placement_model]]` names the model one class of a set is drawn with: either a variant table (`table`, `stride` and the two offsets) or a fixed `object` and `texlist`. A weighted (skinned) model, one with `*_NF` vertex chunks or cached polygon lists, is not drawn: the record gets its set's marker and `skinned` in its extras.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `set` | required | The `[[extract.placement_set]]` set the class belongs to. |
+| `class` | required | The class byte, 0 to 0xFF. |
+| `table` | none | The VA of the variant table: the record for variant `v` is at `table + v * stride`. |
+| `table_flagged` | none | The variant table for records whose flags byte is set (default `table`). Only with `table`. |
+| `variants` | none | The variant table's record count: a record whose variant is past it gets a marker and `variant_out_of_range` in its extras. Only with `table`. |
+| `stride` | `0` | Bytes per variant record; required with `table`. |
+| `object_at`, `texlist_at` | `0`, `4` | Offsets of the `NJS_OBJECT` and texlist pointers in a variant record, inside `stride`. |
+| `object`, `texlist` | none | A fixed `NJS_OBJECT` VA and texlist VA (0: none) instead of a table. |
+
+VAs (`table`, `table_flagged`, `object`, `texlist`) are 0 or more.
+
+`extract --placements` writes `stages/<name>/<name>_placements.gltf`: one top node per set, carrying the turn from `placement_world` and `up`, then one node per record with its position, rotation and its model (under the model's own turn) or a marker box, and glTF `extras` with the set, layer, index, class, variant, flags, the raw rotation and the model's VAs. `placements.json` holds the same per record plus the record's bytes, the counts per set and the classes no `[[extract.placement_model]]` names. The scene instances the glTF as a `placements` node. A drawn model's nodes are named `obj_<va>` after their `NJS_OBJECT`, unique only under one parent: two placements of one model repeat the names, so address a model's nodes through its placement's node. A record whose position or rotation is not finite is `unreadable`: it keeps its bytes in `placements.json` (with `null` for those numbers), no transform and a marker. A table entry or record list that cannot be read is listed under its set's `errors` in `placements.json` and printed as a warning; the other sets and layers are still written.
 
 ## [hud]
 

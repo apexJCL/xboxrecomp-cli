@@ -10,6 +10,7 @@ instead, which must report the pinned version. Nothing here exports a
 """
 
 import os
+import re
 import shutil
 import subprocess
 
@@ -256,14 +257,39 @@ script = ExtResource("3")
 script = ExtResource("5")
 """
 
+# The placements layer (xbr extract --placements): the stage's placements
+# glTF as one more instance, plain nodes and meshes, no script.
+PLACEMENTS_RESOURCE = (
+    '[ext_resource type="PackedScene" path="res://stages/{name}/{name}_placements.gltf"'
+    ' id="{id}"]\n'
+)
+PLACEMENTS_NODE = '\n[node name="placements" parent="." instance=ExtResource("{id}")]\n'
+
+
+def scene(name, collision=False, placements=False):
+    """A stage's .tscn: the stage, then its collision and placements
+    layers when it has them."""
+    text = (SCENE_COLLISION if collision else SCENE).format(name=name)
+    if not placements:
+        return text
+    head, body = text.split("\n[node ", 1)
+    # The next resource id and one more load step, whatever the template
+    # above holds.
+    n = 1 + max(int(i) for i in re.findall(r'^\[ext_resource [^\n]* id="(\d+)"\]$', head, re.M))
+    head = re.sub(r"load_steps=(\d+)", lambda m: "load_steps=%d" % (int(m[1]) + 1), head, count=1)
+    head += PLACEMENTS_RESOURCE.format(name=name, id=n)
+    return head + "\n[node " + body + PLACEMENTS_NODE.format(id=n)
+
+
 GITIGNORE = "# Game data made by xbr extract: never commit it.\n*\n"
 
 
-def write_project(out, title, stages, collision=()):
+def write_project(out, title, stages, collision=(), placements=()):
     """project.godot, view.gd, stage.gd and one <stage>.tscn per stage;
     the glTF files are under stages/<name>/. A stage named in collision
     also instances its stages/<name>/<name>_col.gltf (and the project
-    gets collision.gd)."""
+    gets collision.gd); one named in placements its
+    stages/<name>/<name>_placements.gltf."""
     os.makedirs(out, exist_ok=True)
     main = (stages[0] + ".tscn") if stages else ""
     files = {
@@ -281,7 +307,7 @@ def write_project(out, title, stages, collision=()):
         if os.path.exists(stale):
             os.remove(stale)
     for name in stages:
-        files[name + ".tscn"] = (SCENE_COLLISION if name in collision else SCENE).format(name=name)
+        files[name + ".tscn"] = scene(name, name in collision, name in placements)
     for rel, text in files.items():
         with open(os.path.join(out, rel), "w", newline="\n") as f:
             f.write(text)
