@@ -245,7 +245,11 @@ def run(a):
             if st.get("collision"):
                 parts += "; collision " + ", ".join("0x%08X" % c for c in st["collision"])
             if "placements" in st:
-                parts += "; placements %d" % st["placements"]
+                used = placements.stage_layers(cfg["placement_set"], st)
+                parts += "; placements %d (%s)" % (
+                    st["placements"],
+                    ", ".join("%s %s" % (k, v) for k, v in used.items()),
+                )
             host.say("%-10s %-8s root/texlist %s" % (st["name"], st["section"] or "-", parts))
         return 0
     # Stage names match whatever case the player types (map11, MAP11).

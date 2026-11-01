@@ -5,12 +5,14 @@ names, as named nodes of <name>_placements.gltf plus placements.json.
 Each set is a table of pointers indexed by the stage's number (the
 [[extract.stage]] placements key) plus each of the set's layers, since a
 game may load more than one entry for a stage (an area's own list beside
-the stage's). An entry points to a u32 count and a u32 pointer to the
-records. A record holds a class dword (low byte the class, the next byte
-its variant, the top byte flags), a position and a rotation (three f32
-radians, X applied first, as Ninja objects turn); the rest of it stays
-raw in placements.json for whoever reads the class's own fields. That
-class dword is the one record shape read here.
+the stage's). A stage's placement_layers replaces a set's layers on that
+stage alone: a negative offset reads another stage's entry, [] none. An
+entry points to a u32 count and a u32 pointer to the records. A record
+holds a class dword (low byte the class, the next byte its variant, the
+top byte flags), a position and a rotation (three f32 radians, X applied
+first, as Ninja objects turn); the rest of it stays raw in
+placements.json for whoever reads the class's own fields. That class
+dword is the one record shape read here.
 
 A record whose position or rotation is not finite keeps its bytes but no
 transform: it is unreadable and gets a marker at its set's origin. A
@@ -21,9 +23,12 @@ Positions are in the game's world. [extract] placement_world says how it
 sits against the stage trees' data: "y", the same axes, or "-y", the
 data turned a half turn about X (a game that pushes that turn before it
 draws its stage trees). Each set is a top node carrying the turn back
-into the data's axes, then the stage's own up turn; a model under a
+into the data's axes, then the stage's own up turn. A model under a
 placement is authored in the data's axes like the stage trees, so with
-"-y" it gets the half turn itself.
+"-y" the game pushes the half turn after the position and before the
+record's rotation (T * Rx(pi) * R), and the placement node carries
+Rx(pi) * R. Put after R instead, the turn would mirror the Y and Z
+angles.
 
 A class [[extract.placement_model]] names is drawn with its model: a
 variant table (one record per variant, a flags-set table optional) or a
@@ -85,12 +90,20 @@ def _read_layer(image, s, stage_index, layer):
     ]
 
 
-def read(image, sets, stage_index):
+def stage_layers(sets, stage):
+    """{set name: the offsets the stage reads}: the set's layers unless
+    the stage's placement_layers names the set."""
+    over = stage.get("placement_layers") or {}
+    return {s["name"]: list(over.get(s["name"], s["layers"])) for s in sets}
+
+
+def read(image, sets, stage_index, layers=None):
     """Every placement of the stage, set by set and layer by layer, and
-    the (set, layer, message) of each layer that could not be read."""
+    the (set, layer, message) of each layer that could not be read.
+    layers ({set name: offsets}) replaces the sets' own."""
     out, errors = [], []
     for s in sets:
-        for layer in s["layers"]:
+        for layer in (layers or {}).get(s["name"], s["layers"]):
             try:
                 out += _read_layer(image, s, stage_index, layer)
             except (ImageError, struct.error) as e:
@@ -144,13 +157,25 @@ def _floats(v):
 
 
 def _turns(cfg):
-    """The rotations of a set's top node and of a model under a
-    placement (None: none)."""
+    """The rotations of a set's top node and the turn each placement
+    applies after its own rotation (None: none)."""
     half = UP_ROTATION["-y"]
     world = cfg["placement_world"] == "-y"
     up = UP_ROTATION[cfg["up"]] is not None
     # Two half turns about X cancel.
     return (half if world != up else None), (half if world else None)
+
+
+def _mul(p, r):
+    """The quaternion (x, y, z, w) p * r: r applied first."""
+    px, py, pz, pw = p
+    qx, qy, qz, qw = r
+    return [
+        pw * qx + px * qw + py * qz - pz * qy,
+        pw * qy - px * qz + py * qw + pz * qx,
+        pw * qz + px * qy - py * qx + pz * qw,
+        pw * qw - px * qx - py * qy - pz * qz,
+    ]
 
 
 def add(writer, image, fmt, cfg, sets, placements):
@@ -159,14 +184,18 @@ def add(writer, image, fmt, cfg, sets, placements):
     colour = {s["name"]: s.get("colour", PALETTE[i % len(PALETTE)]) for i, s in enumerate(sets)}
     size = {s["name"]: s["size"] for s in sets}
     groups, rows, trees, lists = {}, [], {}, {}
-    top_turn, model_turn = _turns(cfg)
+    top_turn, turn = _turns(cfg)
     for p in placements:
         nd = {"name": p.name}
         if not p.bad_transform:
             if any(p.pos):
                 nd["translation"] = [float(v) for v in p.pos]
-            if any(p.rot):
-                nd["rotation"] = _rotation(p.rot)
+            rot = _rotation(p.rot) if any(p.rot) else None
+            if turn:
+                # The game's T * Rx(pi) * R: the turn outside the rotation.
+                rot = _mul(turn, rot) if rot else turn
+            if rot:
+                nd["rotation"] = rot
         kids = []
         if p.model and not p.bad_transform:
             if p.model not in trees:
@@ -188,8 +217,6 @@ def add(writer, image, fmt, cfg, sets, placements):
                     except (ImageError, textures.TextureError):
                         lists[p.texlist] = []
                 m = {"name": p.name + "_model"}
-                if model_turn:
-                    m["rotation"] = model_turn
                 m["children"] = writer.add_nodes(roots, lists[p.texlist])
                 kids.append(writer.doc.add("nodes", m))
                 p.drawn = True
@@ -231,7 +258,8 @@ def extract(image, fmt, cfg, stage, source, out_dir):
     """Writes <name>_placements.gltf (+ .bin, textures/) and
     placements.json under out_dir; returns placements.json's summary."""
     sets = cfg["placement_set"]
-    placements, errors = read(image, sets, stage["placements"])
+    layers = stage_layers(sets, stage)
+    placements, errors = read(image, sets, stage["placements"], layers)
     missing = resolve(image, cfg["placement_model"], placements)
     w = gltf.Writer(stage["name"] + "_placements", [], source, cfg["up"], cfg["textured_colour"])
     rows = add(w, image, fmt, cfg, sets, placements)
@@ -259,6 +287,7 @@ def extract(image, fmt, cfg, stage, source, out_dir):
     rep = {
         "stage": stage["name"],
         "stage_index": stage["placements"],
+        "layers": layers,
         "sets": counts,
         "classes_without_model": ["%s 0x%02X" % (k, c) for k, c in missing],
         "meshes": s.meshes,

@@ -1816,7 +1816,7 @@ def test_placements_gltf_draws_rigid_models_and_marks_the_rest(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "world, up, top, model",
+    "world, up, top, turn",
     [
         ("y", "y", False, False),
         ("-y", "y", True, True),
@@ -1824,11 +1824,58 @@ def test_placements_gltf_draws_rigid_models_and_marks_the_rest(tmp_path):
         ("y", "-y", True, False),
     ],
 )
-def test_placements_turn_the_world_back_into_the_data(world, up, top, model):
-    t, m = placements._turns(_pl_cfg(world, up))
+def test_placements_turn_the_world_back_into_the_data(tmp_path, world, up, top, turn):
+    cfg = _pl_cfg(world, up)
+    t, m = placements._turns(cfg)
     half = gltf.UP_ROTATION["-y"]
-    assert (t == half, m == half) == (top, model)
-    assert (t is None) != top and (m is None) != model
+    assert (t == half, m == half) == (top, turn)
+    assert (t is None) != top and (m is None) != turn
+    # The turn sits on the placement node, outside its rotation; the
+    # model under it carries none.
+    placements.extract(_pl_image(), cli.fmt_of(cfg), cfg, cfg["stage"][0], None, str(tmp_path))
+    j = json.load(open(tmp_path / "MAP11_placements.gltf"))
+    nodes = {n["name"]: n for n in j["nodes"]}
+    assert "rotation" not in nodes["enemy_l0_000_cls101_model"]
+    s = math.sqrt(0.5)
+    want = _qmul(half, [0, s, 0, s]) if turn else [0, s, 0, s]
+    assert nodes["enemy_l0_000_cls101"]["rotation"] == pytest.approx(want)
+    marker = nodes["enemy_l0_001_cls2"]
+    assert marker.get("rotation") == (half if turn else None)
+
+
+def _mat(axis, a):
+    """A right-handed rotation by a about axis (0 X, 1 Y, 2 Z), for
+    column vectors."""
+    c, s = math.cos(a), math.sin(a)
+    i, k = [(1, 2), (2, 0), (0, 1)][axis]
+    m = [[float(r == q) for q in range(3)] for r in range(3)]
+    m[i][i], m[i][k], m[k][i], m[k][k] = c, -s, s, c
+    return m
+
+
+def _apply(m, v):
+    return [sum(m[r][q] * v[q] for q in range(3)) for r in range(3)]
+
+
+def test_placements_follow_the_games_turn_order(tmp_path):
+    """The game draws a placement as T * Rx(pi) * Rz * Ry * Rx (column
+    vectors, the record's X angle applied first): the half turn pushed
+    between the position and the record's rotation. Every angle non-zero,
+    so a mirrored Y or Z, or another order, shows."""
+    rx, ry, rz = 0.3, 0.5, 0.7
+    d = bytearray(data_section())
+    struct.pack_into("<3f", d, 0x80 + 0x14, rx, ry, rz)
+    cfg = _pl_cfg("-y", "y")
+    placements.extract(
+        _pl_image(bytes(d)), cli.fmt_of(cfg), cfg, cfg["stage"][0], None, str(tmp_path)
+    )
+    j = json.load(open(tmp_path / "MAP11_placements.gltf"))
+    q = {n["name"]: n for n in j["nodes"]}["enemy_l0_000_cls101"]["rotation"]
+    for v in ([1, 0, 0], [0, 1, 0], [0, 0, 1], [0.2, -0.4, 0.9]):
+        want = v
+        for axis, a in ((0, rx), (1, ry), (2, rz), (0, math.pi)):
+            want = _apply(_mat(axis, a), want)
+        assert _qrot(q, v) == pytest.approx(want, abs=1e-5)
 
 
 def test_placements_call_weighted_models_skinned():
@@ -1864,6 +1911,25 @@ def test_placements_carry_on_past_a_bad_layer(tmp_path):
     assert c["records"] == 3 and len(c["errors"]) == 1
     assert c["errors"][0].startswith("layer 0: ")
     assert json.load(open(tmp_path / "placements.json"))["sets"] == rep["sets"]
+
+
+def test_placements_stage_layers_replace_a_sets_own(tmp_path):
+    """placement_layers reads other entries on that stage alone: a
+    negative offset reaches a lower stage's list, [] reads nothing."""
+    cfg = _pl_cfg(extra=PLACEMENTS_L1)
+    sets = cfg["placement_set"]
+    stage = dict(cfg["stage"][0], placements=2, placement_layers={"enemy": [-1, 0]})
+    assert placements.stage_layers(sets, stage) == {"enemy": [-1, 0]}
+    assert placements.stage_layers(sets, cfg["stage"][0]) == {"enemy": [0]}
+    rep = placements.extract(_pl_image(), cli.fmt_of(cfg), cfg, stage, None, str(tmp_path))
+    # Stage 2 - 1 is stage 1's list; stage 2 + 0 is its layer-1 list.
+    assert rep["sets"]["enemy"]["records"] == 5 and rep["layers"] == {"enemy": [-1, 0]}
+    names = {r["name"] for r in rep["placements"]}
+    assert "enemy_l-1_000_cls101" in names and "enemy_l0_000_cls103" in names
+    assert json.load(open(tmp_path / "placements.json"))["layers"] == {"enemy": [-1, 0]}
+    stage["placement_layers"] = {"enemy": []}
+    rep = placements.extract(_pl_image(), cli.fmt_of(cfg), cfg, stage, None, str(tmp_path))
+    assert rep["sets"] == {} and rep["layers"] == {"enemy": []}
 
 
 def test_placements_layers_flagged_tables_fixed_objects_and_bad_trees(tmp_path):
@@ -1975,7 +2041,22 @@ def test_extract_placements_is_opt_in(pl_game, capsys):
     assert cli.run(Args()) == 0
     assert open(os.path.join(root, "MAP11.tscn")).read() == godot.SCENE.format(name="MAP11")
     assert cli.run(Args(list=True)) == 0
-    assert "; placements 1" in capsys.readouterr().out
+    assert "; placements 1 (enemy [0])" in capsys.readouterr().out
+
+
+def test_extract_list_shows_a_stages_placement_layers(game, capsys):
+    """--list prints the layers the stage reads: its own placement_layers
+    over each set's, [] for a set it does not load."""
+    second = PLACEMENTS.split("[[extract.placement_model]]")[0].replace("enemy", "emitter")
+    with open(os.path.join(game.root, "game.toml"), "a") as f:
+        f.write(
+            "placements = 2\nplacement_layers = {enemy = [-2], emitter = []}\n"
+            + PLACEMENTS
+            + second
+        )
+    manifest.use(manifest.load(game.root))
+    assert cli.run(Args(list=True)) == 0
+    assert "; placements 2 (enemy [-2], emitter [])" in capsys.readouterr().out
 
 
 def _tree_shas(d, skip=()):
@@ -2044,6 +2125,46 @@ def test_manifest_placement_errors(edit, why):
     bad = GAME_TOML + EXTRACT_B1 + "placements = 1\n" + PLACEMENTS.replace(*edit, 1)
     with pytest.raises(manifest.ManifestError, match=why):
         manifest.parse_text(bad)
+
+
+@pytest.mark.parametrize(
+    "layers, index, why",
+    [
+        ("{item = [0]}", 1, r"placement_layers\.item: no \[\[extract\.placement_set\]\] named"),
+        ("{enemy = [0, 0]}", 1, r"placement_layers\.enemy: an offset twice"),
+        ("{enemy = [-2]}", 1, r"placement_layers\.enemy: placements plus each offset"),
+        ("{enemy = 0}", 1, r"placement_layers: a table of set name"),
+        ("[0]", 1, r"placement_layers: a table of set name"),
+        ("{enemy = [0]}", None, r"placement_layers: needs placements"),
+    ],
+)
+def test_manifest_stage_placement_layers_errors(layers, index, why):
+    stage = (
+        "placements = %d\n" % index if index is not None else ""
+    ) + "placement_layers = %s\n" % layers
+    with pytest.raises(manifest.ManifestError, match=why):
+        manifest.parse_text(GAME_TOML + EXTRACT_B1 + stage + PLACEMENTS)
+
+
+def test_manifest_stage_placement_layers():
+    toml = GAME_TOML + EXTRACT_B1 + "placements = 2\nplacement_layers = {enemy = [-2, 0]}\n"
+    st = manifest.parse_text(toml + PLACEMENTS)["extract"]["stage"][0]
+    assert st["placement_layers"] == {"enemy": [-2, 0]}
+    st = manifest.parse_text(GAME_TOML + EXTRACT_B1 + "placements = 1\n" + PLACEMENTS)
+    assert "placement_layers" not in st["extract"]["stage"][0]
+    toml = GAME_TOML + EXTRACT_B1 + "placements = 1\nplacement_layers = {enemy = []}\n"
+    assert manifest.parse_text(toml + PLACEMENTS)["extract"]["stage"][0]["placement_layers"] == {
+        "enemy": []
+    }
+
+
+def test_placements_empty_stage_layers_change_nothing():
+    """placement_layers = {} names no set: every set keeps its layers."""
+    toml = GAME_TOML + EXTRACT_B1 + "placements = 1\nplacement_layers = {}\n"
+    x = manifest.parse_text(toml + PLACEMENTS)["extract"]
+    st = x["stage"][0]
+    assert st["placement_layers"] == {}
+    assert placements.stage_layers(x["placement_set"], st) == {"enemy": [0]}
 
 
 def test_manifest_placement_defaults_and_a_lone_index():

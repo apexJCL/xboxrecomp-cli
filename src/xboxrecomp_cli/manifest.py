@@ -445,7 +445,10 @@ WIZARD_CREDIT = {
 # planar reflection shows through. collision names the stage's collision
 # trees (a VA or a list), which only extract --collision reads;
 # placements is the stage's index into the [[extract.placement_set]] tables,
-# which only extract --placements reads.
+# which only extract --placements reads; placement_layers replaces a set's
+# layers on this stage alone (a game that loads an area's lists only at its
+# first stage, or another stage's list at a boss stage): offsets may be
+# negative while the index stays 0 or more, and [] loads nothing.
 EXTRACT_STAGE = {
     "name": (STR, REQUIRED),
     "section": (STR, ""),
@@ -455,6 +458,7 @@ EXTRACT_STAGE = {
     "texture_alpha": (None, None),  # likewise
     "collision": (None, None),  # likewise
     "placements": (INT, None),  # likewise
+    "placement_layers": (None, None),  # likewise
 }
 # [[extract.placement_set]]: one set of what a stage spawns at load
 # (enemies, items, props). table: a VA of u32 pointers indexed by the
@@ -816,7 +820,30 @@ def _check_extract(m):
                 errors.append("%s.placements: no [[extract.placement_set]] to index" % name)
             if _type_ok(INT, e["placements"]) and e["placements"] < 0:
                 errors.append("%s.placements: an index of 0 or more" % name)
+        if "placement_layers" in e:
+            errors += _check_stage_layers(name, e, x["placement_set"])
     return errors + _check_placements(x)
+
+
+def _check_stage_layers(name, e, sets):
+    """A stage's placement_layers: a table of set name -> offsets, each
+    offset once, the stage index plus each offset 0 or more."""
+    v, name = e["placement_layers"], name + ".placement_layers"
+    if "placements" not in e:
+        return ["%s: needs placements on the same stage" % name]
+    if not isinstance(v, dict) or not all(_type_ok(INTS, o) for o in v.values()):
+        return ["%s: a table of set name = [offsets]" % name]
+    errors = []
+    known = {s.get("name") for s in sets}
+    index = e["placements"] if _type_ok(INT, e["placements"]) else 0
+    for k, offsets in v.items():
+        if k not in known:
+            errors.append("%s.%s: no [[extract.placement_set]] named %r" % (name, k, k))
+        if len(set(offsets)) != len(offsets):
+            errors.append("%s.%s: an offset twice" % (name, k))
+        if any(index + o < 0 for o in offsets):
+            errors.append("%s.%s: placements plus each offset must be 0 or more" % (name, k))
+    return errors
 
 
 def _entry_errors(name, e, spec):
