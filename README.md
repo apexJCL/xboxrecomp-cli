@@ -211,6 +211,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | [docs/porting.md](docs/porting.md) | The porting loop, the keys a port meets first, the D3D fence, macOS |
 | [docs/commands.md](docs/commands.md) | Every command, option and tool |
 | [docs/manifest.md](docs/manifest.md) | `game.toml`, key by key |
+| [docs/symbols.md](docs/symbols.md) | The symbol map: names and notes for guest addresses, carried into gen |
 | [docs/layout.md](docs/layout.md) | A game repo's layout, its ignores and gates, and publishing it |
 | [docs/bundle.md](docs/bundle.md) | What `package` writes: `manifest.json`, patches, each target's layout and applier |
 | [docs/wizard.md](docs/wizard.md) | The build wizard: the player's guide, the config, the build, the release workflow |

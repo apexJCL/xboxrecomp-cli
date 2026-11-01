@@ -7,6 +7,17 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Added
+- `[pipeline] symbols`: a game's symbol map (`docs/symbols.md`). `names`
+  writes its function names into functions.json, so recomp uses them as
+  gen's identifiers, and runs with a map even without a Ghidra export.
+  After `recomp`, the map's notes go in each function's doc block and its
+  globals, fields and labels in trailing comments; a file whose bytes come
+  out the same keeps its mtime. Hooks, seeds and the runtime stay keyed by
+  address. A game without the key keeps its gen key and gen. Names the
+  lifter or runtime use (C keywords, x86 registers, `_`, `g_`, `recomp_`,
+  `sub_`/`loc_`) are refused.
+
 ## [0.18.0] - 2026-10-31
 
 ### Added

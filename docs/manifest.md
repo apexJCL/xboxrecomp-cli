@@ -102,6 +102,7 @@ and the wizard leaves out the config options (see
 | `split` | `250` | Functions per generated file. `SPLIT` in the environment overrides it. |
 | `names_hooks` | `[]` | Scripts run after `names`, given the functions.json path. |
 | `ghidra` | `true` | Whether the optional Ghidra stage is offered. |
+| `symbols` | `""` | A symbol map ([docs/symbols.md](symbols.md)): its function names become gen's identifiers, and its notes, globals, fields and labels become comments. Empty leaves gen as it was. |
 
 ### [pipeline.disasm]
 

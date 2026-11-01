@@ -92,6 +92,7 @@ SPEC = {
         "split": (INT, 250),
         "names_hooks": (STRS, []),
         "ghidra": (BOOL, True),
+        "symbols": (STR, ""),
     },
     "pipeline.disasm": {
         "text_only": (BOOL, False),
@@ -1269,7 +1270,7 @@ def _paths(m):
     ]
     out += [("pipeline.seeds", s) for s in p["seeds"]]
     out += [("pipeline.names_hooks", s) for s in p["names_hooks"]]
-    for k in ("spin_waits", "exclude_manual", "analysis_json"):
+    for k in ("spin_waits", "exclude_manual", "analysis_json", "symbols"):
         if p[k]:
             out.append(("pipeline." + k, p[k]))
     b = m["build"]
@@ -1373,6 +1374,8 @@ class Game:
         self.names_hooks = [j(s) for s in p["names_hooks"]]
         self.recomp_manual = j(p["exclude_manual"]) if p["exclude_manual"] else ""
         self.spin_waits = j(p["spin_waits"]) if p["spin_waits"] else ""
+        # The game's symbol map (docs/symbols.md): names and notes for gen/.
+        self.symbols = j(p["symbols"]) if p["symbols"] else ""
         # analyze's resolved hook slots, beside the seeds; recomp reads it.
         self.hook_functions = j("config", "hook_functions.json")
         self.pins = j("config", "setup-pins.json")

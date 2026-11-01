@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 
-from . import doctor, hooks, host, resources, toolkit
+from . import doctor, hooks, host, resources, symbols, toolkit
 from .host import CliError
 
 
@@ -160,7 +160,12 @@ def abi_cmds(extra=()):
 
 
 def names_cmds(extra=()):
+    """Ghidra's names into functions.json, then the game's names_hooks;
+    [] without a Ghidra export (the symbol map, symbols_cmds, applies
+    either way)."""
     G = g()
+    if not os.path.isfile(G.ghidra_export):
+        return []
     funcs = os.path.join(G.out, "disasm", "functions.json")
     # merge_names only reserves ISO C names; a game's names_hooks reserve
     # what else it needs (a recovered "read" or "write" would replace libc's
@@ -178,6 +183,46 @@ def names_cmds(extra=()):
             *extra,
         )
     ] + [py_cmd(hook, funcs) for hook in G.names_hooks]
+
+
+def symbols_cmds():
+    """The symbol map's step, as data for the generation key only (the CLI
+    runs it in process: apply_symbols, then symbols.annotate_gen after
+    recomp). [] for a game without a map, so its key does not move."""
+    G = g()
+    if not G.symbols:
+        return []
+    return [("cli", "symbols", [G.symbols, str(symbols.ANNOTATION_VERSION)])]
+
+
+def symbol_entries():
+    """The map's checked entries, or None for a game without one."""
+    G = g()
+    if not G.symbols:
+        return None
+    if not os.path.isfile(G.symbols):
+        raise CliError("[pipeline] symbols names %s, which is not there" % G.rel(G.symbols))
+    return symbols.load(G.symbols)
+
+
+def apply_symbols():
+    """The map's function names into functions.json (docs/symbols.md)."""
+    entries = symbol_entries()
+    if entries is None:
+        return
+    G = g()
+    renamed, kept, absent = symbols.apply_names(
+        os.path.join(G.out, "disasm", "functions.json"), entries
+    )
+    host.say(
+        "%d function name(s) from %s; %d keep the name they have; %d not a function start"
+        % (len(renamed), G.rel(G.symbols), len(kept), len(absent))
+    )
+    # A disasm or Ghidra name wins over the map's (docs/symbols.md); say
+    # which, so a map name that never reaches gen is not a surprise.
+    for what, vas in (("keeps its name", kept), ("is no function start", absent)):
+        if vas:
+            host.say("  %s: %s" % (what, " ".join("0x%08X" % va for va in vas)))
 
 
 _flag_probe = {}
@@ -413,13 +458,17 @@ def stage_ghidra(extra=()):
 def stage_names(extra=()):
     host.step("names")
     begin_stage("names", extra)
-    host.require(g().ghidra_export, "ghidra")
+    if not g().symbols:
+        host.require(g().ghidra_export, "ghidra")
+    elif [x for x in extra if x != "--"] and not os.path.isfile(g().ghidra_export):
+        raise CliError("names passes extra arguments to merge_names, which needs a Ghidra export")
     host.require(os.path.join(g().out, "disasm", "functions.json"), "disasm")
     run_cmds(names_cmds(extra))
+    apply_symbols()
 
 
 def maybe_names():
-    if os.path.isfile(g().ghidra_export):
+    if os.path.isfile(g().ghidra_export) or g().symbols:
         stage_names()
 
 
@@ -476,7 +525,12 @@ def stage_recomp(extra=()):
     marker = g().regen_marker
     os.makedirs(os.path.dirname(marker), exist_ok=True)
     open(marker, "a").close()
+    # The names again, from the map as it is now: an edit followed by recomp
+    # alone must not pair new comments with the old identifiers.
+    apply_symbols()
     slots = write_hook_slots()
+    entries = symbol_entries()
+    before = symbols.snapshot(g().gen) if entries is not None else {}
     # -v makes the translator print "[i/n] Translating" every 500 functions,
     # the progress view's only signal in a 10-20 minute step. It changes no
     # output, so it is left out of the argv the generation key hashes.
@@ -484,6 +538,9 @@ def stage_recomp(extra=()):
     if slots:
         with open(os.path.join(g().gen, hooks.SLOTS_C), "w", newline="\n") as f:
             f.write(hooks.slots_c(slots))
+    if entries is not None:
+        n = symbols.annotate_gen(g().gen, entries, before)
+        host.say("%s: comments in %d changed file(s)" % (g().rel(g().symbols), n))
     os.remove(marker)
     write_gen_key()
 
@@ -569,6 +626,9 @@ def gen_inputs():
     G = g()
     files = list(G.seeds) + [icall_db(), G.recomp_manual, G.spin_waits]
     files += list(G.names_hooks) + [G.ghidra_export]
+    # Only with a map, so a game without one keeps its key.
+    if G.symbols:
+        files.append(G.symbols)
     # Only with slots, so a game without [mods] keeps its key. The table
     # itself is an input too: an edited list stales gen/ before analyze
     # rewrites the json.
@@ -587,8 +647,7 @@ def gen_inputs():
 def stage_argv():
     """The commands a fresh `analyze` + `recomp` runs, with placeholders."""
     cmds = parse_cmds() + disasm_cmds() + funcid_cmds() + abi_cmds()
-    if os.path.isfile(g().ghidra_export):
-        cmds += names_cmds()
+    cmds += names_cmds() + symbols_cmds()
     cmds += recomp_cmds()
     return _placeholders(json.dumps(cmds))
 
@@ -679,7 +738,11 @@ def stages():
             stage_ghidra,
             "optional: headless Ghidra names (slow, cached) -> %s/ghidra/" % out,
         ),
-        ("names", stage_names, "write Ghidra's names into functions.json"),
+        (
+            "names",
+            stage_names,
+            "write Ghidra's names and the symbol map's into functions.json",
+        ),
         (
             "hooks",
             stage_hooks,
