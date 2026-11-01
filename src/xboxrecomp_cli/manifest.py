@@ -352,6 +352,9 @@ SPEC = {
         "textured_colour": (STR, "diffuse"),
         # Bytes of one texlist name.
         "texname_size": (INT, 32),
+        # Collision surface classes (0xRRGGBB diffuse colours) the game never
+        # tests: extract --collision draws them but gives them no shape.
+        "collision_skip": (INTS, []),
         # Where a texlist name's DDS is: a pattern under data.game_files
         # ("media/{name}.dds", any case) or "ipk:<archive>:<entry pattern>".
         "textures": (STR, REQUIRED),
@@ -431,7 +434,8 @@ WIZARD_CREDIT = {
 # tree drawn into a render target may name the target's clear colour as a
 # backdrop), and optionally a texture_alpha table: texture names whose
 # surfaces the game blends with an opacity of its own, such as a floor a
-# planar reflection shows through.
+# planar reflection shows through. collision names the stage's collision
+# trees (a VA or a list), which only extract --collision reads.
 EXTRACT_STAGE = {
     "name": (STR, REQUIRED),
     "section": (STR, ""),
@@ -439,6 +443,7 @@ EXTRACT_STAGE = {
     "texlist": (None, 0),
     "transform": (None, None),  # absent unless set (OPTIONAL_ENTRY)
     "texture_alpha": (None, None),  # likewise
+    "collision": (None, None),  # likewise
 }
 EXTRACT_TRANSFORM_KEYS = ("scale", "translation", "backdrop")
 EXTRACT_ANGLES = ("bams", "radians")
@@ -616,8 +621,9 @@ def _derive(m):
         stages = []
         for e in m["extract"]["stage"]:
             e = _entry(e, EXTRACT_STAGE)
-            if isinstance(e.get("root"), int) and not isinstance(e["root"], bool):
-                e["root"] = [e["root"]]
+            for k in ("root", "collision"):
+                if isinstance(e.get(k), int) and not isinstance(e[k], bool):
+                    e[k] = [e[k]]
             t = e.get("texlist")
             if isinstance(e.get("root"), list) and isinstance(t, int) and not isinstance(t, bool):
                 e["texlist"] = [t] * len(e["root"])
@@ -690,6 +696,11 @@ def _check_extract(m):
         errors.append("extract.textured_colour: one of %s" % ", ".join(EXTRACT_TEXTURED_COLOURS))
     if x["texname_size"] <= 0:
         errors.append("extract.texname_size: must be positive")
+    if not all(
+        isinstance(c, int) and not isinstance(c, bool) and 0 <= c <= 0xFFFFFF
+        for c in x["collision_skip"]
+    ):
+        errors.append("extract.collision_skip: 0xRRGGBB colours")
     why = rel_path_problem(x["out"])
     if why:
         errors.append("extract.out: %r %s" % (x["out"], why))
@@ -738,6 +749,12 @@ def _check_extract(m):
             errors += _check_repeats(name, r, t, None)
         if "texture_alpha" in e:
             errors += _check_texture_alpha(name, e["texture_alpha"])
+        c = e.get("collision")
+        if "collision" in e and (
+            not isinstance(c, list)
+            or not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in c)
+        ):
+            errors.append("%s.collision: a VA or a list of VAs" % name)
     return errors
 
 

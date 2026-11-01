@@ -1,6 +1,6 @@
 """xbr extract: the [extract] stages of game.toml to a Godot project.
 
-  xbr extract [--stage NAME ...] [--out DIR] [--import] [--list]
+  xbr extract [--stage NAME ...] [--out DIR] [--collision] [--import] [--list]
   xbr extract --scan SECTION      (maintainers: candidate roots, texlists)
 
 Writes <out>/stages/<name>/<name>.gltf (+ .bin, textures/), one
@@ -8,8 +8,11 @@ Writes <out>/stages/<name>/<name>.gltf (+ .bin, textures/), one
 out, under the game's gitignored dist/. Each stage also gets
 stages/<name>/report.json (its counts, what was left out, what was
 approximated and what goes beyond plain glTF), and <out>/report.txt
-gathers every stage's report in the words the run prints. --import then
-imports the project headless with the pinned Godot and fails on any
+gathers every stage's report in the words the run prints. --collision
+adds, for each stage that names collision trees, stages/<name>/<name>_col.gltf
+(collision.py: Godot static bodies plus a see-through debug mesh by
+surface class, C toggles it) and stages/<name>/collision.json. --import
+then imports the project headless with the pinned Godot and fails on any
 Godot error.
 """
 
@@ -20,7 +23,7 @@ from collections import Counter
 
 from .. import host
 from ..host import CliError
-from . import gltf, godot, ninja, scan, textures
+from . import collision, gltf, godot, ninja, scan, textures
 from .image import Image, ImageError
 
 
@@ -38,6 +41,11 @@ def configure(p):
         dest="do_import",
         action="store_true",
         help="import the project headless with the pinned Godot and check for errors",
+    )
+    p.add_argument(
+        "--collision",
+        action="store_true",
+        help="also write each stage's collision trees as Godot static bodies with a debug mesh",
     )
     p.add_argument("--list", action="store_true", help="list the stages game.toml names")
     p.add_argument(
@@ -61,8 +69,10 @@ def fmt_of(cfg):
     return ninja.Format(cfg["vertex_header"], cfg["angles"], cfg["packed_normals"])
 
 
-def extract_stage(image, cfg, stage, source, out_dir):
-    """Writes one stage under out_dir; returns its gltf.Summary."""
+def extract_stage(image, cfg, stage, source, out_dir, with_collision=False):
+    """Writes one stage under out_dir; returns its gltf.Summary. With
+    with_collision, a stage that names collision trees also gets them
+    (extract_collision)."""
     reader = ninja.Reader(image, fmt_of(cfg))
     w = gltf.Writer(
         stage["name"],
@@ -83,7 +93,18 @@ def extract_stage(image, cfg, stage, source, out_dir):
     s.unsupported.update(reader.unsupported)
     s.supported.update(reader.supported)
     _write_report(s, stage, out_dir, w.unmatched_texture_alpha())
+    if with_collision and stage.get("collision"):
+        extract_collision(image, cfg, stage, out_dir)
     return s
+
+
+def extract_collision(image, cfg, stage, out_dir):
+    """Writes <name>_col.gltf and collision.json under out_dir; returns
+    the collision report."""
+    reader = ninja.Reader(image, fmt_of(cfg))
+    w = collision.Writer(stage["name"], cfg["up"], cfg["collision_skip"])
+    w.add_trees([reader.tree(va) for va in stage["collision"]])
+    return w.write(out_dir)
 
 
 def transforms(stage):
@@ -207,6 +228,8 @@ def run(a):
                 "0x%08X/0x%08X" % (r, t) + (" " + _xf_text(xf) if xf else "")
                 for r, t, xf in zip(st["root"], st["texlist"], transforms(st))
             )
+            if st.get("collision"):
+                parts += "; collision " + ", ".join("0x%08X" % c for c in st["collision"])
             host.say("%-10s %-8s root/texlist %s" % (st["name"], st["section"] or "-", parts))
         return 0
     # Stage names match whatever case the player types (map11, MAP11).
@@ -233,15 +256,30 @@ def run(a):
     for st in picked:
         sdir = os.path.join(out, "stages", st["name"])
         try:
-            s = extract_stage(image, cfg, st, source, sdir)
+            s = extract_stage(image, cfg, st, source, sdir, a.collision)
         except (ImageError, textures.TextureError) as e:
             raise CliError("%s: %s" % (st["name"], e)) from e
         _summary(sdir)
         totals.update(meshes=s.meshes, triangles=s.triangles, stages=1)
+        if a.collision:
+            cj = os.path.join(sdir, "collision.json")
+            if os.path.isfile(cj):
+                with open(cj) as f:
+                    rep = json.load(f)
+                host.say(
+                    "  %s collision: %d triangles in %d classes"
+                    % (st["name"], rep["triangles"], len(rep["classes"]))
+                )
+            else:
+                host.say("  %s collision: no collision trees in game.toml" % st["name"])
+    written = [
+        st["name"] for st in stages if os.path.isdir(os.path.join(out, "stages", st["name"]))
+    ]
     godot.write_project(
         out,
         "%s (extracted)" % G.name,
-        [st["name"] for st in stages if os.path.isdir(os.path.join(out, "stages", st["name"]))],
+        written,
+        {n for n in written if os.path.isfile(os.path.join(out, "stages", n, n + "_col.gltf"))},
     )
     write_report_txt(out, [st["name"] for st in stages])
     host.say(

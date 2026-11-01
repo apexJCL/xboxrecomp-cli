@@ -207,12 +207,63 @@ script = ExtResource("1")
 script = ExtResource("3")
 """
 
+# The collision layer (xbr extract --collision): the stage's collision
+# glTF as a second instance. Its class nodes import as StaticBody3D with a
+# concave shape plus a see-through debug mesh; C toggles the meshes (the
+# shapes stay), and the "show_meshes" property does the same in the editor.
+COLLISION_GD = """\
+@tool
+extends Node3D
+
+@export var show_meshes := true:
+	set(v):
+		show_meshes = v
+		_apply()
+
+
+func _ready():
+	_apply()
+
+
+func _apply():
+	if not is_inside_tree():
+		return
+	for mi in find_children("*", "MeshInstance3D", true, false):
+		mi.visible = show_meshes
+
+
+func _unhandled_input(event):
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
+		show_meshes = not show_meshes
+"""
+
+SCENE_COLLISION = """\
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://view.gd" id="1"]
+[ext_resource type="PackedScene" path="res://stages/{name}/{name}.gltf" id="2"]
+[ext_resource type="Script" path="res://stage.gd" id="3"]
+[ext_resource type="PackedScene" path="res://stages/{name}/{name}_col.gltf" id="4"]
+[ext_resource type="Script" path="res://collision.gd" id="5"]
+
+[node name="{name}" type="Node3D"]
+script = ExtResource("1")
+
+[node name="stage" parent="." instance=ExtResource("2")]
+script = ExtResource("3")
+
+[node name="collision" parent="." instance=ExtResource("4")]
+script = ExtResource("5")
+"""
+
 GITIGNORE = "# Game data made by xbr extract: never commit it.\n*\n"
 
 
-def write_project(out, title, stages):
+def write_project(out, title, stages, collision=()):
     """project.godot, view.gd, stage.gd and one <stage>.tscn per stage;
-    the glTF files are under stages/<name>/."""
+    the glTF files are under stages/<name>/. A stage named in collision
+    also instances its stages/<name>/<name>_col.gltf (and the project
+    gets collision.gd)."""
     os.makedirs(out, exist_ok=True)
     main = (stages[0] + ".tscn") if stages else ""
     files = {
@@ -221,8 +272,16 @@ def write_project(out, title, stages):
         "stage.gd": STAGE_GD,
         ".gitignore": GITIGNORE,
     }
+    if collision:
+        files["collision.gd"] = COLLISION_GD
+    else:
+        # A rerun without collision layers must not leave the script of an
+        # earlier --collision run behind.
+        stale = os.path.join(out, "collision.gd")
+        if os.path.exists(stale):
+            os.remove(stale)
     for name in stages:
-        files[name + ".tscn"] = SCENE.format(name=name)
+        files[name + ".tscn"] = (SCENE_COLLISION if name in collision else SCENE).format(name=name)
     for rel, text in files.items():
         with open(os.path.join(out, rel), "w", newline="\n") as f:
             f.write(text)

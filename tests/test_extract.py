@@ -18,7 +18,7 @@ import pytest
 
 from xboxrecomp_cli import host, manifest
 from xboxrecomp_cli.enhance import dds, ipk
-from xboxrecomp_cli.extract import cli, gltf, godot, ninja, scan, textures
+from xboxrecomp_cli.extract import cli, collision, gltf, godot, ninja, scan, textures
 from xboxrecomp_cli.extract.image import Image, ImageError
 
 BASE = 0x10000
@@ -182,6 +182,7 @@ texlist = 0x20300
 class Args:
     def __init__(self, **kw):
         self.stage, self.out, self.do_import, self.list, self.scan = [], None, False, False, None
+        self.collision = False
         self.__dict__.update(kw)
 
 
@@ -1553,3 +1554,140 @@ def test_manifest_takes_a_backdrop():
         "{scale = [1, -1, 1]}", "{scale = [1, -1, 1], backdrop = [0, 0, 0]}"
     )
     manifest.parse_text(ok)
+
+
+# ---- the collision layer ----------------------------------------------------
+
+# stage_section's diffuse bytes (B, G, R, A) as the class 0xRRGGBB.
+CLASS = 0xC08040
+
+
+def _hidden_tree():
+    img = Image(xbe([("MAP11", SEC, stage_section("b1"))]))
+    roots = ninja.Reader(img, ninja.Format(16, "bams", True)).tree(SEC)
+    # A collision tree is never drawn: its nodes carry the hide flag.
+    roots[0].flags |= ninja.EVAL_HIDE
+    roots[0].children[0].flags |= ninja.EVAL_HIDE
+    return roots
+
+
+def test_collision_bakes_hidden_trees_to_world_space():
+    tris = collision.world_triangles(_hidden_tree())
+    assert list(tris) == [CLASS] and len(tris[CLASS]) == 2
+    # The child's (1, 2, 3), then the root's quarter turn about Y:
+    # (x, y, z) -> (z, y, -x).
+    want = {(round(z + 3, 4), round(y + 2, 4), round(-(x + 1), 4)) for x, y, z in QUAD}
+    got = {tuple(round(c, 4) for c in p) for t in tris[CLASS] for p in t}
+    assert got == want
+
+
+def test_collision_applies_transforms_whatever_the_eval_flags():
+    roots = _hidden_tree()
+    roots[0].children[0].flags |= ninja.EVAL_UNIT_POS
+    got = {p for t in collision.world_triangles(roots)[CLASS] for p in t}
+    assert all(round(p[1], 4) == 2 for p in got)
+
+
+def test_collision_rotates_x_first_even_with_the_zxy_flag():
+    # The game's bake rotates every node X first, then Y, then Z, and
+    # ignores EVAL_ZXY; a two-axis turn tells the two orders apart.
+    def bake(flags):
+        roots = _hidden_tree()
+        roots[0].ang = (math.pi / 2, 0.0, math.pi / 2)
+        roots[0].flags |= flags
+        return {
+            tuple(round(c, 4) for c in p)
+            for t in collision.world_triangles(roots)[CLASS]
+            for p in t
+        }
+
+    assert bake(ninja.EVAL_ZXY) == bake(0)
+    assert ninja.quat((math.pi / 2, 0.0, math.pi / 2), ninja.EVAL_ZXY) != ninja.quat(
+        (math.pi / 2, 0.0, math.pi / 2), 0
+    )
+
+
+def test_collision_gltf_names_shapes_and_skips(tmp_path):
+    w = collision.Writer("M", "-y")
+    w.add_trees([_hidden_tree()])
+    rep = w.write(str(tmp_path))
+    j = json.load(open(tmp_path / "M_col.gltf"))
+    assert os.path.getsize(tmp_path / "M_col.bin") == j["buffers"][0]["byteLength"]
+    names = [n["name"] for n in j["nodes"]]
+    assert names == ["col_c08040-col", "M_col"]
+    assert j["nodes"][1]["rotation"] == gltf.UP_ROTATION["-y"]
+    mat = j["materials"][0]
+    assert mat["alphaMode"] == "BLEND" and mat["doubleSided"]
+    assert mat["pbrMetallicRoughness"]["baseColorFactor"][3] == collision.DEBUG_ALPHA
+    assert gltf.UNLIT in j["extensionsUsed"]
+    assert rep == {
+        "triangles": 2,
+        "classes": {"C08040": {"triangles": 2, "shape": True}},
+        "left_out": {},
+    }
+    assert json.load(open(tmp_path / "collision.json")) == rep
+    w = collision.Writer("M", skip=[CLASS])
+    w.add_trees([_hidden_tree()])
+    rep = w.write(str(tmp_path))
+    j = json.load(open(tmp_path / "M_col.gltf"))
+    assert j["nodes"][0]["name"] == "col_c08040" and "rotation" not in j["nodes"][1]
+    assert rep["classes"]["C08040"]["shape"] is False
+
+
+def test_collision_counts_strips_without_a_colour():
+    roots = _hidden_tree()
+    roots[0].children[0].model.strips[0].diffuse = None
+    stats = collision.Counter()
+    assert collision.world_triangles(roots, stats) == {}
+    assert stats == {"strips without a class colour": 1}
+
+
+@pytest.fixture
+def col_game(game):
+    toml = os.path.join(game.root, "game.toml")
+    with open(toml, "a") as f:
+        f.write("collision = 0x20000\n")
+    G = manifest.load(game.root)
+    manifest.use(G)
+    return G
+
+
+def test_extract_collision_is_opt_in(col_game, capsys):
+    root = col_game.path("dist", "extract")
+    assert cli.run(Args()) == 0
+    assert not os.path.exists(os.path.join(root, "stages", "MAP11", "MAP11_col.gltf"))
+    assert not os.path.exists(os.path.join(root, "collision.gd"))
+    assert open(os.path.join(root, "MAP11.tscn")).read() == godot.SCENE.format(name="MAP11")
+    assert cli.run(Args(collision=True)) == 0
+    assert "MAP11 collision: 2 triangles in 1 classes" in capsys.readouterr().out
+    for rel in ("collision.gd", "stages/MAP11/MAP11_col.gltf", "stages/MAP11/collision.json"):
+        assert os.path.isfile(os.path.join(root, rel)), rel
+    tscn = open(os.path.join(root, "MAP11.tscn")).read()
+    assert 'path="res://stages/MAP11/MAP11_col.gltf"' in tscn
+    assert 'path="res://collision.gd"' in tscn
+    # A later run without the flag drops the layer again.
+    assert cli.run(Args()) == 0
+    assert open(os.path.join(root, "MAP11.tscn")).read() == godot.SCENE.format(name="MAP11")
+    assert not os.path.exists(os.path.join(root, "collision.gd"))
+
+
+def test_extract_list_names_collision_trees(col_game, capsys):
+    assert cli.run(Args(list=True)) == 0
+    assert "; collision 0x00020000" in capsys.readouterr().out
+
+
+def test_manifest_extract_collision_keys():
+    m = manifest.parse_text(GAME_TOML + EXTRACT_B1 + "collision = 0x20000\n")
+    assert m["extract"]["stage"][0]["collision"] == [0x20000]
+    assert m["extract"]["collision_skip"] == []
+    bad = GAME_TOML + EXTRACT_B1 + 'collision = "x"\n'
+    with pytest.raises(manifest.ManifestError, match=r"stage\[0\]\.collision: a VA"):
+        manifest.parse_text(bad)
+    skip = GAME_TOML + EXTRACT_B1.replace(
+        "[extract]\n", "[extract]\ncollision_skip = [0x1000000]\n"
+    )
+    with pytest.raises(manifest.ManifestError, match="extract.collision_skip"):
+        manifest.parse_text(skip)
+    flag = GAME_TOML + EXTRACT_B1.replace("[extract]\n", "[extract]\ncollision_skip = [true]\n")
+    with pytest.raises(manifest.ManifestError, match="extract.collision_skip"):
+        manifest.parse_text(flag)
