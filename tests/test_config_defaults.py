@@ -28,31 +28,32 @@ TOOLKIT = next(
     "",
 )
 
-# What the toolkit's enhancements layer defaults to (enhance.c, recomp_env.h).
+# What the toolkit's enhancements layer defaults to (enhance.c, mod.c for
+# menu.enabled, recomp_env.h).
 WANT = {
     "render.scale": 1,
     "render.aniso": 0,
+    "render.snap_2d": False,
     "display.aspect": "4:3",
+    "display.movie": "black",
+    "display.overscan": 0,
+    "display.hud_aspect": "display",
+    "display.hud_margin": 0,
     "present.filter": "nearest",
     "present.fullscreen": False,
     "present.pacing": "sleep",
     "present.surface": "auto",
+    "present.shader_lines": "auto",
     "storage.ram_cache": True,
+    "menu.enabled": False,
 }
 
-
-# Keys the private integration branch reads ahead of the public branch `new`
-# pins (Hor+, display.overscan, present.shader, the HUD anchors'
-# display.hud_aspect and display.hud_margin): the template gains them in the
-# push round that publishes them.
-AHEAD = {
-    "display.hud_aspect",
-    "display.hud_margin",
-    "display.movie",
-    "display.overscan",
-    "present.shader",
-    "present.shader_lib",
-}
+# Keys the template names only in a comment, as the [textures] table: their
+# stock is unset or "none" (the build's own librashader; no shader, no
+# profile), so the line shows the key without setting it. present.shader and
+# present.profile are read outside enhance.c (shader_profile_req.c),
+# present.shader_lib inside it.
+COMMENTED = {"present.shader", "present.profile", "present.shader_lib"}
 
 
 def write(path, text):
@@ -63,15 +64,23 @@ def write(path, text):
 
 def test_the_template_carries_the_toolkit_defaults():
     assert config_defaults.toolkit_defaults() == WANT
+    # The ports' own: the template ships the menu on, as every game does.
+    assert config_defaults.template_defaults() == {**WANT, "menu.enabled": True}
     text = config_defaults.template_text("Some Game")
     assert text.startswith("# Some Game options: every key at its default.")
     assert "@" not in text
     # No [textures] table: package --hud-pack refuses a file that has one.
     assert "textures" not in tomllib.loads(text)
+    for key in COMMENTED:
+        table, name = key.split(".")
+        section = text.split("[%s]" % table, 1)[1].split("\n[", 1)[0]
+        assert re.search(r"^# %s = " % name, section, re.M), key
     # Every value line has its comment at the same column, as the games'.
     for line in text.splitlines():
-        if re.match(r"^[a-z_]+ = ", line):
+        if re.match(r"^[a-z_0-9]+ = ", line):
             assert line.index("#") == 26, line
+        elif re.match(r"^# [a-z_0-9]+ = ", line):
+            assert line.index("#", 1) == 26, line
         elif line.startswith(" ") and line.strip():
             assert line.index("#") == 26, line
 
@@ -95,6 +104,15 @@ def test_drift_names_only_keys_set_to_another_value(tmp_path):
         "config.default.toml: differs from the toolkit's defaults: "
         'present.fullscreen = 0 (toolkit false), present.pacing = "spin" (toolkit "sleep")'
     )
+    # The menu on, as every game ships it, is no drift; off is, against the
+    # ports' value rather than the toolkit's.
+    write(p, "[menu]\nenabled = true\n")
+    assert config_defaults.drift(p) == []
+    write(p, "[menu]\nenabled = false\n")
+    assert config_defaults.doctor_line(p) == (
+        "config.default.toml: differs from the toolkit's defaults: "
+        "menu.enabled = false (new games true)"
+    )
 
 
 def test_doctor_line_without_a_file_or_with_a_bad_one(tmp_path):
@@ -110,7 +128,8 @@ def test_doctor_line_without_a_file_or_with_a_bad_one(tmp_path):
 )
 def test_the_defaults_match_the_toolkit_beside():
     """Each key's default in the toolkit's enhance.c, as the code passes it."""
-    with open(os.path.join(TOOLKIT, "src", "enhance", "enhance.c"), encoding="utf-8") as f:
+    enhance = os.path.join(TOOLKIT, "src", "enhance")
+    with open(os.path.join(enhance, "enhance.c"), encoding="utf-8") as f:
         src = f.read()
     lists = {
         m.group(1): re.findall(r'"(\w+)"', m.group(2))
@@ -118,7 +137,7 @@ def test_the_defaults_match_the_toolkit_beside():
     }
     seen = {}
     for kind, key, arg in re.findall(
-        r'enhance_cfg_(int|bool|choice|string)\("([a-z_]+\.[a-z_]+)",\s*([^)]*)\)', src
+        r'enhance_cfg_(int|bool|choice|string)\("([a-z_]+\.[a-z_0-9]+)",\s*([^)]*)\)', src
     ):
         if kind == "choice":
             table, dflt = [x.strip() for x in arg.split(",")]
@@ -138,9 +157,21 @@ def test_the_defaults_match_the_toolkit_beside():
             seen[key] = int(arg)
         else:
             seen[key] = arg.strip().strip('"')
+    # menu.enabled is read by the mods layer (mod.c), not enhance.c.
+    with open(os.path.join(enhance, "mod.c"), encoding="utf-8") as f:
+        menu = re.findall(r'enhance_cfg_bool\("menu\.enabled",\s*([^)]*)\)', f.read())
+    assert menu, "menu.enabled: not read by this toolkit's mod.c"
+    seen["menu.enabled"] = menu[0].strip() != "0"
+    # Every key any enhance source names, for the commented lines' keys.
+    named = set()
+    for name in os.listdir(enhance):
+        if name.endswith(".c"):
+            with open(os.path.join(enhance, name), encoding="utf-8") as f:
+                named.update(re.findall(r'enhance_cfg_\w+\("([a-z_]+\.[a-z_0-9]+)"', f.read()))
+    assert COMMENTED <= named, sorted(COMMENTED - named)
     # textures.* stay commented out in the template (--hud-pack adds them).
     keys = {k for k in seen if not k.startswith("textures.")}
-    assert keys - AHEAD == set(WANT), sorted(keys ^ set(WANT))
+    assert keys - COMMENTED == set(WANT), sorted((keys - COMMENTED) ^ set(WANT))
     for key, want in WANT.items():
         assert key in seen, f"{key}: not read by this toolkit"
         assert seen[key] == want, key

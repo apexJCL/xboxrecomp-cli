@@ -1,9 +1,10 @@
 # @NAME@ options: every key at its default. Each default is the stock
-# behaviour except two: present.pacing sleeps (the frames are the same as
-# the console's spin and it frees a CPU core), and the cache partition lives
-# in memory (storage.ram_cache: the game sees the same files, the host disk
-# is spared). The game reads this file on
-# each launch, beside its executable; it is never copied, and an update
+# behaviour except three: present.pacing sleeps (the frames are the same as
+# the console's spin and it frees a CPU core), the in-game menu is on
+# (closed, it changes no frame; the game loses only the presses of the
+# chords that open it), and the cache partition lives in memory
+# (storage.ram_cache: the game sees the same files, the host disk is
+# spared). The game reads this file on each launch, beside its executable; it is never copied, and an update
 # replaces it, so new keys and defaults reach you. Do not edit it: put the
 # keys you change in config/config.toml (copy a line from here), which the
 # game creates with a short comment the first time and never overwrites.
@@ -23,9 +24,26 @@ scale = 1                 # internal resolution factor: 1 (stock 640x480) to 4
 aniso = 0                 # anisotropic filtering on mipmapped textures: 0 (stock,
                           # off) or 2..16; sharper ground and walls at a distance
                           # (Metal and Direct3D 11)
+snap_2d = false           # true: above scale 1, 2D batches sample their textures
+                          # on the guest grid, as at 1x (no seams between
+                          # tiles, blockier 2D art)
 
 [display]
-aspect = "4:3"            # "4:3" (stock; the only ratio this toolkit pin supports)
+aspect = "4:3"            # "4:3" (stock) or wider, "16:9", "16:10", "21:9": Hor+
+                          # (Metal and Direct3D 11; the software renderer
+                          # draws 4:3)
+movie = "black"           # with a wide aspect, a full-screen movie or still:
+                          # "black" (pillarbox), "fit" (stretch), "fill" (crop).
+                          # Nothing at 4:3
+overscan = 0              # guest px cut from each side edge at present, the top
+                          # and bottom in proportion: 0 (stock) to 64, for a
+                          # border a CRT hid; ignored with a wide aspect, a
+                          # shader or the software renderer
+hud_aspect = "display"    # with a HUD mod and a wide aspect, how far the HUD
+                          # moves: "display" (the frame's edges) or a "W:H"
+                          # from 4:3 up to display.aspect
+hud_margin = 0            # with a HUD mod: guest px the edge elements move in,
+                          # 0..64
 
 [present]
 filter = "nearest"        # "nearest" (stock), "linear", "integer"
@@ -39,6 +57,26 @@ surface = "auto"          # "auto": the frame-sized surface goes to gamescope fo
                           # it to scale when the SteamOS launcher says it runs
                           # there (Steam's FSR needs scale = 1 on a Deck);
                           # "window" (the old behaviour) or "internal"
+# shader = "none"         # a slang preset in place of the final present (Metal
+                          # and Direct3D 11): "crt-lottes", "crt-lottes-fast",
+                          # "crt-hyllian", "fsr" (an upscaler) or a .slangp
+                          # path; "none" is stock. Also on the menu's Shaders
+                          # page
+# profile = "none"        # a shader profile, config/shader-profiles/<name>.toml,
+                          # saved from the menu's Shaders page; "none" is stock.
+                          # When set in the same file it wins over shader
+# shader_lib = ""         # the librashader library, relative to the executable;
+                          # unset: the build's own copy beside it
+shader_lines = "auto"     # what a shader gets: "guest" (the guest's line count),
+                          # "host" (the frame at render.scale) or "auto" (by the
+                          # preset's name, or a profile's own lines)
+
+[menu]
+enabled = true            # the in-game menu over the game: F10, Guide+A or
+                          # Back+L3 held 0.4 s opens and closes it. The game
+                          # keeps running behind it and gets no input. Save
+                          # writes only what you changed to config/config.toml.
+                          # false (the toolkit's default): no menu
 
 [storage]
 ram_cache = true          # the cache partition (Z:) in memory, capped at the

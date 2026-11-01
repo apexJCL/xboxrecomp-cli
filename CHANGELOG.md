@@ -18,6 +18,18 @@ a release by its tag in `game.toml`'s `[cli]` table.
   lifter or runtime use (C keywords, x86 registers, `_`, `g_`, `recomp_`,
   `sub_`/`loc_`) are refused.
 
+### Changed
+- `xbr new`'s `packaging/config.default.toml` gains the keys the toolkit's
+  next public release reads: `render.snap_2d`, `display.movie`,
+  `display.overscan`, `display.hud_aspect`, `display.hud_margin` and
+  `present.shader_lines` at their stock values, and `present.shader`,
+  `present.profile` and `present.shader_lib` as commented lines (their stock
+  is unset or `"none"`). doctor's `defaults:` line compares them too.
+- That template also ships `[menu] enabled = true`, as every game does,
+  while the toolkit's default stays off. doctor's `defaults:` line names a
+  game that turns the menu off against the ports' value
+  (`menu.enabled = false (new games true)`).
+
 ## [0.18.0] - 2026-10-31
 
 ### Added
