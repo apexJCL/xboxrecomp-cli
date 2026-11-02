@@ -568,7 +568,8 @@ text; the commands:
 |---|---|
 | `setup` | once per host: umu-launcher and llvm-mingw (for symbolize); host mode also the build distrobox, cmake and ninja, which a no-build host refuses (exit 78) |
 | `sync [--game-files[=reflink]]` | local: ship the exe built here. host: rsync the toolkit and the game to the host. `--game-files` sets up the host's one `game_files/` copy |
-| `build [-- CMAKE ARGS]` | local: build here, then ship. host: configure and compile `build-win/` on the host (shared run lock) |
+| `build [--stale-gen-ok] [-- CMAKE ARGS]` | local: build here, then ship. host: configure and compile `build-win/` on the host (shared run lock). `--stale-gen-ok` builds despite a stale `gen/`; host mode accepts and ignores it (no check there). `all` passes it on to its build |
+| `buildhost build [--stale-gen-ok] [CMAKE ARGS]` \| `buildhost run ARGS [--pull REL]...` | (`BENCH_BUILD_HOST`) build on, or run `<slug> ARGS` in, the native Windows build host's tree |
 | `run [GAME ARGS]` | (local: ship first when the host lacks this exe) launch the game under Proton, log to `bench-logs/<stamp>/`, pull the logs; fails on a crash or a present mismatch. The game starts from the Windows package's `launch.env.default` (`BENCH_ENV` wins), as do `pacing` and `all`; `golden` keeps its scenarios' own env |
 | `golden [--record] [--only SCEN,...] [--tests]` | the golden-frame scenarios from `golden.json`, after `tests`; exit 1 on a regression, 3 when the host was busy (INCONCLUSIVE) |
 | `tests` | host only (local refuses: they compile on the host): build and ctest the toolkit's Proton tests in `build-win/` under `PROTONPATH` (exclusive run lock); first restarts a box whose `/etc/resolv.conf` went stale |

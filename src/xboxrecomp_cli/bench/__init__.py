@@ -58,9 +58,11 @@ Commands:
                       tree that owns it copies this machine's @GAME_FILES@/ into
                       it; any other tree gets a symlink to it (nothing copied)
             --game-files=reflink  a btrfs reflink copy instead of the symlink
-  build     local: build here, then ship               [extra cmake args]
+  build     local: build here, then ship        [--stale-gen-ok] [extra cmake args]
             host: configure + compile build-win/ on the host (holds the
             host's run lock, shared, so no game runs during a build)
+            --stale-gen-ok  build even when gen/ is stale against its key
+                      (BENCH_BUILD=host accepts it and ignores it: no check there)
   run       (local: ship first, when the host lacks this exe)
             launch @WINDOWS_EXE@ under Proton, log to
             bench-logs/<timestamp>/ on the host, then pull logs   [game args];
@@ -108,7 +110,7 @@ Commands:
   symbolize name the native addresses in a run's @CRASH_TAG@ reports, into
             bench-logs/<stamp>/crash-symbols.txt  [stamp, default: newest run]
   buildhost (BENCH_BUILD_HOST) build on the native Windows build host:
-            build [cmake args]  `@SLUG@ build windows` there, pulled into
+            build [--stale-gen-ok] [cmake args]  `@SLUG@ build windows` there, pulled into
                       the windows build dir's build-host/ (ships nothing;
                       needs no BENCH_HOST)
             run ARGS [--pull REL]...  `@SLUG@ ARGS` in the host's tree
@@ -439,10 +441,15 @@ class Bench:
     # build
     def cmd_build(self, args):
         self.need_host()
+        # Ours, not cmake's: never forwarded.
+        stale_ok = "--stale-gen-ok" in args
+        args = [a for a in args if a != "--stale-gen-ok"]
         if self.cfg.local_build:
-            exe, sha, _ = ship_mod.build_local(self, args)
+            exe, sha, _ = ship_mod.build_local(self, args, stale_ok=stale_ok)
             ship_mod.ship(self, exe, sha)
             return 0
+        # The box builds the tree it holds and runs no gen/ staleness check,
+        # so there is nothing for the flag to lift; it is accepted, not sent.
         self.step("build: %s/build-win" % self.cfg.remote_game)
         # No arguments: an empty array (printf '%q ' with no arguments still
         # prints '', which made every build re-run cmake with an empty one).
@@ -897,12 +904,16 @@ class Bench:
         verb = args[0] if args else "build"
         rest = args[1:]
         if verb == "build":
-            exe, sha, _ = ship_mod.build_local(self, rest, command="bench buildhost")
+            stale_ok = "--stale-gen-ok" in rest
+            rest = [a for a in rest if a != "--stale-gen-ok"]
+            exe, sha, _ = ship_mod.build_local(
+                self, rest, stale_ok=stale_ok, command="bench buildhost"
+            )
             self.say("built %s" % exe)
             return 0
         if verb != "run" or not rest:
             raise BenchError(
-                "buildhost: use `buildhost build [cmake args]` or `buildhost run ARGS`"
+                "buildhost: use `buildhost build [--stale-gen-ok] [cmake args]` or `buildhost run ARGS`"
             )
         pulls, argv = [], []
         it = iter(rest)
@@ -1091,7 +1102,7 @@ def dispatch(b, cmd, args):
     if cmd == "all":
         if not b.cfg.local_build:
             b.ok(cmd_sync(b, []))
-        b.ok(b.cmd_build([]))
+        b.ok(b.cmd_build([a for a in args if a == "--stale-gen-ok"]))
         return b.cmd_run([])
     return COMMANDS[cmd](b, args)
 

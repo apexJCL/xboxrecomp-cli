@@ -554,3 +554,41 @@ def test_bundle_clears_a_bare_ref_left_by_an_older_call(bh, tmp_path):
         ["git", "-C", d, "for-each-ref", "refs/worktree/"], capture_output=True, text=True
     )
     assert left.stdout == ""
+
+
+def _spy_build_local(monkeypatch):
+    seen = {}
+
+    def fake(b, cmake_args=(), stale_ok=False, command="bench build", lineage=None):
+        seen.update(args=list(cmake_args), stale_ok=stale_ok)
+        return "/x/cat_recomp.exe", "0" * 64, None
+
+    monkeypatch.setattr(ship_mod, "build_local", fake)
+    monkeypatch.setattr(ship_mod, "ship", lambda *a, **k: None)
+    return seen
+
+
+def test_buildhost_build_takes_stale_gen_ok(bh, monkeypatch):
+    seen = _spy_build_local(monkeypatch)
+    assert Bench(config(bh, **HOST)).cmd_buildhost(["build", "--stale-gen-ok", "-DX=1"]) == 0
+    assert seen == {"args": ["-DX=1"], "stale_ok": True}
+    assert Bench(config(bh, **HOST)).cmd_buildhost(["build", "-DX=1"]) == 0
+    assert seen == {"args": ["-DX=1"], "stale_ok": False}
+
+
+def test_bench_build_takes_stale_gen_ok(bh, monkeypatch):
+    seen = _spy_build_local(monkeypatch)
+    b = Bench(config(bh, BENCH_BUILD="local", **HOST))
+    assert b.cmd_build(["-DX=1", "--stale-gen-ok"]) == 0
+    assert seen == {"args": ["-DX=1"], "stale_ok": True}
+    b.cmd_build([])
+    assert seen == {"args": [], "stale_ok": False}
+
+
+def test_host_mode_build_accepts_stale_gen_ok_and_does_not_send_it(bh, monkeypatch):
+    b = Bench(config(bh, BENCH_BUILD="host"))
+    sent = []
+    monkeypatch.setattr(b.r, "ship", lambda name, extra="": sent.append((name, extra)) or "S")
+    monkeypatch.setattr(b.r, "in_box_locked", lambda script, **k: (0, ""))
+    assert b.cmd_build(["--stale-gen-ok", "-DX=1"]) == 0
+    assert sent == [("build.sh", "EXTRA_ARGS=(-DX=1 )\n")]
