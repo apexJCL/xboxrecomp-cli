@@ -113,6 +113,8 @@ def human(n):
 def add_bundles(c, out):
     from . import package
 
+    if "package" not in g().m:
+        return  # an unpackaged game makes no bundles
     app = package.app()
     for target in g().package["targets"]:
         for patches in (False, True):

@@ -444,7 +444,63 @@ def test_doctor_next_line(d, tk, game, monkeypatch):
     ) == ("'g setup' (no cmake in .venv)")
     assert nxt(["no game_files/default.xbe"], False, "game_files").startswith("run '")
     assert nxt([], False, "game_files") == "'g analyze', then 'g recomp' ('g all' builds too)"
+    # No [package]: package would refuse, so build is the one step named.
+    assert nxt([], True, "game_files") == "'g build'"
+    # A packaged game names package as well.
+    monkeypatch.setitem(host.g().m, "package", {"targets": ["windows"]})
     assert nxt([], True, "game_files") == "'g build', or 'g package <target>'"
+
+
+def test_setup_import_and_clean_without_package(d, tk, game, monkeypatch, capsys):
+    """A fresh scaffold has no [package]: setup still makes the venv, fetches
+    llvm-mingw and the toolkit, and doctor runs; an import records its key
+    and clean lists, with no 'not packaged' refusal on the way."""
+    from xboxrecomp_cli import buildstate, dump
+
+    root = os.path.join(d, "g")
+    assert new(root, "--offline", "--cli-commit", CLI, "--toolkit-commit", TK)[0] == 0
+    assert "package" not in manifest.load(root).m
+    ran = []
+    monkeypatch.setattr(env, "sync_venv", lambda dev, required=True: ran.append("venv"))
+    monkeypatch.setattr(fetch, "load_pins", lambda: {})
+    monkeypatch.setattr(fetch, "fetch_mingw", lambda pins, force: ran.append("mingw"))
+    monkeypatch.setattr(toolkit, "clone_toolkit", lambda: ran.append("toolkit"))
+    monkeypatch.setattr(cli_dir, "checkout_pin", lambda: ran.append("cli"))
+    monkeypatch.setattr(cli_dir, "doctor_line", lambda: "cli:        test")
+    capsys.readouterr()
+    main.main(["--game", root, "setup"])
+    out = capsys.readouterr().out
+    assert ran == ["venv", "mingw", "toolkit", "cli"]
+    assert "game.toml has no [package]: nothing to package" in out
+    assert "can package: nothing yet" in out and "not packaged" not in out
+    write(os.path.join(root, "game_files", "default.xbe"), "")
+    dump.record_import()
+    assert buildstate.State(root).key_of("import")
+    assert main.main(["--game", root, "clean", "--all"]) in (0, None)
+    assert "not packaged" not in capsys.readouterr().err
+    # `<game> PATH` imports the dump: there is no bundle to make.
+    got = []
+    monkeypatch.setattr(dump, "run_import", lambda *a: got.append(a) or 0)
+    assert main.main(["--game", root, d, "--replace"]) == 0
+    assert got == [(d, True, False, False)]
+
+
+def test_a_path_packages_a_packaged_game(d, tk, game, monkeypatch):
+    """With a [package] table, `<game> PATH` is `package <this host> --dump
+    PATH`, with the options after the path."""
+    from xboxrecomp_cli import package
+
+    root = os.path.join(d, "g")
+    assert new(root, "--offline", "--cli-commit", CLI, "--toolkit-commit", TK)[0] == 0
+    with open(os.path.join(root, "game.toml"), "a") as f:
+        f.write('\n[package]\napp = "G"\ntargets = ["windows"]\n')
+    assert "package" in manifest.load(root).m
+    monkeypatch.setattr(main, "native_target", lambda: "windows")
+    got = []
+    monkeypatch.setattr(package, "cmd_package", lambda a: got.append(a))
+    assert main.main(["--game", root, d, "--replace"]) == 0
+    ((a,),) = [got]
+    assert (a.cmd, a.target, a.dump, a.replace) == ("package", "windows", d, True)
 
 
 def test_missing_pins_is_a_message(d, tk, game):

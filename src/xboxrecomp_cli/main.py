@@ -800,8 +800,12 @@ def main(argv=None):
         argv = ["package", native_target()] + argv
     elif argv[0] not in sub.choices and os.path.exists(argv[0]):
         # `<game> PATH`: the one line the README shows. A command name
-        # wins over a folder of that name (the table is checked first).
-        argv = ["package", native_target(), "--dump", argv[0]] + argv[1:]
+        # wins over a folder of that name (the table is checked first). A
+        # game with no [package] (a new port) only imports it.
+        if "package" in G.m:
+            argv = ["package", native_target(), "--dump", argv[0]] + argv[1:]
+        else:
+            argv = ["import"] + argv
     a, extra = ap.parse_known_args(argv)
     if extra and not getattr(a, "passthrough", None):
         ap.error("unrecognized arguments: %s" % " ".join(extra))

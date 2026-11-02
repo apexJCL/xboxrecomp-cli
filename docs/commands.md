@@ -15,7 +15,10 @@ options of one. A game is a directory with a `game.toml`
 image or dump folder at `PATH` (as `import` below), then packages. Any
 other `package` option follows the path (`mygame PATH --replace`,
 `mygame PATH --hud-pack`). A command name wins over a folder of the same
-name; a path that does not exist is an error, not a command.
+name; a path that does not exist is an error, not a command. A game
+whose `game.toml` has no `[package]` table only imports (`mygame import
+PATH`); the package-only options (`--hud-pack` and the like) do not apply
+there.
 
 ### `mygame import PATH`
 

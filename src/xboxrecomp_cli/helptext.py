@@ -19,7 +19,9 @@ Commands:
   @slug@ /path/to/dump                  your disc image (.iso) or the folder
                                         with default.xbe: checks it is @name@,
                                         puts its files in place, then the same
-                                        as the line below
+                                        as the line below (a game with no
+                                        [package] only imports: no package
+                                        options such as --hud-pack)
   @slug@                                package for this computer (macos on a
                                         Mac, steamos on Linux, windows on
                                         Windows): sets up, generates and builds

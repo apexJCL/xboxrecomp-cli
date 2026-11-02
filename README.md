@@ -185,7 +185,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | Command | What it does |
 |---|---|
 | `xbr new DIR` | Prepares a new game workbench from your dump |
-| `mygame PATH` | Imports a dump and packages it for this computer |
+| `mygame PATH` | Imports a dump and packages it for this computer (only imports when `game.toml` has no `[package]`) |
 | `mygame import PATH` | Puts a disc image or dump folder in `game_files/` |
 | `mygame setup` | Fetches the pinned toolchain and toolkit |
 | `mygame doctor` | Says what this host has, what it can package, the memory, cores and disk a build gets, and what to do next |

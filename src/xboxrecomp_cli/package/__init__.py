@@ -106,9 +106,12 @@ def app():
 
 
 def plib():
-    """package/lib.py, configured with the game's values."""
+    """package/lib.py, configured with the game's values. A game with no
+    [package] gets the defaults: import and enhance hud take their
+    game_files/ key from this library, and a porter imports a dump long
+    before packaging."""
     G = g()
-    pkg = G.package
+    pkg = G.m.get("package") or {"product": G.slug + "-recomp", "app": ""}
     lib_mod.configure(
         pkg["product"],
         G.name,

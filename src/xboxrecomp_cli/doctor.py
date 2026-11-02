@@ -507,6 +507,8 @@ def next_step(problems, gen_ok, game_files):
         return dump_fix(game_files)
     if not gen_ok:
         return "'%s analyze', then '%s recomp' ('%s all' builds too)" % (cmd, cmd, cmd)
+    if "package" not in host.g().m:
+        return "'%s build'" % cmd
     return "'%s build', or '%s package <target>'" % (cmd, cmd)
 
 
