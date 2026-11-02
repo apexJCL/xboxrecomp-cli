@@ -3,7 +3,8 @@ Metal, or the CPU path), headless and silent, one at a time under the Mac
 run lock, each stopped once the last frame its check reads is dumped.
 
   <game> golden run [SCEN...] [--backend metal|cpu] [--secs S] [--exe PATH]
-                    [--out DIR] [--keep-frames] [--lock-wait S] [VAR=val...]
+                    [--out DIR] [--keep-frames] [--bmp-frames] [--lock-wait S]
+                    [VAR=val...]
 
 SCEN: golden.json's scenarios (default: all, in its order). Per scenario:
 
@@ -34,6 +35,10 @@ SCEN: golden.json's scenarios (default: all, in its order). Per scenario:
          "verdict: SCEN WORD" line in the run's golden.txt; a passing run's
          frame dumps dropped unless --keep-frames, or unless its flips
          presented a surface the walker did not draw
+  png    once every scenario has run and the lock is released, the frames
+         left in each run's frames/ become PNGs of the same names (frames
+         compact: each read back and compared before its BMP goes), unless
+         --bmp-frames or XBR_FRAMES_BMP=1
 
 Run dirs: DIR/<stamp>-<backend>-<scen>/ (DIR: --out, default the game's
 bench-logs/) with run-info.txt, game-stdio.log, frames/, save/ (or hdd/,
@@ -508,6 +513,7 @@ def parse(args):
         "exe": None,
         "out": None,
         "keep": False,
+        "bmp": False,
         "lock_wait": 3600,
         "extra": [],
     }
@@ -530,6 +536,8 @@ def parse(args):
                 o[a[2:]] = os.path.abspath(v)
         elif a == "--keep-frames":
             o["keep"] = True
+        elif a == "--bmp-frames":
+            o["bmp"] = True
         elif a.startswith("-"):
             raise RunError("golden run: unknown option %s" % a)
         elif "=" in a:
@@ -556,7 +564,13 @@ def cmd_run(args):
     o["root"] = game.root
     o["game_files"] = game.game_files
     o["exe"] = o["exe"] or game.exe(game.build_dir("macos"), "macos")
-    o["out"] = o["out"] or os.path.join(game.root, "bench-logs")
+    if not o["out"]:
+        from . import frames as frame_files
+
+        o["out"] = os.path.join(game.root, "bench-logs")
+        w = frame_files.logs_warning(game.root)
+        if w:
+            print("golden run: " + w, file=sys.stderr)
     if not os.path.isfile(o["exe"]):
         print(
             "golden run: no %s (build it: %s build macos, or --exe PATH)" % (o["exe"], game.slug),
@@ -632,6 +646,12 @@ def cmd_run(args):
     except RunError as e:
         print(e, file=sys.stderr)
         return e.rc
+    # Outside the lock: the conversion is CPU work no run waits on.
+    from . import frames
+
+    frames.after_run(
+        [os.path.join(d, "frames") for d, _w in verdicts.values()], say=say, bmp=o["bmp"]
+    )
     say("\ngolden run: verdicts: %s (%.0f s of runs)" % (", ".join(words), total))
     rc = 1 if 1 in rcs else 2 if any(rcs) else 0
     if verdicts:

@@ -48,6 +48,9 @@ Developer commands:
                                         per round; docs/layout.md)
   @slug@ hud-map <action>               the HUD table: capture, propose, review,
                                         emit, check (frames stay on this machine)
+  @slug@ frames compact DIR...          frame dumps to lossless PNG, each checked
+                                        before its BMP goes (--dry-run: the bytes
+                                        it would save)
   @slug@ workflow --check               the CI workflows against the CLI's
                                         templates
   @slug@ new DIR                        start another game: a manifest, bootstrap

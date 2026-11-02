@@ -349,7 +349,12 @@ def write_text(path, text):
 def cmd_golden(b, args, bench_env=None, kind="golden"):
     b.need_host()
     mode, force, force_tests, only = parse_args(args)
+    from .. import frames as frame_files
     from ..benchdb import live
+
+    w = frame_files.logs_warning(b.cfg.game_dir)
+    if w:
+        b.say("golden: " + w)
 
     started = live.now()
     b.pull_inbox()
@@ -484,6 +489,15 @@ def cmd_golden(b, args, bench_env=None, kind="golden"):
             "golden: verdicts: %s%s"
             % (", ".join("%s %s" % (scen, notes[scen][4]) for scen in runs), part)
         )
+    # The frames the check (or record) kept, as PNG: after it read them
+    # and prune dropped what a pass does not need, so only kept ones pay.
+    if frame_files.after_run(
+        [fr for _stamp, fr, _clean in runs.values()],
+        say=b.say,
+        bmp=(b.cfg.get(frame_files.OPT_OUT) or "0") == "1",
+        env={},
+    ):
+        b.say("golden: warning: a frame failed its PNG check and stays BMP (see frames: above)")
     if erc:
         b.say("golden: FAIL: a run crashed or ended early (see end: above)")
     if prc:

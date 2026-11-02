@@ -29,6 +29,7 @@ import json
 import os
 import sys
 
+from .. import frames as frame_files
 from ..host import CliError
 
 JSONL = "capture.jsonl"
@@ -131,7 +132,12 @@ class Frame:
         cv = d.get("canvas")
         self.canvas = Canvas(cv) if isinstance(cv, dict) and cv else None
         name = d.get("bmp")
-        self.bmp = os.path.join(os.path.dirname(path), name) if isinstance(name, str) else None
+        # The dumper's name; the CLI's PNG of it once the capture converted.
+        self.bmp = (
+            frame_files.existing(os.path.join(os.path.dirname(path), name))
+            if isinstance(name, str)
+            else None
+        )
 
 
 class Capture:

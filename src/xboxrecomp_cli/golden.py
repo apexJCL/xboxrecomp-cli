@@ -43,7 +43,7 @@ directory). Below, golden.json and frames/ are the game's.
                                   the flip_NNNNN.bmp files a check of SCEN
                                   reads, given the run's flip log
   golden.py run [SCEN...] [--backend metal|cpu] [--secs S] [--exe PATH]
-                [--out DIR] [--keep-frames] [--lock-wait S] [VAR=val...]
+                [--out DIR] [--keep-frames] [--bmp-frames] [--lock-wait S] [VAR=val...]
                                   macOS: run the scenarios on this machine's
                                   build, headless and silent, under the Mac
                                   run lock, each stopped once its last
@@ -79,8 +79,9 @@ directory). Below, golden.json and frames/ are the game's.
 
 DIR is a run's frame directory, holding the dumper's frame_NNNN.bmp files
 (d3d11_dump: dump k is present 60k+1) or flip_NNNNN.bmp files
-(fb_dump_at, named by flip; flip N is present N). Dump k is looked up
-as frame_000k.bmp, else as flip 60k+1.
+(fb_dump_at, named by flip; flip N is present N), or the PNGs the CLI
+turns them into after a run (same names, .png; read first when both are
+there). Dump k is looked up as frame_000k, else as flip 60k+1.
 
 Skips. A scenario's (or frame's) "skip_backends" list, e.g. ["cpu"], with
 "skip_why", leaves its frames unchecked on a run whose flip log shows that
@@ -117,7 +118,7 @@ run). R is that flip in the reference run (a reference in
 DIR/../game-stdio.log, or DIR.log) giving the run's anchor A, the frame is
 checked at flip A + (60*dump + 1 - R): the same distance from the event as
 the reference, so a run whose timeline starts a few presents early or late
-is compared with the frame it means. That needs flip_NNNNN.bmp dumps; a run
+is compared with the frame it means. That needs flip_NNNNN dumps; a run
 with no flip dumps, no anchor in its log, or not the target flip is
 INCOMPLETE (exit 2) for that frame, never compared at the plain dump. --window K (default 2) also
 compares the flips within K of the target and prints the best one: a
@@ -201,6 +202,8 @@ import struct
 import subprocess
 import sys
 import zlib
+
+from . import frames
 
 # The game's golden.json, its reference frames and its root (configure()).
 REPO = None
@@ -304,58 +307,19 @@ def _paeth(a, b, c):
 
 
 def read_png(path):
+    """(w, h, RGB pixels top-down) of an 8-bit RGB or RGBA PNG (alpha
+    dropped, as read_bmp drops a 32 bpp dump's fourth byte)."""
     with open(path, "rb") as f:
         d = f.read()
-    if d[:8] != b"\x89PNG\r\n\x1a\n":
-        raise ValueError(f"{path}: not a PNG")
-    pos, idat, w = 8, b"", None
-    while pos < len(d):
-        n, typ = struct.unpack_from(">I4s", d, pos)
-        body = d[pos + 8 : pos + 8 + n]
-        pos += 12 + n
-        if typ == b"IHDR":
-            w, h, depth, ctype, _, _, inter = struct.unpack(">IIBBBBB", body)
-            if depth != 8 or ctype not in (2, 6) or inter:
-                raise ValueError(f"{path}: only 8-bit RGB/RGBA non-interlaced PNG")
-            bypp = 3 if ctype == 2 else 4
-        elif typ == b"IDAT":
-            idat += body
-        elif typ == b"IEND":
-            break
-    raw = zlib.decompress(idat)
-    stride = w * bypp
-    prev = bytearray(stride)
-    out = bytearray()
-    i = 0
-    for _ in range(h):
-        ft = raw[i]
-        cur = bytearray(raw[i + 1 : i + 1 + stride])
-        i += 1 + stride
-        if ft == 1:
-            for x in range(bypp, stride):
-                cur[x] = (cur[x] + cur[x - bypp]) & 255
-        elif ft == 2:
-            for x in range(stride):
-                cur[x] = (cur[x] + prev[x]) & 255
-        elif ft == 3:
-            for x in range(stride):
-                left = cur[x - bypp] if x >= bypp else 0
-                cur[x] = (cur[x] + ((left + prev[x]) >> 1)) & 255
-        elif ft == 4:
-            for x in range(stride):
-                left = cur[x - bypp] if x >= bypp else 0
-                ul = prev[x - bypp] if x >= bypp else 0
-                cur[x] = (cur[x] + _paeth(left, prev[x], ul)) & 255
-        elif ft != 0:
-            raise ValueError(f"{path}: bad PNG filter {ft}")
-        if bypp == 4:
-            rgb = bytearray(w * 3)
-            rgb[0::3], rgb[1::3], rgb[2::3] = cur[0::4], cur[1::4], cur[2::4]
-            out += rgb
-        else:
-            out += cur
-        prev = cur
-    return w, h, bytes(out)
+    try:
+        w, h, bpp, px = frames.decode_png(d, path)
+    except frames.FrameError as e:
+        raise ValueError(str(e)) from None
+    if bpp == 4:
+        rgb = bytearray(w * h * 3)
+        rgb[0::3], rgb[1::3], rgb[2::3] = px[0::4], px[1::4], px[2::4]
+        px = bytes(rgb)
+    return w, h, px
 
 
 def write_png(path, w, h, rgb):
@@ -973,16 +937,18 @@ def check_anchor_chains(g):
                 cur = anchors[nxt]
 
 
+# A dump is read as the CLI's PNG of it when there is one, else as the
+# dumper's BMP (frames.existing): a run's kept frames turn PNG after it.
 def frame_path(d, index):
-    return os.path.join(d, "frame_%04d.bmp" % index)
+    return frames.existing(os.path.join(d, "frame_%04d.bmp" % index))
 
 
 def flip_path(d, flip):
-    return os.path.join(d, "flip_%05d.bmp" % flip)
+    return frames.existing(os.path.join(d, "flip_%05d.bmp" % flip))
 
 
 def dump_image_path(d, index):
-    """Dump `index` of DIR: frame_NNNN.bmp, else flip 60*index + 1."""
+    """Dump `index` of DIR: frame_NNNN, else flip 60*index + 1 (.png or .bmp)."""
     p = frame_path(d, index)
     if os.path.exists(p):
         return p
@@ -1440,7 +1406,7 @@ def window_report(d, img_path, ref, fr, th, k):
     (offset, ok, stats, path)."""
     import re
 
-    m = re.search(r"flip_(\d+)\.bmp$", img_path)
+    m = re.search(r"flip_(\d+)\.(?:bmp|png)$", img_path)
     if not m or k <= 0 or not os.path.exists(ref[2]):
         return None
     t = int(m.group(1))
@@ -1537,7 +1503,7 @@ def read_used(path):
     return out
 
 
-FLIP_NAME_RE = re.compile(r"^flip_\d+\.bmp$")
+FLIP_NAME_RE = re.compile(r"^flip_\d+\.(?:bmp|png)$")
 
 
 def prune_frames(d, keep, dry_run=False):

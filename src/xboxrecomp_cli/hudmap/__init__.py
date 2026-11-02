@@ -29,6 +29,11 @@ def _run_opts(p):
     p.add_argument(
         "--lock-wait", type=int, default=3600, help="seconds to wait for the Mac run lock"
     )
+    p.add_argument(
+        "--bmp-frames",
+        action="store_true",
+        help="keep the frame dumps as BMP (default: lossless PNG after the run; XBR_FRAMES_BMP=1)",
+    )
 
 
 def configure(p):

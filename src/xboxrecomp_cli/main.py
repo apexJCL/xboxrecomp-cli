@@ -767,6 +767,13 @@ def main(argv=None):
         # The one command without a game: it writes the game.toml the
         # others load.
         return scaffold.main(argv[1:], prog or "xbr")
+    if argv[:1] == ["frames"]:
+        # Needs no game, as frame dirs can sit anywhere; inside one, its
+        # golden.json pins the dumps its references came from.
+        from . import frames
+
+        have = os.path.isfile(os.path.join(root, manifest.FILE))
+        return frames.main(argv[1:], root if have else None, prog or "xbr")
     if argv in ([], ["-h"], ["--help"]) and not os.path.isfile(os.path.join(root, manifest.FILE)):
         # A first `xbr --help` outside any game: say how to start one rather
         # than fail on the missing manifest. Bare `xbr` would package, so it

@@ -586,7 +586,9 @@ Flags shared by the commands that run the game: `--kill-game`
 (`BENCH_KILL_GAME=1`) ends a game running outside the bench once the lock is
 held; `--keep-frames` (`BENCH_KEEP_FRAMES=1`) keeps every frame dump of a
 passing scenario, which otherwise drops them all once its verdict is
-written (a failing or recording run always keeps them); `--proton-log` (`BENCH_PROTON_LOG=full`) keeps Proton's
+written (a failing or recording run always keeps them); `--bmp-frames`
+(`XBR_FRAMES_BMP=1`) keeps a golden's kept frames as BMP rather than PNG
+(`frames compact`); `--proton-log` (`BENCH_PROTON_LOG=full`) keeps Proton's
 whole log.
 
 Configuration comes from the environment or the game's `scripts/bench.env`
@@ -772,13 +774,60 @@ for a toolkit key or one of the game's (`golden.enhance_stock`); `golden
 prune SCEN=DIR` drops the flip dumps a passing check did not read.
 
 `golden run [SCEN...] [--backend metal|cpu] [--secs S] [--exe PATH] [--out
-DIR] [--keep-frames] [--lock-wait S] [VAR=val...]` is the golden pass on a
+DIR] [--keep-frames] [--bmp-frames] [--lock-wait S] [VAR=val...]` is the golden pass on a
 Mac's own build: each scenario runs headless with dummy audio under the Mac
 run lock (`~/.recomp-mac-run.lock`), dumps its frames by flip, stops once
 the last frame its check reads is dumped, warns when the Mac is loaded (the
 pace check then says INCOMPLETE), then checks and prunes as `bench golden`
 does (its verdict does not weigh the D3D11 present check, so a present
 mismatch keeps the frames of a pass). Each run is `bench-logs/<stamp>-<backend>-<scen>/` with its `golden.txt`.
+
+### `mygame frames compact [--dry-run] [--jobs N] [--pins FILE]... [--no-pins] DIR...`
+
+The toolkit's dumpers write BMP (a plain copy, so the game's timing is
+untouched); the CLI turns the frames a command keeps into PNG once the run
+is over. `bench golden` (after its pull, check and prune), `golden run`
+(after the Mac run lock is released) and `hud-map capture` and `check` do
+it on their own; `--bmp-frames` or `XBR_FRAMES_BMP=1` keeps the BMPs.
+`frames compact` does the same to frames already on disk, and also works
+outside a game (`xbr frames compact`).
+`bench golden` and `golden run` warn when the game root is a git worktree
+whose `bench-logs/` is a folder rather than a link to the shared store:
+runs written there would go with the worktree.
+
+Each `*.bmp` under DIR (no link followed, nothing outside DIR touched)
+becomes a PNG of the same base name (`flip_01139.bmp` -> `flip_01139.png`):
+filtered per row and deflated with the standard library, a quarter of the
+BMP's size or less on the game's frames. The PNG is read back from disk by
+a decoder of its own and compared with the BMP's pixels before the BMP is
+removed; it takes the BMP's mtime. A mismatch, a BMP it does not take
+(only uncompressed 24 and 32 bpp with the 40-byte header: a V4 or V5
+header's colour space or ICC profile would be lost) or a PNG of that name
+with other pixels keeps the BMP and is named on stderr (exit 1 for a
+mismatch or conflict). The PNG is linked into place, so one made meanwhile
+is never overwritten. A 32 bpp dump's fourth byte becomes an alpha channel
+unless it is 0 in every pixel (as the dumpers write it); every reader reads
+RGB.
+
+Every frame reader (`golden`, `hud-map`) takes either: the PNG when there
+is one, else the BMP. The golden compare gives the same metrics on both.
+
+Pins: what the game's docs cite stays BMP, as benchdb would keep it.
+
+- `golden.json` and each `--pins FILE` pin a file by its name or its path
+  under DIR, as `golden reference` reads those dumps by name.
+- The reference text benchdb reads (`golden.json`, `TASKS.md`,
+  `RESUME*.md`, `openspec/`, the seeds and `[bench.gc] refs` less
+  `refs_exclude`, in the main checkout and the current worktree) pins a
+  file by a path to it (`runs/<topic>/shot.bmp`), every file in a folder it
+  names by path (`runs/<topic>`, but never `runs/` or `bench-logs/`
+  themselves, nor the game root or a folder above it), and every file of a
+  run whose stamp (`YYYYMMDD-HHMMSS`) it names.
+
+`--no-pins` drops both defaults. `--dry-run` converts in memory and checks,
+then prints what each DIR would save and each file left as pinned; it
+writes nothing.
+`--jobs N` sets the worker processes (default the CPUs less one, at most 8).
 
 A scenario that sets `RECOMP_HDD_DIR=@seed:PATH` in its `golden.json` env
 boots on an hdd tree of its own: `PATH` (relative to the game root, and

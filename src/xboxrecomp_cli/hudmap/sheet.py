@@ -29,7 +29,7 @@ PROGRAM_RE = re.compile(
     r"^\[aspect\.program\] ([0-9A-Fa-f]+) flip (\d+): .*? x (\S+)\.\.(\S+) on (\d+)x(\d+)"
     r".*-> \S+( lift)?"
 )
-FLIP_RE = re.compile(r"flip_(\d+)\.bmp$")
+FLIP_RE = re.compile(r"flip_(\d+)\.(bmp|png)$")
 EDGE = 2.0
 LEFT_KINDS = ("left", "proportional", "stretch", "world")
 RIGHT_KINDS = ("right", "proportional", "stretch", "world")
@@ -88,12 +88,13 @@ def explains(kinds, lo, hi, w):
 
 
 def frames_of(d):
-    """{flip: path} of a run's frame dumps."""
+    """{flip: path} of a run's frame dumps: the dumper's BMP, or the PNG
+    the CLI made of it (preferred when both are there)."""
     out = {}
     fd = os.path.join(d, "frames")
     for n in sorted(os.listdir(fd)) if os.path.isdir(fd) else []:
         m = FLIP_RE.search(n)
-        if m:
+        if m and (m.group(2) == "png" or int(m.group(1)) not in out):
             out[int(m.group(1))] = os.path.join(fd, n)
     return out
 

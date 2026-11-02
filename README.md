@@ -199,6 +199,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | `mygame public <init\|export\|pr\|audit>` | Publishes a round to the game's public repo: one audited commit, the push guard, upstream PR branches |
 | `mygame hud-map <capture\|propose\|review\|emit\|check>` | Maps the game's HUD for the widescreen HUD layer, from runs; frames stay local |
 | `mygame golden <subcommand>` | Records and checks golden frames; `golden run` on the Mac |
+| `mygame frames compact DIR...` | Turns frame dumps into lossless PNGs, each one checked before its BMP goes |
 | `mygame bench <command>` | Builds and runs on a Proton host over ssh: runs, goldens, pacing |
 | `mygame enhance hud` | Makes a HUD texture pack from your own dump |
 | `mygame extract` | Turns your dump's stages into a local Godot project |

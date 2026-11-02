@@ -27,6 +27,7 @@ import subprocess
 import sys
 import time
 
+from .. import frames as frame_files
 from ..host import CliError
 from . import table as T
 
@@ -233,7 +234,7 @@ def table_path(G):
 
 
 CAPTURE_TABLE = "capture-table.toml"
-_FRAME_BMP = re.compile(r"frame_[0-9]{5}\.bmp")
+_FRAME_BMP = re.compile(r"frame_[0-9]{5}\.(?:bmp|png)")
 
 
 def _sig_of(d):
@@ -335,6 +336,8 @@ def do_capture(G, a, say=print, popen=subprocess.Popen):
             )
     got = captured_up_to(jsonl)
     say("hud-map capture: %s, %s (exit %s); frames up to %d of %d" % (out, why, rc, got, last))
+    # capture.jsonl keeps the dumper's .bmp names; Frame reads either.
+    frame_files.after_run([out], say=say, bmp=getattr(a, "bmp_frames", False), match=_FRAME_BMP)
     if not os.path.exists(jsonl):
         raise CliError("no capture.jsonl in %s: see game-stdio.log" % out)
     return 0 if why == "done" else 1
@@ -382,6 +385,7 @@ def do_check(G, a, say=print, popen=subprocess.Popen):
             known = tomllib.load(f)
     bad = 0
     sheets = []
+    todo = []
     with locked("%s hud-map check" % G.slug, a.lock_wait, say):
         for scen in scens:
             scen_env, secs = scenario(G, scen)
@@ -414,17 +418,25 @@ def do_check(G, a, say=print, popen=subprocess.Popen):
                         % (scen, r, "on" if on else "off", why, rc)
                     )
                     runs[(r, on)] = (d, rc, why)
-            for r in ratios:
-                path, failed = sheet.write(
-                    os.path.join(out, scen.lstrip("@")),
-                    scen,
-                    r,
-                    runs[(r, True)],
-                    runs[(r, False)],
-                    known,
-                )
-                sheets.append(path)
-                bad += failed
+            todo.append((scen, runs))
+    # Out of the lock: the frames to PNG, then the sheets that link them.
+    frame_files.after_run(
+        [os.path.join(d, "frames") for _s, runs in todo for d, _rc, _why in runs.values()],
+        say=say,
+        bmp=getattr(a, "bmp_frames", False),
+    )
+    for scen, runs in todo:
+        for r in ratios:
+            path, failed = sheet.write(
+                os.path.join(out, scen.lstrip("@")),
+                scen,
+                r,
+                runs[(r, True)],
+                runs[(r, False)],
+                known,
+            )
+            sheets.append(path)
+            bad += failed
     for p in sheets:
         say("hud-map check: sheet %s" % p)
     return 1 if bad else 0
