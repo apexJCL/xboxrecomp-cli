@@ -7,6 +7,18 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Fixed
+- `extract`: a texture mirrored on an axis whose UVs leave [0, 1] is
+  written as a copy twice as long on that axis (image, then mirror image)
+  with its UVs halved there, and repeats. Godot cannot mirror and keeps
+  one wrap per material, so mirror on one axis with repeat on the other
+  was listed as unsupported, and any mirror was drawn as plain repeat.
+  A mirrored or clamped axis inside [0, 1] on a material that repeats is
+  doubled the same way, so its edges no longer bleed the opposite edge
+  in; two mirrors inside [0, 1] are written as clamp. The texture count
+  includes the copies; a texture only read through copies is no longer
+  written.
+
 ## [0.19.0] - 2026-11-01
 
 ### Added

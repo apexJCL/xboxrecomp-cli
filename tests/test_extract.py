@@ -529,7 +529,9 @@ def _scaled(strip, su, sv):
 
 
 KEPT_INSIDE = "texture wrap kept inside [0, 1] (written as the other axis's)"
-MIRRORED = "mirrored texture wrap (Godot repeats it)"
+MIRRORED_OLD = "mirrored texture wrap (Godot repeats it)"
+DOUBLED = gltf.DOUBLED[gltf.MIRROR]
+DOUBLED_CLAMP = gltf.DOUBLED[gltf.CLAMP]
 
 
 def _wrapped(tmp_path, tflags, su, sv):
@@ -544,10 +546,50 @@ def _wrapped(tmp_path, tflags, su, sv):
 
 
 def test_wrap_inside_the_unit_range_takes_the_other_axis(tmp_path):
-    # tunagi: clamp U (U stays in [0, 1]), V tiles to 2: both repeat.
+    # Clamp U (U stays in [0, 1]), V tiles to 2: both repeat, and U is
+    # doubled so its edges still clamp.
     got, s = _wrapped(tmp_path, 0x20, 1, 2)
     assert got == (gltf.REPEAT, gltf.REPEAT) and not s.unsupported
-    assert s.approximated == {KEPT_INSIDE: 1}
+    assert not s.approximated and s.supported == {DOUBLED_CLAMP: 1}
+
+
+@pytest.mark.parametrize(
+    "tflags, su, sv, label",
+    [
+        # Repeat U past [0, 1], mirror V inside: V would bleed its top and
+        # bottom rows into each other under repeat.
+        (0x40, 3, 1, "DOUBLED"),
+        # Clamp V inside, U tiling: the same bleed.
+        (0x10, 3, 1, "DOUBLED_CLAMP"),
+    ],
+)
+def test_inside_axis_under_repeat_is_doubled_to_keep_its_edges(tmp_path, tflags, su, sv, label):
+    roots, strip, w = _one_strip_writer(size=(4, 2))
+    strip.tflags = tflags << 16
+    _scaled(strip, su, sv)
+    w.add_tree(SEC, roots)
+    s = w.write(str(tmp_path))
+    assert _sampler_of(w) == (gltf.REPEAT, gltf.REPEAT)
+    assert not s.unsupported and not s.approximated
+    assert s.supported == {globals()[label]: 1}
+    # Halved to [0, 0.5]: each edge texel meets its own mirror image.
+    assert max(uv[1] for uv in _prim_uvs(w)) == pytest.approx(0.5)
+    assert max(uv[0] for uv in _prim_uvs(w)) == pytest.approx(su)
+    assert _png_size(os.path.join(str(tmp_path), "textures", "Tex0.mirror-v.png")) == (4, 4)
+
+
+def test_mirror_past_two_with_clamp_inside_doubles_both(tmp_path):
+    # Mirror U to 3 (1.5 once halved), clamp V inside: both doubled.
+    roots, strip, w = _one_strip_writer(size=(4, 2))
+    strip.tflags = (0x80 | 0x10) << 16
+    _scaled(strip, 3, 1)
+    w.add_tree(SEC, roots)
+    s = w.write(str(tmp_path))
+    assert _sampler_of(w) == (gltf.REPEAT, gltf.REPEAT)
+    assert s.supported == {DOUBLED: 1, DOUBLED_CLAMP: 1}
+    uvs = _prim_uvs(w)
+    assert max(uv[0] for uv in uvs) == pytest.approx(1.5)
+    assert max(uv[1] for uv in uvs) == pytest.approx(0.5)
 
 
 def test_clamp_on_both_axes_stays_clamp(tmp_path):
@@ -560,16 +602,142 @@ def test_clamp_on_both_axes_stays_clamp(tmp_path):
     assert not s.unsupported and not s.approximated
 
 
+def test_mirror_past_two_halved_inside_with_clamp_inside_clamps(tmp_path):
+    # Mirror U to 2 is halved into [0, 1]; with V clamped inside, one
+    # clamp for both samples like the game.
+    got, s = _wrapped(tmp_path, 0x80 | 0x10, 2, 1)
+    assert got == (gltf.CLAMP, gltf.CLAMP)
+    assert not s.unsupported and not s.approximated and s.supported == {DOUBLED: 1}
+
+
+@pytest.mark.parametrize(
+    "tflags, su, sv, want, supported",
+    [
+        # Mirror U inside, clamp V past [0, 1]: one clamp samples like both,
+        # nothing approximated.
+        (0x80 | 0x10, 1, 2, (gltf.CLAMP, gltf.CLAMP), {}),
+        # Mirror both, one axis past [0, 1]: it is doubled and repeats; the
+        # other, inside, is doubled too so its edges keep clamping.
+        (0xC0, 3, 1, (gltf.REPEAT, gltf.REPEAT), {"DOUBLED": 1}),
+        (0xC0, 1, 3, (gltf.REPEAT, gltf.REPEAT), {"DOUBLED": 1}),
+        # Clamp U past [0, 1] and mirror V to 2: halved, V is inside, so one
+        # clamp for both and no cut.
+        (0x20 | 0x40, 3, 2, (gltf.CLAMP, gltf.CLAMP), {"DOUBLED": 1}),
+    ],
+)
+def test_mirror_and_clamp_rows(tmp_path, tflags, su, sv, want, supported):
+    roots, strip, w = _one_strip_writer(size=(4, 2))
+    strip.tflags = tflags << 16
+    _scaled(strip, su, sv)
+    w.add_tree(SEC, roots)
+    s = w.write(str(tmp_path))
+    assert _sampler_of(w) == want
+    assert not s.unsupported and not s.approximated
+    assert s.supported == {globals()[k]: n for k, n in supported.items()}
+    assert s.triangles == 2
+
+
+def test_texture_read_only_through_copies_is_not_written(tmp_path):
+    roots, strip, w = _one_strip_writer(size=(4, 2))
+    strip.tflags = 0x80 << 16
+    _scaled(strip, 3, 1)
+    w.add_tree(SEC, roots)
+    s = w.write(str(tmp_path))
+    j = w.doc.j
+    assert [i["uri"] for i in j["images"]] == ["textures/Tex0.mirror-u.png"]
+    assert j["textures"][0]["source"] == 0 and s.textures == 1
+    assert sorted(os.listdir(os.path.join(str(tmp_path), "textures"))) == ["Tex0.mirror-u.png"]
+
+
 def test_clamp_past_the_range_wins_over_repeat_inside(tmp_path):
     got, s = _wrapped(tmp_path, 0x20, 3, 1)
     assert got == (gltf.CLAMP, gltf.CLAMP) and not s.unsupported
     assert s.approximated == {KEPT_INSIDE: 1}
 
 
-def test_mirror_past_the_range_wins_and_is_counted(tmp_path):
+def test_mirror_past_the_range_is_doubled_and_repeats(tmp_path):
+    # Mirror U past [0, 1], V inside: U's copy is doubled, so both repeat.
     got, s = _wrapped(tmp_path, 0x80, 3, 1)
-    assert got == (gltf.MIRROR, gltf.MIRROR) and not s.unsupported
-    assert s.approximated == {KEPT_INSIDE: 1, MIRRORED: 1}
+    assert got == (gltf.REPEAT, gltf.REPEAT) and not s.unsupported
+    assert s.supported == {DOUBLED: 1}
+    assert MIRRORED_OLD not in s.approximated
+
+
+def test_mirror_inside_the_unit_range_clamps(tmp_path):
+    # Inside [0, 1] a mirror's edge texel meets itself, as with clamp;
+    # Godot would read a mirror as repeat and bleed the opposite edge.
+    got, s = _wrapped(tmp_path, 0xC0, 1, 1)
+    assert got == (gltf.CLAMP, gltf.CLAMP)
+    assert not s.supported and not s.unsupported and not s.approximated
+
+
+def _png_size(path):
+    with open(path, "rb") as f:
+        return struct.unpack(">II", f.read(24)[16:24])
+
+
+@pytest.mark.parametrize(
+    "tflags, su, sv, suffix, size, halved",
+    [
+        # Mirror one axis, repeat the other, both past [0, 1]: the wraps
+        # used to differ per axis.
+        (0x80, 3, 2, "u", (8, 4), (True, False)),
+        (0x40, 3, 2, "v", (4, 2), (False, True)),
+        (0xC0, 3, 2, "uv", (4, 2), (True, True)),
+    ],
+)
+def test_mirror_with_repeat_doubles_the_mirrored_axis(
+    tmp_path, tflags, su, sv, suffix, size, halved
+):
+    roots, strip, w = _one_strip_writer(size=size)
+    strip.tflags = tflags << 16
+    _scaled(strip, su, sv)
+    w.add_tree(SEC, roots)
+    s = w.write(str(tmp_path))
+    assert _sampler_of(w) == (gltf.REPEAT, gltf.REPEAT)
+    assert not s.unsupported and s.supported == {DOUBLED: 1}
+    j = w.doc.j
+    tex = j["textures"][j["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"]["index"]]
+    img = j["images"][tex["source"]]
+    assert img["uri"] == "textures/Tex0.mirror-%s.png" % suffix
+    got = _png_size(os.path.join(str(tmp_path), "textures", "Tex0.mirror-%s.png" % suffix))
+    assert got == tuple(n * (2 if h else 1) for n, h in zip(size, halved))
+    # One repeat of the copy is one mirrored pair: the UVs halve with it.
+    uvs = _prim_uvs(w)
+    for axis, scale in enumerate((su, sv)):
+        top = max(uv[axis] for uv in uvs)
+        assert top == pytest.approx(scale * (0.5 if halved[axis] else 1))
+    assert s.triangles == 2
+
+
+def test_mirrored_copies_are_shared_per_texture_and_axes():
+    class Src:
+        def read(self, name):
+            return dds_raw(1, 1, 32, ARGB8, [0xFF010203])
+
+    w = gltf.Writer("S", ["t"], Src())
+    img = w.doc.add("images", {"uri": "textures/t.png", "name": "t"})
+    a = w._mirrored(img, (0,))
+    assert w._mirrored(img, (0,)) == a
+    assert w._mirrored(img, (1,)) != a
+    assert set(w._pngs) == {"t.mirror-u.png", "t.mirror-v.png"}
+
+
+def test_mirror_rgba_appends_the_mirror_image():
+    px = [bytes([i] * 4) for i in range(6)]
+    # 3x2: rows 0 1 2 / 3 4 5.
+    rgba = b"".join(px)
+    w, h, got = gltf.mirror_rgba(3, 2, rgba, (0,))
+    assert (w, h) == (6, 2)
+    assert got == b"".join(px[i] for i in (0, 1, 2, 2, 1, 0, 3, 4, 5, 5, 4, 3))
+    w, h, got = gltf.mirror_rgba(3, 2, rgba, (1,))
+    assert (w, h) == (3, 4)
+    assert got == b"".join(px[i] for i in (0, 1, 2, 3, 4, 5, 3, 4, 5, 0, 1, 2))
+    w, h, got = gltf.mirror_rgba(3, 2, rgba, (0, 1))
+    assert (w, h) == (6, 4)
+    row0 = (0, 1, 2, 2, 1, 0)
+    row1 = (3, 4, 5, 5, 4, 3)
+    assert got == b"".join(px[i] for i in row0 + row1 + row1 + row0)
 
 
 CUT = "clamped axis cut into the mesh (Godot keeps one wrap)"
@@ -620,13 +788,16 @@ def test_clamp_past_the_range_is_cut_when_the_other_axis_tiles(
     assert (s.triangles > 2) == (len(centres) > 1)
 
 
-def test_mirror_and_clamp_is_cut_and_mirrors(tmp_path):
-    # Flip U, clamp V: V is cut, then sits inside and takes U's mirror.
+def test_mirror_and_clamp_is_cut_and_doubled(tmp_path):
+    # Flip U to 3, clamp V: V is cut and pinned between its edge texel
+    # centres; U is doubled and halved to 1.5, still past [0, 1], so both
+    # repeat.
     w, s = _cut_quad(tmp_path, 0x80 | 0x10, 3, 2, (4, 2))
-    assert _sampler_of(w) == (gltf.MIRROR, gltf.MIRROR)
     assert not s.unsupported
-    assert s.approximated[CUT] == 2 and s.approximated[MIRRORED] == 1
+    assert s.approximated[CUT] == 2 and s.supported == {DOUBLED: 1}
     assert sorted({round(uv[1], 6) for uv in _prim_uvs(w)}) == [0.25, 0.75]
+    assert max(uv[0] for uv in _prim_uvs(w)) == pytest.approx(1.5)
+    assert _sampler_of(w) == (gltf.REPEAT, gltf.REPEAT)
 
 
 def test_clamp_past_the_range_with_the_other_axis_inside_is_not_cut(tmp_path):

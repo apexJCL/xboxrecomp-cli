@@ -24,12 +24,13 @@ Approximations, counted in the summary's `approximated`:
   take that centre, which is what clamp-to-edge samples past it. That
   axis then stays between the two centres, where repeat and clamp sample
   alike at mip 0; smaller mips still blend in the opposite edge, which
-  clamp would not. An axis whose UVs stay inside [0, 1]
-  takes the other axis's wrap (both inside: clamp);
-  wraps that agree are kept, since repeat bleeds the opposite edge under
-  bilinear filtering where clamp does not. The wraps that still differ
-  per axis are counted as unsupported. Godot cannot mirror either, so a
-  mirrored axis that leaves [0, 1] repeats and is counted.
+  clamp would not. Otherwise an axis whose UVs stay inside [0, 1] takes
+  the other axis's wrap (both inside: clamp); wraps that agree are kept,
+  since repeat bleeds the opposite edge under bilinear filtering where
+  clamp does not. Only a repeat turned into clamp inside [0, 1] and a
+  cut axis are counted here: a mirrored or clamped axis turned into
+  repeat is doubled (below), which is exact, and with mirrors doubled
+  and clamps cut the two wraps never still differ.
 - a texture whose alpha never reaches 0 but dips below 240 is glass and
   blends even without the strip's use-alpha flag.
 - a texture named in the stage's texture_alpha blends at that opacity:
@@ -37,6 +38,22 @@ Approximations, counted in the summary's `approximated`:
   reflection drawn into a render target and blended over the floor),
   which a static scene stands in for with a mirrored copy of the room
   below a see-through floor.
+
+Godot's 3D materials cannot mirror, and a material that repeats on one
+axis repeats on both. Both are met with a copy of the texture twice as
+long on an axis, the image then its mirror image (_mirrored), and the
+UVs halved on that axis, written as repeat (_settle_wraps), counted
+under `supported`:
+- a mirrored axis whose UVs leave [0, 1]: one repeat of the copy is one
+  mirrored pair, so repeat samples it as the game's mirror does;
+- a mirrored or clamped axis whose UVs stay inside [0, 1] while the
+  material repeats: halved to [0, 0.5], each edge texel meets its own
+  mirror image under bilinear filtering, as with clamp-to-edge, where
+  repeat would blend in the opposite edge.
+Bilinear seams and power-of-two mips match the game's. The copies are
+images of their own; a texture no material samples plain any more is
+neither written nor counted, so the summary's texture count is the
+images the stage's glTF names, copies included.
 
 glTF has no additive blend. A strip drawn with Ninja blend 0x21 (source
 alpha, one: the lamp glows) is written as BLEND with the material extra
@@ -57,6 +74,11 @@ FLOAT, UINT = 5126, 5125
 ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER = 34962, 34963
 REPEAT, CLAMP, MIRROR = 10497, 33071, 33648
 LINEAR, LINEAR_MIPMAP_LINEAR = 9729, 9987
+# The summary's `supported` line per wrap a doubled axis stands in for.
+DOUBLED = {
+    MIRROR: "mirrored wrap as a doubled texture (Godot cannot mirror)",
+    CLAMP: "clamped axis inside [0, 1] as a doubled texture (Godot repeats both axes)",
+}
 UNLIT = "KHR_materials_unlit"
 # The material extra the Godot stage scene reads (godot.py STAGE_GD).
 EXTRA_BLEND = "xbr_blend"
@@ -287,6 +309,20 @@ def _needs_bake(corners, axis, lo, hi):
     return any(not lo - CUT_SNAP <= c[3][axis] <= hi + CUT_SNAP for c in corners)
 
 
+def mirror_rgba(w, h, rgba, axes):
+    """(width, height, RGBA) of the image followed by its mirror image on
+    each of axes (0: across, 1: down): mirrored repeat with period 2 as
+    plain repeat with period 1."""
+    rows = [rgba[y * w * 4 : (y + 1) * w * 4] for y in range(h)]
+    if 0 in axes:
+        rows = [r + b"".join(r[x * 4 : x * 4 + 4] for x in reversed(range(w))) for r in rows]
+        w *= 2
+    if 1 in axes:
+        rows = rows + rows[::-1]
+        h *= 2
+    return w, h, b"".join(rows)
+
+
 def wraps(tflags):
     hf = tflags >> 16
     s = MIRROR if hf & TINY_FLIP_U else (CLAMP if hf & TINY_CLAMP_U else REPEAT)
@@ -326,10 +362,17 @@ class Writer:
         # Buffer writes in the order the meshes were added (write()).
         self._pending = []
         self._pngs = {}
-        # texture index: [glTF wraps, umin, umax, vmin, vmax] over every
-        # primitive that samples it; write() picks the sampler from it.
-        self._tex_uv = {}
+        # texture index: the game's (hardware) wraps; write() picks the
+        # sampler from them and the UVs (_settle_wraps).
+        self._tex_wraps = {}
         self._mat_tex = {}
+        # (texture name, axes) to its mirrored copy's image index, and the
+        # images some texture read before its copy.
+        self._mirror_img = {}
+        self._replaced = set()
+        # material index: the UV axes its texture's copy doubles
+        # (_settle_wraps), halved on those axes.
+        self._mirror = {}
         self._tree_names = Counter()
 
     def _tex_name(self, ti):
@@ -410,7 +453,7 @@ class Writer:
         }
         if img is not None:
             tex = self.doc.add("textures", {"source": img})
-            self._tex_uv[tex] = [wraps(s.tflags), None, None, None, None]
+            self._tex_wraps[tex] = wraps(s.tflags)
             self._mat_tex[len(self.doc.j["materials"])] = tex
             ws = wraps(s.tflags)
             if ws[0] != ws[1] and CLAMP in ws:
@@ -518,6 +561,7 @@ class Writer:
         for mi, tris in plan:
             remap, pos, nrm, uvs, idx = {}, [], [], [], []
             bake = self._bake.get(mi)
+            mirror = self._mirror.get(mi)
             for corners in tris:
                 pieces = [corners]
                 if bake and _needs_bake(corners, *bake):
@@ -532,16 +576,12 @@ class Writer:
                                 remap[k] = len(pos)
                                 pos.append(p)
                                 nrm.append(n)
+                                if mirror:
+                                    uv = tuple(
+                                        x * 0.5 if a in mirror else x for a, x in enumerate(uv)
+                                    )
                                 uvs.append(uv)
                             idx.append((remap[k],))
-            if mi in self._mat_tex:
-                r = self._tex_uv[self._mat_tex[mi]]
-                us, vs = [t[0] for t in uvs], [t[1] for t in uvs]
-                lo = (min(us), max(us), min(vs), max(vs))
-                r[1] = lo[0] if r[1] is None else min(r[1], lo[0])
-                r[2] = lo[1] if r[2] is None else max(r[2], lo[1])
-                r[3] = lo[2] if r[3] is None else min(r[3], lo[2])
-                r[4] = lo[3] if r[4] is None else max(r[4], lo[3])
             d = self.doc
             mesh["primitives"].append(
                 {
@@ -560,11 +600,118 @@ class Writer:
         """Keeps the cut only for materials that need it: a clamped axis
         that leaves [0, 1] while the other axis does too. With the other
         axis inside, one clamp for both already samples like the game
-        (_samplers_by_range), and an axis inside has nothing to cut."""
+        (_settle_wraps), and an axis inside has nothing to cut."""
         for mi, (axis, _lo, _hi) in list(self._bake.items()):
             r = self._raw_uv.get(mi)
-            if r is None or _in_unit(*r[axis]) or _in_unit(*r[1 - axis]):
+            if r is None or _in_unit(*r[axis]):
                 del self._bake[mi]
+                continue
+            other = r[1 - axis]
+            if self._tex_wraps[self._mat_tex[mi]][1 - axis] == MIRROR:
+                # A mirror is doubled and halved (_settle_wraps): inside
+                # [0, 1] once halved, one clamp for both samples like the
+                # game too.
+                other = (other[0] * 0.5, other[1] * 0.5)
+            if _in_unit(*other):
+                del self._bake[mi]
+
+    def _settle_wraps(self):
+        """Picks each texture's sampler, before the buffers are filled:
+        Godot keeps one wrap per material and cannot mirror. From the UVs
+        as read, with a cut axis (_settle_bakes) counted as inside, since
+        the cut keeps it between its edge texel centres.
+
+        A mirrored axis that leaves [0, 1] is doubled (_mirrored) and
+        repeats. Wraps that still differ need a choice: an axis inside
+        [0, 1] takes the other axis's wrap (both inside: clamp). Wraps
+        that agree are kept: repeat would bleed the opposite edge into a
+        sky's horizon or a sign's border, where clamp does not; two
+        mirrors inside [0, 1] sample as two clamps. Last, an axis the game
+        mirrors or clamps that stays inside [0, 1] under a repeating
+        material is doubled too: its edge texels then meet their own
+        mirror image, as with clamp-to-edge."""
+        for mi, tex in self._mat_tex.items():
+            k = self._tex_wraps[tex]
+            r = self._raw_uv.get(mi)
+            if r is None:
+                self.doc.j["textures"][tex]["sampler"] = self._sampler(k)
+                continue
+            cut = self._bake[mi][0] if mi in self._bake else None
+            w = list(k)
+            inside = [a == cut or _in_unit(*r[a]) for a in (0, 1)]
+            double = []
+            for a in (0, 1):
+                if w[a] == MIRROR and not inside[a]:
+                    double.append(a)
+                    w[a] = REPEAT
+                    inside[a] = _in_unit(r[a][0] * 0.5, r[a][1] * 0.5)
+            if w[0] != w[1]:
+                if inside[0] and inside[1]:
+                    w = [CLAMP, CLAMP]
+                elif inside[0]:
+                    w[0] = w[1]
+                elif inside[1]:
+                    w[1] = w[0]
+            elif w[0] == MIRROR:
+                w = [CLAMP, CLAMP]
+            if w[0] != w[1]:
+                self.summary.unsupported["texture wraps differ per axis (Godot uses one)"] += 1
+            elif w[0] == REPEAT:
+                for a in (0, 1):
+                    if k[a] in (MIRROR, CLAMP) and inside[a] and a != cut and a not in double:
+                        double.append(a)
+            # Repeat turned into clamp inside [0, 1] loses the bleed the game
+            # has at the edges; a cut axis repeats where the game clamps,
+            # which smaller mips still show.
+            if any(
+                (k[a] == REPEAT and w[a] == CLAMP) or (a == cut and w[a] == REPEAT) for a in (0, 1)
+            ):
+                self.summary.approximated[
+                    "texture wrap kept inside [0, 1] (written as the other axis's)"
+                ] += 1
+            if double:
+                double = tuple(sorted(double))
+                img = self.doc.j["textures"][tex]["source"]
+                self._replaced.add(img)
+                self.doc.j["textures"][tex]["source"] = self._mirrored(img, double)
+                self._mirror[mi] = double
+                for label in {DOUBLED[k[a]] for a in double}:
+                    self.summary.supported[label] += 1
+            self.doc.j["textures"][tex]["sampler"] = self._sampler(tuple(w))
+
+    def _drop_unused_images(self):
+        """Drops the images replaced by doubled copies (_settle_wraps) that
+        no texture samples any more, and their PNGs, so they are neither
+        written nor counted."""
+        j = self.doc.j
+        drop = self._replaced - {t["source"] for t in j["textures"]}
+        if not drop:
+            return
+        for i in drop:
+            self._pngs.pop(j["images"][i]["name"] + ".png", None)
+        keep = [i for i in range(len(j["images"])) if i not in drop]
+        new = {old: i for i, old in enumerate(keep)}
+        j["images"] = [j["images"][i] for i in keep]
+        for t in j["textures"]:
+            t["source"] = new[t["source"]]
+        self._by_name = {}
+        self._mirror_img = {}
+
+    def _mirrored(self, img, axes):
+        """The image index of a copy of image img twice as long on each of
+        axes (0: U, 1: V): the image, then its mirror image. Shared by
+        every material that mirrors the same axes of it."""
+        nm = self.doc.j["images"][img]["name"]
+        key = (nm.lower(), axes)
+        if key not in self._mirror_img:
+            # Decoded again: only these few textures need their pixels kept.
+            w, h, rgba, _ = textures.decode(self.source.read(nm))
+            w, h, rgba = mirror_rgba(w, h, rgba, axes)
+            fn = "%s.mirror-%s" % (nm, "".join("uv"[a] for a in axes))
+            self._pngs[fn + ".png"] = textures.png(w, h, rgba)
+            uri = "textures/%s.png" % urllib.parse.quote(fn)
+            self._mirror_img[key] = self.doc.add("images", {"uri": uri, "name": fn})
+        return self._mirror_img[key]
 
     def _node(self, n):
         nd = {"name": "obj_%08x" % n.va}
@@ -767,43 +914,14 @@ class Writer:
         """texture_alpha names no strip of the stage drew with."""
         return sorted(v for k, v in self._ta_names.items() if k not in self._ta_matched)
 
-    def _samplers_by_range(self):
-        for tex, (k, u0, u1, v0, v1) in self._tex_uv.items():
-            s, t = k
-            u_in = u0 is not None and _in_unit(u0, u1)
-            v_in = v0 is not None and _in_unit(v0, v1)
-            # Godot keeps one wrap per material. Only wraps that differ per
-            # axis need a choice: an axis whose UVs stay inside [0, 1] takes
-            # the other axis's wrap, which tiles the same there. A
-            # clamp is never turned into repeat when both axes agree: under
-            # bilinear and mips, repeat bleeds the opposite edge into a
-            # sky's horizon or a sign's border.
-            if s != t:
-                if u_in and v_in:
-                    s = t = CLAMP
-                elif u_in:
-                    s = t
-                elif v_in:
-                    t = s
-                if s != t:
-                    self.summary.unsupported["texture wraps differ per axis (Godot uses one)"] += 1
-                else:
-                    self.summary.approximated[
-                        "texture wrap kept inside [0, 1] (written as the other axis's)"
-                    ] += 1
-            # Godot's 3D materials cannot mirror: a mirrored axis that leaves
-            # [0, 1] repeats instead.
-            if (s == MIRROR and not u_in) or (t == MIRROR and not v_in):
-                self.summary.approximated["mirrored texture wrap (Godot repeats it)"] += 1
-            self.doc.j["textures"][tex]["sampler"] = self._sampler((s, t))
-
     def write(self, out_dir):
         """Writes the files; returns the Summary."""
         self._settle_bakes()
+        self._settle_wraps()
+        self._drop_unused_images()
         for fill in self._pending:
             fill()
         self._pending = []
-        self._samplers_by_range()
         j = dict(self.doc.j)
         # glTF refuses empty top-level arrays and zero-length buffers, so a
         # stage with nothing drawn keeps only its nodes and scene.

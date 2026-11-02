@@ -292,9 +292,12 @@ those are left out, never fatal. What is approximated is counted apart:
 - Godot's importer keeps one texture repeat flag per material. When a
   texture's two wraps differ, an axis whose UVs stay inside [0, 1] takes
   the other axis's wrap (clamp when both stay inside); wraps that agree
-  are kept, since repeat would bleed the opposite edge in. The wraps that
-  still differ per axis are listed as unsupported. Godot cannot mirror,
-  so a mirrored axis that leaves [0, 1] repeats;
+  are kept, since repeat would bleed the opposite edge in. A clamped
+  axis that leaves [0, 1] while the other repeats is cut into the mesh
+  at its edge texels. Only a repeat turned into clamp inside [0, 1] and
+  a cut axis are listed here: a mirrored or clamped axis turned into
+  repeat is doubled (below), and wraps that differ per axis no longer
+  remain;
 - a texture whose alpha never reaches 0 but dips below 240 (glass)
   blends even without the strip's use-alpha flag.
 
@@ -304,6 +307,17 @@ lamp glows) is written as alpha blend with the material extra
 `"xbr_blend": "add"`, and the project's `stage.gd`, on every stage scene's
 glTF instance, sets those materials to Godot's additive blend mode (in
 the editor too). Opened without it, they blend as plain alpha.
+Godot's 3D materials cannot mirror a texture either, and a material
+that repeats one axis repeats both. Both are met with a copy of the
+texture twice as long on an axis (the image, then its mirror image,
+`textures/<name>.mirror-u.png`, `-v` or `-uv`), its UVs halved there and
+written as repeat, listed as supported: a mirrored axis whose UVs leave
+[0, 1] (one repeat of the copy is one mirrored pair), and a mirrored or
+clamped axis inside [0, 1] on a material that repeats (each edge texel
+then meets its own mirror image, as with clamp, rather than the
+opposite edge). The texture count each stage prints is the images
+its glTF names: the copies, and a plain texture only when some material
+still samples it as it is.
 
 The same lines go to `report.txt` in the project folder, and each stage
 also gets `stages/<name>/report.json` with its trees and counts.
