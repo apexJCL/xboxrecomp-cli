@@ -521,6 +521,48 @@ need a `mod`.
 | `scenarios` | `[]` | What `check` runs without a scenario argument: `golden.json` scenarios, or `@preset` input presets. |
 | `mod` | `""` | The id of the game's HUD mod: the `mods.<id>` key in the player's config, which runs the mod's init (not a `hud.enabled` setting). `capture --level 1` runs with it on; `check` runs it on and off. Each run gets its own config file, so the player's never changes. |
 
+## [saves]
+
+This table is optional: what `saves import` needs to know of the game's
+saves ([commands.md](commands.md#mygame-saves-listimport)). Without it the
+game's `[xbe] title_id` is its title, saves go in as they are with a
+warning, and TDATA is optional.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `title_ids` | `[xbe.title_id]` | The title IDs whose saves are this game's; any other is another game's, listed and left out. |
+| `signing` | unset | `"resign"`: the files `[[saves.signed]]` names are re-signed under the runtime's zero key on import (a console's or emulator's save then loads; one this build wrote comes back byte for byte). `"none"`: the saves are not signed. Unset: not known; imported as they are, with a warning. |
+| `tdata` | `"optional"` | The title's own data (`TDATA/<tid>`): `"ignore"` never imports it, `"optional"` only with `--with-tdata`, `"required"` always (the game keeps state there its saves need). |
+
+### [[saves.signed]]
+
+One signed block of a save file. Every key is required.
+
+| Key | Meaning |
+|---|---|
+| `glob` | The file, as a pattern below `UDATA/<tid>/` (any case; `*/blinx2data.bin`). No `..`, `/` separators. |
+| `size` | The file's size in bytes. A matching file of another size makes its save not importable. |
+| `data` | `[start, end]`: the byte range the digest covers. |
+| `digest` | Where the 20-byte HMAC-SHA1 goes. |
+| `key` | `"roamable"`: the title's roamable signature (`XCalculateSignature`), which this runtime computes under its zero key. |
+
+Several entries may share a glob (a file with more than one signed block):
+they must share `size`, and no digest may sit inside any entry's data range
+or overlap another digest.
+
+```toml
+[saves]
+signing = "resign"
+tdata = "ignore"
+
+[[saves.signed]]
+glob = "*/blinx2data.bin"
+size = 81920
+data = [0, 33972]
+digest = 33972
+key = "roamable"
+```
+
 ## [enhance.hud]
 
 This table is optional. Without it, `enhance hud` says the game names no HUD set. The pack it makes is the owner's own (made from their game files, never distributed; `package --hud-pack` puts it in their private bundle).

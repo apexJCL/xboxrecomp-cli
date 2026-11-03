@@ -390,6 +390,15 @@ SPEC = {
         "table": (STR, "config/hud.toml"),
         "scenarios": (STRS, []),
         "mod": (STR, ""),
+    },  # saves import (docs/manifest.md, xbr saves): which title IDs are the
+    # game's, how its saves are signed, and whether its TDATA travels.
+    "saves": {
+        "title_ids": (INTS, DERIVED),
+        # "resign": [[saves.signed]] says how; "none": unsigned; "" (unset):
+        # not known, imported as they are with a warning.
+        "signing": (STR, ""),
+        "tdata": (STR, "optional"),
+        "signed": (TABLES, []),
     },
 }
 # The dashboard's language codes, XC_LANGUAGE 1..9 in order (the toolkit's
@@ -399,7 +408,7 @@ LANGUAGES = ("en", "ja", "de", "fr", "es", "it", "ko", "zh", "pt")
 # benches (package says the manifest has no [package]). A game without
 # [public] is not published; one without [layout] has the standard one;
 # one without [hud] has no HUD table.
-OPTIONAL = {"package", "enhance", "wizard", "public", "layout", "extract", "hud"}
+OPTIONAL = {"package", "enhance", "wizard", "public", "layout", "extract", "hud", "saves"}
 PUBLIC_MODES = ("export", "history")
 # "Name <email>", as git writes an identity.
 IDENTITY_RE = re.compile(r"^([^<>\n]*[^<>\s])\s+<([^<>\s]+@[^<>\s]+)>$")
@@ -696,6 +705,8 @@ def _derive(m):
     d.setdefault("windows", "%LOCALAPPDATA%\\" + app)
     d.setdefault("steamos", "~/Games/" + app)
     d.setdefault("macos", "~/Library/Application Support/" + app)
+    if "saves" in m:
+        m["saves"].setdefault("title_ids", [x["title_id"]])
     gj = m["golden"]
     gj.setdefault("frames", (gj["json"].rsplit("/", 1)[0] + "/frames") if gj["json"] else "")
     if "package" in m:
@@ -1450,6 +1461,7 @@ def _check_values(m):
     errors += _check_public(m)
     errors += _check_mods(m)
     errors += _check_extract(m)
+    errors += _check_saves(m)
     for s in m["xbe"]["sha256"]:
         if not re.match(r"^[0-9a-f]{64}$", s):
             errors.append("xbe.sha256: %r is not a sha256" % s)
@@ -1468,6 +1480,82 @@ def _check_values(m):
             errors.append("%s: must stay inside the game root" % name)
     if errors:
         raise ManifestError("; ".join(errors))
+
+
+SAVES_SIGNED_KEYS = ("glob", "size", "data", "digest", "key")
+SAVES_SIGN_KEYS = ("roamable",)
+SAVES_DIGEST = 20  # HMAC-SHA1
+
+
+def _int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _check_saves(m):
+    """[saves] (openspec save-import D3): every recipe must describe one
+    file layout the importer can re-sign without touching its own data."""
+    s = m.get("saves")
+    if not s:
+        return []
+    errors = []
+    if not s["title_ids"]:
+        errors.append("saves.title_ids: name at least one title ID")
+    for t in s["title_ids"]:
+        if not 0 < t <= 0xFFFFFFFF:
+            errors.append("saves.title_ids: %r is not a 32-bit title ID" % t)
+    if s["signing"] not in ("", "resign", "none"):
+        errors.append('saves.signing: "resign" or "none" (or unset: not known)')
+    if s["tdata"] not in ("ignore", "optional", "required"):
+        errors.append('saves.tdata: one of "ignore", "optional", "required"')
+    if s["signing"] == "resign" and not s["signed"]:
+        errors.append('saves.signed: signing = "resign" needs at least one [[saves.signed]]')
+    if s["signed"] and s["signing"] != "resign":
+        errors.append('saves.signed: only with signing = "resign"')
+    by_glob = {}
+    for i, e in enumerate(s["signed"]):
+        name = "saves.signed[%d]" % i
+        bad = sorted(set(e) - set(SAVES_SIGNED_KEYS))
+        if bad:
+            errors.append("%s: unknown key %s" % (name, ", ".join(bad)))
+        missing = [k for k in SAVES_SIGNED_KEYS if k not in e]
+        if missing:
+            errors.append("%s: %s required" % (name, ", ".join(missing)))
+            continue
+        g, size, data, dg = e["glob"], e["size"], e["data"], e["digest"]
+        if (
+            not isinstance(g, str)
+            or not g
+            or g.startswith("/")
+            or "\\" in g
+            or ".." in g.split("/")
+        ):
+            errors.append("%s.glob: a pattern below UDATA/<tid>/, with /, no '..'" % name)
+            continue
+        if not _int(size) or size <= 0:
+            errors.append("%s.size: a positive byte count" % name)
+            continue
+        if not (isinstance(data, list) and len(data) == 2 and all(_int(x) for x in data)) or not (
+            0 <= data[0] < data[1] <= size
+        ):
+            errors.append("%s.data: [start, end] inside the file, start < end" % name)
+            continue
+        if not _int(dg) or dg < 0 or dg + SAVES_DIGEST > size:
+            errors.append("%s.digest: an offset with 20 bytes inside the file" % name)
+            continue
+        if e["key"] not in SAVES_SIGN_KEYS:
+            errors.append('%s.key: "roamable"' % name)
+        by_glob.setdefault(g.lower(), []).append((name, size, data, dg))
+    for rs in by_glob.values():
+        if len({r[1] for r in rs}) > 1:
+            errors.append("%s: entries for one glob must share size" % rs[0][0])
+        for name, _, _, dg in rs:
+            for other, _, data, _ in rs:
+                if dg < data[1] and data[0] < dg + SAVES_DIGEST:
+                    errors.append("%s.digest: inside %s's data range" % (name, other))
+            for other, _, _, dg2 in rs:
+                if other != name and abs(dg - dg2) < SAVES_DIGEST:
+                    errors.append("%s.digest: overlaps %s's" % (name, other))
+    return errors
 
 
 # A hook_functions entry: a VA, or a [mods.signatures] row by name.

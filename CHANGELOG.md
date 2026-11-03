@@ -7,6 +7,20 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Added
+- `saves list` and `saves import --from SRC`: a player's own saves from a
+  folder or zip (another install, a console's or Cxbx-Reloaded's copy, the
+  in-game menu's saves export) into the installed game. The save root is
+  found by its layout; names follow the FATX rules the menu's zip checks;
+  links are never followed. It refuses while the game (or the emulator
+  whose disk the source is on) runs, backs the saves there up first as a
+  menu saves zip in `config/exports/save-backups/`, stages each save and
+  renames it in, skips saves already there unless `--replace`, and
+  re-signs the files `[[saves.signed]]` names under the zero key.
+  `--dry-run` and `--json` show the plan.
+- `[saves]` in `game.toml`: `title_ids`, `signing`, `tdata` and
+  `[[saves.signed]]` recipes, checked on load.
+
 ## [0.20.0] - 2026-11-03
 
 ### Added

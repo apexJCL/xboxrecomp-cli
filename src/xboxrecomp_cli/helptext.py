@@ -29,6 +29,9 @@ Commands:
   @slug@ package windows|steamos|macos  the same, for a given target: dist/
   @slug@ import PATH [--replace]        only the import (--check compares, writes
                                         nothing)
+  @slug@ saves import --from PATH       your saves from a folder or zip (another
+                                        install, a console or Cxbx copy, the menu's
+                                        export); backs up first (saves list shows)
   @slug@ doctor                         what this host has, and what it can package
   @slug@ fingerprint [PATH]             whether your dump's code is the one the
                                         port was made from (modded data or code)

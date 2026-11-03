@@ -534,6 +534,7 @@ def test_command_table():
         "package",
         "clean",
         "import",
+        "saves",
         "fingerprint",
         "enhance",
         "extract",

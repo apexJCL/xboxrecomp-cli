@@ -241,6 +241,79 @@ as `xbe`, and the build wizard asks before building modded code.
 | `--toml` | maintainers: print the `[xbe.sections]` table for the XBE, to paste in `game.toml` |
 | `--json` | the verdict as JSON: `sha256`, `verdict`, `sections`, `note` |
 
+### `mygame saves <list|import>`
+
+Brings a player's own saves into the installed game: from another install,
+a dashboard or FTP copy of a console's `E:\UDATA`, Cxbx-Reloaded's
+`EmuDisk\Partition1`, or the in-game menu's saves export. A source is a
+folder or a zip (stored or deflated); the save root in it is found by its
+layout, not its name:
+
+- the shallowest folder holding `UDATA/` (an `E/` copy, an install's
+  `hdd/`, the menu's zip with `xbr-saves.toml` and `hdd/`);
+- a `UDATA` folder itself;
+- else a title folder (8 hex digits) whose save folders hold
+  `SaveMeta.xbx`, taken as `UDATA/<tid>`.
+
+A save folder with no title folder above it is listed as "no title" and
+left out; so are other games' title IDs. Every name follows the FATX rules
+the menu's zip checks (42 bytes, no `..`, no `\ : * ? " < > |`, no
+control characters, no trailing dot or space, no device names, at most 7
+folders below the save root). Links and junctions are never followed, and
+caps of 16 MiB a file, 64 MiB a save and in all, and 4096 entries bound
+what a source can make it read. A save that breaks a rule is refused; the
+others go in.
+
+`saves list [--from SRC] [--to DIR] [--json]` shows the saves in a source,
+or with no `--from` the ones the installed game has.
+
+`saves import --from SRC` plans, then:
+
+1. refuses while the game is running (Linux and macOS read the process
+   list, Windows `tasklist`; when the list cannot be had it warns), while
+   Cxbx-Reloaded or xemu runs and the source sits on its disk, a target
+   inside an app bundle or the game files, and a link anywhere in the
+   target's `UDATA/<tid>` or `TDATA/<tid>`;
+2. backs up the saves there, one zip per title in the menu's format, to
+   `<data>/config/exports/save-backups/<slug>-saves-backup-<UTC
+   yyyymmdd-hhmmss>.zip` (`-2`, `-3` on a clash), and reads it back: the
+   menu's **Import saves** restores it. A backup that fails stops the
+   import;
+3. takes `<target>/.save-import.lock` (a second import into the same
+   target is refused while it is held; one left by a run that died on
+   this host is taken over, and when the process list cannot be read it
+   counts as held), writes every save whole in `<target>/.save-import-tmp/`,
+   re-signs the files `[[saves.signed]]` names under the zero key, then
+   renames each one in. With `--replace` the save there is renamed aside
+   first. If any rename fails, every swap of the run is undone, newest
+   first, and the saves there are as they were; if an undo fails too, the
+   old copies stay in the staging folder with `UNDO-FAILED.txt`, and the
+   next import refuses until they are moved back. A run killed between
+   the two renames of one save gets that save put back on the next run;
+   if that save's place is taken again, the next import refuses and
+   names both copies rather than delete either.
+
+The target is the installed game's hdd folder: `<data>/hdd`, with
+`<data>` the `[data] dir_env` variable when it is set, else `[data]
+windows`, `macos` or `steamos` (which must be installed; else pass `--to`).
+
+| Option | Effect |
+|---|---|
+| `--from SRC` | the folder or zip |
+| `--to DIR` | the hdd folder (the one holding `UDATA`) to import into |
+| `--save ID` | only this save folder (repeatable) |
+| `--replace` | overwrite saves and TDATA files already there (default: skip them) |
+| `--with-tdata` | bring the title's `TDATA` too, when `[saves] tdata = "optional"` |
+| `--dry-run` | print the plan, write nothing |
+| `--json` | the plan (and the result) as JSON |
+
+Conflicts are per save folder, by name in any case; TDATA per file. A
+title folder's own files (`TitleMeta.xbx`, `TitleImage.xbx`) are written
+only where absent. A game without `[saves]` imports its saves as they are,
+with a warning ([manifest.md](manifest.md#saves)). Refusals end with
+`refused: CODE` (`running`, `emulator`, `target`, `link`, `backup`,
+`source`, `save`, `empty`, `write`, `busy`, `stage`).
+
 ### `mygame enhance hud`
 
 The HUD texture pack from the owner's own dump, into `dist/enhance/hud/hud.pack`.

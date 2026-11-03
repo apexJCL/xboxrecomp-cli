@@ -545,6 +545,12 @@ def register():
         _cfg_import,
     )(cmd_import)
     command(
+        "saves",
+        "your own saves from a folder or zip into the game (saves list, saves import): "
+        "backs up what is there first",
+        _cfg_saves,
+    )(cmd_saves)
+    command(
         "fingerprint",
         "the XBE's verdict against game.toml: known, header, modded data or modded code",
         _cfg_fingerprint,
@@ -575,6 +581,18 @@ def register():
         "emit, check; docs/commands.md)",
         _cfg_hudmap,
     )(cmd_hudmap)
+
+
+def _cfg_saves(p):
+    from .saves import cli
+
+    cli.configure(p)
+
+
+def cmd_saves(a):
+    from .saves import cli
+
+    return cli.run(a)
 
 
 def _cfg_hudmap(p):

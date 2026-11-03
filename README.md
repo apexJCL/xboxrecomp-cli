@@ -189,6 +189,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | `mygame import PATH` | Puts a disc image or dump folder in `game_files/` |
 | `mygame setup` | Fetches the pinned toolchain and toolkit |
 | `mygame doctor` | Says what this host has, what it can package, the memory, cores and disk a build gets, and what to do next |
+| `mygame saves <list\|import>` | Brings your own saves in from a folder or zip (another install, a console copy, Cxbx-Reloaded, the in-game menu's export), backing up the saves there first |
 | `mygame fingerprint [PATH]` | Says whether a dump's XBE is known, differs only in its header, or has modded data or code |
 | `mygame clean` | Frees space: lists the bundles and build trees it would delete, deletes with `--yes` |
 | `mygame all` | Runs analyze, recomp and build |
