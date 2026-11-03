@@ -22,6 +22,14 @@ committed file is `{}`; the module is never built in place for a release).
 | `internal/termlaunch` | a terminal for a step that needs one (sudo on Linux) |
 | `internal/screens` | the Fyne pages |
 
+## Design
+
+[`design/`](design/) holds the reworked wizard's target design:
+[`design/SPEC.md`](design/SPEC.md) is the contract (the Play and Explore
+structure, each page, its words and the CLI command behind it), and
+`design/screens/` the screens as HTML and PNG. Read the spec before
+changing a page.
+
 ## Dependencies
 
 Two direct ones, each pinned in `go.mod`:

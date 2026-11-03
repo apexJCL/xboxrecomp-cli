@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Options · build wizard design</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;0,700;1,400&amp;display=swap">
+<style>
+body{margin:0;background:#0e0f10}
+a{color:#86b6ef}a:hover{color:#b3d0f5}
+.b{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:5px;border:0;font:inherit;font-weight:600;color:#f3f3f3;background:#28292e;cursor:pointer;text-decoration:none;box-sizing:border-box;white-space:nowrap}
+.b:hover{background:#333439;color:#f3f3f3}
+.bp{background:#1c5cab;color:#ffffff}.bp:hover{background:#2367bd;color:#ffffff}
+.bq{background:transparent;color:#c3c2b7}.bq:hover{background:rgba(255,255,255,.059);color:#f0efec}
+.bo{background:transparent;box-shadow:inset 0 0 0 1px #f48fb1;color:#f0efec;font-weight:400}
+</style>
+</head>
+<body>
+<div style="min-height: 580px; display: flex; flex-direction: column; background: #171718; color: #f0efec; font-family: 'Noto Sans', system-ui, sans-serif; font-size: 14px; line-height: 1.5">
+<header style="display: flex; flex-direction: column; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px">
+<div style="display: flex; align-items: center; gap: 12px; padding: 12px 24px 0; flex-wrap: wrap">
+<div style="width: 32px; height: 32px; border-radius: 7px; background: #1e4d6b; display: flex; align-items: center; justify-content: center; flex: none"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5h3.5a5 5 0 0 1 0 10h-5.5l-4.015 4.227a2.3 2.3 0 0 1 -3.923 -2.035l1.634 -8.173a5 5 0 0 1 4.904 -4.019h3.4z"></path><path d="M14 15l4.07 4.284a2.3 2.3 0 0 0 3.925 -2.023l-1.6 -8.232"></path><path d="M8 9v2"></path><path d="M7 10h2"></path><path d="M14 10h2"></path></svg></div>
+<div style="display: flex; flex-direction: column; line-height: 1.25; flex: 1; min-width: 0"><strong style="font-size: 14px">BLiNX 2</strong><span style="font-size: 12px; color: #c3c2b7">Play · Fresh build</span></div>
+<span role="status" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: #202023; font-size: 12px; color: #c3c2b7"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#43f436" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"></path><path d="M9 12l2 2l4 -4"></path></svg>Your computer is ready</span>
+<a class="b bq" href="12-get-help.html"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"></path><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"></path><path d="M15 15l3.35 3.35"></path><path d="M9 15l-3.35 3.35"></path><path d="M5.65 5.65l3.35 3.35"></path><path d="M18.35 5.65l-3.35 3.35"></path></svg>Get help</a>
+</div>
+<ol aria-label="Steps" style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 10px 0 0; padding: 0 24px; list-style: none; font-size: 12px">
+<li style="display: flex; flex-direction: column; gap: 6px; color: #c3c2b7"><span style="height: 4px; border-radius: 2px; background: #296ff6"></span>Your game</li>
+<li style="display: flex; flex-direction: column; gap: 6px; color: #c3c2b7"><span style="height: 4px; border-radius: 2px; background: #296ff6"></span>Platforms</li>
+<li aria-current="step" style="display: flex; flex-direction: column; gap: 6px; font-weight: 600"><span style="height: 4px; border-radius: 2px; background: #296ff6"></span>Options</li>
+<li style="display: flex; flex-direction: column; gap: 6px; color: #c3c2b7"><span style="height: 4px; border-radius: 2px; background: #39393a"></span>Review</li>
+</ol>
+</header>
+<main style="flex: 1; padding: 24px 32px 20px; display: flex; flex-direction: column; gap: 18px; max-width: 716px; width: 100%; box-sizing: border-box; margin: 0 auto">
+<div style="display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap">
+<div style="flex: 1; min-width: 240px; display: flex; flex-direction: column; gap: 4px">
+<h1 style="margin: 0; font-size: 22px; line-height: 1.25; font-weight: 700">How should it look?</h1>
+<p style="margin: 0; color: #c3c2b7; text-wrap: pretty">The game starts with these. Most players leave them as they are.</p>
+</div>
+<button class="b bq" type="button" style="min-height: 36px; font-size: 13px">Reset to recommended</button>
+</div>
+<div style="display: flex; flex-direction: column; border-radius: 8px; background: #202023; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10)">
+<div style="display: flex; flex-direction: column; gap: 10px; padding: 16px">
+<div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+<label for="scale" style="font-weight: 600">Render scale</label>
+<span style="font-size: 13px; color: #f0efec; font-variant-numeric: tabular-nums">2× · 1280×960</span>
+</div>
+<input id="scale" type="range" min="1" max="4" value="2" style="width: 100%; accent-color: #296ff6; margin: 0">
+<div style="display: flex; justify-content: space-between; font-size: 12px; color: #c3c2b7"><span>As on the Xbox</span><span>Sharpest</span></div>
+<span style="font-size: 13px; color: #c3c2b7">Draws the game sharper on a big screen; needs a faster graphics card.</span>
+</div>
+<label style="display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-top: 1px solid rgba(255,255,255,0.08); cursor: pointer">
+<input type="checkbox" style="width: 20px; height: 20px; margin: 0; accent-color: #296ff6; flex: none">
+<span style="font-weight: 600; flex: 1">Start fullscreen</span>
+</label>
+<div style="display: flex; gap: 12px; padding: 14px 16px; border-top: 1px solid rgba(255,255,255,0.08)">
+<input id="hud" type="checkbox" checked style="width: 20px; height: 20px; margin: 2px 0 0; accent-color: #296ff6; flex: none">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<label for="hud" style="font-weight: 600; cursor: pointer">Sharper HUD and menus</label>
+<span style="font-size: 13px; color: #c3c2b7">Redrawn from your own game files.</span>
+<span style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #43f436"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"></path><path d="M9 12l2 2l4 -4"></path></svg>PT Sans Narrow is installed.</span>
+</div>
+</div>
+</div>
+<p style="margin: 0; font-size: 13px; color: #c3c2b7">You can change these and more later, in the game's settings file.</p>
+</main>
+<footer style="display: flex; align-items: center; gap: 12px; padding: 12px 24px; border-top: 1px solid rgba(255,255,255,0.08)">
+<a class="b" href="03-platforms.html">Back</a>
+<div style="flex: 1; display: flex; justify-content: center"><button class="b bo" type="button">♥️ Open-source</button></div>
+<a class="b bp" href="05-review.html">Next</a>
+</footer>
+</div>
+</body>
+</html>

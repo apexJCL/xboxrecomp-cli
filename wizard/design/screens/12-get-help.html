@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get help · build wizard design</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;0,700;1,400&amp;display=swap">
+<style>
+body{margin:0;background:#0e0f10}
+a{color:#86b6ef}a:hover{color:#b3d0f5}
+.b{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:5px;border:0;font:inherit;font-weight:600;color:#f3f3f3;background:#28292e;cursor:pointer;text-decoration:none;box-sizing:border-box;white-space:nowrap}
+.b:hover{background:#333439;color:#f3f3f3}
+.bp{background:#1c5cab;color:#ffffff}.bp:hover{background:#2367bd;color:#ffffff}
+.bq{background:transparent;color:#c3c2b7}.bq:hover{background:rgba(255,255,255,.059);color:#f0efec}
+.bo{background:transparent;box-shadow:inset 0 0 0 1px #f48fb1;color:#f0efec;font-weight:400}
+</style>
+</head>
+<body>
+<div style="min-height: 580px; display: flex; flex-direction: column; background: #171718; color: #f0efec; font-family: 'Noto Sans', system-ui, sans-serif; font-size: 14px; line-height: 1.5">
+<header style="display: flex; align-items: center; gap: 12px; padding: 12px 24px; border-bottom: 1px solid rgba(255,255,255,0.08); flex-wrap: wrap">
+<div style="width: 32px; height: 32px; border-radius: 7px; background: #1e4d6b; display: flex; align-items: center; justify-content: center; flex: none"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5h3.5a5 5 0 0 1 0 10h-5.5l-4.015 4.227a2.3 2.3 0 0 1 -3.923 -2.035l1.634 -8.173a5 5 0 0 1 4.904 -4.019h3.4z"></path><path d="M14 15l4.07 4.284a2.3 2.3 0 0 0 3.925 -2.023l-1.6 -8.232"></path><path d="M8 9v2"></path><path d="M7 10h2"></path><path d="M14 10h2"></path></svg></div>
+<div style="display: flex; flex-direction: column; line-height: 1.25; flex: 1; min-width: 0"><strong style="font-size: 14px">BLiNX 2</strong><span style="font-size: 12px; color: #c3c2b7">Get help</span></div>
+</header>
+<main style="flex: 1; padding: 24px 32px 18px; display: flex; flex-direction: column; gap: 18px; max-width: 716px; width: 100%; box-sizing: border-box; margin: 0 auto">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<h1 style="margin: 0; font-size: 22px; line-height: 1.25; font-weight: 700">Get help with this build</h1>
+<p style="margin: 0; color: #c3c2b7; text-wrap: pretty">Whoever helps you needs the technical side. This report has all of it, so you don't have to know what it means.</p>
+</div>
+<section aria-labelledby="h-copy" style="display: flex; flex-direction: column; gap: 10px">
+<h2 id="h-copy" style="margin: 0; display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600"><span style="width: 22px; height: 22px; border-radius: 50%; background: #1c5cab; color: #ffffff; font-size: 12px; display: flex; align-items: center; justify-content: center">1</span>Copy the report</h2>
+<pre aria-label="The report" style="margin: 0; padding: 12px 14px; max-height: 168px; overflow: auto; border-radius: 8px; background: #121213; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10); font-family: ui-monospace, 'DejaVu Sans Mono', monospace; font-size: 12px; line-height: 1.55; color: #c3c2b7; white-space: pre-wrap">### BLiNX 2 build wizard report
+Wizard v0.6.7 · release v1 (1a2b3c4) · xboxrecomp-cli v0.6.7 · toolkit blinx2-v0.3.1
+Computer: Windows 11 x64 · 16 GB memory (9.2 GB free) · 8 cores
+Path: Fresh build · platforms: windows, steamos · options: scale=2, hud_pack
+Stopped at: Compile (build) · exit status 1 · 6:52 in
+Command: blinx2 package windows --dump ~/Games/BLiNX2.iso --out ~/Downloads/BLiNX2-wizard/dist --plain --hud-pack --seed-config …
+
+Last lines:
+src/gen/rec_0012a4c0.c:1043:5: error: use of undeclared identifier 'ctx'
+FAILED: CMakeFiles/blinx2.dir/src/gen/rec_0012a4c0.c.obj
+ninja: build stopped: subcommand failed.</pre>
+<p style="margin: 0; display: flex; align-items: center; gap: 8px; font-size: 13px; color: #c3c2b7"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#43f436" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none"><path d="M11.46 20.846a12 12 0 0 1 -7.96 -14.846a12 12 0 0 0 8.5 -3a12 12 0 0 0 8.5 3a12 12 0 0 1 -.09 7.06"></path><path d="M15 19l2 2l4 -4"></path></svg>No game files. Your user name is shortened to ~. Nothing is sent until you post it.</p>
+<div style="display: flex; gap: 10px; flex-wrap: wrap">
+<button class="b bp" type="button"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667z"></path><path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1"></path></svg>Copy report</button>
+<button class="b" type="button">Save as a file…</button>
+<button class="b bq" type="button">Open the log folder</button>
+</div>
+</section>
+<section aria-labelledby="h-post" style="display: flex; flex-direction: column; gap: 10px">
+<h2 id="h-post" style="margin: 0; display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600"><span style="width: 22px; height: 22px; border-radius: 50%; background: #28292e; color: #f0efec; font-size: 12px; display: flex; align-items: center; justify-content: center">2</span>Post it where it helps</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 10px">
+<a href="https://github.com/apexJCL/blinx2-recomp/issues" style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 8px; background: #202023; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10); text-decoration: none; color: #f0efec">
+<span style="flex: 1; display: flex; flex-direction: column"><strong>The game misbehaves</strong><span style="font-size: 12px; color: #c3c2b7">blinx2-recomp, on GitHub</span></span>
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#86b6ef" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6"></path><path d="M11 13l9 -9"></path><path d="M15 4h5v5"></path></svg></a>
+<a href="https://github.com/apexJCL/xboxrecomp-cli/issues" style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 8px; background: #202023; box-shadow: inset 0 0 0 2px #296ff6; text-decoration: none; color: #f0efec">
+<span style="flex: 1; display: flex; flex-direction: column"><strong>The build or this wizard</strong><span style="font-size: 12px; color: #c3c2b7">xboxrecomp-cli, on GitHub · suggested</span></span>
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#86b6ef" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6"></path><path d="M11 13l9 -9"></path><path d="M15 4h5v5"></path></svg></a>
+</div>
+<p style="margin: 0; font-size: 13px; color: #c3c2b7">Opens the browser with the report filled in. Share the report or the log, never the finished game or your game files.</p>
+</section>
+</main>
+<footer style="display: flex; align-items: center; gap: 12px; padding: 12px 24px; border-top: 1px solid rgba(255,255,255,0.08)">
+<a class="b" href="11-build-stopped.html">Back</a>
+<div style="flex: 1"></div>
+<a class="b" href="11-build-stopped.html">Close</a>
+</footer>
+</div>
+</body>
+</html>
