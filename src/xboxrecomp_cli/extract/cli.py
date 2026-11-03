@@ -116,7 +116,7 @@ def extract_collision(image, cfg, stage, out_dir):
     """Writes <name>_col.gltf and collision.json under out_dir; returns
     the collision report."""
     reader = ninja.Reader(image, fmt_of(cfg))
-    w = collision.Writer(stage["name"], cfg["up"], cfg["collision_skip"])
+    w = collision.Writer(stage["name"], cfg["up"], cfg["collision_skip"], cfg["collision_class"])
     w.add_trees([reader.tree(va) for va in stage["collision"]])
     return w.write(out_dir)
 

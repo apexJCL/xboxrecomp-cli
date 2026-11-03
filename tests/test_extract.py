@@ -1786,7 +1786,7 @@ def test_collision_gltf_names_shapes_and_skips(tmp_path):
     j = json.load(open(tmp_path / "M_col.gltf"))
     assert os.path.getsize(tmp_path / "M_col.bin") == j["buffers"][0]["byteLength"]
     names = [n["name"] for n in j["nodes"]]
-    assert names == ["col_c08040-col", "M_col"]
+    assert names == ["col_0xc08040-col", "M_col"]
     assert j["nodes"][1]["rotation"] == gltf.UP_ROTATION["-y"]
     mat = j["materials"][0]
     assert mat["alphaMode"] == "BLEND" and mat["doubleSided"]
@@ -1802,8 +1802,39 @@ def test_collision_gltf_names_shapes_and_skips(tmp_path):
     w.add_trees([_hidden_tree()])
     rep = w.write(str(tmp_path))
     j = json.load(open(tmp_path / "M_col.gltf"))
-    assert j["nodes"][0]["name"] == "col_c08040" and "rotation" not in j["nodes"][1]
+    assert j["nodes"][0]["name"] == "col_0xc08040" and "rotation" not in j["nodes"][1]
     assert rep["classes"]["C08040"]["shape"] is False
+
+
+ROWS = [
+    {"value": 0x008000, "mask": 0x00FF00, "name": "green_mid", "colour": 0x123456},
+    {"value": CLASS, "mask": 0xFFFFFF, "name": "never"},  # the row above wins
+]
+
+
+def test_collision_class_names_nodes_and_keeps_the_colour(tmp_path):
+    w = collision.Writer("M", classes=ROWS)
+    w.add_trees([_hidden_tree()])
+    rep = w.write(str(tmp_path))
+    j = json.load(open(tmp_path / "M_col.gltf"))
+    assert [n["name"] for n in j["nodes"]] == ["col_green_mid_0xc08040-col", "M_col"]
+    assert j["meshes"][0]["name"] == j["materials"][0]["name"] == "col_green_mid_0xc08040"
+    rgb = j["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"][:3]
+    assert rgb == [collision._srgb_to_linear(v) for v in (0x12, 0x34, 0x56)]
+    assert rep["classes"] == {"C08040": {"triangles": 2, "shape": True, "name": "green_mid"}}
+    # No colour: the class colour; no row matches: the colour name alone.
+    for rows, name, rgb_of in (
+        ([{"value": CLASS, "mask": 0xFFFFFF, "name": "wall"}], "col_wall_0xc08040", CLASS),
+        ([{"value": 0x0000FF, "mask": 0xFFFFFF, "name": "blue"}], "col_0xc08040", CLASS),
+    ):
+        w = collision.Writer("M", skip=[CLASS], classes=rows)
+        w.add_trees([_hidden_tree()])
+        rep = w.write(str(tmp_path))
+        j = json.load(open(tmp_path / "M_col.gltf"))
+        assert j["nodes"][0]["name"] == name
+        rgb = j["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"][:3]
+        assert rgb == [collision._srgb_to_linear((rgb_of >> s) & 0xFF) for s in (16, 8, 0)]
+        assert ("name" in rep["classes"]["C08040"]) == (name != "col_0xc08040")
 
 
 def test_collision_counts_strips_without_a_colour():
@@ -1863,6 +1894,62 @@ def test_manifest_extract_collision_keys():
     flag = GAME_TOML + EXTRACT_B1.replace("[extract]\n", "[extract]\ncollision_skip = [true]\n")
     with pytest.raises(manifest.ManifestError, match="extract.collision_skip"):
         manifest.parse_text(flag)
+
+
+def test_manifest_extract_collision_class():
+    rows = (
+        '[[extract.collision_class]]\nvalue = 0xBFBFBF\nname = "solid"\n'
+        '[[extract.collision_class]]\nvalue = 0x7F0000\nmask = 0xFF0000\nname = "red"\n'
+        "colour = 0xFF0000\n"
+    )
+    m = manifest.parse_text(GAME_TOML + EXTRACT_B1 + rows)
+    assert m["extract"]["collision_class"] == [
+        {"value": 0xBFBFBF, "mask": 0xFFFFFF, "name": "solid"},
+        {"value": 0x7F0000, "mask": 0xFF0000, "name": "red", "colour": 0xFF0000},
+    ]
+    assert manifest.parse_text(GAME_TOML + EXTRACT_B1)["extract"]["collision_class"] == []
+    for row, why in (
+        ('value = 0xBFBFBF\nname = "Solid"\n', r"\[0\]\.name: lower-case"),
+        ('value = 0xBFBFBF\nname = "a-b"\n', r"\[0\]\.name: lower-case"),
+        ('value = 0x1000000\nname = "a"\n', r"\[0\]\.value: a 0xRRGGBB"),
+        ('value = 0xBF0000\nmask = 0xFF00\nname = "a"\n', r"\[0\]\.value: bits outside"),
+        ('value = 1\nname = "a"\ncolour = -1\n', r"\[0\]\.colour: a 0xRRGGBB"),
+        ('name = "a"\n', r"\[0\]\.value: required"),
+        ('value = 1\nname = "a"\nkind = 2\n', r"\[0\]\.kind: unknown key"),
+        # re.match with $ would take the trailing newline.
+        ('value = 1\nname = "a\\n"\n', r"\[0\]\.name: lower-case"),
+        # Godot would read these as a body, a navmesh or no node.
+        ('value = 1\nname = "rigid"\n', r"\[0\]\.name: 'rigid' ends in a Godot import hint"),
+        ('value = 1\nname = "a_col"\n', r"\[0\]\.name: 'a_col' ends in a Godot import hint"),
+        ('value = 1\nname = "x_navmesh"\n', r"\[0\]\.name: 'x_navmesh' ends"),
+    ):
+        with pytest.raises(manifest.ManifestError, match=r"extract\.collision_class" + why):
+            manifest.parse_text(GAME_TOML + EXTRACT_B1 + "[[extract.collision_class]]\n" + row)
+    # Names that only contain a hint word, or end in a longer word, pass.
+    for ok in ("collider", "wall_cols", "occ_floor", "rigid2"):
+        row = '[[extract.collision_class]]\nvalue = 1\nname = "%s"\n' % ok
+        manifest.parse_text(GAME_TOML + EXTRACT_B1 + row)
+    # A row an earlier row covers never matches: the same pair, a value
+    # inside an earlier family, or anything after mask = 0.
+    row = '[[extract.collision_class]]\nvalue = %s\nmask = %s\nname = "%s"\n'
+    for first, second in (
+        (("1", "0xFFFFFF", "a"), ("1", "0xFFFFFF", "b")),
+        (("0x7F0000", "0xFF0000", "red"), ("0x7F00FF", "0xFFFFFF", "b")),
+        (("0", "0", "all"), ("0x00FF00", "0x00FF00", "b")),
+    ):
+        with pytest.raises(
+            manifest.ManifestError,
+            match=r"collision_class\[1\]: never matches, extract\.collision_class\[0\] covers",
+        ):
+            manifest.parse_text(GAME_TOML + EXTRACT_B1 + row % first + row % second)
+    # The other way round both rows can match: the narrow row first.
+    narrow_first = row % ("0x7F00FF", "0xFFFFFF", "b") + row % ("0x7F0000", "0xFF0000", "red")
+    assert (
+        len(
+            manifest.parse_text(GAME_TOML + EXTRACT_B1 + narrow_first)["extract"]["collision_class"]
+        )
+        == 2
+    )
 
 
 # ---- the placements layer ---------------------------------------------------
@@ -2181,7 +2268,9 @@ def test_godot_scene_adds_the_placements_layer(monkeypatch):
         t = godot.scene("S", col, True)
         assert t.startswith("[gd_scene load_steps=%d " % (n + 1))
         assert 'path="res://stages/S/S_placements.gltf" id="%d"]' % n in t
-        assert t.endswith('[node name="placements" parent="." instance=ExtResource("%d")]\n' % n)
+        node = '[node name="placements" parent="." instance=ExtResource("%d")]\n' % n
+        # The collision instance stays editable, listed after every node.
+        assert t.endswith(node + ('\n[editable path="collision"]\n' if col else ""))
 
 
 @pytest.fixture

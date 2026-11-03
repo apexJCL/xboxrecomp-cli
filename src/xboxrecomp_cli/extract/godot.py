@@ -212,6 +212,10 @@ script = ExtResource("3")
 # glTF as a second instance. Its class nodes import as StaticBody3D with a
 # concave shape plus a see-through debug mesh; C toggles the meshes (the
 # shapes stay), and the "show_meshes" property does the same in the editor.
+# The instance's children are editable, so the Scene dock lists one node
+# per class (col_<name>_0x<rrggbb> with [[extract.collision_class]]) and its
+# eye hides that class alone. show_meshes hides the glTF's top node rather
+# than each mesh, so it keeps the classes hidden in the dock hidden.
 COLLISION_GD = """\
 @tool
 extends Node3D
@@ -229,8 +233,9 @@ func _ready():
 func _apply():
 	if not is_inside_tree():
 		return
-	for mi in find_children("*", "MeshInstance3D", true, false):
-		mi.visible = show_meshes
+	for top in get_children():
+		if top is Node3D:
+			top.visible = show_meshes
 
 
 func _unhandled_input(event):
@@ -255,6 +260,8 @@ script = ExtResource("3")
 
 [node name="collision" parent="." instance=ExtResource("4")]
 script = ExtResource("5")
+
+[editable path="collision"]
 """
 
 # The placements layer (xbr extract --placements): the stage's placements
@@ -272,13 +279,16 @@ def scene(name, collision=False, placements=False):
     text = (SCENE_COLLISION if collision else SCENE).format(name=name)
     if not placements:
         return text
+    text, editable = (text.split("\n[editable ", 1) + [None])[:2]
     head, body = text.split("\n[node ", 1)
     # The next resource id and one more load step, whatever the template
     # above holds.
     n = 1 + max(int(i) for i in re.findall(r'^\[ext_resource [^\n]* id="(\d+)"\]$', head, re.M))
     head = re.sub(r"load_steps=(\d+)", lambda m: "load_steps=%d" % (int(m[1]) + 1), head, count=1)
     head += PLACEMENTS_RESOURCE.format(name=name, id=n)
-    return head + "\n[node " + body + PLACEMENTS_NODE.format(id=n)
+    text = head + "\n[node " + body + PLACEMENTS_NODE.format(id=n)
+    # Godot lists [editable] after every node.
+    return text if editable is None else text + "\n[editable " + editable
 
 
 GITIGNORE = "# Game data made by xbr extract: never commit it.\n*\n"

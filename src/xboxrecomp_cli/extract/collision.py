@@ -6,11 +6,22 @@ material diffuse. Every strip with a diffuse is baked, textured or not. At load 
 transform whatever its eval flags say (a collision tree's root is often
 hidden), and bakes the triangles into world space for its own spatial
 index. This module does the same walk and writes the world triangles
-grouped by class, one node per class, named `col_<rrggbb>-col` so that
-Godot's scene importer gives each node a StaticBody3D with a concave
-(trimesh) shape and keeps its mesh. A class listed in [extract]
+grouped by class, one node per class, named `col_0x<rrggbb>-col` so
+that Godot's scene importer gives each node a StaticBody3D with a
+concave (trimesh) shape and keeps its mesh. A class listed in [extract]
 collision_skip (one the game never tests, such as a trigger volume)
-keeps its mesh and gets no shape: its node is named `col_<rrggbb>`.
+keeps its mesh and gets no shape: its node is named `col_0x<rrggbb>`.
+
+A game's [[extract.collision_class]] rows name the classes: the first
+row whose value matches the class under its mask names the node
+`col_<name>_0x<rrggbb>` (the colour stays, so classes that share a name
+still get a node each), and its colour, when given, replaces the class
+colour in the debug mesh. A class no row matches keeps `col_0x<rrggbb>`.
+
+The `0x` is there for Godot: before it matches an import hint it strips
+a name's trailing digits and '_', so `col_rigid_000000` would import as
+a RigidBody3D and `col_a_col_000000` as a StaticBody3D. No hint ends in
+`x`, so with it no name of ours strips into one.
 
 The meshes are a debug view: each class draws in its own diffuse colour,
 see-through, unlit and double-sided, so walls stay readable from either
@@ -117,11 +128,22 @@ def _srgb_to_linear(c):
     return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
 
 
+def class_row(c, rows):
+    """The first [[extract.collision_class]] row that matches class c
+    (c & mask == value), or None."""
+    for r in rows:
+        if c & r.get("mask", 0xFFFFFF) == r["value"]:
+            return r
+    return None
+
+
 class Writer:
-    def __init__(self, name, up="y", skip=()):
+    def __init__(self, name, up="y", skip=(), classes=()):
+        """classes: the [[extract.collision_class]] rows, in order."""
         self.name = name + "_col"
         self.up = up
         self.skip = set(skip)
+        self.classes = list(classes)
         self.doc = gltf._Doc()
         self.tris = Counter()  # class -> triangles
         self.stats = Counter()
@@ -155,11 +177,14 @@ class Writer:
         if not pos:
             return None
         self.tris[c] += len(pos) // 3
-        rgb = [_srgb_to_linear((c >> s) & 0xFF) for s in (16, 8, 0)]
+        label = self._label(c)
+        row = class_row(c, self.classes)
+        colour = c if row is None or row.get("colour") is None else row["colour"]
+        rgb = [_srgb_to_linear((colour >> s) & 0xFF) for s in (16, 8, 0)]
         mat = self.doc.add(
             "materials",
             {
-                "name": "col_%06x" % c,
+                "name": label,
                 "pbrMetallicRoughness": {
                     "baseColorFactor": rgb + [DEBUG_ALPHA],
                     "metallicFactor": 0.0,
@@ -177,12 +202,16 @@ class Writer:
         mesh = self.doc.add(
             "meshes",
             {
-                "name": "col_%06x" % c,
+                "name": label,
                 "primitives": [{"attributes": {"POSITION": pa, "NORMAL": na}, "material": mat}],
             },
         )
-        name = "col_%06x" % c + ("" if c in self.skip else SUFFIX)
+        name = label + ("" if c in self.skip else SUFFIX)
         return self.doc.add("nodes", {"name": name, "mesh": mesh})
+
+    def _label(self, c):
+        row = class_row(c, self.classes)
+        return "col_0x%06x" % c if row is None else "col_%s_0x%06x" % (row["name"], c)
 
     def write(self, out_dir):
         """Writes <name>_col.gltf/.bin and collision.json; returns the
@@ -200,13 +229,17 @@ class Writer:
             f.write("\n")
         rep = {
             "triangles": sum(self.tris.values()),
-            "classes": {
-                "%06X" % c: {"triangles": n, "shape": c not in self.skip}
-                for c, n in sorted(self.tris.items())
-            },
+            "classes": {"%06X" % c: self._entry(c, n) for c, n in sorted(self.tris.items())},
             "left_out": dict(sorted(self.stats.items())),
         }
         with open(os.path.join(out_dir, "collision.json"), "w") as f:
             json.dump(rep, f, indent=1, sort_keys=True)
             f.write("\n")
         return rep
+
+    def _entry(self, c, n):
+        e = {"triangles": n, "shape": c not in self.skip}
+        row = class_row(c, self.classes)
+        if row is not None:
+            e["name"] = row["name"]
+        return e

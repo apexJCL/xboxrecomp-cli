@@ -355,6 +355,8 @@ SPEC = {
         # Collision surface classes (0xRRGGBB diffuse colours) the game never
         # tests: extract --collision draws them but gives them no shape.
         "collision_skip": (INTS, []),
+        # Names for collision surface classes (EXTRACT_COLLISION_CLASS below).
+        "collision_class": (TABLES, []),
         # Where a texlist name's DDS is: a pattern under data.game_files
         # ("media/{name}.dds", any case) or "ipk:<archive>:<entry pattern>".
         "textures": (STR, REQUIRED),
@@ -460,6 +462,23 @@ EXTRACT_STAGE = {
     "placements": (INT, None),  # likewise
     "placement_layers": (None, None),  # likewise
 }
+# [[extract.collision_class]]: a name for the collision surface classes
+# whose 0xRRGGBB class, under mask, equals value; the first row that
+# matches wins. colour, when given, replaces the class colour in
+# extract --collision's debug mesh.
+EXTRACT_COLLISION_CLASS = {
+    "value": (INT, REQUIRED),
+    "mask": (INT, 0xFFFFFF),
+    "name": (STR, REQUIRED),
+    "colour": (INT, None),
+}
+COLLISION_CLASS_NAME = re.compile(r"[a-z0-9_]+")
+# Godot's import hints (resource_importer_scene.cpp): a node name ending
+# in one after '-' or '_' becomes a body, a navmesh or nothing.
+GODOT_HINT_WORDS = frozenset(
+    "col colonly convcol convcolonly rigid noimp navmesh vehicle wheel occ occonly"
+    " loop cycle vcol".split()
+)
 # [[extract.placement_set]]: one set of what a stage spawns at load
 # (enemies, items, props). table: a VA of u32 pointers indexed by the
 # stage's placements index plus each of layers; each points to a u32 count
@@ -689,6 +708,9 @@ def _derive(m):
                 e["texlist"] = [t] * len(e["root"])
             stages.append(e)
         m["extract"]["stage"] = stages
+        m["extract"]["collision_class"] = [
+            _entry(e, EXTRACT_COLLISION_CLASS) for e in m["extract"]["collision_class"]
+        ]
         m["extract"]["placement_set"] = [
             _entry(e, EXTRACT_PLACEMENT_SET) for e in m["extract"]["placement_set"]
         ]
@@ -769,6 +791,7 @@ def _check_extract(m):
         for c in x["collision_skip"]
     ):
         errors.append("extract.collision_skip: 0xRRGGBB colours")
+    errors += _check_collision_classes(x["collision_class"])
     why = rel_path_problem(x["out"])
     if why:
         errors.append("extract.out: %r %s" % (x["out"], why))
@@ -857,6 +880,40 @@ def _entry_errors(name, e, spec):
                 errors.append("%s.%s: required" % (name, k))
         elif kind is not None and not _type_ok(kind, e[k]):
             errors.append("%s.%s: must be a %s" % (name, k, kind))
+    return errors
+
+
+def _check_collision_classes(rows):
+    """[[extract.collision_class]]: 0xRRGGBB values, masks and colours, a
+    value with no bits outside its mask, a name of [a-z0-9_] that is not
+    and does not end in a Godot import hint (the node name ends in the
+    colour token, which keeps it from reading as one; this is a second
+    guard), and no row an earlier row covers (it could never match)."""
+    errors, ok = [], []
+    for i, e in enumerate(rows):
+        name = "extract.collision_class[%d]" % i
+        bad = _entry_errors(name, e, EXTRACT_COLLISION_CLASS)
+        errors += bad
+        if bad:
+            continue
+        for k in ("value", "mask", "colour"):
+            if k in e and not 0 <= e[k] <= 0xFFFFFF:
+                errors.append("%s.%s: a 0xRRGGBB value" % (name, k))
+        if e["value"] & ~e["mask"]:
+            errors.append("%s.value: bits outside mask 0x%06X" % (name, e["mask"] & 0xFFFFFF))
+        if not COLLISION_CLASS_NAME.fullmatch(e["name"]):
+            errors.append("%s.name: lower-case letters, digits and '_' only" % name)
+        elif e["name"].rsplit("_", 1)[-1] in GODOT_HINT_WORDS:
+            errors.append("%s.name: %r ends in a Godot import hint" % (name, e["name"]))
+        for j, f in ok:
+            # Row j matches every class this row does: its mask is no wider
+            # and the value agrees on its bits.
+            if not f["mask"] & ~e["mask"] and e["value"] & f["mask"] == f["value"]:
+                errors.append(
+                    "%s: never matches, extract.collision_class[%d] covers it" % (name, j)
+                )
+                break
+        ok.append((i, e))
     return errors
 
 

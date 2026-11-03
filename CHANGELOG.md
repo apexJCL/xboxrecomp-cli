@@ -7,6 +7,24 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Added
+- `[[extract.collision_class]]`: names for collision surface classes (a
+  value under a mask, a name and an optional debug colour). `extract
+  --collision` names a matched class's node `col_<name>_0x<rrggbb>` and
+  adds the name to `collision.json`. Names that are or end in a Godot
+  import hint, and rows an earlier row covers, are errors. The stage scene now keeps the collision instance's
+  children editable, so each class can be hidden in Godot's Scene dock,
+  and `C` hides the collision glTF's top node, which leaves those
+  per-class choices alone (they live in the stage's `.tscn`, so a rerun
+  of the extract drops them).
+
+### Changed
+- `extract --collision` names the class nodes `col_0x<rrggbb>` (was
+  `col_<rrggbb>`), also for a game with no `[[extract.collision_class]]`
+  rows. Godot strips a name's trailing digits and `_` before it looks for
+  an import hint, so a skipped class such as `col_rigid_000000` imported
+  as a body; no hint ends in the `x`.
+
 ### Fixed
 - `extract`: a texture mirrored on an axis whose UVs leave [0, 1] is
   written as a copy twice as long on that axis (image, then mirror image)
