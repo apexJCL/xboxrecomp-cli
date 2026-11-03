@@ -7,7 +7,19 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-03
+
 ### Added
+- `frames compact [--dry-run] [--jobs N] [--pins FILE]... [--no-pins] DIR...`
+  (also `xbr frames compact`): turns kept frame dumps into lossless PNG,
+  checked by decoding back, without clobbering. Alpha is kept unless it is
+  0 everywhere; BMPs with another header than the 40-byte one, and files
+  the game's reference text cites, stay BMP. `bench golden`, `golden run`
+  and `hud-map capture` and `check` compact the frames they keep on their
+  own; `--bmp-frames` (`XBR_FRAMES_BMP=1`) keeps BMP. Every frame reader
+  takes both formats. `bench golden` and `golden run` warn when a git
+  worktree's `bench-logs/` is a folder rather than a link to the shared
+  store.
 - `[[extract.collision_class]]`: names for collision surface classes (a
   value under a mask, a name and an optional debug colour). `extract
   --collision` names a matched class's node `col_<name>_0x<rrggbb>` and
@@ -36,6 +48,20 @@ a release by its tag in `game.toml`'s `[cli]` table.
   in; two mirrors inside [0, 1] are written as clamp. The texture count
   includes the copies; a texture only read through copies is no longer
   written.
+- The build wizard on Windows: a stock PC (ANSI code page cp1252, git's
+  `core.autocrlf=true`) can build again. Every text file the CLI writes is
+  UTF-8 (ruff's PLW1514 keeps it so) and the runner sets `PYTHONUTF8=1`,
+  so a non-ASCII character no longer stops the hook scan with
+  UnicodeEncodeError. Clones take `core.autocrlf=false`, an older CRLF
+  clone is turned back to LF (resumable, files the player edited are left
+  alone) and staged shader copies that differ only in line endings take
+  the toolkit's bytes, so `package` no longer refuses
+  `shaders/param-kinds.toml`. An unchanged `hook_functions.json` is no
+  longer rewritten, so Retry no longer fails with "has local changes".
+- `bench build` and `bench buildhost build` take `--stale-gen-ok` (and
+  `bench all` passes it on) instead of handing it to cmake.
+- A game with no `[package]` table imports (`<game> PATH`), cleans, and
+  `doctor` names `build` as the next step rather than `package`.
 
 ## [0.19.0] - 2026-11-01
 
@@ -807,7 +833,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.16.0...v0.17.0
