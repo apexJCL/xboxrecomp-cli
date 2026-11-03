@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review · build wizard design</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,600;0,700;1,400&amp;display=swap">
+<style>
+body{margin:0;background:#0e0f10}
+a{color:#86b6ef}a:hover{color:#b3d0f5}
+.b{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:5px;border:0;font:inherit;font-weight:600;color:#f3f3f3;background:#28292e;cursor:pointer;text-decoration:none;box-sizing:border-box;white-space:nowrap}
+.b:hover{background:#333439;color:#f3f3f3}
+.bp{background:#1c5cab;color:#ffffff}.bp:hover{background:#2367bd;color:#ffffff}
+.bq{background:transparent;color:#c3c2b7}.bq:hover{background:rgba(255,255,255,.059);color:#f0efec}
+.bo{background:transparent;box-shadow:inset 0 0 0 1px #f48fb1;color:#f0efec;font-weight:400}
+</style>
+</head>
+<body>
+<div style="min-height: 580px; display: flex; flex-direction: column; background: #171718; color: #f0efec; font-family: 'Noto Sans', system-ui, sans-serif; font-size: 14px; line-height: 1.5">
+<header style="display: flex; flex-direction: column; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px">
+<div style="display: flex; align-items: center; gap: 12px; padding: 12px 24px 0; flex-wrap: wrap">
+<div style="width: 32px; height: 32px; border-radius: 7px; background: #1e4d6b; display: flex; align-items: center; justify-content: center; flex: none"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5h3.5a5 5 0 0 1 0 10h-5.5l-4.015 4.227a2.3 2.3 0 0 1 -3.923 -2.035l1.634 -8.173a5 5 0 0 1 4.904 -4.019h3.4z"></path><path d="M14 15l4.07 4.284a2.3 2.3 0 0 0 3.925 -2.023l-1.6 -8.232"></path><path d="M8 9v2"></path><path d="M7 10h2"></path><path d="M14 10h2"></path></svg></div>
+<div style="display: flex; flex-direction: column; line-height: 1.25; flex: 1; min-width: 0"><strong style="font-size: 14px">BLiNX 2</strong><span style="font-size: 12px; color: #c3c2b7">Play · Fresh build</span></div>
+<span role="status" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: #202023; font-size: 12px; color: #c3c2b7"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#43f436" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"></path><path d="M9 12l2 2l4 -4"></path></svg>Your computer is ready</span>
+<a class="b bq" href="12-get-help.html"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"></path><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"></path><path d="M15 15l3.35 3.35"></path><path d="M9 15l-3.35 3.35"></path><path d="M5.65 5.65l3.35 3.35"></path><path d="M18.35 5.65l-3.35 3.35"></path></svg>Get help</a>
+</div>
+<ol aria-label="Steps" style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 10px 0 0; padding: 0 24px; list-style: none; font-size: 12px">
+<li style="display: flex; flex-direction: column; gap: 6px; color: #c3c2b7"><span style="height: 4px; border-radius: 2px; background: #296ff6"></span>Your game</li>
+<li style="display: flex; flex-direction: column; gap: 6px; color: #c3c2b7"><span style="height: 4px; border-radius: 2px; background: #296ff6"></span>Platforms</li>
+<li style="display: flex; flex-direction: column; gap: 6px; color: #c3c2b7"><span style="height: 4px; border-radius: 2px; background: #296ff6"></span>Options</li>
+<li aria-current="step" style="display: flex; flex-direction: column; gap: 6px; font-weight: 600"><span style="height: 4px; border-radius: 2px; background: #296ff6"></span>Review</li>
+</ol>
+</header>
+<main style="flex: 1; padding: 22px 32px 18px; display: flex; flex-direction: column; gap: 16px; max-width: 716px; width: 100%; box-sizing: border-box; margin: 0 auto">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<h1 style="margin: 0; font-size: 22px; line-height: 1.25; font-weight: 700">Ready to build</h1>
+<p style="margin: 0; color: #c3c2b7; text-wrap: pretty">This makes two installers, one for each computer you picked. Once it starts, it runs on its own.</p>
+</div>
+<dl style="margin: 0; display: flex; flex-direction: column; border-radius: 8px; background: #202023; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10)">
+<div style="display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 16px">
+<dt style="color: #c3c2b7; font-size: 13px">Game</dt><dd style="margin: 0">BLiNX 2, from your disc image</dd><a href="02b-your-game-checked.html" style="font-size: 13px">Change</a>
+</div>
+<div style="display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.08)">
+<dt style="color: #c3c2b7; font-size: 13px">For</dt><dd style="margin: 0">Windows PC, and Steam Deck or Linux PC</dd><a href="03-platforms.html" style="font-size: 13px">Change</a>
+</div>
+<div style="display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.08)">
+<dt style="color: #c3c2b7; font-size: 13px">Settings</dt><dd style="margin: 0">Render scale 2×, sharper HUD and menus</dd><a href="04-options.html" style="font-size: 13px">Change</a>
+</div>
+<div style="display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.08)">
+<dt style="color: #c3c2b7; font-size: 13px">Finished game</dt><dd style="margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Downloads\BLiNX2-wizard\dist</dd><a href="01-welcome.html" style="font-size: 13px">Change</a>
+</div>
+</dl>
+<div style="display: flex; align-items: center; gap: 10px; font-size: 13px; color: #c3c2b7"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#43f436" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"></path><path d="M9 12l2 2l4 -4"></path></svg>Enough free disk space for both installers.</div>
+<div style="display: flex; flex-direction: column; gap: 4px">
+<details style="border-top: 1px solid rgba(255,255,255,0.08)">
+<summary style="display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; font-weight: 600"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z"></path><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"></path></svg>Advanced<span style="font-weight: 400; font-size: 13px; color: #c3c2b7">Build jobs: Automatic · Rebuild everything: off</span></summary>
+</details>
+<details style="border-top: 1px solid rgba(255,255,255,0.08); border-bottom: 1px solid rgba(255,255,255,0.08)">
+<summary style="display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; font-weight: 600"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c3c2b7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 8l-4 4l4 4"></path><path d="M17 8l4 4l-4 4"></path><path d="M14 4l-4 16"></path></svg>Technical details<span style="font-weight: 400; font-size: 13px; color: #c3c2b7">Versions, commands and the plan, for whoever helps you</span></summary>
+</details>
+</div>
+</main>
+<footer style="display: flex; align-items: center; gap: 12px; padding: 12px 24px; border-top: 1px solid rgba(255,255,255,0.08)">
+<a class="b" href="04-options.html">Back</a>
+<div style="flex: 1; display: flex; justify-content: center"><button class="b bo" type="button">♥️ Open-source</button></div>
+<a class="b bp" href="06-building.html"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.414 10l-7.383 7.418a2.091 2.091 0 0 0 0 2.967a2.11 2.11 0 0 0 2.976 0l7.407 -7.385"></path><path d="M18.121 15.293l2.586 -2.586a1 1 0 0 0 0 -1.414l-7.586 -7.586a1 1 0 0 0 -1.414 0l-2.586 2.586a1 1 0 0 0 0 1.414l7.586 7.586a1 1 0 0 0 1.414 0z"></path></svg>Build</a>
+</footer>
+</div>
+</body>
+</html>
