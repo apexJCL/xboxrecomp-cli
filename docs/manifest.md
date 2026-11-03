@@ -499,6 +499,14 @@ VAs (`table`, `table_flagged`, `object`, `texlist`) are 0 or more.
 
 `extract --placements` writes `stages/<name>/<name>_placements.gltf`: one top node per set, carrying the turn from `placement_world` and `up`, then one node per record with its position and rotation and its model or a marker box under it, and glTF `extras` with the set, layer, index, class, variant, flags, the raw rotation and the model's VAs. `placements.json` holds the same per record plus the record's bytes, the counts per set and the classes no `[[extract.placement_model]]` names. The scene instances the glTF as a `placements` node. A drawn model's nodes are named `obj_<va>` after their `NJS_OBJECT`, unique only under one parent: two placements of one model repeat the names, so address a model's nodes through its placement's node. A record whose position or rotation is not finite is `unreadable`: it keeps its bytes in `placements.json` (with `null` for those numbers), no transform and a marker. A table entry or record list that cannot be read is listed under its set's `errors` in `placements.json` and printed as a warning; the other sets and layers are still written.
 
+## [system]
+
+The title's console settings that the player may change.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `languages` | `[]` | The languages the game's disc carries, as dashboard codes in the game's order: `en` `ja` `de` `fr` `es` `it` `ko` `zh` `pt` (XC_LANGUAGE 1 to 9). `build` passes them to the toolkit (`-DXBOXRECOMP_LANGUAGES=en,ja,...`, compared with the cache on every build, so a new list reconfigures). The menu's Game page then offers these as `system.language`, and the runtime refuses any other code (English). Empty: no Language item, and `system.language` takes any of the nine. |
+
 ## [hud]
 
 This table is optional: the game's HUD table for the toolkit's HUD layer,

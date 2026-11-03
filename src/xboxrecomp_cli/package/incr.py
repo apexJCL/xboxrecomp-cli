@@ -230,6 +230,7 @@ def compile_inputs(btarget, a, lib, icon_args, bdir):
     cache = lib.read_cache(cache_path) if os.path.isfile(cache_path) else {}
     dlist = (
         list(build_mod.stock_cmake_args())
+        + build_mod.game_args(bdir)
         + ["-DXBOXRECOMP_DIR=" + toolkit.toolkit_dir()]
         + list(icon_args)
     )

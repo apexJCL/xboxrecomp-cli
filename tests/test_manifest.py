@@ -114,6 +114,54 @@ def test_errors_name_the_key(edit, key):
         parse(edit(MINIMAL))
 
 
+def test_system_languages(monkeypatch, tmp_path):
+    """[system] languages: dashboard codes, each once; build passes them
+    to the toolkit and a cache with another list reconfigures."""
+    import types
+
+    assert parse(MINIMAL)["system"] == {"languages": []}
+    m = parse(MINIMAL + '[system]\nlanguages = ["en", "ja", "fr", "es"]\n')
+    assert m["system"]["languages"] == ["en", "ja", "fr", "es"]
+    for bad, why in (
+        ('["en", "EN"]', "'EN' is not one of"),
+        ('["en", "us"]', "'us' is not one of"),
+        ('["en", "en"]', "listed twice"),
+        ('"en"', "system.languages: must be a"),
+    ):
+        with pytest.raises(manifest.ManifestError, match=why):
+            parse(MINIMAL + "[system]\nlanguages = %s\n" % bad)
+    monkeypatch.setattr(build.host, "g", lambda: types.SimpleNamespace(m=m))
+    assert build.game_args() == ["-DXBOXRECOMP_LANGUAGES=en,ja,fr,es"]
+    (tmp_path / "CMakeCache.txt").write_text("XBOXRECOMP_LANGUAGES:STRING=en,ja\n")
+    assert build.pool_moved(str(tmp_path), build.game_args())
+    (tmp_path / "CMakeCache.txt").write_text("XBOXRECOMP_LANGUAGES:STRING=en,ja,fr,es\n")
+    assert not build.pool_moved(str(tmp_path), build.game_args())
+    m["system"]["languages"] = []
+    assert build.game_args() == []
+    # A list dropped from game.toml: CMake keeps the cached one unless the
+    # empty value replaces it.
+    assert build.game_args(str(tmp_path)) == ["-DXBOXRECOMP_LANGUAGES="]
+    assert build.pool_moved(str(tmp_path), build.game_args(str(tmp_path)))
+    (tmp_path / "CMakeCache.txt").write_text("XBOXRECOMP_LANGUAGES:STRING=\n")
+    assert build.game_args(str(tmp_path)) == []
+
+
+def test_system_languages_need_the_toolkit(monkeypatch, tmp_path):
+    """A toolkit without the language setting would only warn of the unused
+    -D, so build refuses [system] languages with it."""
+    import types
+
+    m = parse(MINIMAL + '[system]\nlanguages = ["en", "fr"]\n')
+    monkeypatch.setattr(build.host, "g", lambda: types.SimpleNamespace(m=m))
+    with pytest.raises(build.CliError, match="needs a toolkit with the language setting"):
+        build.check_game_args(str(tmp_path))
+    (tmp_path / "src" / "kernel").mkdir(parents=True)
+    (tmp_path / "src" / "kernel" / "kernel_language.c").write_text("")
+    build.check_game_args(str(tmp_path))
+    m["system"]["languages"] = []
+    build.check_game_args(str(tmp_path / "old"))
+
+
 def test_enhance_hud_table():
     """Optional; defaults; the font needs its rows; validation names keys."""
     m = parse(MINIMAL)

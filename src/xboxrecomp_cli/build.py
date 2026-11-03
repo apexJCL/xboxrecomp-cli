@@ -240,8 +240,38 @@ def pool_args(bdir, gen_jobs):
     ]
 
 
+def game_args(bdir=None):
+    """The -D values game.toml sets in the toolkit: [system] languages, the
+    languages the title ships. Passed on every configure and compared with
+    the cache like the pool's, so a new list reaches a configured tree; none
+    for a game that names none (the toolkit's default), unless bdir's cache
+    still holds a list from before: CMake keeps a cache value it is not
+    given, so the empty one clears it."""
+    langs = host.g().m["system"]["languages"]
+    if langs:
+        return ["-DXBOXRECOMP_LANGUAGES=" + ",".join(langs)]
+    if bdir and cached(bdir, "XBOXRECOMP_LANGUAGES"):
+        return ["-DXBOXRECOMP_LANGUAGES="]
+    return []
+
+
+def check_game_args(tk):
+    """Refuse a game.toml value the toolkit cannot take. An older toolkit
+    has no XBOXRECOMP_LANGUAGES, and CMake only warns of an unused -D, so
+    the game would build without its language setting and say nothing."""
+    if host.g().m["system"]["languages"] and not os.path.isfile(
+        os.path.join(tk, "src", "kernel", "kernel_language.c")
+    ):
+        raise CliError(
+            "[system] languages needs a toolkit with the language setting"
+            " (src/kernel/kernel_language.c), not %s: update the toolkit"
+            " (XBOXRECOMP_DIR or the [toolkit] pin) or drop [system] languages"
+            " from game.toml" % tk
+        )
+
+
 def pool_moved(bdir, args):
-    """Whether a configured tree's cached pool differs from args."""
+    """Whether a configured tree's cached values differ from args."""
     for a in args:
         var, _, val = a[2:].partition("=")
         if cached(bdir, var) != val:
@@ -281,6 +311,7 @@ def build(
     tk = toolkit.toolkit_dir()
     if not os.path.isfile(os.path.join(tk, "CMakeLists.txt")):
         raise CliError("no toolkit at %s: run '%s setup' or set XBOXRECOMP_DIR" % (tk, host.prog()))
+    check_game_args(tk)
     if target == "windows":
         reset_stale_toolchain(bdir, toolchain_file())
     reset_stale_toolkit(bdir, tk)
@@ -293,7 +324,7 @@ def build(
     host.say("build: " + sizing.line())
     for w in sizing.warnings:
         host.say("WARNING: " + w)
-    extra = pool_args(bdir, sizing.gen_jobs) if pool else []
+    extra = (pool_args(bdir, sizing.gen_jobs) if pool else []) + game_args(bdir)
     configured = os.path.isfile(os.path.join(bdir, "CMakeCache.txt"))
     timer = build_timer(g, target, bdir, tk, cmake, ninja, command, lineage, configured)
     timer.doc["jobs"] = sizing.jobs
@@ -353,7 +384,8 @@ def configure_and_compile(
         timer.timed("configure", lambda: host.run(cfg + list(cmake_args) + extra, env=env))
     elif cmake_args or (extra and pool_moved(bdir, extra)):
         # A new pool depth regenerates build.ninja only: no compile command
-        # changes, so Ninja rebuilds nothing. -S even with a cache: given
+        # changes, so Ninja rebuilds nothing (a new language list recompiles
+        # one toolkit file). -S even with a cache: given
         # -B alone, CMake takes the working directory as the source tree,
         # and a build host runs the CLI from its ssh home.
         timer.timed(

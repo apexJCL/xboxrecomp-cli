@@ -377,6 +377,12 @@ SPEC = {
         # upstream files): any other is a doctor note.
         "extra": (STRS, []),
     },
+    # What the title's console settings may be: the languages its disc
+    # carries, as XC_LANGUAGE codes (LANGUAGES). build passes them to the
+    # toolkit (XBOXRECOMP_LANGUAGES), whose menu offers only these.
+    "system": {
+        "languages": (STRS, []),
+    },
     # hud-map (docs/commands.md): the game's HUD table for the toolkit's
     # HUD layer, the scenarios check runs by default, and the mod id that
     # switches the layer (capture --level 1 and check run it on and off).
@@ -386,6 +392,9 @@ SPEC = {
         "mod": (STR, ""),
     },
 }
+# The dashboard's language codes, XC_LANGUAGE 1..9 in order (the toolkit's
+# kernel_language.c holds the same table).
+LANGUAGES = ("en", "ja", "de", "fr", "es", "it", "ko", "zh", "pt")
 # Optional tables: a game without them still sets up, generates, builds and
 # benches (package says the manifest has no [package]). A game without
 # [public] is not published; one without [layout] has the standard one;
@@ -1324,6 +1333,12 @@ def _check_values(m):
         if p["url"].startswith("-"):
             # git would read it as an option (clone, ls-remote).
             errors.append("%s.url: %r starts with '-'" % (k, p["url"]))
+    langs = m["system"]["languages"]
+    for code in langs:
+        if code not in LANGUAGES:
+            errors.append("system.languages: %r is not one of %s" % (code, " ".join(LANGUAGES)))
+    if len(set(langs)) != len(langs):
+        errors.append("system.languages: a code is listed twice")
     if not m["cli"]["tag"] and not m["cli"]["commit"]:
         errors.append("cli: tag or commit required")
     if not m["toolkit"]["tag"]:

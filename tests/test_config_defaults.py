@@ -45,6 +45,7 @@ WANT = {
     "present.surface": "auto",
     "present.shader_lines": "auto",
     "storage.ram_cache": True,
+    "system.language": "en",
     "menu.enabled": False,
 }
 

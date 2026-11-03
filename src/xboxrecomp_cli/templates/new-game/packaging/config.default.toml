@@ -87,6 +87,13 @@ ram_cache = true          # the cache partition (Z:) in memory, capped at the
                           # nothing back. Costs up to 750 MB of RAM. false: the
                           # files go to hdd/Cache as stock
 
+[system]
+language = "en"           # the language the game is told the console is set
+                          # to, read at boot: en ja de fr es it ko zh pt. A
+                          # code the game does not ship (game.toml [system]
+                          # languages) gives English. Also on the menu's Game
+                          # page when the game names its languages
+
 # [textures]
 # pack = "none"           # a texture pack file, relative to the executable;
 #                         # `package --hud-pack` writes this table itself
