@@ -1801,15 +1801,16 @@ def test_collision_gltf_names_shapes_and_skips(tmp_path):
     j = json.load(open(tmp_path / "M_col.gltf", encoding="utf-8"))
     assert os.path.getsize(tmp_path / "M_col.bin") == j["buffers"][0]["byteLength"]
     names = [n["name"] for n in j["nodes"]]
-    assert names == ["col_0xc08040-col", "M_col"]
-    assert j["nodes"][1]["rotation"] == gltf.UP_ROTATION["-y"]
+    assert names == ["col_0xc08040-col", "col_0xc08040_flat", "col_0xc08040_edges", "M_col"]
+    assert j["nodes"][0]["children"] == [1, 2]
+    assert j["nodes"][3]["rotation"] == gltf.UP_ROTATION["-y"]
     mat = j["materials"][0]
     assert mat["alphaMode"] == "BLEND" and mat["doubleSided"]
     assert mat["pbrMetallicRoughness"]["baseColorFactor"][3] == collision.DEBUG_ALPHA
     assert gltf.UNLIT in j["extensionsUsed"]
     assert rep == {
         "triangles": 2,
-        "classes": {"C08040": {"triangles": 2, "shape": True}},
+        "classes": {"C08040": {"triangles": 2, "shape": True, "edges": 4, "flatness": FLAT2}},
         "left_out": {},
     }
     assert json.load(open(tmp_path / "collision.json", encoding="utf-8")) == rep
@@ -1817,9 +1818,12 @@ def test_collision_gltf_names_shapes_and_skips(tmp_path):
     w.add_trees([_hidden_tree()])
     rep = w.write(str(tmp_path))
     j = json.load(open(tmp_path / "M_col.gltf", encoding="utf-8"))
-    assert j["nodes"][0]["name"] == "col_0xc08040" and "rotation" not in j["nodes"][1]
+    assert j["nodes"][0]["name"] == "col_0xc08040" and "rotation" not in j["nodes"][3]
     assert rep["classes"]["C08040"]["shape"] is False
 
+
+# The test quad is level: both faces in the flat band.
+FLAT2 = {"flat": 2, "near": 0, "tilted": 0, "slope": 0, "sliver": 0}
 
 ROWS = [
     {"value": 0x008000, "mask": 0x00FF00, "name": "green_mid", "colour": 0x123456},
@@ -1832,11 +1836,24 @@ def test_collision_class_names_nodes_and_keeps_the_colour(tmp_path):
     w.add_trees([_hidden_tree()])
     rep = w.write(str(tmp_path))
     j = json.load(open(tmp_path / "M_col.gltf", encoding="utf-8"))
-    assert [n["name"] for n in j["nodes"]] == ["col_green_mid_0xc08040-col", "M_col"]
+    assert [n["name"] for n in j["nodes"]] == [
+        "col_green_mid_0xc08040-col",
+        "col_green_mid_0xc08040_flat",
+        "col_green_mid_0xc08040_edges",
+        "M_col",
+    ]
     assert j["meshes"][0]["name"] == j["materials"][0]["name"] == "col_green_mid_0xc08040"
     rgb = j["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"][:3]
     assert rgb == [collision._srgb_to_linear(v) for v in (0x12, 0x34, 0x56)]
-    assert rep["classes"] == {"C08040": {"triangles": 2, "shape": True, "name": "green_mid"}}
+    assert rep["classes"] == {
+        "C08040": {
+            "triangles": 2,
+            "shape": True,
+            "edges": 4,
+            "flatness": FLAT2,
+            "name": "green_mid",
+        }
+    }
     # No colour: the class colour; no row matches: the colour name alone.
     for rows, name, rgb_of in (
         ([{"value": CLASS, "mask": 0xFFFFFF, "name": "wall"}], "col_wall_0xc08040", CLASS),
@@ -1850,6 +1867,347 @@ def test_collision_class_names_nodes_and_keeps_the_colour(tmp_path):
         rgb = j["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"][:3]
         assert rgb == [collision._srgb_to_linear((rgb_of >> s) & 0xFF) for s in (16, 8, 0)]
         assert ("name" in rep["classes"]["C08040"]) == (name != "col_0xc08040")
+
+
+def _quad(z0, z1, x=1.0):
+    """Two triangles from (0, 0, z0) to (x, 0, z1), in the y = 0 plane
+    when x is a length, wound one way and the other."""
+    a, b, c, d = (0, 0, z0), (x, 0, z0), (x, 0, z1), (0, 0, z1)
+    return [(a, b, c), (a, d, c)]
+
+
+def _wall(z):
+    """A unit quad standing up from the floor at x = 1, z from z to z + 1."""
+    a, b, c, d = (1, 0, z), (1, 1, z), (1, 1, z + 1), (1, 0, z + 1)
+    return [(a, b, c), (a, c, d)]
+
+
+def _key(points, pairs):
+    return {frozenset(tuple(round(v, 6) for v in points[i]) for i in e) for e in pairs}
+
+
+def test_collision_shade_tells_faces_apart():
+    light = collision.light_in("y")
+    floor, wall_x, wall_z = (0, 1, 0), (1, 0, 0), (0, 0, 1)
+    shades = [collision.shade(n, light) for n in (floor, wall_x, wall_z)]
+    # The floor brightest, the two walls apart from it and from each other.
+    assert shades[0] > shades[1] > shades[2] >= collision.AMBIENT
+    assert min(shades[0] - shades[1], shades[1] - shades[2]) > 0.1
+    # Both sides of a face get one shade.
+    assert collision.shade((0, -1, 0), light) == shades[0]
+    # Edge-on to the light: the ambient floor, never black.
+    lt = collision._unit(collision.LIGHT)
+    side = collision._unit((lt[1], -lt[0], 0.0))
+    assert collision.shade(side, light) == pytest.approx(collision.AMBIENT)
+    # "-y" turns the tree half a turn about X: the light follows it, so the
+    # floor (up in Godot) still faces it the same.
+    assert collision.light_in("-y") == pytest.approx((lt[0], -lt[1], -lt[2]))
+
+
+def test_collision_shade_is_baked_into_color_0(tmp_path):
+    w = collision.Writer("M", "-y")
+    w.add_trees([_hidden_tree()])
+    w.write(str(tmp_path))
+    j = json.load(open(tmp_path / "M_col.gltf", encoding="utf-8"))
+    raw = open(tmp_path / "M_col.bin", "rb").read()
+    prim = j["meshes"][0]["primitives"][0]
+    acc = j["accessors"][prim["attributes"]["COLOR_0"]]
+    view = j["bufferViews"][acc["bufferView"]]
+    cols = list(
+        struct.iter_unpack("<3f", raw[view["byteOffset"] : view["byteOffset"] + view["byteLength"]])
+    )
+    assert acc["count"] == 6 and len(cols) == 6
+    na = j["accessors"][prim["attributes"]["NORMAL"]]
+    nv = j["bufferViews"][na["bufferView"]]
+    n = struct.unpack_from("<3f", raw, nv["byteOffset"])
+    g = collision._srgb_to_linear(255 * collision.shade(n, collision.light_in("-y")))
+    assert all(c == pytest.approx((g, g, g), abs=1e-6) for c in cols)
+    # The class colour stays in the material, still unlit and see-through.
+    mat = j["materials"][prim["material"]]
+    assert mat["pbrMetallicRoughness"]["baseColorFactor"][3] == collision.DEBUG_ALPHA
+    assert gltf.UNLIT in mat["extensions"] and mat["alphaMode"] == "BLEND"
+
+
+def test_collision_crease_edges_cube():
+    cube = []
+    for axis in range(3):
+        for side in (0, 1):
+
+            def p(u, v, axis=axis, side=side):
+                q = [u, v]
+                q.insert(axis, side)
+                return tuple(float(c) for c in q)
+
+            cube += [(p(0, 0), p(1, 0), p(1, 1)), (p(0, 0), p(1, 1), p(0, 1))]
+    points, pairs = collision.crease_edges(cube)
+    # The 12 cube edges; the six face diagonals are coplanar seams.
+    assert len(pairs) == 12 and len(points) == 8
+    for a, b in pairs:
+        assert sum(x != y for x, y in zip(points[a], points[b])) == 1
+
+
+def test_collision_crease_edges_l_shape_and_coplanar_quads():
+    # Two coplanar quads side by side, wound both ways: only the outline
+    # (6 open edges), no diagonals, no shared seam.
+    flat = _quad(0, 1) + _quad(1, 2)
+    points, pairs = collision.crease_edges(flat)
+    assert len(pairs) == 6
+    assert frozenset({(0, 0, 1), (1, 0, 1)}) not in _key(points, pairs)
+    # A floor and a wall meeting at a right angle: the shared edge is a crease.
+    ell = _quad(0, 1) + _wall(0)
+    points, pairs = collision.crease_edges(ell)
+    keys = _key(points, pairs)
+    assert frozenset({(1, 0, 0), (1, 0, 1)}) in keys
+    assert len(pairs) == 7  # 3 + 3 open edges and the crease
+    # Under the threshold the fold is a seam.
+    bent = _quad(0, 1) + [
+        ((1, 0, 0), (2, 0.1, 0), (2, 0.1, 1)),
+        ((1, 0, 0), (2, 0.1, 1), (1, 0, 1)),
+    ]
+    assert frozenset({(1, 0, 0), (1, 0, 1)}) not in _key(*collision.crease_edges(bent))
+    assert frozenset({(1, 0, 0), (1, 0, 1)}) in _key(*collision.crease_edges(bent, deg=5))
+    # Corners a hair apart weld into one vertex.
+    nudged = _quad(0, 1) + [tuple((x, y, z + 1e-5) for x, y, z in t) for t in _quad(1, 2)]
+    assert len(collision.crease_edges(nudged)[1]) == 6
+
+
+def test_collision_gltf_writes_edges_as_lines(tmp_path):
+    w = collision.Writer("M")
+    w.add_trees([_hidden_tree()])
+    w.write(str(tmp_path))
+    j = json.load(open(tmp_path / "M_col.gltf", encoding="utf-8"))
+    edges = j["nodes"][2]
+    # No hint suffix: Godot keeps it a plain mesh and builds no shape.
+    assert edges["name"].endswith(collision.EDGES) and "-col" not in edges["name"]
+    prim = j["meshes"][edges["mesh"]]["primitives"][0]
+    assert prim["mode"] == collision.LINES == 1
+    assert set(prim["attributes"]) == {"POSITION"}
+    idx = j["accessors"][prim["indices"]]
+    assert idx["count"] == 8 and j["accessors"][prim["attributes"]["POSITION"]]["count"] == 4
+    mat = j["materials"][prim["material"]]
+    assert "alphaMode" not in mat and gltf.UNLIT in mat["extensions"]
+    face = j["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"]
+    line = mat["pbrMetallicRoughness"]["baseColorFactor"]
+    assert line[3] == 1.0 and all(a < b for a, b in zip(line[:3], face[:3]))
+
+
+def _sphere(lon=36, lat=18):
+    """A closed UV sphere: neighbouring faces meet at 10 degrees, and the
+    pole quads collapse into triangles with two corners welded."""
+
+    def p(i, j):
+        t, f = math.pi * j / lat, 2 * math.pi * i / lon
+        return (math.sin(t) * math.cos(f), math.cos(t), math.sin(t) * math.sin(f))
+
+    tris = []
+    for i in range(lon):
+        for j in range(lat):
+            a, b, c, d = p(i, j), p(i + 1, j), p(i + 1, j + 1), p(i, j + 1)
+            tris += [(a, b, c), (a, c, d)]
+    return tris
+
+
+def test_collision_smooth_closed_mesh_has_no_edges(tmp_path):
+    assert collision.crease_edges(_sphere()) == ([], [])
+    w = collision.Writer("M")
+    node = w.doc.j["nodes"][w._class_node(CLASS, _sphere())]
+    # Only the flatness copy: no lines.
+    (kid,) = node["children"]
+    assert w.doc.j["nodes"][kid]["name"].endswith(collision.FLAT) and w.edges[CLASS] == 0
+
+
+def test_collision_weld_reaches_across_a_cell_border():
+    # 0.49 and 0.51 weld cells round apart, 2e-5 from each other.
+    w = collision.WELD
+    left = _quad(0, 1)
+    right = [tuple((x, y, z + 0.51 * w if z == 1 else z) for x, y, z in t) for t in _quad(1, 2)]
+    left = [tuple((x, y, z + 0.49 * w if z == 1 else z) for x, y, z in t) for t in left]
+    points, pairs = collision.crease_edges(left + right)
+    assert len(pairs) == 6 and len(points) == 6
+    # A sliver with two welded corners is left out, not drawn as a line.
+    sliver = [((0, 0, 0), (1, 0, 0), (1, 0, 0.1 * w))]
+    assert collision.crease_edges(sliver) == ([], [])
+
+
+def test_collision_edges_with_up_minus_y_and_skipped_class(tmp_path):
+    w = collision.Writer("M", "-y", skip=[CLASS])
+    w.add_trees([_hidden_tree()])
+    w.write(str(tmp_path))
+    j = json.load(open(tmp_path / "M_col.gltf", encoding="utf-8"))
+    names = [n["name"] for n in j["nodes"]]
+    # The skipped class has no shape hint but keeps its lines, under the
+    # turned top node.
+    assert names == ["col_0xc08040", "col_0xc08040_flat", "col_0xc08040_edges", "M_col"]
+    assert j["nodes"][0]["children"] == [1, 2] and j["nodes"][3]["children"] == [0]
+    assert j["nodes"][3]["rotation"] == gltf.UP_ROTATION["-y"]
+    prim = j["meshes"][j["nodes"][2]["mesh"]]["primitives"][0]
+    assert prim["mode"] == collision.LINES
+    assert j["accessors"][prim["indices"]]["componentType"] == 5125
+    # The lines sit on the face corners, in the same (unturned) frame.
+    raw = open(tmp_path / "M_col.bin", "rb").read()
+
+    def rows(i):
+        a = j["accessors"][i]
+        v = j["bufferViews"][a["bufferView"]]
+        return {
+            tuple(round(c, 4) for c in r)
+            for r in struct.iter_unpack(
+                "<3f", raw[v["byteOffset"] : v["byteOffset"] + v["byteLength"]]
+            )
+        }
+
+    faces = j["meshes"][0]["primitives"][0]["attributes"]["POSITION"]
+    assert rows(prim["attributes"]["POSITION"]) == rows(faces)
+
+
+def test_collision_gd_toggles_edges():
+    gd = godot.COLLISION_GD
+    assert "@export var show_edges := true" in gd and "KEY_E" in gd and "KEY_C" in gd
+    assert 'find_children("*%s"' % collision.EDGES in gd and "{edges}" not in gd
+    # C and E fade the faces and the lines apart and never set visible, so
+    # C alone leaves the lines and a class hidden in the dock stays hidden.
+    assert "m.transparency = 0.0 if show_meshes and not flatness else 1.0" in gd
+    assert "e.transparency = 0.0 if show_edges else 1.0" in gd
+    assert ".visible" not in gd
+    # Godot's glTF import leaves COLOR_0 out of the albedo; the script
+    # turns it on.
+    assert "vertex_color_use_as_albedo = true" in gd
+
+
+def test_collision_flat_band_edges():
+    # Each band starts at its edge.
+    assert [collision.flat_band(d) for d in (0, 0.0999, 0.1, 1.999, 2, 9.999, 10, 45)] == [
+        0,
+        0,
+        1,
+        1,
+        2,
+        2,
+        3,
+        3,
+    ]
+
+    def tilt(deg):
+        r = math.radians(deg)
+        return (math.sin(r), math.cos(r), 0.0)
+
+    # Off flat or off vertical, whichever is nearer, either side up.
+    for deg, want in ((0, 0), (0.05, 0), (0.5, 1), (5, 2), (30, 3), (45, 3), (85, 2), (90, 0)):
+        for n in (tilt(deg), tuple(-c for c in tilt(deg))):
+            assert collision.flat_band(collision.flatness_deg(n)) == want, (deg, n)
+    # Tenths of a degree stay exact where acos would round them off.
+    assert abs(collision.flatness_deg(tilt(0.01)) - 0.01) < 1e-9
+
+
+def _accessor_rows(j, raw, i, fmt="<3f"):
+    a = j["accessors"][i]
+    v = j["bufferViews"][a["bufferView"]]
+    return list(struct.iter_unpack(fmt, raw[v["byteOffset"] : v["byteOffset"] + v["byteLength"]]))
+
+
+def test_collision_flatness_copy_in_the_gltf(tmp_path):
+    # One level face, one 1 degree off, one 5 off, one a real slope, and a
+    # wall 0.05 off vertical, in a tree turned by "-y".
+    def face(deg):
+        r = math.radians(deg)
+        return ((0, 0, 0), (math.cos(r), math.sin(r), 0), (0, 0, 1))
+
+    tris = [face(0), face(1), face(5), face(30), face(89.95)]
+    w = collision.Writer("M", "-y")
+    at = w._class_node(CLASS, tris)
+    assert w.bands[CLASS] == {0: 2, 1: 1, 2: 1, 3: 1}
+    w.doc.j["scenes"][0]["nodes"].append(w.doc.add("nodes", {"name": "M_col", "children": [at]}))
+    rep = w.write(str(tmp_path))
+    assert rep["classes"]["C08040"]["flatness"] == {
+        "flat": 2,
+        "near": 1,
+        "tilted": 1,
+        "slope": 1,
+        "sliver": 0,
+    }
+    j = json.load(open(tmp_path / "M_col.gltf", encoding="utf-8"))
+    raw = open(tmp_path / "M_col.bin", "rb").read()
+    node = j["nodes"][at]
+    flat = j["nodes"][node["children"][0]]
+    # A plain mesh (no hint), sharing the faces' positions, coloured per
+    # face in its band colour times the face's shade, on white.
+    assert flat["name"] == "col_0xc08040" + collision.FLAT
+    fp = j["meshes"][flat["mesh"]]["primitives"][0]
+    cp = j["meshes"][node["mesh"]]["primitives"][0]
+    assert fp["attributes"]["POSITION"] == cp["attributes"]["POSITION"]
+    assert fp["attributes"]["COLOR_0"] != cp["attributes"]["COLOR_0"]
+    mat = j["materials"][fp["material"]]
+    assert mat["pbrMetallicRoughness"]["baseColorFactor"] == [1.0, 1.0, 1.0, collision.DEBUG_ALPHA]
+    assert mat["alphaMode"] == "BLEND" and gltf.UNLIT in mat["extensions"]
+    cols = _accessor_rows(j, raw, fp["attributes"]["COLOR_0"])[::3]
+    light = collision.light_in("-y")
+    for (r, g, b), t, band in zip(cols, tris, (0, 1, 2, 3, 0)):
+        s = collision.shade(collision._normal(t), light)
+        fc = collision.FLAT_COLOURS[band]
+        want = [collision._srgb_to_linear(((fc >> k) & 0xFF) * s) for k in (16, 8, 0)]
+        assert [round(c, 5) for c in (r, g, b)] == [round(c, 5) for c in want]
+
+
+def test_collision_slivers_get_a_band_of_their_own(tmp_path):
+    # Two corners within WELD: a normal of noise, so neither flat nor a
+    # slope, but the face keeps its shape.
+    w = collision.WELD
+    sliver = ((0, 0, 0), (1, 0.5, 0), (1 + 0.5 * w, 0.5, 0.5 * w))
+    level = ((0, 0, 0), (1, 0, 0), (0, 0, 1))
+    assert collision._sliver(sliver) and not collision._sliver(level)
+    wr = collision.Writer("M")
+    at = wr._class_node(CLASS, [sliver, level])
+    assert wr.bands[CLASS] == {collision.SLIVER: 1, 0: 1} and wr.tris[CLASS] == 2
+    wr.doc.j["scenes"][0]["nodes"].append(wr.doc.add("nodes", {"name": "M_col", "children": [at]}))
+    rep = wr.write(str(tmp_path))
+    assert rep["classes"]["C08040"]["flatness"]["sliver"] == 1
+    assert collision.FLAT_NAMES[collision.SLIVER] == "sliver"
+    j = json.load(open(tmp_path / "M_col.gltf", encoding="utf-8"))
+    raw = open(tmp_path / "M_col.bin", "rb").read()
+    fp = j["meshes"][j["nodes"][j["nodes"][at]["children"][0]]["mesh"]]["primitives"][0]
+    r, g, b = _accessor_rows(j, raw, fp["attributes"]["COLOR_0"])[0]
+    assert r == g == b  # neutral
+    # The class mesh still holds both faces for the shape.
+    assert j["accessors"][j["meshes"][0]["primitives"][0]["attributes"]["POSITION"]]["count"] == 6
+
+
+def test_collision_bands_use_the_up_rotation(monkeypatch):
+    # Both real ups ("y" and the half turn "-y") leave every band alone,
+    # and so would any quarter turn (it swaps flat and vertical), so a
+    # made-up 45 degree turn about Z tells a missing rotation apart.
+    h = math.sqrt(0.5 - 0.5 * math.sqrt(0.5))  # sin(22.5)
+    monkeypatch.setitem(gltf.UP_ROTATION, "tilt", [0.0, 0.0, h, math.sqrt(1 - h * h)])
+    level = ((0, 0, 0), (1, 0, 0), (0, 0, 1))
+    for up, band in (("y", 0), ("-y", 0), ("tilt", 3)):
+        w = collision.Writer("M", up)
+        w._class_node(CLASS, [level])
+        assert w.bands[CLASS] == {band: 1}, up
+
+
+def test_collision_gd_materials_leave_the_lines_out():
+    gd = godot.COLLISION_GD
+    body = gd[gd.index("func _materials():") :].split("\n\n\n")[0]
+    assert "_faces() + _flats()" in body and "_edges" not in body
+    faces = gd[gd.index("func _faces():") :].split("\n\n\n")[0]
+    assert 'ends_with("%s")' % collision.EDGES in faces and "continue" in faces
+    # The lines get their own pulled-forward shader, never no_depth_test.
+    assert "EDGE_SHADER" in gd and "no_depth_test" not in gd
+    assert "v.xyz *= 1.0 - %s;" % collision.EDGE_PULL in gd
+    assert "render_mode unshaded" in gd and "{{" not in gd
+
+
+def test_collision_gd_flatness_and_opaque():
+    gd = godot.COLLISION_GD
+    # Both off by default, on F and O.
+    assert "@export var flatness := false" in gd and "@export var opaque := false" in gd
+    assert "KEY_F:\n\t\tflatness = not flatness" in gd
+    assert "KEY_O:\n\t\topaque = not opaque" in gd
+    # F swaps the class faces for their flatness copies, both under C.
+    assert 'find_children("*%s"' % collision.FLAT in gd and "{flat}" not in gd
+    assert "m.transparency = 0.0 if show_meshes and flatness else 1.0" in gd
+    # O switches the materials' alpha, never visible or the shading mode.
+    assert "TRANSPARENCY_DISABLED" in gd and "TRANSPARENCY_ALPHA" in gd
+    assert ".visible" not in gd and "shading_mode" not in gd
 
 
 def test_collision_counts_strips_without_a_colour():

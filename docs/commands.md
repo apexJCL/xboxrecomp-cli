@@ -350,7 +350,7 @@ stage and a viewer that frames it. Needs `[extract]` in `game.toml`.
 |---|---|
 | `--stage NAME` | extract only this stage (repeatable) |
 | `--out OUT` | output directory (default: `[extract] out`) |
-| `--collision` | also write each stage's collision trees (static bodies + debug mesh, `C` toggles); off by default |
+| `--collision` | also write each stage's collision trees (static bodies + shaded debug mesh, `C` toggles it, `E` its crease lines, `F` colours faces by how far off flat or vertical, `O` makes them opaque); off by default |
 | `--placements` | also write each stage's placements (`[[extract.placement_set]]`): a named node per record, its rigid model or a marker box, plus `placements.json`; off by default |
 | `--import` | run Godot's headless import over the project and fail on any error line (log in `import.log`) |
 | `--list` | print the stages, write nothing |

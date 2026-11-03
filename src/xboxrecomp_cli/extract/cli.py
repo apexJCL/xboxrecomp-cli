@@ -11,8 +11,10 @@ stages/<name>/report.json (its counts, what was left out, what was
 approximated and what goes beyond plain glTF), and <out>/report.txt
 gathers every stage's report in the words the run prints. --collision
 adds, for each stage that names collision trees, stages/<name>/<name>_col.gltf
-(collision.py: Godot static bodies plus a see-through debug mesh by
-surface class, C toggles it) and stages/<name>/collision.json.
+(collision.py: Godot static bodies plus a see-through, shaded debug mesh
+by surface class with crease lines; C toggles the meshes, E the lines,
+F colours faces by how far off flat or vertical, O makes them opaque)
+and stages/<name>/collision.json.
 --placements adds, for each stage with a placements index,
 stages/<name>/<name>_placements.gltf (placements.py: one named node per
 record of the [[extract.placement_set]] sets, its model where one is named

@@ -27,6 +27,41 @@ The meshes are a debug view: each class draws in its own diffuse colour,
 see-through, unlit and double-sided, so walls stay readable from either
 side. The Godot scene toggles them (godot.py's COLLISION_GD); the shapes
 stay. Nothing here reads textures.
+
+Flat colour hides corners, so each face is shaded by its direction: a
+brightness from its normal against one fixed light (LIGHT, from above
+at an angle, AMBIENT the floor), baked into COLOR_0 and multiplied with
+the class colour. The material stays unlit, so the shading is the same
+under any scene light. Godot 4.7.2's glTF import keeps COLOR_0 but does
+not use it as albedo on a material the file defines, so collision.gd
+turns vertex_color_use_as_albedo on for the class meshes.
+
+Each class node also gets a child `<label>_edges`: opaque, darker lines
+(glTF mode LINES) along its creases, where two faces meet at more than
+CREASE_DEG, and its open edges. Corners within WELD of each other are
+one vertex, and a triangle two of whose corners weld is left out. A
+seam between coplanar faces that share both corners draws no line, but
+a T-junction (a corner of one face on the side of another) shows as
+open edges, and so does a class border, in both classes. The winding is
+not trusted, so a face's two sides count as one plane: a fold sharper
+than 180 - CREASE_DEG degrees (160; two faces nearly back to back) draws no
+line either. The child is a plain mesh (no hint suffix, and Godot
+builds no shape from lines). In the scene C hides the faces and E the
+lines, each without the other.
+
+A second child `<label>_flat` holds the same faces coloured by how far
+each is from exactly flat or exactly vertical, in the scene's frame
+(after the up rotation): under FLAT_BANDS[0] degrees grey, then yellow,
+orange, and red from FLAT_BANDS[2] on (a real slope); each band starts
+at its edge. A sliver (two corners within WELD, a face the edges leave
+out) has no trustworthy normal: it is dark grey and counted apart, and
+keeps its shape. A face a few tenths of a degree off flat is one the
+game may treat as a slope, so the view finds them without maths in the
+scene. collision.json counts each class's faces per band. F swaps the
+class colours for these (off by default), and O makes the faces opaque
+(off by default; still unlit); both work with C, E and the editor's eye.
+The scene draws the lines a hair toward the camera (EDGE_PULL), so the
+opaque faces they lie on do not hide them.
 """
 
 import json
@@ -39,6 +74,31 @@ from . import gltf, ninja
 # How opaque the debug mesh is.
 DEBUG_ALPHA = 0.35
 SUFFIX = "-col"
+EDGES = "_edges"
+# The shading light, in Godot's frame (+Y up): from above, off to one
+# side, so walls facing X and Z get different shades. AMBIENT keeps a face
+# edge-on to it from going black.
+LIGHT = (0.5, 1.0, 0.25)
+AMBIENT = 0.3
+# Faces meeting at more than this many degrees get an edge line.
+CREASE_DEG = 20.0
+# Corners closer than this (game units) are one vertex for the edges.
+WELD = 1e-3
+# The edge lines' colour: the class colour this much darker.
+EDGE_DARKEN = 0.3
+LINES = 1  # glTF primitive mode
+FLAT = "_flat"
+# Flatness band edges, in degrees off flat or vertical: a face below the
+# first is grey, then yellow, orange and, from the last on, red.
+FLAT_BANDS = (0.1, 2.0, 10.0)
+# The last band is the slivers: faces with two corners within WELD.
+FLAT_NAMES = ("flat", "near", "tilted", "slope", "sliver")
+FLAT_COLOURS = (0x9A9A9A, 0xF0D020, 0xF08020, 0xE02020, 0x4A4A4A)
+SLIVER = len(FLAT_BANDS) + 1
+# The edge lines' vertices are pulled this fraction of their distance
+# toward the camera, so they stay in front of the faces they lie on when
+# O makes those write depth, and still hide behind anything else.
+EDGE_PULL = 0.002
 
 
 def _mat_mul(a, b):
@@ -123,6 +183,95 @@ def _normal(t):
     return None if ln == 0 else (n[0] / ln, n[1] / ln, n[2] / ln)
 
 
+def _unit(v):
+    ln = math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
+    return (v[0] / ln, v[1] / ln, v[2] / ln)
+
+
+def light_in(up):
+    """LIGHT in the tree's own frame: the top node's up rotation undone."""
+    q = gltf.UP_ROTATION[up]
+    lt = _unit(LIGHT)
+    return lt if not q else gltf._qrot((-q[0], -q[1], -q[2], q[3]), lt)
+
+
+def shade(n, light):
+    """A face's brightness, AMBIENT to 1. Both sides of a face get the same
+    shade (the mesh is double-sided and the game's winding is not relied
+    on)."""
+    d = abs(n[0] * light[0] + n[1] * light[1] + n[2] * light[2])
+    return AMBIENT + (1.0 - AMBIENT) * d
+
+
+def flatness_deg(n):
+    """How many degrees the face with normal n (+Y up) is off exactly flat
+    or exactly vertical, whichever is nearer. atan2 keeps tenths of a
+    degree exact where acos of a dot near 1 would not."""
+    off_flat = math.degrees(math.atan2(math.hypot(n[0], n[2]), abs(n[1])))
+    return min(off_flat, 90.0 - off_flat)
+
+
+def _sliver(t, weld=WELD):
+    """Whether two of t's corners are within weld of each other (on every
+    axis), as crease_edges welds them."""
+    return any(
+        all(abs(a - b) <= weld for a, b in zip(t[i], t[j])) for i, j in ((0, 1), (1, 2), (2, 0))
+    )
+
+
+def flat_band(deg, edges=FLAT_BANDS):
+    """The band index of a face deg off flat or vertical: 0 below
+    edges[0], len(edges) from edges[-1] on."""
+    return sum(deg >= e for e in edges)
+
+
+def crease_edges(tris, deg=CREASE_DEG, weld=WELD):
+    """(points, pairs): the edges of tris (corner triples) where two faces
+    meet at more than deg degrees, and the open ones (one face); an edge
+    shared by more faces counts as a crease unless they are all coplanar.
+    Corners within weld of each other (on every axis) are one vertex, and
+    a triangle with two welded corners is left out. A face's two sides are
+    one plane, so a seam between faces wound either way is coplanar, and
+    so is a fold sharper than 180 - deg degrees."""
+    cos_max = math.cos(math.radians(deg))
+    cells, points = {}, []  # weld cell -> ids of the points in it
+
+    def vid(p):
+        k = tuple(round(c / weld) for c in p)
+        # Two corners within weld can round into neighbouring cells.
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    for i in cells.get((k[0] + dx, k[1] + dy, k[2] + dz), ()):
+                        if all(abs(a - b) <= weld for a, b in zip(points[i], p)):
+                            return i
+        cells.setdefault(k, []).append(len(points))
+        points.append(p)
+        return len(points) - 1
+
+    faces = {}  # (a, b) with a < b -> normals of the faces on it
+    for t in tris:
+        n = _normal(t)
+        if n is None:
+            continue
+        v = [vid(p) for p in t]
+        if len(set(v)) < 3:
+            continue
+        for a, b in ((v[0], v[1]), (v[1], v[2]), (v[2], v[0])):
+            faces.setdefault((min(a, b), max(a, b)), []).append(n)
+    pairs = []
+    for e, ns in faces.items():
+        n0 = ns[0]
+        if len(ns) == 1 or any(
+            abs(n0[0] * m[0] + n0[1] * m[1] + n0[2] * m[2]) < cos_max for m in ns[1:]
+        ):
+            pairs.append(e)
+    # Only the points the lines use, renumbered.
+    used = sorted({i for e in pairs for i in e})
+    remap = {old: new for new, old in enumerate(used)}
+    return [points[i] for i in used], [(remap[a], remap[b]) for a, b in pairs]
+
+
 def _srgb_to_linear(c):
     c /= 255.0
     return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
@@ -146,6 +295,9 @@ class Writer:
         self.classes = list(classes)
         self.doc = gltf._Doc()
         self.tris = Counter()  # class -> triangles
+        self.edges = Counter()  # class -> edge lines
+        self.light = light_in(up)
+        self.bands = {}  # class -> Counter of flatness band index
         self.stats = Counter()
 
     def add_trees(self, trees):
@@ -166,7 +318,9 @@ class Writer:
         self.doc.j["scenes"][0]["nodes"].append(self.doc.add("nodes", top))
 
     def _class_node(self, c, tris):
-        pos, nrm = [], []
+        pos, nrm, col, flat = [], [], [], []
+        q = gltf.UP_ROTATION[self.up]
+        bands = self.bands.setdefault(c, Counter())
         for t in tris:
             n = _normal(t)
             if n is None:
@@ -174,39 +328,90 @@ class Writer:
                 continue
             pos.extend(t)
             nrm.extend((n, n, n))
+            # COLOR_0 is linear: store the shade so it shows at that
+            # brightness on screen.
+            s = shade(n, self.light)
+            g = _srgb_to_linear(255.0 * s)
+            col.extend(((g, g, g),) * 3)
+            # The band is measured in the scene's frame, the up rotation
+            # applied. Both ups in use ("y", and "-y", a half turn about
+            # X) leave every band as it is, but a turn that tilts the
+            # scene would not, so the rotation stays. A sliver's normal is
+            # noise, so it gets a band of its own (it keeps its shape).
+            # The colour keeps the shade so corners still read.
+            if _sliver(t):
+                b = SLIVER
+            else:
+                b = flat_band(flatness_deg(n if not q else gltf._qrot(q, n)))
+            bands[b] += 1
+            fc = FLAT_COLOURS[b]
+            fl = tuple(_srgb_to_linear(((fc >> k) & 0xFF) * s) for k in (16, 8, 0))
+            flat.extend((fl,) * 3)
         if not pos:
             return None
         self.tris[c] += len(pos) // 3
         label = self._label(c)
         row = class_row(c, self.classes)
         colour = c if row is None or row.get("colour") is None else row["colour"]
-        rgb = [_srgb_to_linear((colour >> s) & 0xFF) for s in (16, 8, 0)]
-        mat = self.doc.add(
-            "materials",
-            {
-                "name": label,
-                "pbrMetallicRoughness": {
-                    "baseColorFactor": rgb + [DEBUG_ALPHA],
-                    "metallicFactor": 0.0,
-                    "roughnessFactor": 1.0,
-                },
-                "alphaMode": "BLEND",
-                "doubleSided": True,
-                "extensions": {gltf.UNLIT: {}},
-            },
-        )
-        if gltf.UNLIT not in self.doc.j["extensionsUsed"]:
-            self.doc.j["extensionsUsed"].append(gltf.UNLIT)
+        srgb = [(colour >> s) & 0xFF for s in (16, 8, 0)]
+        rgb = [_srgb_to_linear(v) for v in srgb]
+        mat = self._material(label, rgb + [DEBUG_ALPHA], blend=True)
         pa = self.doc.accessor("f", 3, pos, "VEC3", gltf.ARRAY_BUFFER, minmax=True)
         na = self.doc.accessor("f", 3, nrm, "VEC3", gltf.ARRAY_BUFFER)
+        ca = self.doc.accessor("f", 3, col, "VEC3", gltf.ARRAY_BUFFER)
+        attrs = {"POSITION": pa, "NORMAL": na, "COLOR_0": ca}
         mesh = self.doc.add(
-            "meshes",
-            {
-                "name": label,
-                "primitives": [{"attributes": {"POSITION": pa, "NORMAL": na}, "material": mat}],
-            },
+            "meshes", {"name": label, "primitives": [{"attributes": attrs, "material": mat}]}
         )
         name = label + ("" if c in self.skip else SUFFIX)
+        node = {"name": name, "mesh": mesh}
+        at = self.doc.add("nodes", node)
+        # The flatness view: the same faces (shared positions and
+        # normals) in band colours, on a white material.
+        fa = self.doc.accessor("f", 3, flat, "VEC3", gltf.ARRAY_BUFFER)
+        fmat = self._material(label + FLAT, [1.0, 1.0, 1.0, DEBUG_ALPHA], blend=True)
+        fattrs = {"POSITION": pa, "NORMAL": na, "COLOR_0": fa}
+        fmesh = self.doc.add(
+            "meshes",
+            {"name": label + FLAT, "primitives": [{"attributes": fattrs, "material": fmat}]},
+        )
+        kids = [self.doc.add("nodes", {"name": label + FLAT, "mesh": fmesh})]
+        edges = self._edges_node(c, label, tris, [_srgb_to_linear(v * EDGE_DARKEN) for v in srgb])
+        if edges is not None:
+            kids.append(edges)
+        node["children"] = kids
+        return at
+
+    def _material(self, label, rgba, blend):
+        m = {
+            "name": label,
+            "pbrMetallicRoughness": {
+                "baseColorFactor": rgba,
+                "metallicFactor": 0.0,
+                "roughnessFactor": 1.0,
+            },
+            "doubleSided": True,
+            "extensions": {gltf.UNLIT: {}},
+        }
+        if blend:
+            m["alphaMode"] = "BLEND"
+        if gltf.UNLIT not in self.doc.j["extensionsUsed"]:
+            self.doc.j["extensionsUsed"].append(gltf.UNLIT)
+        return self.doc.add("materials", m)
+
+    def _edges_node(self, c, label, tris, rgb):
+        """The class's crease and open edges as a LINES mesh node, or None."""
+        points, pairs = crease_edges(tris)
+        if not pairs:
+            return None
+        self.edges[c] += len(pairs)
+        name = label + EDGES
+        mat = self._material(name, rgb + [1.0], blend=False)
+        pa = self.doc.accessor("f", 3, points, "VEC3", gltf.ARRAY_BUFFER, minmax=True)
+        idx = [(i,) for e in pairs for i in e]
+        ia = self.doc.accessor("I", 1, idx, "SCALAR", gltf.ELEMENT_ARRAY_BUFFER)
+        prim = {"attributes": {"POSITION": pa}, "indices": ia, "mode": LINES, "material": mat}
+        mesh = self.doc.add("meshes", {"name": name, "primitives": [prim]})
         return self.doc.add("nodes", {"name": name, "mesh": mesh})
 
     def _label(self, c):
@@ -238,7 +443,9 @@ class Writer:
         return rep
 
     def _entry(self, c, n):
-        e = {"triangles": n, "shape": c not in self.skip}
+        e = {"triangles": n, "shape": c not in self.skip, "edges": self.edges[c]}
+        b = self.bands.get(c, Counter())
+        e["flatness"] = {k: b[i] for i, k in enumerate(FLAT_NAMES)}
         row = class_row(c, self.classes)
         if row is not None:
             e["name"] = row["name"]

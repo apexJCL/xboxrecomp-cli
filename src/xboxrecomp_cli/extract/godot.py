@@ -16,6 +16,7 @@ import subprocess
 
 from .. import fetch, host
 from ..host import CliError
+from . import collision
 
 VERSION = "4.7.2"
 VERSION_PREFIX = "4.7.2.stable"
@@ -212,11 +213,21 @@ script = ExtResource("3")
 # glTF as a second instance. Its class nodes import as StaticBody3D with a
 # concave shape plus a see-through debug mesh; C toggles the meshes (the
 # shapes stay), and the "show_meshes" property does the same in the editor.
-# The instance's children are editable, so the Scene dock lists one node
-# per class (col_<name>_0x<rrggbb> with [[extract.collision_class]]) and its
-# eye hides that class alone. show_meshes hides the glTF's top node rather
-# than each mesh, so it keeps the classes hidden in the dock hidden.
-COLLISION_GD = """\
+# E and "show_edges" toggle each class's crease lines (its <label>_edges
+# child). F and "flatness" swap the class colours for the flatness bands
+# (the <label>_flat child), O and "opaque" make the faces opaque; both
+# start off. The instance's children are editable, so the Scene dock lists one
+# node per class (col_<name>_0x<rrggbb> with [[extract.collision_class]])
+# and its eye hides that class and its lines. The toggles fade a mesh out
+# (GeometryInstance3D.transparency) and never set visible: hiding a class
+# node would hide its lines too, and setting visible would undo the eye.
+# A face faded to transparency 1.0 is still drawn and can still be picked
+# in the editor, and the materials are shared, so a stage scene open twice
+# shares O. The lines get a small shader that draws them a hair toward the
+# camera (collision.EDGE_PULL): with O the faces write depth and the lines
+# lying on them would flicker, and no_depth_test would show them through
+# walls.
+COLLISION_GD = f"""\
 @tool
 extends Node3D
 
@@ -225,22 +236,133 @@ extends Node3D
 		show_meshes = v
 		_apply()
 
+# The crease lines (collision.py's <class>{collision.EDGES} children). A class node
+# hidden in the Scene dock hides its lines too, whatever this says.
+@export var show_edges := true:
+	set(v):
+		show_edges = v
+		_apply()
+
+# The faces in flatness colours (the <class>{collision.FLAT} children: grey
+# flat or vertical, yellow, orange, red the further off) instead of the
+# class colours.
+@export var flatness := false:
+	set(v):
+		flatness = v
+		_apply()
+
+# The faces fully opaque instead of see-through, still unlit.
+@export var opaque := false:
+	set(v):
+		opaque = v
+		_apply()
+
 
 func _ready():
+	_shade()
 	_apply()
 
 
+# collision.py bakes each face's shade into COLOR_0, but Godot 4.7.2's glTF
+# import keeps the colours with vertex_color_use_as_albedo off, and the
+# .import file's _subresources can only move a material out, not set its
+# flags. So this sets it on the imported materials each time the scene
+# loads, in the editor too (@tool). It is never saved: the glTF opened on
+# its own, or a material extracted at reimport, shows flat colour.
+func _shade():
+	for mat in _materials():
+		mat.vertex_color_use_as_albedo = true
+	# The lines' own material, swapped in the same way: never saved.
+	var sh = Shader.new()
+	sh.code = EDGE_SHADER
+	for e in _edges():
+		var src = e.mesh.surface_get_material(0)
+		if src is ShaderMaterial:
+			continue
+		var mat = ShaderMaterial.new()
+		mat.shader = sh
+		if src is BaseMaterial3D:
+			mat.set_shader_parameter("colour", src.albedo_color)
+		e.mesh.surface_set_material(0, mat)
+
+
+# Unlit lines in one colour, each vertex pulled a fraction of its distance
+# toward the camera, so they win the depth test against the faces they lie
+# on and still lose it to anything nearer.
+const EDGE_SHADER = '''shader_type spatial;
+render_mode unshaded, cull_disabled;
+uniform vec4 colour : source_color = vec4(1.0);
+
+void vertex() {{
+	vec4 v = MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
+	v.xyz *= 1.0 - {collision.EDGE_PULL};
+	POSITION = PROJECTION_MATRIX * v;
+}}
+
+void fragment() {{
+	ALBEDO = colour.rgb;
+}}
+'''
+
+
+func _edges():
+	return find_children("*{collision.EDGES}", "MeshInstance3D", true, false)
+
+
+# The class meshes, not their lines or flatness copies.
+func _faces():
+	var out = []
+	for m in find_children("*", "MeshInstance3D", true, false):
+		var n = String(m.name)
+		if m.mesh == null or n.ends_with("{collision.EDGES}") or n.ends_with("{collision.FLAT}"):
+			continue
+		out.append(m)
+	return out
+
+
+func _flats():
+	return find_children("*{collision.FLAT}", "MeshInstance3D", true, false)
+
+
+func _materials():
+	var out = []
+	for m in _faces() + _flats():
+		for i in m.mesh.get_surface_count():
+			var mat = m.mesh.surface_get_material(i)
+			if mat is BaseMaterial3D:
+				out.append(mat)
+	return out
+
+
+# Each toggle fades meshes (transparency) and never sets visible, so a
+# class hidden in the Scene dock stays hidden and its children with it.
 func _apply():
 	if not is_inside_tree():
 		return
-	for top in get_children():
-		if top is Node3D:
-			top.visible = show_meshes
+	for m in _faces():
+		m.transparency = 0.0 if show_meshes and not flatness else 1.0
+	for m in _flats():
+		m.transparency = 0.0 if show_meshes and flatness else 1.0
+	for e in _edges():
+		e.transparency = 0.0 if show_edges else 1.0
+	for mat in _materials():
+		if opaque:
+			mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+		else:
+			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 
 
 func _unhandled_input(event):
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return
+	if event.keycode == KEY_C:
 		show_meshes = not show_meshes
+	elif event.keycode == KEY_E:
+		show_edges = not show_edges
+	elif event.keycode == KEY_F:
+		flatness = not flatness
+	elif event.keycode == KEY_O:
+		opaque = not opaque
 """
 
 SCENE_COLLISION = """\
