@@ -35,7 +35,7 @@ def step_nsis(pins, force):
 
 # The needs setup meets by fetching or moving the toolkit: what is generated
 # and built on it is judged only after.
-TOOLKIT_NEEDS = frozenset(("no toolkit", "toolkit not at the pin"))
+TOOLKIT_NEEDS = frozenset(("no toolkit", "toolkit not at the pin", "toolkit line endings"))
 
 
 def setup_needs(target, system_tools=False):
@@ -61,6 +61,10 @@ def setup_needs(target, system_tools=False):
         # Setup moves the clone to the pin. Left behind, a game update
         # compiled its new code against the old toolkit and failed.
         needs.append("toolkit not at the pin")
+    elif toolkit.line_endings_unset(tk):
+        # A clone an older CLI made under core.autocrlf=true: its CRLF
+        # shaders and scripts fail the bundle's LF check.
+        needs.append("toolkit line endings")
     if target in ("windows", "steamos"):
         try:
             fetch.mingw_root()

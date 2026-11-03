@@ -126,7 +126,7 @@ def test_session_falls_back_to_its_runs_build(ws):
 def test_tests_pass(ws):
     d, db = ws
     p = os.path.join(d, "demo", "tests-pass-k1.txt")
-    with open(p, "w") as f:
+    with open(p, "w", encoding="utf-8") as f:
         f.write("key: k1\npassed: 2026-10-14 17:26:15\nhost: hostA\n")
     assert live.tests_pass(p, cwd=d) == "added"
     assert live.tests_pass(p, cwd=d) == "updated"
@@ -263,7 +263,7 @@ def pc_host(d):
     pc = os.path.join(d, "pc")
     root = game_dir(pc)
     ib = os.path.join(pc, "benchdb-inbox")
-    with open(os.path.join(pc, "benchdb.toml"), "w") as f:
+    with open(os.path.join(pc, "benchdb.toml"), "w", encoding="utf-8") as f:
         f.write(PC_HOST.format(inbox=ib))
     return root, ib
 
@@ -309,7 +309,7 @@ def test_environment_beats_the_host_config(d, monkeypatch):
 
 def test_a_relative_inbox_is_relative_to_the_config(d, monkeypatch):
     root, ib = pc_host(d)
-    with open(os.path.join(d, "pc", "benchdb.toml"), "w") as f:
+    with open(os.path.join(d, "pc", "benchdb.toml"), "w", encoding="utf-8") as f:
         f.write(PC_HOST.format(inbox="benchdb-inbox"))
     # From another cwd the inbox still lands beside the config.
     monkeypatch.chdir(d)
@@ -318,7 +318,7 @@ def test_a_relative_inbox_is_relative_to_the_config(d, monkeypatch):
 
 def test_a_broken_host_config_never_fails_the_build(d, capsys):
     root, _ib = pc_host(d)
-    with open(os.path.join(d, "pc", "benchdb.toml"), "a") as f:
+    with open(os.path.join(d, "pc", "benchdb.toml"), "a", encoding="utf-8") as f:
         f.write("\n[bogus]\n")
     t = live.Timer("demo", "windows", "build", cwd=root)
     assert t.doc["host"] == "local"
@@ -402,7 +402,7 @@ def test_provenance_build_line(d, monkeypatch):
     bdir = os.path.join(d, "build")
     os.makedirs(bdir)
     exe = os.path.join(bdir, "demo_recomp")
-    with open(exe, "w") as f:
+    with open(exe, "w", encoding="utf-8") as f:
         f.write("x")
     record.write(os.path.join(bdir, record.BUILD), {"uuid": "u1", "exe_sha256": SHA_A})
     lines = golden_run.provenance_lines({"exe": exe, "exe_sha256": SHA_A})
@@ -633,6 +633,6 @@ def test_bench_golden_only_records_its_session(ws, capsys):
     assert v["scenario"] == "story" and v["run_id"] == db.one("SELECT id FROM runs")["id"]
     # A caller handing the list itself gets the same text in record and row.
     uuid = live.session(logs(d), "demo", "golden", only=["story"], rc=0)
-    with open(os.path.join(logs(d), record.SESSIONS, uuid + ".json")) as f:
+    with open(os.path.join(logs(d), record.SESSIONS, uuid + ".json"), encoding="utf-8") as f:
         assert json.load(f)["only"] == "story"
     assert db.one("SELECT only FROM sessions WHERE uuid = ?", (uuid,))["only"] == "story"

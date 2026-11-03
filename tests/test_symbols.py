@@ -117,7 +117,7 @@ def funcs_json(tmp_path, names):
 
 
 def names_in(path):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return {int(e["start"], 16): e["name"] for e in json.load(f)}
 
 
@@ -141,14 +141,14 @@ def test_apply_names_and_rerun(tmp_path):
     # Rerun with the name dropped from the map: sub_ comes back.
     assert symbols.apply_names(fj, rows[1:])[0] == []
     assert names_in(fj)[0x12000] == "sub_00012000"
-    with open(fj) as f:
+    with open(fj, encoding="utf-8") as f:
         assert all(symbols.MARK not in e for e in json.load(f))
     # A later Ghidra name over a renamed entry is kept on the rerun.
     symbols.apply_names(fj, rows)
-    with open(fj) as f:
+    with open(fj, encoding="utf-8") as f:
         data = json.load(f)
     data[0]["name"] = "ghidra_name"
-    with open(fj, "w") as f:
+    with open(fj, "w", encoding="utf-8") as f:
         json.dump(data, f)
     symbols.apply_names(fj, rows)
     assert names_in(fj)[0x12000] == "ghidra_name"
@@ -271,7 +271,10 @@ def with_map(root):
 def test_manifest_key():
     assert (
         manifest.parse_text(
-            open(os.path.join(os.path.dirname(__file__), "testdata", "game", "game.toml")).read()
+            open(
+                os.path.join(os.path.dirname(__file__), "testdata", "game", "game.toml"),
+                encoding="utf-8",
+            ).read()
         )["pipeline"]["symbols"]
         == ""
     )
@@ -343,14 +346,14 @@ def test_recomp_annotates_and_applies_names(d, monkeypatch):
         monkeypatch.setattr(pipeline, "run_cmds", fake_recomp)
         pipeline.stage_recomp()
         c = os.path.join(G.gen, "recomp_0000.c")
-        with open(c) as f:
+        with open(c, encoding="utf-8") as f:
             text = f.read()
         assert "void menu_title_main(void)" in text
         assert " * menu_title_main (sub_00012000): Title state machine; 27 states" in text
         os.utime(c, ns=(0, 1_000_000_000))
         pipeline.stage_recomp()
         assert os.stat(c).st_mtime_ns == 1_000_000_000
-        with open(c) as f:
+        with open(c, encoding="utf-8") as f:
             assert f.read() == text
         assert pipeline.gen_stale_reasons() == []
 
@@ -368,7 +371,7 @@ def test_no_map_leaves_gen_and_key_alone(d, monkeypatch):
 
         monkeypatch.setattr(pipeline, "run_cmds", fake_recomp)
         pipeline.stage_recomp()
-        with open(os.path.join(G.gen, "recomp_0000.c")) as f:
+        with open(os.path.join(G.gen, "recomp_0000.c"), encoding="utf-8") as f:
             assert f.read() == GEN
         with open(G.gen_key, "rb") as f:
             key = f.read()

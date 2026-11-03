@@ -1019,7 +1019,7 @@ def hot_paths(prof, exe=None, nm=None, top=25, run_exe=None, spin_functions=()):
 
 def read(path):
     try:
-        with open(path, errors="replace") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             return f.read()
     except OSError:
         return None
@@ -1145,7 +1145,7 @@ def collect(run_dir, scene=None, exe=None, nm=None):
             )
         except MatrixError as e:
             out["profile"] = {"error": str(e)}
-    with open(os.path.join(run_dir, "run.json"), "w") as f:
+    with open(os.path.join(run_dir, "run.json"), "w", encoding="utf-8") as f:
         json.dump(out, f, indent=1)
         f.write("\n")
     try:
@@ -1497,7 +1497,7 @@ def load_rows(root, recollect=False, scene=None, exe=None):
                 # stays as collected.
                 print("recollect %s: %s; kept its run.json" % (d, e), file=sys.stderr)
         if r is None:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 r = json.load(f)
         runs.append(r)
         rows.append(summary_row(r, os.path.relpath(d, root)))
@@ -1526,7 +1526,7 @@ def analyse(root, out_dir=None, include_disturbed=False, recollect=False, scene=
     overhead = prof_overhead(rows, include_disturbed)
     rules = {json.dumps(r["verdict_rule"], sort_keys=True) for r in runs if r.get("verdict_rule")}
     os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(out_dir, "summary.json"), "w") as f:
+    with open(os.path.join(out_dir, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(
             {
                 "rows": rows,
@@ -1543,13 +1543,13 @@ def analyse(root, out_dir=None, include_disturbed=False, recollect=False, scene=
         )
         f.write("\n")
     cols = COLUMNS[:4] + axes + COLUMNS[4:] + core_cols
-    with open(os.path.join(out_dir, "summary.csv"), "w", newline="") as f:
+    with open(os.path.join(out_dir, "summary.csv"), "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
     acols = ["host", "arm", "prof"] + axes + ["n", "good", "bad"]
     acols += [k + s for k in ARM_STATS for s in ARM_SUFFIXES]
-    with open(os.path.join(out_dir, "summary-arms.csv"), "w", newline="") as f:
+    with open(os.path.join(out_dir, "summary-arms.csv"), "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=acols, extrasaction="ignore")
         w.writeheader()
         w.writerows(arms_)
@@ -1706,11 +1706,11 @@ def compare_table(rows, before="before", after="after"):
 
 def write_compare(rows, out_dir, before, after):
     os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(out_dir, "compare.csv"), "w", newline="") as f:
+    with open(os.path.join(out_dir, "compare.csv"), "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=compare_columns(), extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
-    with open(os.path.join(out_dir, "compare.md"), "w") as f:
+    with open(os.path.join(out_dir, "compare.md"), "w", encoding="utf-8") as f:
         f.write(compare_table(rows, before, after))
 
 
@@ -1972,7 +1972,7 @@ class BusyWatch(threading.Thread):
 def benches_line(path, text):
     if not path:
         return
-    with open(path, "a") as f:
+    with open(path, "a", encoding="utf-8") as f:
         f.write("- %s %s\n" % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), text))
 
 
@@ -2086,7 +2086,7 @@ def run_local(scene, host, local, arm, out, prof, benches, rep_n=None, order=Non
     clone = ["cp", "-c", "-R"] if sys.platform == "darwin" else ["cp", "-a"]
     subprocess.run(clone + [seed, hdd], check=True)
     cfg = os.path.join(out, "config.toml")
-    with open(cfg, "w") as f:
+    with open(cfg, "w", encoding="utf-8") as f:
         f.write(config_toml(arm["config"]))
     env = run_env(scene, arm, prof, os.path.join(out, "prof.txt"), host)
     env.update({str(k): str(v) for k, v in host.get("env", {}).items()})
@@ -2137,7 +2137,7 @@ def run_local(scene, host, local, arm, out, prof, benches, rep_n=None, order=Non
         )
         info["started"] = datetime.datetime.now().isoformat(timespec="seconds")
         tmux = TmuxStatusPause(bool(local.get("tmux_status_pause", False)))
-        with tmux, open(os.path.join(out, "game.log"), "w") as log:
+        with tmux, open(os.path.join(out, "game.log"), "w", encoding="utf-8") as log:
             info["tmux_status_paused"] = tmux.paused
             if tmux.paused:
                 info["tmux_status_interval"] = tmux.interval
@@ -2269,7 +2269,7 @@ def base_info(scene, host, arm, prof, exe, env, waited, busy, rep_n=None, order=
 
 
 def write_info(out, info):
-    with open(os.path.join(out, "run-info.json"), "w") as f:
+    with open(os.path.join(out, "run-info.json"), "w", encoding="utf-8") as f:
         json.dump(info, f, indent=1)
         f.write("\n")
 
@@ -2734,11 +2734,11 @@ def write_windows(
     for arm in arms(scene, host["_name"]):
         d = os.path.join(out, "arms", arm["id"])
         os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, "config.toml"), "w") as f:
+        with open(os.path.join(d, "config.toml"), "w", encoding="utf-8") as f:
             f.write(config_toml(arm["config"]))
         env = run_env(scene, arm, True, "@R\\prof.txt", host)
         env.update({str(k): str(v) for k, v in host.get("env", {}).items()})
-        with open(os.path.join(d, "env.txt"), "w", newline="\r\n") as f:
+        with open(os.path.join(d, "env.txt"), "w", encoding="utf-8", newline="\r\n") as f:
             f.write("".join("%s=%s\n" % kv for kv in env.items()))
     exe = local.get("exe_name") or (exe_name + ".exe" if exe_name else None)
     if not exe:
@@ -2768,7 +2768,7 @@ def write_windows(
         "period": GPU_PERIOD_MS,
         "cap": scene["scene"]["run_s"] + 90,
     }
-    with open(os.path.join(out, "run-arm.ps1"), "w", newline="\r\n") as f:
+    with open(os.path.join(out, "run-arm.ps1"), "w", encoding="utf-8", newline="\r\n") as f:
         f.write(ps1)
     ids = [a["id"] for a in arms(scene, host["_name"])]
     if series is not None:
@@ -2781,7 +2781,7 @@ def write_windows(
             % (ps_quote(a), "" if p else " -NoProf", rep)
             for a, p, rep in series
         ]
-        with open(os.path.join(out, "run-series.ps1"), "w", newline="\r\n") as f:
+        with open(os.path.join(out, "run-series.ps1"), "w", encoding="utf-8", newline="\r\n") as f:
             f.write(
                 RUN_SERIES_PS1
                 % {

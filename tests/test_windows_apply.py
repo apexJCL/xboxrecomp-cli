@@ -430,7 +430,7 @@ def game2(tmp_path):
     """game2 with a [package] table (as in test_windows_templates)."""
     root = tmp_path / "game2"
     root.mkdir()
-    with open(os.path.join(GAME2, "game.toml")) as f:
+    with open(os.path.join(GAME2, "game.toml"), encoding="utf-8") as f:
         text = f.read()
     (root / "game.toml").write_text(text + '\n[package]\napp = "Second"\ncontent = "packaging"\n')
     saved = manifest.current()
@@ -477,9 +477,9 @@ def payload_of(d, files, m):
         with open(dst, "wb") as f:
             f.write(b)
     text = json.dumps(m, indent=2) + "\n"
-    with open(os.path.join(d, "manifest.json"), "w", newline="\n") as f:
+    with open(os.path.join(d, "manifest.json"), "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
-    with open(os.path.join(d, "SHA256SUMS"), "w", newline="\n") as f:
+    with open(os.path.join(d, "SHA256SUMS"), "w", encoding="utf-8", newline="\n") as f:
         f.write("".join("%s  %s\n" % (e["sha256"], e["path"]) for e in m["files"]))
 
 
@@ -524,7 +524,7 @@ def test_patch_folder(game2, tmp_path, driver):
             os.path.join("files", "game_files", "media", "a.bin"),
         ]
     )
-    doc = json.load(open(os.path.join(folder, "patch.json")))
+    doc = json.load(open(os.path.join(folder, "patch.json"), encoding="utf-8"))
     assert doc["base_manifest_sha256"] == base.sha256 and doc["game_data"] is True
     lst_path = os.path.join(folder, "patch.lst")
     text = open(lst_path, encoding="utf-8").read()
@@ -591,7 +591,7 @@ def test_base_rules(game2):
 def test_stub_abi_one_number():
     """stub.c, apply.c and the CLI name the same STUB_ABI."""
     for n in ("stub.c", "apply.c"):
-        text = open(os.path.join(TEMPLATES, n)).read()
+        text = open(os.path.join(TEMPLATES, n), encoding="utf-8").read()
         assert re.search(r"#define STUB_ABI (\d+)", text).group(1) == str(windows.STUB_ABI), n
 
 
@@ -713,11 +713,11 @@ def mingw_clang():
 
 
 def render_c(name, dst, values):
-    text = open(os.path.join(TEMPLATES, name)).read()
+    text = open(os.path.join(TEMPLATES, name), encoding="utf-8").read()
     for k, v in values.items():
         text = text.replace("@%s@" % k, v)
     assert not re.findall(r"@[A-Z_]+@", text), name
-    with open(dst, "w") as f:
+    with open(dst, "w", encoding="utf-8") as f:
         f.write(text)
 
 
@@ -770,7 +770,7 @@ def test_d10_messages_on_every_applier():
     apply.c's run on the PC (tasks 7.5), so its strings are checked here."""
     tpl = os.path.dirname(TEMPLATES)
     texts = {
-        n: open(os.path.join(tpl, *n.split("/"))).read()
+        n: open(os.path.join(tpl, *n.split("/")), encoding="utf-8").read()
         for n in ("windows/apply.c", "steamos/install_lib.py", "macos/apply.command")
     }
     for n, t in texts.items():

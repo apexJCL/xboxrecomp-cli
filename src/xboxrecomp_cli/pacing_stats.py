@@ -79,7 +79,7 @@ def pct(vals, p):
 def parse(log):
     run = {"flip_us": {}, "batches": {}, "raster": {}, "summaries": [], "sites": [], "windows": []}
     last_flip = 0
-    with open(log, errors="replace") as f:
+    with open(log, encoding="utf-8", errors="replace") as f:
         for line in f:
             m = PACING_FLIP_RE.match(line)
             if m:

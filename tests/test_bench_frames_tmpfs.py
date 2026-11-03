@@ -15,7 +15,7 @@ HOST = os.path.join(os.path.dirname(os.path.abspath(bg.__file__)), "host")
 def blocks():
     """The frames functions, trap and sweep, and the FRAMES=1 block, to run
     on their own."""
-    with open(os.path.join(HOST, "run_game.sh")) as f:
+    with open(os.path.join(HOST, "run_game.sh"), encoding="utf-8") as f:
         text = f.read()
     head = re.search(r"^FRAMES_SHM=.*?^done\n", text, re.S | re.M)
     block = re.search(r'^if \[ "\$FRAMES" = 1 \]; then\n.*?^fi\n', text, re.S | re.M)

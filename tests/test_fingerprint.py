@@ -179,14 +179,16 @@ def test_manifest_validates_the_new_keys(d):
     shutil.copy(os.path.join(GAME, "game.toml"), d)
     path = os.path.join(d, "game.toml")
     # The fixture sets both: start from a game.toml without them.
-    base = re.sub(r"\n\[xbe\.sections\]\n(?:[^\n\[]*\n)*", "\n", open(path).read())
+    base = re.sub(
+        r"\n\[xbe\.sections\]\n(?:[^\n\[]*\n)*", "\n", open(path, encoding="utf-8").read()
+    )
     base = re.sub(r"\nreference_files = \d+\n", "\n", base)
     assert "[xbe.sections]" not in base and "reference_files" not in base
     for extra, ok in (
         ('\n[xbe.sections]\n".text" = "%s"\n' % ("a" * 64), True),
         ('\n[xbe.sections]\n".text" = "abc"\n', False),
     ):
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(base + extra)
         if ok:
             assert manifest.load(d).m["xbe"]["sections"] == {".text": "a" * 64}
@@ -200,7 +202,7 @@ def test_manifest_validates_the_new_keys(d):
         ("[data]\n", "[data]\nreference_files = -1\n", False),
     ):
         assert old in base
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(base.replace(old, new, 1))
         if ok:
             manifest.load(d)
@@ -231,10 +233,10 @@ def test_doctor_assets_line(d):
     with game_with(d, image(STOCK), data__reference_files=5) as G:
         for n in ("a.bin", "b/c.bin"):
             os.makedirs(os.path.dirname(os.path.join(G.game_files, n)), exist_ok=True)
-            open(os.path.join(G.game_files, n), "w").close()
+            open(os.path.join(G.game_files, n), "w", encoding="utf-8").close()
         # A derived file the pipeline writes there is not the dump's.
         excl = G.m["data"]["game_files_exclude"][0]
-        open(os.path.join(G.game_files, excl), "w").close()
+        open(os.path.join(G.game_files, excl), "w", encoding="utf-8").close()
         assert doctor.assets_line() == "3 files (the reference dump has 5, 2 fewer)"
         lines, _, blocked = doctor.doctor_report()
         assert "assets:     3 files (the reference dump has 5, 2 fewer)" in lines
@@ -248,11 +250,11 @@ def test_doctor_assets_line(d):
 def stage_common(G, monkeypatch, d):
     G.content = G.path("packaging")
     os.makedirs(G.content, exist_ok=True)
-    with open(os.path.join(G.content, "launch.env.default.windows"), "w") as f:
+    with open(os.path.join(G.content, "launch.env.default.windows"), "w", encoding="utf-8") as f:
         f.write("LOG_KEEP=10\n")
-    with open(os.path.join(G.content, "config.default.toml"), "w") as f:
+    with open(os.path.join(G.content, "config.default.toml"), "w", encoding="utf-8") as f:
         f.write("# none\n")
-    with open(G.path("LICENSE"), "w") as f:
+    with open(G.path("LICENSE"), "w", encoding="utf-8") as f:
         f.write("MIT\n")
     monkeypatch.setattr(pkg, "readme", lambda *a: None)
     monkeypatch.setattr(pl, "stage_game_files", lambda src, dst: 0)

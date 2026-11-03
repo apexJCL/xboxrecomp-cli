@@ -52,13 +52,13 @@ def bh(win, monkeypatch):  # noqa: F811
         for p in os.environ["PATH"].split(os.pathsep)
         if os.path.isfile(os.path.join(p, "rsync"))
     ][0]
-    body = open(ssh).read()
-    with open(ssh, "w") as f:
+    body = open(ssh, encoding="utf-8").read()
+    with open(ssh, "w", encoding="utf-8") as f:
         f.write(body.replace('case "$*" in\n', BUILD_SSH.lstrip("\n") + 'case "$*" in\n', 1))
     monkeypatch.delenv("BENCH_HOST_OS")
     for k, v in HOST.items():
         monkeypatch.setenv(k, v)
-    with open(win["bench_env"], "w") as f:
+    with open(win["bench_env"], "w", encoding="utf-8") as f:
         f.write(win["bench_env_text"])
     return win
 
@@ -107,9 +107,9 @@ def test_snapshot_clean_dirty_and_untracked(bh):
     d = bh["cat"]
     head = git(d, "rev-parse", "HEAD")
     assert buildhost.snapshot(d) == (head, "")
-    with open(os.path.join(d, "game.toml"), "a") as f:
+    with open(os.path.join(d, "game.toml"), "a", encoding="utf-8") as f:
         f.write("# local edit\n")
-    with open(os.path.join(d, "new.txt"), "w") as f:
+    with open(os.path.join(d, "new.txt"), "w", encoding="utf-8") as f:
         f.write("x")
     commit, note = buildhost.snapshot(d)
     # The edit travels as a commit of its own; HEAD, the tree and the stash
@@ -131,7 +131,7 @@ def test_bundle_full_then_incremental(bh, tmp_path):
     git(host, "init", "-q")
     git(host, "fetch", "-q", full, "+%s:refs/xbr/in" % buildhost.REF)
     assert git(host, "rev-parse", "refs/xbr/in") == first
-    with open(os.path.join(d, "game.toml"), "a") as f:
+    with open(os.path.join(d, "game.toml"), "a", encoding="utf-8") as f:
         f.write("# second\n")
     git(d, "commit", "-qam", "second")
     second = git(d, "rev-parse", "HEAD")
@@ -156,10 +156,10 @@ def test_gen_state_follows_gen_and_its_key(bh, tmp_path):
     g = config(bh, **HOST).game
     a, n = buildhost.gen_state(g)
     assert n == 2
-    with open(g.gen_key, "a") as f:
+    with open(g.gen_key, "a", encoding="utf-8") as f:
         f.write(" ")
     b, _ = buildhost.gen_state(g)
-    with open(os.path.join(g.gen, "recomp_0001.c"), "a") as f:
+    with open(os.path.join(g.gen, "recomp_0001.c"), "a", encoding="utf-8") as f:
         f.write("/* x */\n")
     c, _ = buildhost.gen_state(g)
     assert len({a, b, c}) == 3
@@ -219,7 +219,9 @@ def test_build_sends_builds_and_pulls(bh, monkeypatch, capsys):
         "cat_recomp.exe",
         "config.default.toml",
     ]
-    prov = open(os.path.join(os.path.dirname(exe), ship_mod.LOCAL_PROVENANCE)).read()
+    prov = open(
+        os.path.join(os.path.dirname(exe), ship_mod.LOCAL_PROVENANCE), encoding="utf-8"
+    ).read()
     assert "build host: pc D:/xbr/build-bench/blinx2" in prov and "\nsent: game " in prov
     # Never built here.
     assert t["builds"] == []
@@ -345,13 +347,13 @@ def test_run_verb_package_keeps_the_local_gen_guards(bh, capsys):
     t = bh
     g = config(t, **HOST).game
     # Mid-regeneration here: nothing is sent.
-    open(g.regen_marker, "w").close()
+    open(g.regen_marker, "w", encoding="utf-8").close()
     assert run(t, "buildhost", "run", "package", "windows") == 1
     assert "gen/ is mid-regeneration" in capsys.readouterr().err
     assert calls(t) == []
     os.remove(g.regen_marker)
     # Stale against its key: refused as a local package refuses it.
-    with open(g.gen_key, "w") as f:
+    with open(g.gen_key, "w", encoding="utf-8") as f:
         f.write("not a key")
     assert run(t, "buildhost", "run", "package", "windows") == 1
     err = capsys.readouterr().err
@@ -370,7 +372,7 @@ def test_run_verb_refuses_gen_changed_while_sent(bh, monkeypatch, capsys):
 
     def edit_then_run(self, *a):
         # recomp rewrites gen/ here while the call is under way.
-        with open(os.path.join(g.gen, "recomp_0001.c"), "a") as f:
+        with open(os.path.join(g.gen, "recomp_0001.c"), "a", encoding="utf-8") as f:
             f.write("/* later */\n")
         return real(self, *a)
 
@@ -485,7 +487,7 @@ def test_ship_warns_when_the_exe_here_is_newer(bh, monkeypatch, capsys):
     assert run(t, "buildhost", "build") == 0
     here = os.path.join(t["cat"], "build-win", "cat_recomp.exe")
     os.makedirs(os.path.dirname(here), exist_ok=True)
-    with open(here, "w") as f:
+    with open(here, "w", encoding="utf-8") as f:
         f.write("mac\n")
     later = os.path.getmtime(ship_mod.local_exe(config(t, **HOST))) + 60
     os.utime(here, (later, later))

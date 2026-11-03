@@ -184,7 +184,7 @@ def pins_refresh():
     }
     if g.m["toolchain"]["sdl3"]:
         pins["sdl3"] = sdl3_pin(g.m["toolchain"]["sdl3"])
-    with open(g.pins, "w", newline="\n") as f:
+    with open(g.pins, "w", encoding="utf-8", newline="\n") as f:
         json.dump(pins, f, indent=2, sort_keys=True)
         f.write("\n")
     host.run([uv, "lock", "--upgrade", "--project", g.root], env=env.uv_env())
@@ -246,7 +246,7 @@ def wizard_pins_refresh(path=None, get_json=None):
 
     get_json = get_json or _get_json
     path = path or os.path.join(wizard_build.module_dir(), "pins.json")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         pins = json.load(f)
     uv = get_json("https://api.github.com/repos/astral-sh/uv/releases/latest")
     git = get_json("https://api.github.com/repos/git-for-windows/git/releases/latest")
@@ -255,7 +255,7 @@ def wizard_pins_refresh(path=None, get_json=None):
         "version": git["tag_name"].lstrip("v"),
         "assets": release_pins(git, {"windows-amd64": MINGIT_ASSET}),
     }
-    with open(path, "w", newline="\n") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(pins, f, indent=2, sort_keys=True)
         f.write("\n")
     host.say(

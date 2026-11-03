@@ -123,15 +123,15 @@ def scratch(d, game=GAME, name="cat"):
     # No dump in the scratch: the known-dump check is off (an empty list),
     # as bench.sh had none; test_golden_refuses_unknown_dump covers it.
     if game != GAME:
-        with open(os.path.join(cat, ".gitignore"), "w") as f:
+        with open(os.path.join(cat, ".gitignore"), "w", encoding="utf-8") as f:
             f.write(
                 "/scripts/bench.env\n/src/game/recomp/gen/\n/src/game/recomp/gen.key.json\n"
                 "/bench-logs/\n"
             )
     toml = os.path.join(cat, "game.toml")
-    with open(toml) as f:
+    with open(toml, encoding="utf-8") as f:
         text = re.sub(r"(?ms)^sha256 = \[.*?\]", "sha256 = []", f.read(), count=1)
-    with open(toml, "w") as f:
+    with open(toml, "w", encoding="utf-8") as f:
         f.write(text)
     git(cat, "init", "-q")
     git(cat, "add", "-A")
@@ -139,7 +139,7 @@ def scratch(d, game=GAME, name="cat"):
     HEADS.append(head(cat))
     # Ignored, as in a real checkout.
     os.makedirs(os.path.join(cat, "scripts"))
-    with open(os.path.join(cat, "scripts", "bench.env"), "w") as f:
+    with open(os.path.join(cat, "scripts", "bench.env"), "w", encoding="utf-8") as f:
         f.write(
             "# scratch\nBENCH_HOST=fakehost\nBENCH_DIR=~/bench test\n".replace(
                 "~/bench test", "'~/bench-test'"
@@ -150,11 +150,11 @@ def scratch(d, game=GAME, name="cat"):
     )
     os.makedirs(gen)
     for n in ("recomp_0001.c", "recomp_funcs.h"):
-        with open(os.path.join(gen, n), "w") as f:
+        with open(os.path.join(gen, n), "w", encoding="utf-8") as f:
             f.write("/* %s */\n" % n)
     if game != GAME:
         return scratch_rest(d, cat, tk, bindir, gen)
-    g = json.load(open(os.path.join(cat, "analysis", "golden", "golden.json")))
+    g = json.load(open(os.path.join(cat, "analysis", "golden", "golden.json"), encoding="utf-8"))
     frames = os.path.join(cat, "analysis", "golden", "frames")
     os.makedirs(frames)
     for sc in g["scenarios"].values():
@@ -171,7 +171,7 @@ def scratch(d, game=GAME, name="cat"):
 
 def scratch_rest(d, cat, tk, bindir, gen):
     os.makedirs(tk)
-    with open(os.path.join(tk, "README"), "w") as f:
+    with open(os.path.join(tk, "README"), "w", encoding="utf-8") as f:
         f.write("toolkit\n")
     git(tk, "init", "-q", "-b", "posix-host/portability")
     git(tk, "add", "-A")
@@ -181,7 +181,7 @@ def scratch_rest(d, cat, tk, bindir, gen):
     os.makedirs(bindir)
     for name, body in (("ssh", FAKE_SSH), ("rsync", FAKE_RSYNC)):
         p = os.path.join(bindir, name)
-        with open(p, "w") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write(body)
         os.chmod(p, 0o755)
     return cat, tk, bindir, package_lib.gen_digest(gen)[0]
@@ -494,7 +494,7 @@ def test_proton_log_modes(d):
 
 def cap_log_fn():
     """run_game.sh's cap_log, to run on its own."""
-    with open(os.path.join(HOST, "run_game.sh")) as f:
+    with open(os.path.join(HOST, "run_game.sh"), encoding="utf-8") as f:
         text = f.read()
     m = re.search(r"^cap_log\(\) \{\n.*?^\}\n", text, re.M | re.S)
     assert m, "no cap_log in run_game.sh"
@@ -675,7 +675,7 @@ def test_golden_only_and_kept_verdicts(d):
     # Each run dir keeps its checks and verdict; the session file a line a pass.
     logs = os.path.join(cat, "bench-logs")
     texts = [
-        open(os.path.join(logs, n, "golden.txt")).read()
+        open(os.path.join(logs, n, "golden.txt"), encoding="utf-8").read()
         for n in sorted(os.listdir(logs))
         if os.path.isfile(os.path.join(logs, n, "golden.txt"))
     ]
@@ -683,7 +683,7 @@ def test_golden_only_and_kept_verdicts(d):
     assert texts, logs
     assert texts[-1].startswith("end: FAIL") and texts[-1].endswith("verdict: stage1 FAIL-RUN\n")
     assert "INCOMPLETE stage1/stage1-stick" in texts[-1], texts[-1]
-    sessions = open(os.path.join(logs, "golden-sessions.tsv")).read().splitlines()
+    sessions = open(os.path.join(logs, "golden-sessions.tsv"), encoding="utf-8").read().splitlines()
     assert len(sessions) == 2, sessions
     f = sessions[1].split("\t")
     assert f[1:4] == ["golden", "tests=pass", "only=stage1,attract"] and f[-2:] == [
@@ -712,13 +712,13 @@ def test_parity_refusals(d):
     a, _ = assert_parity(d, ["integrate"])
     assert a[0] == 1 and not a[3], a
     git(cat, "checkout", "-q", "main")
-    with open(os.path.join(cat, "untracked.txt"), "w") as f:
+    with open(os.path.join(cat, "untracked.txt"), "w", encoding="utf-8") as f:
         f.write("x\n")
     a, _ = assert_parity(d, ["integrate"])
     assert a[0] == 1 and "is dirty" in a[2] and not a[3], a
     os.remove(os.path.join(cat, "untracked.txt"))
     marker = os.path.join(cat, "src", "recomp", ".gen-regenerating")
-    open(marker, "w").close()
+    open(marker, "w", encoding="utf-8").close()
     a, _ = assert_parity(d, ["sync"])
     assert a[0] == 1 and "mid-regeneration" in a[2], a
     os.remove(marker)
@@ -736,10 +736,10 @@ def test_integrate_refuses_stale_gen(d):
     --stale-gen-ok goes on as before."""
     cat = d["tree"][0]
     key = os.path.join(cat, "src", "recomp", "gen.key.json")
-    with open(key) as f:
+    with open(key, encoding="utf-8") as f:
         rec = json.load(f)
     rec["toolkit"] = "older"
-    with open(key, "w") as f:
+    with open(key, "w", encoding="utf-8") as f:
         json.dump(rec, f)
     d["n"] += 1
     rc, out, err, calls = run_side(d, "py", ["integrate"])
@@ -886,7 +886,7 @@ def test_bench_env_file():
 
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "bench.env")
-        with open(p, "w") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write("# c\n\nBENCH_HOST=me@box\nBENCH_DIR=~/x\nA='~/y z'\nB=\"p q\"\nC=a:~/b\n")
         got = read_env_file(p, home="/h")
         assert got == {
@@ -897,7 +897,7 @@ def test_bench_env_file():
             "C": "a:/h/b",
         }, got
         for bad in ("export X=1\n", "X=$HOME\n", "X=a b\n", 'X="$Y"\n', "just words\n"):
-            with open(p, "w") as f:
+            with open(p, "w", encoding="utf-8") as f:
                 f.write("# ok\n" + bad)
             try:
                 read_env_file(p, home="/h")
@@ -915,7 +915,7 @@ def test_host_path_warning():
         shutil.copy(os.path.join(GAME, "game.toml"), d)
         os.makedirs(os.path.join(d, "tk"))
         home = os.path.expanduser("~")
-        with open(os.path.join(d, "scripts", "bench.env"), "w") as f:
+        with open(os.path.join(d, "scripts", "bench.env"), "w", encoding="utf-8") as f:
             f.write("BENCH_HOST=h\nBENCH_DIR=~/b\nLLVM_MINGW_ROOT='~/m'\n")
         env = {"XBOXRECOMP_DIR": os.path.join(d, "tk"), "HOME": home}
         w = Config(d, env).warnings()
@@ -939,7 +939,7 @@ def test_sync_excludes_follow_gitignore():
     game = manifest.load(GAME)
     GAME_EXCLUDES, SYNCED_IGNORED = game_excludes(game), synced_ignored(game)
     dirs = []
-    with open(os.path.join(GAME, ".gitignore")) as f:
+    with open(os.path.join(GAME, ".gitignore"), encoding="utf-8") as f:
         for line in f:
             e = line.strip()
             if not e or e[0] in "#!" or "*" in e:
@@ -972,7 +972,7 @@ def test_cli_sync_excludes_follow_gitignore():
     root = os.path.join(HERE, "..")
     ex = [x.strip("/") for x in CLI_EXCLUDES]
     missing = []
-    with open(os.path.join(root, ".gitignore")) as f:
+    with open(os.path.join(root, ".gitignore"), encoding="utf-8") as f:
         for line in f:
             e = line.strip()
             if not e or e[0] in "#!" or not e.endswith("/"):

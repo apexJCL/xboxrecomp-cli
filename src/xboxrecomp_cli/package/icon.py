@@ -401,7 +401,7 @@ def make_icons(xbe_path, out, name, root, force=False):
     key_path = os.path.join(out, "icon.key")
     key = icon_key(xbe_path)
     try:
-        with open(key_path) as f:
+        with open(key_path, encoding="utf-8") as f:
             old = json.load(f)
     except (OSError, ValueError):
         old = None
@@ -416,7 +416,7 @@ def make_icons(xbe_path, out, name, root, force=False):
     for fn, blob in build_icons(img, name).items():
         with open(os.path.join(out, fn), "wb") as f:
             f.write(blob)
-    with open(key_path, "w") as f:
+    with open(key_path, "w", encoding="utf-8") as f:
         json.dump({"key": key, "source": desc}, f)
         f.write("\n")
     return desc, True

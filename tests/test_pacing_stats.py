@@ -74,7 +74,7 @@ def make_log(
                     f"[PACING]   site 0x00060475: waits {w} immediate 0 wakes {wk}"
                     f" timeouts {to} dispatch 0;{exits} cpu in-wait {iw}% thread 40%"
                 )
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return path
 
@@ -118,7 +118,7 @@ def test_story_checkpoint_is_its_first_3d_anchor():
             t += 33333
             b = 6000 if fl >= 3950 else (1 if fl % 2 else 40)
             lines.append(f"[PACING] flip {fl} t_us {t} batches {b}")
-        with open(log, "w") as f:
+        with open(log, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
         s = P.stats(log, scen="story")
         assert s["checkpoint"] == 3950 and s["flips3d"] == 250, s
@@ -268,7 +268,7 @@ def test_sleep_gate():
 def test_bad_input():
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "empty.log")
-        open(p, "w").close()
+        open(p, "w", encoding="utf-8").close()
         rc, out = run([p])
         assert rc == 2 and "checkpoint" in out, out
         rc, out = run(["--gate", "fast", p])

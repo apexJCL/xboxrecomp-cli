@@ -319,7 +319,7 @@ def write_project(out, title, stages, collision=(), placements=()):
     for name in stages:
         files[name + ".tscn"] = scene(name, name in collision, name in placements)
     for rel, text in files.items():
-        with open(os.path.join(out, rel), "w", newline="\n") as f:
+        with open(os.path.join(out, rel), "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
 
 
@@ -329,7 +329,7 @@ def import_project(binary, out, log_path):
     cmd = [binary, "--headless", "--audio-driver", "Dummy", "--path", out, "--import"]
     r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", check=False)
     log = r.stdout + r.stderr
-    with open(log_path, "w") as f:
+    with open(log_path, "w", encoding="utf-8") as f:
         f.write(log)
     errors = [ln for ln in log.splitlines() if ln.lstrip().startswith(("ERROR", "SCRIPT ERROR"))]
     if r.returncode != 0 or errors:

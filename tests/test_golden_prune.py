@@ -96,19 +96,19 @@ def test_pruned_run_records_and_references_the_same(tmp_path):
         G.GOLDEN_JSON, G.FRAMES_DIR = g2, os.path.join(tmp, tag + "-frames")
         with contextlib.redirect_stdout(io.StringIO()):
             assert G.cmd_record(["--only", "f", "s=" + run_frames]) == 0
-        with open(g2) as f:
+        with open(g2, encoding="utf-8") as f:
             fr = json.load(f)["scenarios"]["s"]["frames"][0]
         # As a reference too, on a frame that holds a references list.
-        with open(g2) as f:
+        with open(g2, encoding="utf-8") as f:
             g = json.load(f)
         g["scenarios"]["s"]["frames"][0] = dict(
             {k: v for k, v in fr.items() if k != "sha256"}, references=[]
         )
-        with open(g2, "w") as f:
+        with open(g2, "w", encoding="utf-8") as f:
             json.dump(g, f)
         with contextlib.redirect_stdout(io.StringIO()):
             assert G.cmd_reference(["s", "f", "a", run_frames]) == 0
-        with open(g2) as f:
+        with open(g2, encoding="utf-8") as f:
             ref = json.load(f)["scenarios"]["s"]["frames"][0]["references"][0]
         return fr["sha256"], fr.get("ref_flip"), ref["sha256"], ref.get("anchor_flip")
 
@@ -197,12 +197,12 @@ def test_bench_prunes_only_passing_clean_runs(tmp_path):
         frames = os.path.join(tmp, scen, "frames")
         os.makedirs(frames)
         for n in ("frame_0001.bmp", "flip_00061.bmp", "flip_00062.bmp", "pulls.txt"):
-            open(os.path.join(frames, n), "w").close()
+            open(os.path.join(frames, n), "w", encoding="utf-8").close()
         runs[scen] = ("20261007-00000%d" % len(runs), frames, clean)
         lines += ["%s\t%s" % (scen, os.path.join(frames, "flip_00061.bmp"))]
         lines += ["%s\t#verdict\t%d" % (scen, rc)]
     used = os.path.join(tmp, "used.txt")
-    with open(used, "w") as f:
+    with open(used, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     b = FakeBench({})
     bg.prune(b, runs, G.read_used(used))
@@ -228,7 +228,7 @@ def test_host_prune_script(tmp_path):
     (run / "frames").mkdir(parents=True)
     (run / "frames" / "flip_00001.bmp").write_text("x")
     (run / "run-info.txt").write_text("x")
-    with open(os.path.join(HOST, "prune_frames.sh")) as f:
+    with open(os.path.join(HOST, "prune_frames.sh"), encoding="utf-8") as f:
         body = f.read()
 
     def go(stamps):
@@ -334,7 +334,7 @@ def pad_block():
     """run_game.sh's RECOMP_PAD_SCRIPT=@seed: block, to run on its own."""
     import re
 
-    with open(os.path.join(HOST, "run_game.sh")) as f:
+    with open(os.path.join(HOST, "run_game.sh"), encoding="utf-8") as f:
         m = re.search(r"^case \"\$\{RECOMP_PAD_SCRIPT:-\}\" in\n.*?^esac\n", f.read(), re.S | re.M)
     assert m, "no pad block in run_game.sh"
     return m.group(0)
@@ -370,7 +370,7 @@ def debug_pad_block():
     """run_game.sh's RECOMP_DEBUG pad_script=@seed: block, to run on its own."""
     import re
 
-    with open(os.path.join(HOST, "run_game.sh")) as f:
+    with open(os.path.join(HOST, "run_game.sh"), encoding="utf-8") as f:
         m = re.search(r'^case ",\$\{RECOMP_DEBUG:-\}" in\n.*?^esac\n', f.read(), re.S | re.M)
     assert m, "no RECOMP_DEBUG pad block in run_game.sh"
     return m.group(0)
@@ -423,7 +423,7 @@ def seed_block():
     the frames functions before it that its EXIT trap calls."""
     import re
 
-    with open(os.path.join(HOST, "run_game.sh")) as f:
+    with open(os.path.join(HOST, "run_game.sh"), encoding="utf-8") as f:
         m = re.search(r"^FRAMES_SHM=.*?^SEED_HDD=\n.*?^esac\n", f.read(), re.S | re.M)
     assert m, "no seed block in run_game.sh"
     return m.group(0)
@@ -490,15 +490,15 @@ def bench_runs(tmp, scens):
         frames = os.path.join(tmp, scen, "frames")
         os.makedirs(os.path.join(frames, "verdict"))
         for n in ("frame_0001.bmp", "flip_00061.bmp", "flip_00062.bmp", "pulls.txt"):
-            with open(os.path.join(frames, n), "w") as f:
+            with open(os.path.join(frames, n), "w", encoding="utf-8") as f:
                 f.write("x")
-        with open(os.path.join(frames, "verdict", "f-diff.png"), "w") as f:
+        with open(os.path.join(frames, "verdict", "f-diff.png"), "w", encoding="utf-8") as f:
             f.write("x")
         runs[scen] = ("20261007-00000%d" % len(runs), frames, True)
         lines += ["%s\t%s" % (scen, os.path.join(frames, "flip_00061.bmp"))]
         lines += ["%s\t#verdict\t%d" % (scen, rc)]
     used = os.path.join(tmp, "used.txt")
-    with open(used, "w") as f:
+    with open(used, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return runs, G.read_used(used)
 
@@ -554,7 +554,7 @@ def test_golden_run_drops_a_pass_and_keeps_the_rest(tmp_path, monkeypatch):
     def fake(rc, text):
         def run(argv, stdout=None):
             used = argv[argv.index("--used") + 1]
-            with open(used, "w") as f:
+            with open(used, "w", encoding="utf-8") as f:
                 f.write("s\t#verdict\t%d\n" % rc)
             return subprocess.CompletedProcess(argv, rc, text.encode(), None)
 

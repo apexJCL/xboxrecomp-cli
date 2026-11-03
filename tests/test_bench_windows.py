@@ -68,7 +68,7 @@ FILE_KEYS = ("BENCH_DIR", "BENCH_GAME_FILES")
 def bench_env(t, **kv):
     """The scratch's bench.env with KV's host paths (single-quoted, as a
     Windows path needs) after its own lines."""
-    with open(t["bench_env"], "w") as f:
+    with open(t["bench_env"], "w", encoding="utf-8") as f:
         f.write(t["bench_env_text"])
         for k in FILE_KEYS:
             if k in kv:
@@ -82,11 +82,11 @@ def win(tree, monkeypatch):  # noqa: F811
     ][0]
     for name, body in (("ssh", FAKE_SSH), ("scp", FAKE_SCP), ("sftp", FAKE_SFTP)):
         p = os.path.join(bindir, name)
-        with open(p, "w") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write(body)
         os.chmod(p, 0o755)
     tree["bench_env"] = os.path.join(tree["cat"], "scripts", "bench.env")
-    tree["bench_env_text"] = open(tree["bench_env"]).read()
+    tree["bench_env_text"] = open(tree["bench_env"], encoding="utf-8").read()
     bench_env(tree, **WIN)
     monkeypatch.setenv("BENCH_HOST_OS", "windows")
     return tree
@@ -103,9 +103,9 @@ def calls(t):
         argv = open(os.path.join(rec, n), "rb").read().decode().split("\0")[:-1]
         extra = None
         if os.path.exists(os.path.join(rec, base + ".json")):
-            extra = json.load(open(os.path.join(rec, base + ".json")))
+            extra = json.load(open(os.path.join(rec, base + ".json"), encoding="utf-8"))
         if os.path.exists(os.path.join(rec, base + ".batch")):
-            extra = open(os.path.join(rec, base + ".batch")).read()
+            extra = open(os.path.join(rec, base + ".batch"), encoding="utf-8").read()
         out.append((kind, argv, extra))
         for x in os.listdir(rec):
             if x.startswith(base):

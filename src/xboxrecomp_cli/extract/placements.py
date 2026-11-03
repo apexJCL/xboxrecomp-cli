@@ -295,7 +295,7 @@ def extract(image, fmt, cfg, stage, source, out_dir):
         "missing_textures": sorted(set(s.missing)),
         "placements": rows,
     }
-    with open(os.path.join(out_dir, "placements.json"), "w") as f:
+    with open(os.path.join(out_dir, "placements.json"), "w", encoding="utf-8") as f:
         json.dump(rep, f, indent=1, allow_nan=False)
         f.write("\n")
     return rep

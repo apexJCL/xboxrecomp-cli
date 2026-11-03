@@ -357,7 +357,7 @@ class View:
     def _load_timings(self):
         p = self._timings_path()
         try:
-            with open(p) as f:
+            with open(p, encoding="utf-8") as f:
                 d = json.load(f)
             return d if isinstance(d, dict) else {}
         except (OSError, ValueError, TypeError):
@@ -369,7 +369,7 @@ class View:
             return
         try:
             os.makedirs(self.logs, exist_ok=True)
-            with open(p + ".tmp", "w") as f:
+            with open(p + ".tmp", "w", encoding="utf-8") as f:
                 json.dump(self.timings, f, indent=1, sort_keys=True)
             os.replace(p + ".tmp", p)
         except OSError:
@@ -505,7 +505,7 @@ def prune_logs(logs, keep=KEEP_RUNS):
 def load_timings(logs):
     """build-logs/timings.json: each step's last duration, {} when none."""
     try:
-        with open(os.path.join(logs, "timings.json")) as f:
+        with open(os.path.join(logs, "timings.json"), encoding="utf-8") as f:
             d = json.load(f)
         return d if isinstance(d, dict) else {}
     except (OSError, ValueError, TypeError):
@@ -519,7 +519,7 @@ def save_timing(logs, label, secs):
     try:
         os.makedirs(logs, exist_ok=True)
         p = os.path.join(logs, "timings.json")
-        with open(p + ".tmp", "w") as f:
+        with open(p + ".tmp", "w", encoding="utf-8") as f:
             json.dump(d, f, indent=1, sort_keys=True)
         os.replace(p + ".tmp", p)
     except OSError:

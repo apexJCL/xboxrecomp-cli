@@ -171,7 +171,7 @@ def sha256_path(path):
 
 def read_text(path):
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return f.read().strip()
     except OSError:
         return None

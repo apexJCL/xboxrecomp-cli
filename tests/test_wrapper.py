@@ -35,9 +35,10 @@ FAKE_GIT = """#!/bin/sh
 echo "$@" >> "$GIT_LOG"
 fail() { echo "fatal: $1" >&2; exit 128; }
 if [ "$1" = clone ]; then
-  [ -n "$FAKE_OFFLINE" ] && fail "unable to access '$5': Could not resolve host"
-  /bin/mkdir -p "$6/.git/info"; : > "$6/pyproject.toml"
-  echo "$FAKE_MAIN" > "$6/.git/fake-head"; exit 0
+  for a; do url="$dest"; dest="$a"; done
+  [ -n "$FAKE_OFFLINE" ] && fail "unable to access '$url': Could not resolve host"
+  /bin/mkdir -p "$dest/.git/info"; : > "$dest/pyproject.toml"
+  echo "$FAKE_MAIN" > "$dest/.git/fake-head"; exit 0
 fi
 [ "$1" = -C ] || exit 0
 dir="$2"; shift 2
@@ -63,11 +64,11 @@ OLD = "1" * 40
 def fake_clone(path, sha, marked):
     """A checkout of the CLI at sha, as the fake git sees it."""
     os.makedirs(os.path.join(path, ".git", "info"))
-    open(os.path.join(path, "pyproject.toml"), "w").close()
-    with open(os.path.join(path, ".git", "fake-head"), "w") as f:
+    open(os.path.join(path, "pyproject.toml"), "w", encoding="utf-8").close()
+    with open(os.path.join(path, ".git", "fake-head"), "w", encoding="utf-8") as f:
         f.write(sha + "\n")
     if marked:
-        with open(os.path.join(path, ".xbr-pin"), "w") as f:
+        with open(os.path.join(path, ".xbr-pin"), "w", encoding="utf-8") as f:
             f.write(sha + "\n")
 
 
@@ -83,7 +84,7 @@ def scratch(d):
 
 def tool(bindir, name, text):
     p = os.path.join(bindir, name)
-    with open(p, "w") as f:
+    with open(p, "w", encoding="utf-8") as f:
         f.write(text)
     os.chmod(p, 0o755)
 
@@ -149,14 +150,14 @@ def test_search_order(d):
     override = os.path.join(d, "elsewhere")
     for p in (beside, override):
         os.makedirs(p)
-        open(os.path.join(p, "pyproject.toml"), "w").close()
+        open(os.path.join(p, "pyproject.toml"), "w", encoding="utf-8").close()
     fake_clone(external, PIN, marked=False)
     tool(bindir, "git", FAKE_GIT)
 
     def project(**env):
         r = run(root, bindir, ["doctor"], UV_LOG=log, GIT_LOG=os.path.join(d, "git.log"), **env)
         assert r.returncode == 0, r.stderr
-        with open(log) as f:
+        with open(log, encoding="utf-8") as f:
             argv = f.read().splitlines()
         return argv[argv.index("--project") + 1]
 
@@ -172,10 +173,10 @@ def test_uv_command(d):
     log = os.path.join(d, "uv.log")
     cli = os.path.join(d, "xboxrecomp-cli")
     os.makedirs(cli)
-    open(os.path.join(cli, "pyproject.toml"), "w").close()
+    open(os.path.join(cli, "pyproject.toml"), "w", encoding="utf-8").close()
     r = run(root, bindir, ["package", "two words"], UV_LOG=log, VIRTUAL_ENV="/somewhere")
     assert r.returncode == 0, r.stderr
-    with open(log) as f:
+    with open(log, encoding="utf-8") as f:
         argv = f.read().splitlines()
     assert argv == [
         "run",
@@ -202,7 +203,7 @@ def git_env(d, **kw):
 
 
 def git_calls(d):
-    with open(os.path.join(d, "git.log")) as f:
+    with open(os.path.join(d, "git.log"), encoding="utf-8") as f:
         return f.read().splitlines()
 
 
@@ -216,14 +217,17 @@ def test_clone_at_the_pin(d):
     tmp = dest + ".partial"
     pin = tomllib.load(open(os.path.join(root, "game.toml"), "rb"))["cli"]
     calls = git_calls(d)
-    assert calls[0] == "clone --quiet --no-checkout -- %s %s" % (pin["url"], tmp), calls
+    assert calls[0] == "clone -c core.autocrlf=false --quiet --no-checkout -- %s %s" % (
+        pin["url"],
+        tmp,
+    ), calls
     assert calls[1] == "-C %s checkout --quiet %s" % (tmp, pin["commit"]), calls
-    with open(os.path.join(dest, ".xbr-pin")) as f:
+    with open(os.path.join(dest, ".xbr-pin"), encoding="utf-8") as f:
         assert f.read() == pin["commit"] + "\n"
-    with open(os.path.join(dest, ".git", "info", "exclude")) as f:
+    with open(os.path.join(dest, ".git", "info", "exclude"), encoding="utf-8") as f:
         assert "/.xbr-pin" in f.read()
     assert not os.path.exists(tmp)
-    with open(os.path.join(d, "uv.log")) as f:
+    with open(os.path.join(d, "uv.log"), encoding="utf-8") as f:
         argv = f.read().splitlines()
     assert argv[argv.index("--project") + 1] == dest
 
@@ -277,9 +281,9 @@ def test_stale_clone(d, python):
     r = run(root, bindir, ["doctor"], python, **git_env(d))
     assert r.returncode == 0, r.stderr
     assert "the pin moved" in r.stderr
-    with open(os.path.join(dest, ".git", "fake-head")) as f:
+    with open(os.path.join(dest, ".git", "fake-head"), encoding="utf-8") as f:
         assert f.read().strip() == PIN
-    with open(os.path.join(dest, ".xbr-pin")) as f:
+    with open(os.path.join(dest, ".xbr-pin"), encoding="utf-8") as f:
         assert f.read() == PIN + "\n"
     # Offline, and the old clone lacks the new pin: refused, left as it was.
     shutil.rmtree(dest)
@@ -292,7 +296,7 @@ def test_stale_clone(d, python):
     fake_clone(dest, OLD, marked=False)
     r = run(root, bindir, ["doctor"], python, **git_env(d))
     refused(r, d, "is at 111111111111, not the pin 000000000000, and this script did not clone it")
-    with open(os.path.join(dest, ".git", "fake-head")) as f:
+    with open(os.path.join(dest, ".git", "fake-head"), encoding="utf-8") as f:
         assert f.read().strip() == OLD
 
 
@@ -336,7 +340,7 @@ def test_wrapper_check(d, capsys):
     root, _ = scratch(d)
     game = manifest.load(root)
     assert wrapper.main(["--check"], game) == 0
-    with open(os.path.join(root, "blinx2.py"), "a") as f:
+    with open(os.path.join(root, "blinx2.py"), "a", encoding="utf-8") as f:
         f.write("# local edit\n")
     assert wrapper.main(["--check"], game) == 1
     assert "+# local edit" in capsys.readouterr().out
@@ -354,5 +358,5 @@ def test_template_is_py39():
     import ast
 
     for p in (wrapper.TEMPLATE, helptext.__file__):
-        with open(p) as f:
+        with open(p, encoding="utf-8") as f:
             ast.parse(f.read(), p, feature_version=(3, 9))

@@ -157,10 +157,10 @@ def test_misspelt_hosts_are_refused(tmp_path):
     d = scenario_run(tmp, OFF)
     with pytest.raises(SystemExit):
         check(tmp, gj, d, "--host-os", "win")
-    with open(gj) as f:
+    with open(gj, encoding="utf-8") as f:
         g = json.load(f)
     g["scenarios"]["s"]["frames"][0]["known_divergence"][0]["host"] = "Windows"
-    with open(gj, "w") as f:
+    with open(gj, "w", encoding="utf-8") as f:
         json.dump(g, f)
     # On every host, the Deck's too: the marking would silently never match.
     with pytest.raises(SystemExit):

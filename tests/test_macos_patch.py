@@ -73,9 +73,9 @@ def make_app(root, version, files, says):
         "version": version,
         "files": [{"path": p, "sha256": sha(d), "size": len(d)} for p, d in sorted(files.items())],
     }
-    with open(os.path.join(res, "manifest.json"), "w") as f:
+    with open(os.path.join(res, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(man, f, indent=1)
-    with open(os.path.join(res, "SHA256SUMS"), "w") as f:
+    with open(os.path.join(res, "SHA256SUMS"), "w", encoding="utf-8") as f:
         f.writelines("%s  %s\n" % (sha(d), p) for p, d in sorted(files.items()))
     with open(os.path.join(c, "Info.plist"), "wb") as f:
         plistlib.dump(
@@ -105,7 +105,9 @@ def base_of(app):
 
 def make_patch(root, base_app, new_app, version):
     base = base_of(base_app)
-    with open(os.path.join(new_app, "Contents", "Resources", "manifest.json")) as f:
+    with open(
+        os.path.join(new_app, "Contents", "Resources", "manifest.json"), encoding="utf-8"
+    ) as f:
         new = json.load(f)
     choice = patch_mod.Choice("patch", "", base, patch_mod.diff(base.manifest, new))
     return macos.patch_tree(os.path.join(root, "patch-dmg"), new_app, choice, version)
@@ -230,12 +232,12 @@ def test_patch_folder(built):
     assert shipped == sorted(
         ["README.txt", "game_files/media/a.xpr", "new.txt", "manifest.json", "SHA256SUMS"]
     )
-    with open(os.path.join(p, "patch", "patch.json")) as f:
+    with open(os.path.join(p, "patch", "patch.json"), encoding="utf-8") as f:
         doc = json.load(f)
     assert doc["base_version"] == V1 and doc["version"] == V2
     assert [e["path"] for e in doc["deleted"]] == ["old.txt"]
     assert doc["game_data"] is True
-    kept = open(os.path.join(p, "patch", "kept.list")).read().splitlines()
+    kept = open(os.path.join(p, "patch", "kept.list"), encoding="utf-8").read().splitlines()
     assert kept == [
         "%d %s %s" % (len(BASE_FILES[k]), sha(BASE_FILES[k]), k)
         for k in ("game_files/default.xbe", "game_files/media/b.xpr")
@@ -344,7 +346,7 @@ def test_refuses_another_version(inst, built, tmp_path):
 
 def test_refuses_a_wrong_manifest(inst, built):
     p = os.path.join(inst["app"], "Contents", "Resources", "manifest.json")
-    with open(p, "a") as f:
+    with open(p, "a", encoding="utf-8") as f:
         f.write(" ")
     r = apply(inst)
     assert r.returncode != 0
@@ -389,9 +391,9 @@ def test_refuses_unsafe_list_lines(inst, built, lst, line):
     """A list line that leaves the app (or is not a path) stops the run
     before the clone; nothing is written or removed."""
     victim = os.path.join(os.path.dirname(inst["apps"]), "victim")
-    with open(victim, "w") as f:
+    with open(victim, "w", encoding="utf-8") as f:
         f.write("keep me")
-    with open(os.path.join(inst["patch"], "patch", lst), "a") as f:
+    with open(os.path.join(inst["patch"], "patch", lst), "a", encoding="utf-8") as f:
         f.write(line + "\n")
     before = tree(inst["app"])
     r = apply(inst)
@@ -441,13 +443,13 @@ def test_into_another_folder(inst, built):
 def player_config(home, text):
     p = os.path.join(home, "Library", "Application Support", "Fix", "config")
     os.makedirs(p, exist_ok=True)
-    with open(os.path.join(p, "config.toml"), "w") as f:
+    with open(os.path.join(p, "config.toml"), "w", encoding="utf-8") as f:
         f.write(text)
     return p
 
 
 def test_patch_env_names_the_data_folder(built):
-    with open(os.path.join(built["patch"], "patch", "patch.env")) as f:
+    with open(os.path.join(built["patch"], "patch", "patch.env"), encoding="utf-8") as f:
         text = f.read()
     assert "DATA_DIR='~/Library/Application Support/Fix'\n" in text
     assert "DATA_DIR_ENV='%s'\n" % DATA_ENV in text
@@ -504,7 +506,7 @@ def test_override_note_follows_the_data_variable(inst, built, tmp_path):
 
 def note_functions():
     """say, pack_key and override_note from apply.command, to run alone."""
-    with open(os.path.join(macos.DEFAULTS_MACOS, "apply.command")) as f:
+    with open(os.path.join(macos.DEFAULTS_MACOS, "apply.command"), encoding="utf-8") as f:
         text = f.read()
     start = text.index("pack_key() {")
     end = text.index("# Every name the lists give")

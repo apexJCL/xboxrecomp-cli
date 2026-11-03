@@ -109,7 +109,7 @@ def test_record_round_trip(tmp_path):
     assert "unchanged since the pass at" in ts.skip_reason(ts.key_of(PARTS), rec)
     assert ts.skip_reason(ts.key_of(dict(PARTS, toolkit="ab")), rec) is None
     assert ts.skip_reason(None, rec) is None
-    assert "proton: 1789520217 GE-Proton11-7\n" in open(a).read()
+    assert "proton: 1789520217 GE-Proton11-7\n" in open(a, encoding="utf-8").read()
 
 
 def git(d, *a):

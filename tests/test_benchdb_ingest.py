@@ -358,7 +358,7 @@ def test_run_links_build_record_by_uuid(ws):
 def test_tsv_links_runs_and_rekeys(ws):
     d, db, cfg = ws
     tsv = os.path.join(store_dir(d), ingest_mod.TSV)
-    with open(tsv, "w") as f:
+    with open(tsv, "w", encoding="utf-8") as f:
         f.write(
             "2026-10-25 07:34:10\tgolden\ttests=pass\tonly=menu\t"
             "menu=20261025-072135:pass\trc=0\thost=posix\n"
@@ -384,7 +384,7 @@ def test_tsv_links_runs_and_rekeys(ws):
 def test_reconstructed_tsv(ws):
     d, db, cfg = ws
     tsv = os.path.join(store_dir(d), ingest_mod.TSV_RECON)
-    with open(tsv, "w") as f:
+    with open(tsv, "w", encoding="utf-8") as f:
         f.write("2026-10-20 10:00:00\tgolden\tmenu=20261020-100000:pass\trc=unknown\n")
     with db.write() as w:
         ingest_mod.ingest_tsv(w, tsv, reconstructed=True)
@@ -418,7 +418,7 @@ def test_session_record_and_tests_pass(ws):
     assert v["run_id"] == rid
     tp = os.path.join(store_dir(d), ingest_mod.TESTS_PASS)
     os.makedirs(tp)
-    with open(os.path.join(tp, "k1.txt"), "w") as f:
+    with open(os.path.join(tp, "k1.txt"), "w", encoding="utf-8") as f:
         f.write("key: k1\npassed: 2026-10-14 17:26:15\nhost: hostA\n")
     with db.write() as w:
         assert ingest_mod.ingest_tests_pass(w, os.path.join(tp, "k1.txt")) == "added"
@@ -454,9 +454,9 @@ def test_walk_all_order_and_topic_dirs(ws):
     run_dir(os.path.join(s, "topic"), "20261024-100000", PROTON_INFO)
     run_dir(os.path.join(s, "topic"), "notes", "x")
     os.makedirs(os.path.join(s, "inbox", "hostA"))
-    with open(os.path.join(s, "inbox", "hostA", "b.json"), "w") as f:
+    with open(os.path.join(s, "inbox", "hostA", "b.json"), "w", encoding="utf-8") as f:
         json.dump({"record": "build", "uuid": "u", "game": "demo"}, f)
-    with open(os.path.join(s, ingest_mod.TSV), "w") as f:
+    with open(os.path.join(s, ingest_mod.TSV), "w", encoding="utf-8") as f:
         f.write("")
     items = ingest_mod.walk_all(cfg)
     kinds = [k for k, _ in items]
@@ -471,11 +471,11 @@ def test_bundles_and_patches(ws):
     g = os.path.join(d, "demo")
     idx = os.path.join(g, ".git", "xbr", "bundles", "windows")
     os.makedirs(idx)
-    with open(os.path.join(idx, "index.json"), "w") as f:
+    with open(os.path.join(idx, "index.json"), "w", encoding="utf-8") as f:
         json.dump({"c" * 64: {"version": "v1", "made": "2026-10-20T10:00:00Z", "size": 9}}, f)
     pj = os.path.join(g, "dist", "demo-windows-v2", "patch.json")
     os.makedirs(os.path.dirname(pj))
-    with open(pj, "w") as f:
+    with open(pj, "w", encoding="utf-8") as f:
         json.dump({"version": "v2", "base_version": "v1", "changed": [{"size": 4}]}, f)
     with db.write() as w:
         assert ingest_mod.ingest_bundles(w, cfg, "demo", g) == 2

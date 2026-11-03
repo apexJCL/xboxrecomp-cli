@@ -481,7 +481,7 @@ def options_digest(cache_vals, seed=None, hud_sha=None):
 
 def read_cache(path):
     vals = {}
-    with open(path, errors="replace") as f:
+    with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*):[A-Z]+=(.*)$", line.rstrip("\n"))
             if m:
@@ -566,7 +566,7 @@ def compiler_line(vals, build_dir=None):
         for f in sorted(
             glob.glob(os.path.join(build_dir, "CMakeFiles", "*", "CMakeCCompiler.cmake"))
         ):
-            with open(f, errors="replace") as fh:
+            with open(f, encoding="utf-8", errors="replace") as fh:
                 m = re.search(r'^set\(CMAKE_C_COMPILER "([^"]+)"\)', fh.read(), re.M)
             if m:
                 cc = m.group(1)
@@ -1029,18 +1029,18 @@ def main(argv=None):
         leaks = private_leaks(text)
         if leaks:
             die("manifest would carry private data: " + ", ".join(leaks))
-        with open(os.path.join(a.root, "manifest.json"), "w") as f:
+        with open(os.path.join(a.root, "manifest.json"), "w", encoding="utf-8") as f:
             f.write(text)
-        with open(os.path.join(a.root, "SHA256SUMS"), "w") as f:
+        with open(os.path.join(a.root, "SHA256SUMS"), "w", encoding="utf-8") as f:
             f.write(sums_text(man))
         print("%d files" % len(man["files"]))
     elif a.cmd == "dylibs":
         print(json.dumps(dylib_plan(a.exe, a.companion), indent=1))
     elif a.cmd == "nsis-files":
         names, inst, uninst = nsis_lists(a.root)
-        with open(a.out_install, "w") as f:
+        with open(a.out_install, "w", encoding="utf-8") as f:
             f.write(inst)
-        with open(a.out_uninstall, "w") as f:
+        with open(a.out_uninstall, "w", encoding="utf-8") as f:
             f.write(uninst)
         print("\n".join(names))
     return 0

@@ -161,6 +161,7 @@ func (g Git) Ensure(ctx context.Context, src Source, dest string) (Result, error
 	if before == "" {
 		return Result{}, fmt.Errorf("%s holds a broken clone (no HEAD): move it away or pick another build folder", dest)
 	}
+	g.restoreLineEndings(ctx, dest)
 	// Untracked files do not count: a checkout never touches them, and a
 	// build may leave some a game's .gitignore does not list.
 	if st, err := g.run(ctx, dest, "status", "--porcelain", "--untracked-files=no"); err != nil || st != "" {
@@ -399,4 +400,39 @@ func MarkIn(dir string) *Mark {
 		return nil
 	}
 	return &m
+}
+
+// restoreLineEndings checks out again each tracked file git calls modified
+// while its content matches HEAD. On a Windows clone (core.autocrlf=true),
+// a file the build rewrote with LF where checkout wrote CRLF reads as
+// modified with no diff, and the Retry after a failed build refused the
+// clone as having local changes (the CLI no longer rewrites it,
+// but clones an older CLI touched keep the mark). Only files with no
+// content change are restored, so no edit is lost.
+func (g Git) restoreLineEndings(ctx context.Context, dest string) {
+	st, err := g.run(ctx, dest, "status", "--porcelain=v2", "-z", "--untracked-files=no")
+	if err != nil || st == "" {
+		return
+	}
+	diff, err := g.run(ctx, dest, "diff", "--name-only", "-z", "HEAD")
+	if err != nil {
+		return
+	}
+	changed := map[string]bool{}
+	for _, p := range strings.Split(diff, "\x00") {
+		changed[p] = true
+	}
+	var same []string
+	for _, e := range strings.Split(st, "\x00") {
+		// "1 .M <6 fields> path": only unstaged edits to a file; staged,
+		// renamed or unmerged entries are the player's and are left to the
+		// refusal.
+		f := strings.SplitN(e, " ", 9)
+		if len(f) == 9 && f[0] == "1" && f[1] == ".M" && !changed[f[8]] {
+			same = append(same, f[8])
+		}
+	}
+	if len(same) > 0 {
+		g.run(ctx, dest, append([]string{"checkout", "--"}, same...)...)
+	}
 }

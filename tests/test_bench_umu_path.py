@@ -57,7 +57,7 @@ def stub_umu(home):
     bindir = os.path.join(home, ".local", "bin")
     os.makedirs(bindir)
     p = os.path.join(bindir, "umu-run")
-    with open(p, "w") as f:
+    with open(p, "w", encoding="utf-8") as f:
         f.write("#!/bin/sh\n")
     os.chmod(p, os.stat(p).st_mode | stat.S_IXUSR)
     return p

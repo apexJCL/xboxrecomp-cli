@@ -273,7 +273,7 @@ def test_export_refuses_data(pub, capsys, rel, data, why):
 
 def test_a_fail_rule_refuses(pub, capsys):
     root = pub["root"]
-    with open(os.path.join(pub["pd"], "rewrite"), "a") as f:
+    with open(os.path.join(pub["pd"], "rewrite"), "a", encoding="utf-8") as f:
         f.write("!fail \\bproject-x\\b\n")
     assert xbr(root, "public", "init", capsys=capsys)[0] == 0
     commit_file(root, "docs/x.md", "Project-X notes.\n")
@@ -578,7 +578,7 @@ def test_a_diff_attribute_hides_nothing(pub, capsys, monkeypatch, where):
 
 def test_text_that_is_not_utf8_is_refused(pub, capsys):
     root = pub["root"]
-    with open(os.path.join(pub["pd"], "rewrite"), "a") as f:
+    with open(os.path.join(pub["pd"], "rewrite"), "a", encoding="utf-8") as f:
         f.write("!fail \\bproject-x\\b\n")
     assert xbr(root, "public", "init", capsys=capsys)[0] == 0
     with open(os.path.join(root, "docs", "l1.md"), "wb") as f:
@@ -637,7 +637,7 @@ def test_a_checkout_without_a_rewrite_file_refuses(pub, capsys, monkeypatch):
     .git/info but no rewrite file: it must not export or pass an audit with
     no rewrites and no !fail checks."""
     root = pub["root"]
-    with open(os.path.join(pub["pd"], "rewrite"), "a") as f:
+    with open(os.path.join(pub["pd"], "rewrite"), "a", encoding="utf-8") as f:
         f.write("!fail \\bsession session\\b\n")
     assert xbr(root, "public", "init", capsys=capsys)[0] == 0
     assert xbr(root, "public", "export", capsys=capsys)[0] == 0
@@ -1072,7 +1072,7 @@ def test_pr_runs_the_fail_checks_and_reads_each_commit(pub, capsys, d):
     name too, and a private-set file added and removed inside the range is
     still pushed in the commit that added it."""
     root = pub["root"]
-    with open(os.path.join(pub["pd"], "rewrite"), "a") as f:
+    with open(os.path.join(pub["pd"], "rewrite"), "a", encoding="utf-8") as f:
         f.write("!fail \\bsecretword\\b\n")
     u1 = fork_with_screenshot(root)
     wt = pr_branch(root, d, u1)
@@ -1110,7 +1110,7 @@ def test_pr_refuses_what_a_rewrite_rule_would_change(pub, capsys, d):
     branch, so a line, path, message or name a rule would change stays
     out of it."""
     root = pub["root"]
-    with open(os.path.join(pub["pd"], "rewrite"), "a") as f:
+    with open(os.path.join(pub["pd"], "rewrite"), "a", encoding="utf-8") as f:
         f.write("\\bcodename\\b\tthe game\n")
     u1 = fork_with_screenshot(root)
     wt = pr_branch(root, d, u1)

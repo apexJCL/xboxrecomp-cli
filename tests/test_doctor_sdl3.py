@@ -13,7 +13,7 @@ from xboxrecomp_cli.host import CliError
 
 def fake_tool(d, name, out, rc=0):
     p = os.path.join(d, name)
-    with open(p, "w") as f:
+    with open(p, "w", encoding="utf-8") as f:
         f.write("#!/bin/sh\nprintf '%%s\\n' '%s'\nexit %d\n" % (out, rc))
     os.chmod(p, os.stat(p).st_mode | stat.S_IXUSR)
 
@@ -36,7 +36,7 @@ def test_installed_from_the_homebrew_keg(bin_dir, d):
     fake_tool(bin_dir, "pkg-config", "", rc=1)  # no sdl3.pc on its path
     keg = os.path.join(d, "Cellar", "sdl3", "3.4.16_1")
     os.makedirs(os.path.join(keg, "lib"))
-    open(os.path.join(keg, "lib", "libSDL3.0.dylib"), "w").close()
+    open(os.path.join(keg, "lib", "libSDL3.0.dylib"), "w", encoding="utf-8").close()
     opt = os.path.join(d, "opt-sdl3")
     os.symlink(keg, opt)
     fake_tool(bin_dir, "brew", opt)
@@ -163,7 +163,7 @@ def test_pins_refresh(d, monkeypatch, sdl3):
     monkeypatch.setattr(pins.host, "run", lambda *a, **k: None)
     monkeypatch.setattr(pins, "pin_report", lambda *a: "")
     pins.pins_refresh()
-    with open(g.pins) as f:
+    with open(g.pins, encoding="utf-8") as f:
         out = json.load(f)
     want = {"_comment", "llvm_mingw", "nsis"} | ({"sdl3"} if sdl3 else set())
     assert set(out) == want

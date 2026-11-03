@@ -95,7 +95,7 @@ def flip_log(scene_ms, n=800, t0_us=1_000_000_000):
 def make_run(root, scene, host, arm_id, ms, suffix="", info_extra=None):
     d = os.path.join(root, host, arm_id + suffix)
     os.makedirs(d)
-    with open(os.path.join(d, "game.log"), "w") as f:
+    with open(os.path.join(d, "game.log"), "w", encoding="utf-8") as f:
         f.write(flip_log(ms))
     a = B.find_arm(scene, host, arm_id)
     info = B.base_info(scene, dict(scene["hosts"][host], _name=host), a, True, "/none", {}, 0, [])
@@ -352,7 +352,7 @@ def test_private_report_sections(scene, result, tmp_path):
     assert re.findall(r"https?://[^\"' ]+", page) == ["http://www.w3.org/2000/svg"] * len(
         re.findall(r"https?://", page)
     )
-    with open(os.path.join(result, "summary.json")) as f:
+    with open(os.path.join(result, "summary.json"), encoding="utf-8") as f:
         rows = json.load(f)["rows"]
     mean = next(r for r in rows if r["host"] == "mac" and r["arm"] == "s2-43")["steady_fps"]
     assert "%.1f" % mean in page
@@ -364,7 +364,7 @@ def test_report_cli_writes_html_and_json(scene, result, tmp_path):
     rc = B.main(["report", result, "--scene", str(tmp_path / "scene.toml"), "--out", out])
     assert rc == 0
     assert os.path.isfile(os.path.join(out, "index.html"))
-    with open(os.path.join(out, "report.json")) as f:
+    with open(os.path.join(out, "report.json"), encoding="utf-8") as f:
         assert json.load(f)["schema"] == 1
 
 
@@ -434,7 +434,7 @@ def poisoned_info():
     """The real run-info with a plant in every string field outside the
     allow-list, plus the fields a careless capture could add (a host name,
     a serial, a MAC, an IP, raw tool output)."""
-    with open(REAL_INFO) as f:
+    with open(REAL_INFO, encoding="utf-8") as f:
         info = json.load(f)
     for k in IDENTITY:
         info.pop(k, None)
@@ -466,11 +466,11 @@ def poisoned_info():
 def test_poisoned_fixture_is_the_real_run_info(scene, tmp_path):
     """Every field of the real run-info reaches the run's files, so the
     export below meets them all."""
-    with open(REAL_INFO) as f:
+    with open(REAL_INFO, encoding="utf-8") as f:
         real = json.load(f)
     root = str(tmp_path / "out")
     make_run(root, scene, "deck", "s1-43", [16.0], info_extra=poisoned_info())
-    with open(os.path.join(root, "deck", "s1-43", "run-info.json")) as f:
+    with open(os.path.join(root, "deck", "s1-43", "run-info.json"), encoding="utf-8") as f:
         info = json.load(f)
     assert set(real) - set(IDENTITY) <= set(info)
     assert set(real["hw"]) <= set(info["hw"]) and set(real["build"]) <= set(info["build"])
@@ -505,7 +505,7 @@ def test_public_export_template_plant_fails(scene, result, tmp_path, audit):
     scene["report"]["public"]["hosts"]["mac"]["label"] = "Mac, see someone@example.org"
     with pytest.raises(P.LeakError):
         P.export(model, scene, repo)
-    assert open(os.path.join(repo, "README.md")).read() == MARKED
+    assert open(os.path.join(repo, "README.md"), encoding="utf-8").read() == MARKED
     assert not os.path.exists(os.path.join(repo, "docs"))
 
 
@@ -539,7 +539,7 @@ def test_public_export_without_markers(scene, result, tmp_path, audit, capsys):
     )
     assert rc == 1
     assert "### Performance: Test scene" in capsys.readouterr().out
-    assert open(os.path.join(repo, "README.md")).read() == "# Game\n"
+    assert open(os.path.join(repo, "README.md"), encoding="utf-8").read() == "# Game\n"
     assert not os.path.exists(os.path.join(repo, "docs"))
 
 
@@ -552,7 +552,7 @@ def test_public_export_without_patterns(scene, result, tmp_path, monkeypatch, ca
         + ["--out", str(tmp_path / "rep")]
     )
     assert rc == 2
-    assert open(os.path.join(repo, "README.md")).read() == MARKED
+    assert open(os.path.join(repo, "README.md"), encoding="utf-8").read() == MARKED
 
 
 def test_private_patterns_cannot(tmp_path, monkeypatch):
@@ -603,7 +603,7 @@ def test_public_export_refuses_a_host_without_hw(scene, result_no_hw, tmp_path, 
     model, _ = R.build_model(result_no_hw, scene)
     with pytest.raises(P.Refused, match="no hardware recorded"):
         P.export(model, scene, repo)
-    assert open(os.path.join(repo, "README.md")).read() == MARKED
+    assert open(os.path.join(repo, "README.md"), encoding="utf-8").read() == MARKED
     assert not os.path.exists(os.path.join(repo, "docs"))
     rc = B.main(
         ["report", result_no_hw, "--scene", str(tmp_path / "scene.toml"), "--public", repo]
@@ -650,11 +650,11 @@ def drop_window_field(root):
         for name in ("run.json", "run-info.json"):
             if name in files:
                 p = os.path.join(dirpath, name)
-                with open(p) as f:
+                with open(p, encoding="utf-8") as f:
                     info = json.load(f)
                 info.pop("present_fullscreen", None)
                 info.pop("run", None)
-                with open(p, "w") as f:
+                with open(p, "w", encoding="utf-8") as f:
                     json.dump(info, f)
 
 
@@ -775,7 +775,7 @@ def test_public_export_refuses_a_public_host_without_runs(scene, tmp_path, audit
     model, _ = R.build_model(root, scene)
     with pytest.raises(P.Refused, match=r"no runs for Steam Deck \(Proton\)"):
         P.export(model, scene, repo)
-    assert open(os.path.join(repo, "README.md")).read() == MARKED
+    assert open(os.path.join(repo, "README.md"), encoding="utf-8").read() == MARKED
     del scene["report"]["public"]["hosts"]["deck"]
     assert P.export(model, scene, repo)[0] == 0
 
@@ -822,20 +822,20 @@ def test_public_export_honours_the_games_export_rules(
     """D8 task 4.3 with the game's own manifest: a file its `public export`
     would drop never reaches the public repo, so the export refuses."""
     repo = git_repo(tmp_path, MARKED)
-    with open(os.path.join(repo, "game.toml"), "w") as f:
+    with open(os.path.join(repo, "game.toml"), "w", encoding="utf-8") as f:
         f.write(GAME_TOML % exclude)
     model, _ = R.build_model(result, scene)
     if refused:
         with pytest.raises(P.LeakError, match=r"\[public\] exclude"):
             P.export(model, scene, repo)
-        assert open(os.path.join(repo, "README.md")).read() == MARKED
+        assert open(os.path.join(repo, "README.md"), encoding="utf-8").read() == MARKED
     else:
         assert P.export(model, scene, repo)[0] == 0
 
 
 def test_public_export_refuses_a_path_the_layout_refuses(scene, result, tmp_path, audit):
     repo = git_repo(tmp_path, MARKED)
-    with open(os.path.join(repo, "game.toml"), "w") as f:
+    with open(os.path.join(repo, "game.toml"), "w", encoding="utf-8") as f:
         f.write(GAME_TOML % "")
     scene["report"]["public"]["images"] = "bench-logs/images"
     model, _ = R.build_model(result, scene)
@@ -892,12 +892,12 @@ def test_groups_differ_keeps_the_per_arm_window_check(scene, tmp_path):
     # Both sides hold both modes, so the host-level check sees no change.
     for d in (base, now):
         B.analyse(d)
-    with open(os.path.join(base, "summary.json")) as f:
+    with open(os.path.join(base, "summary.json"), encoding="utf-8") as f:
         summ = json.load(f)
     for r in summ["rows"]:
         # A sampled baseline against the same arms at another rate.
         r["prof"] = 100
-    with open(os.path.join(base, "summary.json"), "w") as f:
+    with open(os.path.join(base, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summ, f)
     model, _ = R.build_model(now, scene, baseline=base)
     assert not model["baseline"]["hosts"]["deck"]["present_differs"]

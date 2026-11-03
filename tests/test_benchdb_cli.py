@@ -38,7 +38,7 @@ def ws(d, monkeypatch):
         log=flip_log(),
     )
     run_dir(os.path.join(s, "topic"), "20261024-100000", extra={"game-stdio.log": "x\n"})
-    with open(os.path.join(s, "golden-sessions.tsv"), "w") as f:
+    with open(os.path.join(s, "golden-sessions.tsv"), "w", encoding="utf-8") as f:
         f.write(
             "2026-10-25 07:34:10\tgolden\ttests=pass\tonly=menu\t"
             "menu=20261025-072135:pass\trc=0\thost=posix\n"
@@ -162,7 +162,7 @@ def test_export(ws, capsys, tmp_path):
     assert "menu=20261025-072135:pass" in out and "rc=0" in out
     dest = str(tmp_path / "out")
     assert run(ws, "export", "--jsonl", dest) == 0
-    with open(os.path.join(dest, "runs.jsonl")) as f:
+    with open(os.path.join(dest, "runs.jsonl"), encoding="utf-8") as f:
         assert len(f.readlines()) == 3
 
 

@@ -938,7 +938,7 @@ class Writer:
         if self.doc.bin:
             with open(os.path.join(out_dir, self.name + ".bin"), "wb") as f:
                 f.write(self.doc.bin)
-        with open(os.path.join(out_dir, self.name + ".gltf"), "w") as f:
+        with open(os.path.join(out_dir, self.name + ".gltf"), "w", encoding="utf-8") as f:
             json.dump(j, f, indent=1)
             f.write("\n")
         self.summary.materials = len(self.doc.j["materials"])

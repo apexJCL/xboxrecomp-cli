@@ -44,12 +44,12 @@ def repo(d):
     r = os.path.join(d, "r")
     os.makedirs(r)
     git(r, "init", "-q", "-b", "main")
-    with open(os.path.join(r, "README.md"), "w") as f:
+    with open(os.path.join(r, "README.md"), "w", encoding="utf-8") as f:
         f.write("# clean\n")
     git(r, "add", "-A")
     git(r, "commit", "-qm", "first")
     git(r, "update-ref", "refs/remotes/origin/main", "HEAD")
-    with open(os.path.join(r, ".git", "info", "audit-private"), "w") as f:
+    with open(os.path.join(r, ".git", "info", "audit-private"), "w", encoding="utf-8") as f:
         f.write("# private\n%s\n%s\n" % (HOSTNAME, EMAIL.replace(".", "\\.")))
     return r
 
@@ -256,24 +256,24 @@ def test_refuses_without_private_patterns(d):
     p = audit(r)
     assert p.returncode == 2 and "no private patterns" in p.stderr, p.stderr
     other = os.path.join(d, "patterns")
-    with open(other, "w") as f:
+    with open(other, "w", encoding="utf-8") as f:
         f.write(HOSTNAME + "\n")
     assert audit(r, env={"XBR_AUDIT_PRIVATE": other}).returncode == 0
     # $XBR_PUBLIC_DIR/audit-private, the games' file, comes first.
     pd = os.path.join(d, "public")
     os.makedirs(pd)
-    with open(os.path.join(pd, "audit-private"), "w") as f:
+    with open(os.path.join(pd, "audit-private"), "w", encoding="utf-8") as f:
         f.write("ok\n")
     commit(r, "x.txt", "ok\n")
     p = audit(r, env={"XBR_AUDIT_PRIVATE": other, "XBR_PUBLIC_DIR": pd})
     assert p.returncode == 1 and "/ok/" in p.stdout, p.stdout
     # A file with only comments and blanks counts as missing, as in the
     # games' `public audit`: the next one is read.
-    with open(os.path.join(pd, "audit-private"), "w") as f:
+    with open(os.path.join(pd, "audit-private"), "w", encoding="utf-8") as f:
         f.write("# none yet\n\n")
     p = audit(r, env={"XBR_AUDIT_PRIVATE": other, "XBR_PUBLIC_DIR": pd})
     assert p.returncode == 0, p.stdout + p.stderr
-    with open(other, "w") as f:
+    with open(other, "w", encoding="utf-8") as f:
         f.write("  # indented comment\n")
     p = audit(r, env={"XBR_AUDIT_PRIVATE": other, "XBR_PUBLIC_DIR": pd})
     # Neither has a pattern now (info/audit-private was removed above).
@@ -290,7 +290,7 @@ def test_no_upstream_needs_all(d):
 
 def test_parity_record_names_only_fakehost():
     """The bench record moved from the game names no real host."""
-    with open(os.path.join(HERE, "testdata", "bench_parity.json")) as f:
+    with open(os.path.join(HERE, "testdata", "bench_parity.json"), encoding="utf-8") as f:
         text = f.read()
     hosts = set(re.findall(r'"(?:[\w.-]+@)?([\w.-]+):[~/]', text))
     assert hosts <= {"fakehost"}, hosts

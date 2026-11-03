@@ -186,7 +186,7 @@ class WindowsHost:
         s = shutil.which("sftp")
         if not s:
             raise BenchError("no sftp on PATH; install the OpenSSH client")
-        with tempfile.NamedTemporaryFile("w", suffix=".sftp", delete=False) as f:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".sftp", delete=False) as f:
             f.write(batch)
         try:
             argv = [s, "-q", "-o", "BatchMode=yes"] + KEEPALIVE + ["-b", f.name, self.target]
@@ -213,7 +213,7 @@ class WindowsHost:
         if rc == 3:
             with tempfile.TemporaryDirectory() as t:
                 digest = os.path.join(t, "digest.txt")
-                with open(digest, "w") as f:
+                with open(digest, "w", encoding="utf-8") as f:
                     f.write(script_digest() + "\n")
                 # digest.txt last: its presence says the copy is whole.
                 if self.scp([os.path.join(WIN_DIR, n) for n in SCRIPTS], d) or self.scp(

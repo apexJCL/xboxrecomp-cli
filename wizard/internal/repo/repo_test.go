@@ -171,6 +171,50 @@ func TestEnsureRefuses(t *testing.T) {
 	}
 }
 
+// A Windows clone (core.autocrlf=true) holds a tracked file with CRLF; a
+// build that rewrote it with the same content in LF left git calling it
+// modified, and the Retry refused the clone. Ensure restores such
+// files; a real edit is still refused.
+func TestEnsureRestoresLineEndings(t *testing.T) {
+	g, ctx := newGit(t)
+	u := newUpstream(t)
+	json := filepath.Join(u.dir, "config", "hook_functions.json")
+	os.MkdirAll(filepath.Dir(json), 0o755)
+	os.WriteFile(json, []byte("{\n \"version\": 1\n}\n"), 0o644)
+	sh(t, u.dir, "add", ".")
+	sh(t, u.dir, "commit", "-qm", "v3")
+	sh(t, u.dir, "tag", "-a", "v3", "-m", "v3")
+	src := Source{Repo: u.url, Tag: "v3", Commit: sh(t, u.dir, "rev-parse", "HEAD")}
+	dest := filepath.Join(t.TempDir(), "src")
+	if _, err := g.Ensure(ctx, src, dest); err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(dest, "config", "hook_functions.json")
+	sh(t, dest, "config", "core.autocrlf", "true")
+	os.Remove(f)
+	sh(t, dest, "checkout", "--", "config")
+	if b, _ := os.ReadFile(f); !strings.Contains(string(b), "\r\n") {
+		t.Fatalf("no CRLF checkout: %q", b)
+	}
+	os.WriteFile(f, []byte("{\n \"version\": 1\n}\n"), 0o644) // the build's LF rewrite
+	if st := sh(t, dest, "status", "--porcelain"); st == "" {
+		t.Skip("this git does not call an LF rewrite of a CRLF checkout modified")
+	}
+	if _, err := g.Ensure(ctx, src, dest); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if st := sh(t, dest, "status", "--porcelain"); st != "" {
+		t.Fatalf("still dirty: %q", st)
+	}
+	os.WriteFile(f, []byte("{\n \"version\": 2\n}\n"), 0o644)
+	if _, err := g.Ensure(ctx, src, dest); err == nil || !strings.Contains(err.Error(), "local changes") {
+		t.Fatalf("edit: %v", err)
+	}
+	if b, _ := os.ReadFile(f); !strings.Contains(string(b), "2") {
+		t.Fatal("the edit was lost")
+	}
+}
+
 func TestEnsureMovedTagAndFailedFetch(t *testing.T) {
 	g, ctx := newGit(t)
 	u := newUpstream(t)

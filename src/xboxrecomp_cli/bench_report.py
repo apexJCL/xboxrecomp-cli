@@ -175,7 +175,7 @@ def load_summary(result, scene):
     for a summary written before the column existed."""
     path = os.path.join(result, "summary.json")
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             s = json.load(f)
     except (OSError, ValueError) as e:
         raise ReportError("%s: %s (run analyse first)" % (path, e)) from e
@@ -614,7 +614,7 @@ def run_infos(result, host):
             p = os.path.join(d, name)
             if os.path.isfile(p):
                 try:
-                    with open(p) as f:
+                    with open(p, encoding="utf-8") as f:
                         out.append((os.path.relpath(d, result), json.loads(f.read().lstrip("﻿"))))
                 except ValueError:
                     pass
@@ -694,7 +694,7 @@ def find_scene(result, scene_path=None):
     newest = None
     for p in glob.glob(os.path.join(result, "*", "*", "run-info.json")):
         try:
-            with open(p) as f:
+            with open(p, encoding="utf-8") as f:
                 i = json.loads(f.read().lstrip("﻿"))
         except (OSError, ValueError):
             continue
@@ -882,7 +882,7 @@ def judged_delta(e, b):
 
 def write_json(path, model):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(model, f, indent=1, default=str)
         f.write("\n")
 

@@ -163,7 +163,7 @@ def check_presets(game):
     presets, key = game.m["input"]["presets"], game.m["input"]["script_env"]
     if not presets or not game.golden_json:
         return
-    with open(game.golden_json) as f:
+    with open(game.golden_json, encoding="utf-8") as f:
         scenarios = json.load(f).get("scenarios", {})
     bad = [
         "%s (%s)" % (name, sc["env"][key])
@@ -242,11 +242,11 @@ def pull_windows(b, scen, stamp, log, idxs):
     for name in b.host.pull_frames(stamp, ["frame_%s.bmp" % i for i in idxs], frames):
         b.say("golden: %s %s was not dumped" % (scen, name))
     pulls = os.path.join(frames, "pulls.txt")
-    with open(pulls, "w") as f:
+    with open(pulls, "w", encoding="utf-8") as f:
         rc, _ = golden_py(b, "pulls", scen, os.path.join(log, "game-stdio.log"), stdout=f)
     names = []
     if rc == 0:
-        with open(pulls) as f:
+        with open(pulls, encoding="utf-8") as f:
             names = [x.strip() for x in f if x.strip()]
     if b.host.pull_frames(stamp, names, frames):
         b.say(
@@ -441,7 +441,7 @@ def cmd_golden(b, args, bench_env=None, kind="golden"):
         # Only the flips the check reads (each target +-2, from the run's
         # anchors), not all of dumpat's window (150-230 MB a scenario).
         pulls = os.path.join(log, "frames", "pulls.txt")
-        with open(pulls, "w") as f:
+        with open(pulls, "w", encoding="utf-8") as f:
             rc, _ = golden_py(
                 b,
                 "pulls",
@@ -452,7 +452,7 @@ def cmd_golden(b, args, bench_env=None, kind="golden"):
                 stdout=f,
             )
         if rc != 0:
-            open(pulls, "w").close()
+            open(pulls, "w", encoding="utf-8").close()
         # A directory source with --files-from does not get its leading ~
         # expanded on the host; the remote rsync starts in $HOME anyway.
         rg = c.remote_game[2:] if c.remote_game.startswith("~/") else c.remote_game

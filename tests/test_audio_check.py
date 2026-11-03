@@ -189,7 +189,7 @@ def test_noise_fails(d):
     # windows started at 0.40 and 57 %.
     assert 0.315 < ac.DEFAULTS["noise_flatness"] < 0.40, ac.DEFAULTS
     assert 0.16 < ac.DEFAULTS["noise_hf_share"] < 0.57, ac.DEFAULTS
-    g = json.load(open(GOLDEN))["compare"]
+    g = json.load(open(GOLDEN, encoding="utf-8"))["compare"]
     assert g["noise_flatness"] == ac.DEFAULTS["noise_flatness"], g
     assert g["noise_hf_share"] == ac.DEFAULTS["noise_hf_share"], g
     # A scenario's own keys override compare's: one with sustained broadband
@@ -200,7 +200,7 @@ def test_noise_fails(d):
             "compare": {"max_noise_fraction": 0.1},
             "scenarios": {"windy": {"noise_flatness": 0.9, "noise_hf_share": 0.99}, "calm": {}},
         },
-        open(gj, "w"),
+        open(gj, "w", encoding="utf-8"),
     )
     rc, out = run_cli([p, "--golden", gj, "--scenario", "windy"])
     assert rc == 0, (rc, out)
@@ -212,16 +212,16 @@ def test_rate_from_log(d):
     p = os.path.join(d, "rate.wav")
     ac.write_wav(p, RATE, tone(2.0))
     log = os.path.join(d, "run.log")
-    with open(log, "w") as f:
+    with open(log, "w", encoding="utf-8") as f:
         f.write("noise\n[APU] first submit t=10.000000\nmore\n[APU] last submit t=12.000000\n")
     rep, fails = ac.check(p, log=log, need_rate=True)
     assert abs(rep["rate_ratio"] - 1.0) < 1e-9 and not fails, (rep, fails)
-    with open(log, "w") as f:  # 1 % slow: frames from samples=
+    with open(log, "w", encoding="utf-8") as f:  # 1 % slow: frames from samples=
         f.write("[APU] first submit t=0.5\n[APU] last submit t=2.5 samples=95040\n")
     rep, fails = ac.check(p, log=log, need_rate=True)
     assert abs(rep["rate_ratio"] - 0.99) < 1e-9, rep
     assert any("sample-rate ratio" in f for f in fails), fails
-    with open(log, "w") as f:
+    with open(log, "w", encoding="utf-8") as f:
         f.write("nothing here\n")
     _, fails = ac.check(p, log=log, need_rate=True)
     assert any("first submit" in f for f in fails), fails
@@ -230,7 +230,7 @@ def test_rate_from_log(d):
 
 
 def test_golden(d):
-    g = json.load(open(GOLDEN))
+    g = json.load(open(GOLDEN, encoding="utf-8"))
     names = sorted(g["scenarios"])
     assert names == ["boot-title", "stage1", "title-menu"], names
     p = os.path.join(d, "late.wav")
@@ -286,7 +286,7 @@ def test_host_starve_from_log(d):
     rep, fails = ac.check(p)
     assert not fails, fails
     log = os.path.join(d, "starve.log")
-    with open(log, "w") as f:
+    with open(log, "w", encoding="utf-8") as f:
         f.write("[AUDIO-HOST] wav=0 starves=0 starved_ms=0.0\n")
         f.write(f"[AUDIO-HOST] starve wav={RATE} ms=30.0 queued=0 gap_ms=40.0 trapped=1\n")
     rep, fails = ac.check(p, log=log)
@@ -304,7 +304,7 @@ def test_ring_stale_from_log(d):
     p = os.path.join(d, "ring.wav")
     ac.write_wav(p, RATE, tone(2.0))
     log = os.path.join(d, "ring.log")
-    with open(log, "w") as f:
+    with open(log, "w", encoding="utf-8") as f:
         f.write(
             "[APU-RING] t=4s v=68 bytes=65536 entries=91 stale=6 "
             "stale_total=6 lead_min=0 lead_avg=292\n"
@@ -324,14 +324,14 @@ def test_ring_stale_from_log(d):
     _, fails = ac.check(p, log=log, limits=limits)
     assert not any("stale-lap" in f for f in fails), fails
     clean = os.path.join(d, "clean.log")
-    with open(clean, "w") as f:
+    with open(clean, "w", encoding="utf-8") as f:
         f.write(
             "[APU-RING] t=5s v=71 bytes=65536 entries=172 stale=0 "
             "stale_total=0 lead_min=15104 lead_avg=15834\n"
         )
     _, fails = ac.check(p, log=clean)
     assert not fails, fails
-    with open(clean, "w") as f:
+    with open(clean, "w", encoding="utf-8") as f:
         f.write("no ring lines\n")
     assert ac.ring_stale(clean) is None
     rep, fails = ac.check(p, log=clean)

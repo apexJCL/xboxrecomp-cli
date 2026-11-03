@@ -42,7 +42,7 @@ def states(ws, **items):
             "labels": list(v[2]) if len(v) > 2 else [],
         }
     p = ws.p("states.json")
-    with open(p, "w") as f:
+    with open(p, "w", encoding="utf-8") as f:
         json.dump(doc, f)
     return p
 
@@ -241,11 +241,11 @@ def test_frames_of_passing_runs_only(ws):
 
 def test_pending_and_clean_config_keys(ws):
     def load(extra):
-        with open(ws.p(config.NAME), "a") as f:
+        with open(ws.p(config.NAME), "a", encoding="utf-8") as f:
             f.write(extra)
         return config.load(ws.p(config.NAME))
 
-    base = open(ws.p(config.NAME)).read()
+    base = open(ws.p(config.NAME), encoding="utf-8").read()
     cfg = load('\n[pending]\nstates = ["true"]\nprefixes = ["trk"]\n[clean]\nguard_hours = 6\n')
     assert cfg.pending["prefixes"] == ["TRK"] and cfg.pending["cache_minutes"] == 10
     assert cfg.guard_hours == 6
@@ -253,7 +253,7 @@ def test_pending_and_clean_config_keys(ws):
         ("\n[pending]\nstate = 1\n", "state"),
         ("\n[clean]\nguard_hours = 0.5\n", "guard_hours"),
     ):
-        with open(ws.p(config.NAME), "w") as f:
+        with open(ws.p(config.NAME), "w", encoding="utf-8") as f:
             f.write(base)
         with pytest.raises(Exception, match=msg):
             load(bad)
@@ -354,7 +354,7 @@ def test_an_empty_or_stale_states_doc_is_refused(ws, doc, msg):
             "items": {"TRK-10": {"state": "Done", "group": "completed"}},
         }
     p = ws.p("st.json")
-    with open(p, "w") as f:
+    with open(p, "w", encoding="utf-8") as f:
         json.dump(doc, f)
     write(ws.p("notes/refs/t.md"), "## TRK-10\nkept 20261001-200001\n")
     write(ws.p("runs/topic/a.txt"))

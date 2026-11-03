@@ -99,7 +99,7 @@ def test_ascii_glyphs():
 
 def fake_child(d, body):
     p = os.path.join(d, "child.py")
-    with open(p, "w") as f:
+    with open(p, "w", encoding="utf-8") as f:
         f.write(body)
     return [sys.executable, p]
 
@@ -129,7 +129,7 @@ def test_plain_never_rewrites(d):
     with open(os.path.join(v.logs, logs[0]), "rb") as f:
         raw = f.read()
     assert b"[20/20]" in raw and b"60%\r" in raw
-    with open(os.path.join(v.logs, "timings.json")) as f:
+    with open(os.path.join(v.logs, "timings.json"), encoding="utf-8") as f:
         assert "build windows" in json.load(f)
 
 
@@ -257,7 +257,7 @@ def test_interrupt_reaps_child(d):
     except KeyboardInterrupt:
         pass
     assert time.monotonic() - t0 < 10
-    with open(pidf) as f:
+    with open(pidf, encoding="utf-8") as f:
         pid = int(f.read())
     if os.name != "nt":  # signal 0 is a probe only on POSIX
         try:
@@ -384,11 +384,11 @@ def test_prune_logs(d):
     stamps = ["20261005-%06d" % i for i in range(25)]
     for s in stamps:
         for step in ("build", "recomp"):
-            open(os.path.join(logs, "%s-%s.log" % (s, step)), "w").close()
+            open(os.path.join(logs, "%s-%s.log" % (s, step)), "w", encoding="utf-8").close()
     for keep in ("timings.json", "notes.txt", "x-build.log"):
-        open(os.path.join(logs, keep), "w").close()
+        open(os.path.join(logs, keep), "w", encoding="utf-8").close()
     outside = os.path.join(d, "20200101-000000-build.log")
-    open(outside, "w").close()
+    open(outside, "w", encoding="utf-8").close()
     gone = pg.prune_logs(logs, keep=20)
     assert len(gone) == 10
     left = sorted(os.listdir(logs))

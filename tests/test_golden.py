@@ -166,7 +166,7 @@ def make_golden(tmp, frame, anchors=None, extra=None):
         },
     }
     path = os.path.join(tmp, "golden.json")
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(g, f)
     return path
 
@@ -183,7 +183,7 @@ def run_check(tmp, golden_json, run_dir):
 def setup_run(tmp, log_lines, flips):
     run = os.path.join(tmp, "run")
     os.makedirs(os.path.join(run, "frames"), exist_ok=True)
-    with open(os.path.join(run, "game-stdio.log"), "w") as f:
+    with open(os.path.join(run, "game-stdio.log"), "w", encoding="utf-8") as f:
         f.write("\n".join(log_lines) + "\n")
     for n, img in flips.items():
         write_bmp(os.path.join(run, "frames", "flip_%05d.bmp" % n), img)
@@ -853,7 +853,7 @@ def test_record_stores_pace():
         G.GOLDEN_JSON, G.FRAMES_DIR = gj, os.path.join(tmp, "frames")
         with contextlib.redirect_stdout(io.StringIO()):
             assert G.cmd_record(["s=" + d]) == 0
-        with open(gj) as f:
+        with open(gj, encoding="utf-8") as f:
             a = json.load(f)["scenarios"]["s"]["frames"][0]["anchor"]
         assert a["ref_flip"] == 30 and a["ref_pace"] == 50.0, a
 
@@ -867,7 +867,7 @@ def test_reference_stores_pace():
         G.GOLDEN_JSON, G.FRAMES_DIR = gj, os.path.join(tmp, "frames")
         with contextlib.redirect_stdout(io.StringIO()):
             assert G.cmd_reference(["s", "f", "a", d]) == 0
-        with open(gj) as f:
+        with open(gj, encoding="utf-8") as f:
             r = json.load(f)["scenarios"]["s"]["frames"][0]["references"][0]
         assert r["anchor_flip"] == 30 and r["pace"] == 50.0, r
 
@@ -1062,10 +1062,10 @@ def test_skipped_frames_are_not_planned_on_their_backend():
     assert G.dumpat_ranges(sc2, backend="cpu") == ""
     with tempfile.TemporaryDirectory() as tmp:
         G.GOLDEN_JSON = os.path.join(tmp, "golden.json")
-        with open(G.GOLDEN_JSON, "w") as f:
+        with open(G.GOLDEN_JSON, "w", encoding="utf-8") as f:
             json.dump({"compare": {}, "scenarios": {"s": dict(sc, seconds=1)}}, f)
         log = os.path.join(tmp, "log")
-        with open(log, "w") as f:
+        with open(log, "w", encoding="utf-8") as f:
             f.write("\n".join(metal_log({n: 1 for n in range(1, 130)})) + "\n")
 
         def out(fn, args):
@@ -1103,7 +1103,7 @@ def test_pad_step_count_cross_checked():
             assert got == rc and word in out, out
         # An @file script is counted from the file under the game root.
         os.makedirs(os.path.join(tmp, "fx"))
-        with open(os.path.join(tmp, "fx", "r.pad"), "w") as f:
+        with open(os.path.join(tmp, "fx", "r.pad"), "w", encoding="utf-8") as f:
             f.write("# rec\nf1:a\nf2:b\nf3:lx=10:4\n")
         assert G.pad_steps_expected({"RECOMP_DEBUG": "pad_script=@fx/r.pad"}, tmp) == 3
         assert G.pad_steps_expected({"RECOMP_PAD_SCRIPT": "@fx/r.pad"}, tmp) == 3
@@ -1131,7 +1131,7 @@ def test_worktree_reads_references_from_the_main_checkout():
         main, wt = os.path.join(tmp, "main"), os.path.join(tmp, "wt")
         os.makedirs(os.path.join(main, "golden", "frames"))
         git("init", "-q", cwd=main)
-        with open(os.path.join(main, "golden", "golden.json"), "w") as f:
+        with open(os.path.join(main, "golden", "golden.json"), "w", encoding="utf-8") as f:
             f.write("{}")
         git("add", ".", cwd=main)
         git("commit", "-qm", "x", cwd=main)

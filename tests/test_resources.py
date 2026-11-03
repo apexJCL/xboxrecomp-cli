@@ -186,7 +186,7 @@ def test_gen_job_sources_and_record(d, state):
         resources.record("compile:windows", 200 * MiB, 6)
         assert resources.peak_of("compile:windows") == 1300 * MiB
         resources.record("compile:windows", None)
-        assert json.load(open(state))["compile:windows"]["jobs"] == 6
+        assert json.load(open(state, encoding="utf-8"))["compile:windows"]["jobs"] == 6
         # The other target's peak does not count.
         assert resources.gen_job("macos")[1] == "game.toml"
 

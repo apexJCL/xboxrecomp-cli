@@ -32,7 +32,7 @@ def make_patch(d, base_bundle, new_bundle, name="p"):
     into d/<name>/; returns the patch folder."""
     with open(os.path.join(base_bundle, "manifest.json"), "rb") as f:
         base = patch_mod.Base(f.read(), base_bundle)
-    with open(os.path.join(new_bundle, "manifest.json")) as f:
+    with open(os.path.join(new_bundle, "manifest.json"), encoding="utf-8") as f:
         new = json.load(f)
     choice = patch_mod.Choice("patch", "", base, patch_mod.diff(base.manifest, new))
     out = os.path.join(d, name + "-out")
@@ -95,7 +95,7 @@ def launchable(root):
     """current names a version holding its whole program, by its sums."""
     v = os.path.join(root, "current")
     assert os.path.isfile(os.path.join(v, EXE + ".exe"))
-    with open(os.path.join(v, "SHA256SUMS")) as f:
+    with open(os.path.join(v, "SHA256SUMS"), encoding="utf-8") as f:
         for line in f:
             sha, rel = line.rstrip("\n").split("  ", 1)
             if not rel.startswith("game_files/"):
@@ -145,7 +145,7 @@ def test_patch_tar_deterministic(il, d):
     v1, v2 = bundles(d)
     with open(os.path.join(v1, "manifest.json"), "rb") as f:
         base = patch_mod.Base(f.read(), v1)
-    with open(os.path.join(v2, "manifest.json")) as f:
+    with open(os.path.join(v2, "manifest.json"), encoding="utf-8") as f:
         new = json.load(f)
     choice = patch_mod.Choice("patch", "", base, patch_mod.diff(base.manifest, new))
     shas = []
@@ -233,7 +233,7 @@ def test_deleted_and_stray_game_files(il, d):
     v1, v2 = bundles(d, v2_game=g2)
     p = make_patch(d, v1, v2)
     root = installed(il, d, v1)
-    with open(os.path.join(root, "game_files", "mine.txt"), "w") as f:
+    with open(os.path.join(root, "game_files", "mine.txt"), "w", encoding="utf-8") as f:
         f.write("x")
     rc, out = run(il, p, root, "patch", "--yes")
     assert rc == 0, out
@@ -283,7 +283,7 @@ def test_wrong_base_manifest_refuses(il, d):
     root = installed(il, d, v1)
     doc = json.loads(read(os.path.join(p, "patch.json")))
     doc["base_manifest_sha256"] = "0" * 64
-    with open(os.path.join(p, "patch.json"), "w") as f:
+    with open(os.path.join(p, "patch.json"), "w", encoding="utf-8") as f:
         json.dump(doc, f)
     snap = tree(root)
     rc, out = run(il, p, root, "patch")
@@ -314,10 +314,10 @@ def test_damaged_patch_refuses(il, d):
 
 def edit_patch_json(p, change):
     path = os.path.join(p, "patch.json")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         doc = json.load(f)
     change(doc)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(doc, f)
 
 
@@ -328,7 +328,7 @@ def test_patch_deleting_outside_the_install_refused(il, d):
     p = make_patch(d, v1, v2)
     root = installed(il, d, v1)
     victim = os.path.join(d, "victim")
-    with open(victim, "w") as f:
+    with open(victim, "w", encoding="utf-8") as f:
         f.write("keep me")
     rel = "game_files/" + os.path.relpath(victim, os.path.join(root, "game_files"))
     assert ".." in rel.split("/")
@@ -348,10 +348,10 @@ def test_patch_with_a_bad_version_refused(il, d, key):
     root = installed(il, d, v1)
     if key == "version":
         mpath = os.path.join(p, "manifest.json")
-        with open(mpath) as f:
+        with open(mpath, encoding="utf-8") as f:
             m = json.load(f)
         m["version"] = "../evil"
-        with open(mpath, "w") as f:
+        with open(mpath, "w", encoding="utf-8") as f:
             json.dump(m, f)
     edit_patch_json(p, lambda doc: doc.__setitem__(key, "../evil"))
     rc, out = run(il, p, root, "patch")
@@ -384,7 +384,7 @@ def test_refuses_while_game_runs(il, d, command):
     v1, v2 = bundles(d)
     p = make_patch(d, v1, v2)
     root = installed(il, d, v1)
-    with open(os.path.join(root, "state", "launch.lock"), "a") as f:
+    with open(os.path.join(root, "state", "launch.lock"), "a", encoding="utf-8") as f:
         il.fcntl.flock(f.fileno(), il.fcntl.LOCK_EX)
         rc, out = run(il, p if command == "patch" else v2, root, command)
     assert rc == 1 and "the game is running" in out, out
@@ -545,14 +545,14 @@ def test_override_note_after_install_and_patch(il, d):
     root = installed(il, d, v1)
     assert "note: " not in run(il, v1, root, "install")[1]
     cfg = os.path.join(root, "config", "config.toml")
-    with open(cfg, "w") as f:
+    with open(cfg, "w", encoding="utf-8") as f:
         f.write('[render]\nscale = 2\n[textures]\npack = "none"  # mine\n')
     rc, out = run(il, v1, root, "install")
     assert rc == 0 and 'textures.pack = "none", which overrides this build\'s HUD pack' in out, out
     # The clear: "none" then hides nothing.
     rc, out = run(il, make_patch(d, v1, v2), root, "patch", "--yes")
     assert rc == 0 and "note: " not in out, out
-    with open(cfg, "w") as f:
+    with open(cfg, "w", encoding="utf-8") as f:
         f.write('[textures]\npack = "enhance/hud.pack"\n')
     rc, out = run(il, v2, root, "install")
     assert rc == 0 and "this build ships no HUD pack" in out, out
@@ -569,7 +569,7 @@ def test_scan_pack_key(il, d):
         ('[textures]\npacked = "x"\n', None),
         ('[textures]\n[other]\npack = "x"\n', None),
     ):
-        with open(p, "w") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write(text)
         assert il.scan_pack_key(p) == want, text
     assert il.scan_pack_key(os.path.join(d, "missing.toml")) is None

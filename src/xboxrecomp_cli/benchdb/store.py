@@ -60,7 +60,7 @@ def local_fs(d):
         return True, ""
     if sys.platform.startswith("linux"):
         try:
-            with builtins.open("/proc/self/mounts") as f:
+            with builtins.open("/proc/self/mounts", encoding="utf-8") as f:
                 mounts = [line.split() for line in f]
         except OSError:
             return True, ""

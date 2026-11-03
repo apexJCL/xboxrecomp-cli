@@ -230,11 +230,11 @@ def make_icon(bdir):
 
 
 def render(template, values, dst, mode=None):
-    with open(template) as f:
+    with open(template, encoding="utf-8") as f:
         text = f.read()
     for k, v in values.items():
         text = text.replace("@%s@" % k, v)
-    with open(dst, "w", newline="\n") as f:
+    with open(dst, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
     if mode:
         os.chmod(dst, mode)
@@ -361,7 +361,7 @@ def cap_blocks(text, caps, where):
 
 
 def read_template(path, caps):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return cap_blocks(f.read(), caps, path)
 
 
@@ -400,7 +400,7 @@ def readme(target, version, lib, dst, enhance=True):
     pacing = pacing and "@OPTION_NOTES@" in text
     for k, v in values.items():
         text = text.replace("@%s@" % k, v)
-    with open(dst, "w", newline="\n") as f:
+    with open(dst, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
     part_values = {
         "VERSION": version,
@@ -415,7 +415,7 @@ def readme(target, version, lib, dst, enhance=True):
     part = read_template(part_path, caps)
     for k, v in part_values.items():
         part = part.replace("@%s@" % k, v)
-    with open(dst, "a", newline="\n") as f:
+    with open(dst, "a", encoding="utf-8", newline="\n") as f:
         f.write(part.replace("\r\n", "\n"))
     return pacing
 
@@ -648,7 +648,7 @@ def stage_hud_pack(payload, target, info):
     defaults = os.path.join(payload, "config.default.toml")
     if os.path.isfile(defaults) and has_textures_table(defaults):
         raise CliError("--hud-pack: the staged config.default.toml already has a [textures] table")
-    with open(defaults, "a", newline="\n") as f:
+    with open(defaults, "a", encoding="utf-8", newline="\n") as f:
         f.write(
             "\n[textures]\n"
             "# Your HUD texture pack (%d entries at %dx), made by enhance hud from\n"
@@ -767,7 +767,7 @@ def write_common(
     if enhance:
         copy_lf(config_default_path(G), os.path.join(payload, "config.default.toml"))
     if seed is not None:
-        with open(os.path.join(payload, SEED_NAME), "w", newline="\n") as f:
+        with open(os.path.join(payload, SEED_NAME), "w", encoding="utf-8", newline="\n") as f:
             f.write(seed)
     global HUD_PACK
     HUD_PACK = stage_hud_pack(payload, target, hud_pack) if hud_pack else None
@@ -824,7 +824,7 @@ def stamp_launch_env(path):
         if f.seek(0, os.SEEK_END):
             f.seek(-1, os.SEEK_END)
             ends = f.read(1) == b"\n"
-    with open(path, "a", newline="\n") as f:
+    with open(path, "a", encoding="utf-8", newline="\n") as f:
         if not ends:
             f.write("\n")
         f.write("# The XBE this build was made from (xbr fingerprint).\n")
@@ -873,9 +873,9 @@ def write_manifest(root, target, version, overrides, lib, extra=None, hasher=Non
     leaks = lib.private_leaks(text)
     if leaks:
         raise CliError("the manifest would carry private data: " + ", ".join(leaks))
-    with open(os.path.join(root, "manifest.json"), "w", newline="\n") as f:
+    with open(os.path.join(root, "manifest.json"), "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
-    with open(os.path.join(root, "SHA256SUMS"), "w", newline="\n") as f:
+    with open(os.path.join(root, "SHA256SUMS"), "w", encoding="utf-8", newline="\n") as f:
         f.write(lib.sums_text(man))
     return man
 
@@ -1023,6 +1023,7 @@ def stage_present_shaders(payload, target, exe):
     shader_lib, shaders = incr.present_shader_files(target, exe)
     if shaders:
         shutil.copytree(shaders, os.path.join(payload, incr.SHADER_DIR))
+        refresh_shader_line_endings(os.path.join(payload, incr.SHADER_DIR))
     if shader_lib and target != "macos":
         shutil.copy2(shader_lib, os.path.join(payload, os.path.basename(shader_lib)))
     names = [
@@ -1030,6 +1031,31 @@ def stage_present_shaders(payload, target, exe):
     ]
     if names:
         host.say("present.shader: %s staged" % " and ".join(names))
+
+
+def refresh_shader_line_endings(staged, src=None):
+    """The toolkit's LF bytes for every staged shader file that differs
+    from its assets/shaders source only by CRLF. The build copies the
+    shaders beside the exe after a link only, so a Windows exe built from
+    an autocrlf toolkit clone keeps CRLF copies after setup has healed the
+    clone, and the package refuses them. Any other difference
+    is left for staged_problems to report."""
+    src = src or os.path.join(toolkit.toolkit_dir(), "assets", "shaders")
+    for dirpath, _, files in os.walk(staged):
+        for name in files:
+            path = os.path.join(dirpath, name)
+            ref = os.path.join(src, os.path.relpath(path, staged))
+            if not os.path.isfile(ref):
+                continue
+            with open(path, "rb") as f:
+                got = f.read()
+            if b"\r\n" not in got:
+                continue
+            with open(ref, "rb") as f:
+                want = f.read()
+            if got.replace(b"\r\n", b"\n") == want:
+                with open(path, "wb") as f:
+                    f.write(want)
 
 
 def stage_files(a, stage, payload, version, exe, lib, hud_pack, seed, enhance):

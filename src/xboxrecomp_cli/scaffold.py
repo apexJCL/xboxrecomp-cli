@@ -334,11 +334,13 @@ __pycache__/
 GITATTRIBUTES = """\
 # Line endings that must survive a Windows checkout (core.autocrlf=true):
 # the shell wrapper and the files a bundle carries to Linux and macOS run
-# there, and a CR breaks them. cmd.exe wants CRLF.
+# there, and a CR breaks them. cmd.exe wants CRLF. The pipeline rewrites
+# config/*.json with LF; a CRLF checkout of them would read as modified.
 *.sh      text eol=lf
 *.py      text eol=lf
 *.in      text eol=lf
 *.toml    text eol=lf
+*.json    text eol=lf
 @SLUG@    text eol=lf
 *.cmd     text eol=crlf
 """

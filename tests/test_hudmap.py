@@ -181,7 +181,7 @@ def test_merge_into_nothing():
 
 def write_capture(d, sprites, frames=(0, 1, 2), canvas=CANVAS):
     os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "capture.jsonl"), "w") as f:
+    with open(os.path.join(d, "capture.jsonl"), "w", encoding="utf-8") as f:
         # As the toolkit writes them: a frame's sprites, then its frame line.
         for fr in frames:
             for s in sprites:
@@ -223,7 +223,7 @@ TOOLKIT_LINES = """\
 
 
 def test_capture_reads_the_toolkit_format(d):
-    open(os.path.join(d, "capture.jsonl"), "w").write(TOOLKIT_LINES)
+    open(os.path.join(d, "capture.jsonl"), "w", encoding="utf-8").write(TOOLKIT_LINES)
     cap = C.Capture(d)
     one, zero, unlisted = cap.sprites
     assert (one.level, one.queue, one.element, one.tex) == (1, 7, "score", "0x00000000DEADBEEF")
@@ -237,11 +237,11 @@ def test_capture_reads_the_toolkit_format(d):
 
 
 def test_review_draws_a_frame_without_picture(d):
-    open(os.path.join(d, "capture.jsonl"), "w").write(TOOLKIT_LINES)
+    open(os.path.join(d, "capture.jsonl"), "w", encoding="utf-8").write(TOOLKIT_LINES)
     prop = os.path.join(d, "proposal.toml")
     P.write(table(), [], prop, [d])
     out, n = R.review(prop, (16, 9))
-    text = open(out).read()
+    text = open(out, encoding="utf-8").read()
     assert n == 2 and text.count('href="frame_00002.bmp"') == 2 and 'fill="#222"' in text
 
 
@@ -256,7 +256,7 @@ def test_canvas_maps_centre_origin_and_view():
 def test_capture_errors(d):
     with pytest.raises(CliError, match="no capture"):
         C.Capture(os.path.join(d, "none"))
-    with open(os.path.join(d, "capture.jsonl"), "w") as f:
+    with open(os.path.join(d, "capture.jsonl"), "w", encoding="utf-8") as f:
         f.write("{not json\n" + json.dumps({"type": "frame", "frame": 0}) + "\n")
     with pytest.raises(CliError, match="not JSON"):
         C.Capture(d)
@@ -264,7 +264,7 @@ def test_capture_errors(d):
 
 def test_capture_skips_a_partial_last_line(d, capsys):
     path = write_capture(d, [sprite(0, 0x12005, [0, 0, 10, 10])])
-    with open(os.path.join(path, "capture.jsonl"), "a") as f:
+    with open(os.path.join(path, "capture.jsonl"), "a", encoding="utf-8") as f:
         f.write('{"type": "sprite", "fra')
     cap = C.Capture(path)
     assert len(cap.sprites) == 1
@@ -400,9 +400,9 @@ def write_analysis(d):
         {"from": "0x12100", "to": "0x13000", "type": "call"},
         {"from": "0x12200", "to": "0x11000", "type": "jump"},
     ]
-    json.dump(funcs, open(os.path.join(dd, "functions.json"), "w"))
-    json.dump(xrefs, open(os.path.join(dd, "xrefs.json"), "w"))
-    with open(os.path.join(dd, "asm", "text.asm"), "w") as f:
+    json.dump(funcs, open(os.path.join(dd, "functions.json"), "w", encoding="utf-8"))
+    json.dump(xrefs, open(os.path.join(dd, "xrefs.json"), "w", encoding="utf-8"))
+    with open(os.path.join(dd, "asm", "text.asm"), "w", encoding="utf-8") as f:
         f.write("  0x00012000  e8fbefffff   call 0x11000\n")
         f.write("  0x00013010  ff15aabbccdd   call [0xddccbbaa]\n")
         f.write("  0x00012100  e8fb0e0000   call 0x13000\n")
@@ -468,7 +468,7 @@ def test_emit_writes_refuses_and_checks(d):
     prop = os.path.join(d, "proposal.toml")
     doc = emit_doc()
     doc["site"][1].update(proposed=True, evidence={"rule": "x"})
-    open(prop, "w").write(T.dumps(doc))
+    open(prop, "w", encoding="utf-8").write(T.dumps(doc))
     rc, msgs, _ = E.emit(tp, prop, hooked, an)
     assert rc == 1 and "still proposed" in msgs[0] and msgs[1] == "  site 0x00012105"
     assert not os.path.exists(tp)
@@ -481,14 +481,16 @@ def test_emit_writes_refuses_and_checks(d):
     assert E.emit(tp, prop, hooked, an)[0] == 0
     assert E.emit(tp, None, hooked, an) == (0, [], [])
     # A table the parser refuses fails the check.
-    open(tp, "a").write('\n[[site]]\nret_va = 0x00012005\nelement = "again"\nkind = "left"\n')
+    open(tp, "a", encoding="utf-8").write(
+        '\n[[site]]\nret_va = 0x00012005\nelement = "again"\nkind = "left"\n'
+    )
     rc, msgs, _ = E.emit(tp, None, hooked, an)
     assert rc == 1 and "site 0x00012005: listed twice" in msgs
 
 
 def test_emit_refuses_unknown_proposal_keys(d):
     prop = os.path.join(d, "p.toml")
-    open(prop, "w").write("version = 1\n[[site]]\nret_va = 1\ncolour = 2\n")
+    open(prop, "w", encoding="utf-8").write("version = 1\n[[site]]\nret_va = 1\ncolour = 2\n")
     rc, msgs, _ = E.emit(os.path.join(d, "t.toml"), prop, E.Hooked([]), None)
     assert rc == 1 and msgs[0].endswith("unknown key site.0.colour")
 
@@ -518,7 +520,7 @@ def test_review_sheet_links_frames(d):
     assert R.sources(prop) == [cap_dir]
     out, n = R.review(prop, (16, 9))
     assert n == 3 and out == os.path.join(cap_dir, "review-16x9.html")
-    text = open(out).read()
+    text = open(out, encoding="utf-8").read()
     assert 'href="frame_00000.bmp"' in text and "heart life 0x00012005" in text
     assert "unlisted - 0x00019005" in text and "data:" not in text
 
@@ -634,7 +636,7 @@ def test_play_sees_exit_and_limit(d):
 def test_captured_up_to(d):
     p = os.path.join(d, "c.jsonl")
     assert RUN.captured_up_to(p) == 0
-    open(p, "w").write(
+    open(p, "w", encoding="utf-8").write(
         '{"type":"frame","frame":600,"bmp":null}\n'
         '{"type":"sprite","level":1,"frame":601,"bbox":null}\n'
         '{"type":"frame","frame":601,"canvas":null,"bmp":null}\n'
@@ -645,7 +647,9 @@ def test_captured_up_to(d):
     assert RUN.captured_up_to(p) == 601
     log = os.path.join(d, "game-stdio.log")
     assert not RUN.capture_done(log)
-    open(log, "w").write("x\n[hud.capture] done: frames 600..719, 3 lines, in d\n")
+    open(log, "w", encoding="utf-8").write(
+        "x\n[hud.capture] done: frames 600..719, 3 lines, in d\n"
+    )
     assert RUN.capture_done(log)
 
 
@@ -665,7 +669,10 @@ class FakeGame:
             "input": {"script_env": "RECOMP_INPUT_SCRIPT", "presets": ["@menu"]},
             "golden": {"json": "golden.json"},
         }
-        json.dump({"scenarios": scenarios or {}}, open(os.path.join(d, "golden.json"), "w"))
+        json.dump(
+            {"scenarios": scenarios or {}},
+            open(os.path.join(d, "golden.json"), "w", encoding="utf-8"),
+        )
 
     def path(self, p):
         return os.path.join(self.root, p)
@@ -696,7 +703,7 @@ def no_lock(monkeypatch):
 def test_capture_run(d, no_lock):
     G = FakeGame(d, hud={"mod": "hud-anchors"})
     exe = os.path.join(d, "game")
-    open(exe, "w").close()
+    open(exe, "w", encoding="utf-8").close()
     out = os.path.join(d, "cap")
     seen = {}
 
@@ -704,7 +711,7 @@ def test_capture_run(d, no_lock):
         seen.update(env=env, cwd=cwd)
 
         def start():
-            with open(os.path.join(out, "capture.jsonl"), "w") as f:
+            with open(os.path.join(out, "capture.jsonl"), "w", encoding="utf-8") as f:
                 for fr in (10, 11, 12):
                     f.write(json.dumps({"type": "frame", "frame": fr}) + "\n")
 
@@ -773,7 +780,7 @@ def run_dir(d, name, flips, log=""):
     os.makedirs(os.path.join(rd, "frames"))
     for f in flips:
         open(os.path.join(rd, "frames", "flip_%05d.bmp" % f), "wb").close()
-    open(os.path.join(rd, "game-stdio.log"), "w").write(log)
+    open(os.path.join(rd, "game-stdio.log"), "w", encoding="utf-8").write(log)
     return rd
 
 
@@ -784,7 +791,7 @@ def test_sheet_write(d):
     path, failed = S.write(os.path.join(d, "out"), "@menu", "16:9", on, off, known)
     # The skip and the right-hand lift no row explains.
     assert failed == 2 and path.endswith("check-16x9.html")
-    text = open(path).read()
+    text = open(path, encoding="utf-8").read()
     assert "../off/frames/flip_00300.bmp" in text and "no dump" in text
     assert "0x00012505" in text and "0000ABCE" in text
     _, failed = S.write(os.path.join(d, "out"), "@menu", "16:9", on, (off[0], 1, "exited"), {})
@@ -794,7 +801,7 @@ def test_sheet_write(d):
 def test_check_run(d, no_lock, monkeypatch):
     G = FakeGame(d, hud={"mod": "hud-anchors", "scenarios": ["@menu"]})
     exe = os.path.join(d, "game")
-    open(exe, "w").close()
+    open(exe, "w", encoding="utf-8").close()
     envs = []
 
     def popen(argv, cwd, env, stdout, **k):
@@ -907,7 +914,9 @@ def test_c_readable_refuses_what_the_reader_refuses():
 def test_emit_refuses_text_the_reader_refuses(d):
     an = write_analysis(d)
     tp = os.path.join(d, "hud.toml")
-    open(tp, "w").write(T.dumps(emit_doc()) + "\n[capture]\ndraws = [{ fn = 0x11000 }]\n")
+    open(tp, "w", encoding="utf-8").write(
+        T.dumps(emit_doc()) + "\n[capture]\ndraws = [{ fn = 0x11000 }]\n"
+    )
     rc, msgs, _ = E.emit(tp, None, E.Hooked(["0x11000", "0x13000"]), an, dry=True)
     assert rc == 1 and msgs[0].endswith("draws: nested arrays and inline tables are not supported")
 
@@ -916,12 +925,14 @@ def test_emit_writes_capture_draws_the_reader_takes(d):
     an = write_analysis(d)
     hooked = E.Hooked(["0x11000", "0x13000"])
     tp = os.path.join(d, "hud.toml")
-    open(tp, "w").write(T.dumps(emit_doc()))
+    open(tp, "w", encoding="utf-8").write(T.dumps(emit_doc()))
     prop = os.path.join(d, "p.toml")
-    open(prop, "w").write(T.dumps({"version": 1, "capture": {"draws": [{"fn": 0x11000}]}}))
+    open(prop, "w", encoding="utf-8").write(
+        T.dumps({"version": 1, "capture": {"draws": [{"fn": 0x11000}]}})
+    )
     rc, msgs, report = E.emit(tp, prop, hooked, an)
     assert (rc, msgs, report) == (0, [], [("capture", None, "added")])
-    text = open(tp).read()
+    text = open(tp, encoding="utf-8").read()
     assert "[[capture.draws]]\nfn = 0x00011000" in text and T.c_readable(text) == []
     assert E.emit(tp, None, hooked, an) == (0, [], [])
 
@@ -929,7 +940,7 @@ def test_emit_writes_capture_draws_the_reader_takes(d):
 def test_emit_without_analysis_needs_no_analysis(d):
     tp = os.path.join(d, "hud.toml")
     prop = os.path.join(d, "p.toml")
-    open(prop, "w").write(T.dumps(emit_doc()))
+    open(prop, "w", encoding="utf-8").write(T.dumps(emit_doc()))
     hooked = E.Hooked(["0x11000", "0x13000"])
     rc, msgs, _ = E.emit(tp, prop, hooked, None)
     assert rc == 1 and msgs == [E.NO_ANALYSIS] and not os.path.exists(tp)
@@ -992,7 +1003,7 @@ def test_malformed_rows_are_errors_not_crashes():
 
 
 def test_capture_needs_a_canvas(d):
-    with open(os.path.join(d, "capture.jsonl"), "w") as f:
+    with open(os.path.join(d, "capture.jsonl"), "w", encoding="utf-8") as f:
         f.write(json.dumps({"type": "frame", "frame": 0}) + "\n")
     with pytest.raises(CliError, match="no frame line with a canvas"):
         C.Capture(d)
@@ -1011,15 +1022,15 @@ def test_capture_skips_a_last_line_cut_inside_a_utf8_name(d, capsys):
 def test_capture_clears_an_earlier_runs_frames(d, no_lock):
     G = FakeGame(d, hud={"mod": "hud-anchors"})
     exe = os.path.join(d, "game")
-    open(exe, "w").close()
+    open(exe, "w", encoding="utf-8").close()
     out = os.path.join(d, "cap")
     os.makedirs(out)
     for n in ("frame_00099.bmp", "capture.jsonl", "notes.txt", "flip_00001.bmp"):
-        open(os.path.join(out, n), "w").close()
+        open(os.path.join(out, n), "w", encoding="utf-8").close()
 
     def popen(argv, cwd, env, **k):
         def start():
-            with open(os.path.join(out, "capture.jsonl"), "w") as f:
+            with open(os.path.join(out, "capture.jsonl"), "w", encoding="utf-8") as f:
                 for fr in (10, 11, 12):
                     f.write(json.dumps({"type": "frame", "frame": fr}) + "\n")
 
@@ -1165,13 +1176,13 @@ def test_capture_table_resolves_sig_draws(d, monkeypatch):
     slots = [{"entry": "sig:Draw", "va": "0x00011000"}, {"entry": "0x13000", "va": "0x13000"}]
     monkeypatch.setattr(hooks, "load_json", lambda G: slots)
     # Nothing to resolve: the game's own table.
-    open(tp, "w").write(T.dumps(table(capture={"draws": [0x13000]})))
+    open(tp, "w", encoding="utf-8").write(T.dumps(table(capture={"draws": [0x13000]})))
     assert RUN.capture_table(G, tp, out) == tp
     draws = ["sig:Draw", {"sig": "Draw", "vtx": "ecx", "count": 4}, {"fn": "sig:Draw"}, 0x13000]
-    open(tp, "w").write(T.dumps(table(capture={"draws": draws})))
+    open(tp, "w", encoding="utf-8").write(T.dumps(table(capture={"draws": draws})))
     got = RUN.capture_table(G, tp, out)
     assert got == os.path.join(out, RUN.CAPTURE_TABLE)
-    text = open(got).read()
+    text = open(got, encoding="utf-8").read()
     assert "sig:" not in text.split("\n", 1)[1] and T.c_readable(text) == []
     assert tomllib.loads(text)["capture"]["draws"] == [
         {"fn": 0x11000},
@@ -1179,6 +1190,6 @@ def test_capture_table_resolves_sig_draws(d, monkeypatch):
         {"fn": 0x11000},
         {"fn": 0x13000},
     ]
-    open(tp, "w").write(T.dumps(table(capture={"draws": ["sig:Other"]})))
+    open(tp, "w", encoding="utf-8").write(T.dumps(table(capture={"draws": ["sig:Other"]})))
     with pytest.raises(CliError, match="sig:Other: no VA"):
         RUN.capture_table(G, tp, out)

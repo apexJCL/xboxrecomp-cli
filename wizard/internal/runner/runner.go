@@ -38,7 +38,10 @@ type Runner struct {
 
 // Environ is base with dirs put first on PATH, the shell's virtualenv
 // dropped (the bootstrap does the same) and Python's output unbuffered
-// and UTF-8 so the log pane gets each line as it is printed. tools is the
+// and UTF-8 so the log pane gets each line as it is printed. Python also
+// runs in UTF-8 mode (PYTHONUTF8): without it a text file opened with no
+// encoding is the ANSI code page on Windows (cp1252), and the first
+// character outside it failed a player's build. tools is the
 // install root's tools folder: uv's cache and the Python it installs go
 // there, so deleting the root removes everything the wizard fetched. On
 // Windows git gets core.longpaths for every clone below (the wizard's and
@@ -52,7 +55,7 @@ func Environ(base []string, tools string, dirs ...string) []string {
 		case "PATH":
 			path = v
 			continue
-		case "VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "PYTHONUNBUFFERED", "PYTHONIOENCODING",
+		case "VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "PYTHONUNBUFFERED", "PYTHONIOENCODING", "PYTHONUTF8",
 			"UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "UV_PYTHON_INSTALL_BIN", "UV_NO_MODIFY_PATH":
 			continue
 		case "GIT_CONFIG_COUNT":
@@ -67,7 +70,7 @@ func Environ(base []string, tools string, dirs ...string) []string {
 		parts = append(parts, path)
 	}
 	out = append(out, "PATH="+strings.Join(parts, string(os.PathListSeparator)),
-		"PYTHONUNBUFFERED=1", "PYTHONIOENCODING=utf-8")
+		"PYTHONUNBUFFERED=1", "PYTHONIOENCODING=utf-8", "PYTHONUTF8=1")
 	if tools != "" {
 		out = append(out, "UV_CACHE_DIR="+filepath.Join(tools, "uv-cache"),
 			"UV_PYTHON_INSTALL_DIR="+filepath.Join(tools, "python"),

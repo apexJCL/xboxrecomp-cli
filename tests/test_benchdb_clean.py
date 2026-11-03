@@ -115,7 +115,7 @@ def git(d, *args):
 
 def write(path, text=""):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(text)
     return path
 
@@ -137,7 +137,7 @@ class WS:
         self.d = d
         self.game = os.path.join(d, "demo")
         os.makedirs(self.game)
-        with open(os.path.join(TESTDATA_GAME, "game.toml")) as f:
+        with open(os.path.join(TESTDATA_GAME, "game.toml"), encoding="utf-8") as f:
             toml = f.read()
         toml = toml.replace('slug = "blinx2"', 'slug = "demo"')
         write(os.path.join(self.game, "game.toml"), toml)
@@ -809,7 +809,7 @@ def test_a_retention_decision_edited_into_the_plan_is_ignored(ws):
     pid, plan = ws.saved()
     assert ws.planned(plan) == ["runs/old"]
     p = os.path.join(ws.store, clean.PLANS, pid + ".json")
-    with open(p) as f:
+    with open(p, encoding="utf-8") as f:
         doc = json.load(f)
     st = os.lstat(os.path.join(keep, "frames"))
     for path, kind in ((os.path.join(keep, "frames"), "heavy"), (ws.p("runs/fresh"), "tree")):
@@ -826,7 +826,7 @@ def test_a_retention_decision_edited_into_the_plan_is_ignored(ws):
                 age=0,
             )
         )
-    with open(p, "w") as f:
+    with open(p, "w", encoding="utf-8") as f:
         json.dump(doc, f)
     out, lines = ws.clean(pid)
     assert out == dict(deleted=1, skipped=2, failed=0, bytes=out["bytes"])
@@ -947,7 +947,7 @@ def test_journal_rows_and_log(ws):
         (pid, "tester", "runs", "j2"),
     ]
     assert rows[0]["result"] == "deleted" and rows[1]["result"].startswith("refused:")
-    with open(os.path.join(ws.store, clean.CLEAN_LOG)) as f:
+    with open(os.path.join(ws.store, clean.CLEAN_LOG), encoding="utf-8") as f:
         log = f.read().splitlines()
     assert len(log) == 2 and all(line.split("\t")[1] == pid for line in log)
 

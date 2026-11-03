@@ -432,7 +432,7 @@ def test_compact_reads_the_games_reference_text(tmp_path, monkeypatch):
     game = tmp_path / "game"
     game.mkdir()
     (game / "game.toml").write_text(
-        open(os.path.join(here, "testdata", "game", "game.toml")).read()
+        open(os.path.join(here, "testdata", "game", "game.toml"), encoding="utf-8").read()
     )
     (game / "TASKS.md").write_text("- done: frames in runs/cited-topic/shot.bmp\n")
     (game / "openspec" / "changes" / "x").mkdir(parents=True)

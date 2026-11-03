@@ -66,7 +66,7 @@ def home(d, monkeypatch):
 
 def make_exe(path, body="exit 0\n"):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("#!/bin/sh\n" + body)
     os.chmod(path, 0o755)
     return path
@@ -106,9 +106,9 @@ def make_bundle(base, version, exe=b"MZ program", game=None, extra=None):
         {"CMAKE_BUILD_TYPE": "Release"},
         "clang",
     )
-    with open(os.path.join(b, "manifest.json"), "w") as f:
+    with open(os.path.join(b, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(m, f)
-    with open(os.path.join(b, "SHA256SUMS"), "w") as f:
+    with open(os.path.join(b, "SHA256SUMS"), "w", encoding="utf-8") as f:
         f.write(pl.sums_text(m))
     return b
 
@@ -179,7 +179,7 @@ def test_templates_game_agnostic():
     """The defaults name no game: every game value is a placeholder, and
     rendering fills them all."""
     for name in ("install.sh", "install_lib.py", "launch.sh", "README.part"):
-        with open(os.path.join(steamos.DEFAULTS, name)) as f:
+        with open(os.path.join(steamos.DEFAULTS, name), encoding="utf-8") as f:
             text = f.read()
         for word in ("BLiNX", "blinx", "cat_recomp", "Burnout"):
             assert word not in text, (name, word)
@@ -192,7 +192,7 @@ def test_templates_game_agnostic():
 
 def test_templates_render_fully(d):
     for name, _mode in steamos.FILES + (("README.part", 0o644),):
-        with open(render(name, os.path.join(d, name))) as f:
+        with open(render(name, os.path.join(d, name)), encoding="utf-8") as f:
             text = f.read()
         left = re.findall(r"@[A-Z_]+@", text)
         if name == "README.part":
@@ -243,7 +243,7 @@ def test_first_install_layout(il, d):
     # the umu-run the install found.
     assert os.path.isdir(os.path.join(root, "config"))
     assert os.listdir(os.path.join(root, "config")) == []
-    with open(os.path.join(root, "state", "umu-run")) as f:
+    with open(os.path.join(root, "state", "umu-run"), encoding="utf-8") as f:
         assert f.read() == "/opt/umu/umu-run\n"
 
 
@@ -253,11 +253,11 @@ def test_config_kept(il, d):
     b = make_bundle(d, "20261001.0000-ca-tb-g1")
     root = os.path.join(d, "r")
     os.makedirs(os.path.join(root, "config"))
-    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+    with open(os.path.join(root, "config", "launch.env"), "w", encoding="utf-8") as f:
         f.write("PATH=/x\n")
     rc, out = run(il, b, root, "install")
     assert rc == 0 and "config: created" not in out, out
-    with open(os.path.join(root, "config", "launch.env")) as f:
+    with open(os.path.join(root, "config", "launch.env"), encoding="utf-8") as f:
         assert f.read() == "PATH=/x\n"
 
 
@@ -266,10 +266,10 @@ def test_same_version_noop(il, d):
     root = os.path.join(d, "r")
     run(il, b, root, "install")
     plant_user_data(root)
-    hist = open(os.path.join(root, "state", "history")).read()
+    hist = open(os.path.join(root, "state", "history"), encoding="utf-8").read()
     rc, out = run(il, b, root, "install")
     assert rc == 0 and "already installed" in out and "unchanged" in out, out
-    assert open(os.path.join(root, "state", "history")).read() == hist
+    assert open(os.path.join(root, "state", "history"), encoding="utf-8").read() == hist
 
 
 def test_damaged_bundle_fetches_no_umu(il, d):
@@ -523,7 +523,7 @@ def test_sums_path_traversal_refused(il, d):
         b = make_bundle(os.path.join(d, "b" + str(len(name))), V1, extra={PACK: b"pack 1"})
         # ../outside exists beside the bundle, with the digest it is listed with.
         shutil.copy2(outside, os.path.join(os.path.dirname(b), "outside"))
-        with open(os.path.join(b, "SHA256SUMS"), "a") as f:
+        with open(os.path.join(b, "SHA256SUMS"), "a", encoding="utf-8") as f:
             f.write("%s  %s\n" % (digest, name))
         rc, out = run(il, b, root, "install")
         assert rc == 1 and "bundle file missing: %s" % name in out, out
@@ -579,7 +579,7 @@ def test_desktop_entry_and_steam(il, d, monkeypatch):
     b = make_bundle(d, "20261001.0000-ca-tb-g1")
     rc, out = run(il, b, root, "install")
     assert rc == 0, out
-    with open(os.path.join(root, APP + ".desktop")) as f:
+    with open(os.path.join(root, APP + ".desktop"), encoding="utf-8") as f:
         entry = f.read().splitlines()
     assert entry[0] == "[Desktop Entry]"
     kv = dict(line.split("=", 1) for line in entry[1:])
@@ -601,7 +601,7 @@ def test_desktop_entry_and_steam(il, d, monkeypatch):
     rc, out = run(il, b, root, "install", "--steam")
     monkeypatch.undo()
     assert rc == 0, out
-    with open(argv_log) as f:
+    with open(argv_log, encoding="utf-8") as f:
         assert f.read().splitlines() == [os.path.join(root, APP + ".desktop")]
     rc, out = run(il, b, root, "uninstall")
     assert not os.path.exists(os.path.join(root, APP + ".desktop"))
@@ -628,7 +628,7 @@ def test_foreign_root_refused(il, d):
     b = make_bundle(d, "20261001.0000-ca-tb-g1")
     root = os.path.join(d, "Games")
     os.makedirs(os.path.join(root, "game_files"))
-    with open(os.path.join(root, "game_files", "mine.txt"), "w") as f:
+    with open(os.path.join(root, "game_files", "mine.txt"), "w", encoding="utf-8") as f:
         f.write("not yours")
     os.makedirs(os.path.join(root, "versions", "x"))
     for args in (("install",), ("uninstall",), ("rollback",)):
@@ -647,7 +647,7 @@ def test_import_saves(il, d):
     b = make_bundle(d, "20261001.0000-ca-tb-g1")
     old = os.path.join(d, "old")
     os.makedirs(os.path.join(old, "UDATA", "4d530065"))
-    with open(os.path.join(old, "UDATA", "4d530065", "s"), "w") as f:
+    with open(os.path.join(old, "UDATA", "4d530065", "s"), "w", encoding="utf-8") as f:
         f.write("s")
     rc, out = run(il, b, root, "install", "--import-saves", old)
     assert rc == 0 and os.path.isfile(os.path.join(root, "hdd", "UDATA", "4d530065", "s")), out
@@ -815,7 +815,7 @@ def test_install_fetch_umu(il, d, home, fake_release, monkeypatch):
     umu_dir = os.path.join(root, "umu-test")
     rc, out = run(il, b, root, "install", "--fetch-umu", "--umu-dir", umu_dir, umu=None)
     assert rc == 0, out
-    with open(os.path.join(root, "state", "umu-run")) as f:
+    with open(os.path.join(root, "state", "umu-run"), encoding="utf-8") as f:
         assert f.read() == os.path.join(umu_dir, "umu-run") + "\n"
     # Not a tty: without --fetch-umu and no umu-run anywhere, install
     # refuses before it writes anything.
@@ -936,7 +936,7 @@ def test_fetch_proton_unpinned_refused(il, d, home, monkeypatch):
 
 def test_fetch_proton_failed_download(il, d, home):
     def fetch(url, dst):
-        open(dst, "w").close()
+        open(dst, "w", encoding="utf-8").close()
         raise OSError("network down")
 
     with pytest.raises(il.InstallError, match="download failed"):
@@ -1027,12 +1027,12 @@ def fake_install(d, home):
     v = os.path.join(root, "versions", "v")
     os.makedirs(v)
     render("launch.sh", os.path.join(v, "launch.sh"), 0o755)
-    with open(os.path.join(v, "launch.env.default"), "w") as f:
+    with open(os.path.join(v, "launch.env.default"), "w", encoding="utf-8") as f:
         f.write("RECOMP_KEYBOARD=1\n")
-    with open(os.path.join(v, "config.default.toml"), "w") as f:
+    with open(os.path.join(v, "config.default.toml"), "w", encoding="utf-8") as f:
         f.write("[render]\n")
     os.makedirs(os.path.join(root, "game_files"))
-    open(os.path.join(root, "game_files", "default.xbe"), "w").close()
+    open(os.path.join(root, "game_files", "default.xbe"), "w", encoding="utf-8").close()
     make_exe(os.path.join(pinned_proton(home), "proton"))
     return root, os.path.join(v, "launch.sh")
 
@@ -1073,7 +1073,7 @@ def test_launch_finds_umu_in_local_bin(d, home):
     make_exe(os.path.join(home, ".local", "bin", "umu-run"), FAKE_UMU)
     r = launch(launcher, home, "/usr/bin:/bin")
     assert r.returncode == 0, r.stdout
-    with open(os.path.join(home, "umu.argv")) as f:
+    with open(os.path.join(home, "umu.argv"), encoding="utf-8") as f:
         argv = f.read()
     assert argv.startswith(os.path.join(home, ".local", "bin", "umu-run") + " "), argv
     assert argv.rstrip().endswith("versions/v/%s.exe" % EXE), argv
@@ -1087,23 +1087,23 @@ def test_launch_umu_search(d, home):
     # The copy install.sh recorded (a --umu-dir).
     rec = make_exe(os.path.join(d, "elsewhere", "umu-run"), FAKE_UMU)
     os.makedirs(os.path.join(root, "state"), exist_ok=True)
-    with open(os.path.join(root, "state", "umu-run"), "w") as f:
+    with open(os.path.join(root, "state", "umu-run"), "w", encoding="utf-8") as f:
         f.write(rec + "\n")
     assert launch(launcher, home, "/usr/bin:/bin").returncode == 0
-    with open(os.path.join(home, "umu.argv")) as f:
+    with open(os.path.join(home, "umu.argv"), encoding="utf-8") as f:
         assert f.read().startswith(rec + " ")
     # The per-user default copy, when nothing is recorded.
     os.remove(os.path.join(root, "state", "umu-run"))
     dflt = make_exe(os.path.join(home, ".local", "share", "xboxrecomp", "umu", "umu-run"), FAKE_UMU)
     assert launch(launcher, home, "/usr/bin:/bin").returncode == 0
-    with open(os.path.join(home, "umu.argv")) as f:
+    with open(os.path.join(home, "umu.argv"), encoding="utf-8") as f:
         assert f.read().startswith(dflt + " ")
     # UMU_RUN in config/launch.env wins over all of them.
     mine = make_exe(os.path.join(d, "mine", "umu-run"), FAKE_UMU)
-    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+    with open(os.path.join(root, "config", "launch.env"), "w", encoding="utf-8") as f:
         f.write("UMU_RUN=%s\n" % mine)
     assert launch(launcher, home, "/usr/bin:/bin").returncode == 0
-    with open(os.path.join(home, "umu.argv")) as f:
+    with open(os.path.join(home, "umu.argv"), encoding="utf-8") as f:
         assert f.read().startswith(mine + " ")
 
 
@@ -1118,14 +1118,14 @@ def test_launch_gamescope_hint(d, home):
     def hint(**env):
         r = launch(launcher, home, "/usr/bin:/bin", **env)
         assert r.returncode == 0, r.stdout
-        with open(os.path.join(home, "umu.env")) as f:
+        with open(os.path.join(home, "umu.env"), encoding="utf-8") as f:
             return f.read().strip()
 
     assert hint(XDG_CURRENT_DESKTOP="gamescope") == "1"
     assert hint(GAMESCOPE_WAYLAND_DISPLAY="gamescope-0") == "1"
     assert hint() == "unset"
     assert hint(XDG_CURRENT_DESKTOP="KDE") == "unset"
-    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+    with open(os.path.join(root, "config", "launch.env"), "w", encoding="utf-8") as f:
         f.write("RECOMP_HOST_GAMESCOPE=0\n")
     assert hint(XDG_CURRENT_DESKTOP="gamescope") == "0"
 
@@ -1146,18 +1146,18 @@ def test_launch_config_layering(d, home):
     for n, data in old.items():
         with open(os.path.join(cfg, n), "wb") as f:
             f.write(data)
-    with open(os.path.join(cfg, "enhance.toml.default"), "w") as f:
+    with open(os.path.join(cfg, "enhance.toml.default"), "w", encoding="utf-8") as f:
         f.write("[render]\nscale = 1\n")
     r = launch(launcher, home, "/usr/bin:/bin")
     assert r.returncode == 0, r.stdout
-    with open(os.path.join(home, "umu.config")) as f:
+    with open(os.path.join(home, "umu.config"), encoding="utf-8") as f:
         assert f.read().strip() == "Z:%s/config/config.toml" % root
     assert not os.path.exists(os.path.join(cfg, "enhance.toml.default"))
     assert not os.path.exists(os.path.join(cfg, "config.toml"))
     for n, data in old.items():
         with open(os.path.join(cfg, n), "rb") as f:
             assert f.read() == data, n
-    with open(launcher) as f:
+    with open(launcher, encoding="utf-8") as f:
         text = f.read()
     assert "RECOMP_ENHANCE_CONFIG" not in text and 'cp "$HERE' not in text
 
@@ -1180,10 +1180,10 @@ def test_first_launch_notice(d, home):
     r = launch(launcher, home, path, DISPLAY=":0", FAKE_DELAY="2", FAKE_RC="3")
     assert r.returncode == 3, r.stdout  # the game's exit status
     assert time.monotonic() - t >= 4
-    with open(os.path.join(home, "zenity.argv")) as f:
+    with open(os.path.join(home, "zenity.argv"), encoding="utf-8") as f:
         argv = f.read()
     assert "--progress" in argv and "--auto-close" in argv and pl.PRODUCT_NAME in argv, argv
-    with open(os.path.join(home, "zenity.lines")) as f:
+    with open(os.path.join(home, "zenity.lines"), encoding="utf-8") as f:
         lines = f.read()
     assert "# Downloading the Steam Linux Runtime ..." in lines, lines
     # The notice closed once the game wrote its log, before the game ended.
@@ -1202,7 +1202,7 @@ def test_no_notice_once_set_up(d, home):
         os.path.join(home, ".local", "share", "Steam", "compatibilitytools.d", "GE-Proton10-1")
     )
     os.makedirs(os.path.join(root, "prefix"))
-    open(os.path.join(root, "prefix", "system.reg"), "w").close()
+    open(os.path.join(root, "prefix", "system.reg"), "w", encoding="utf-8").close()
     bindir = os.path.join(d, "bin")
     make_exe(os.path.join(bindir, "umu-run"), FAKE_UMU)
     make_exe(os.path.join(bindir, "zenity"), FAKE_ZENITY)
@@ -1211,7 +1211,7 @@ def test_no_notice_once_set_up(d, home):
     assert not os.path.exists(os.path.join(home, "zenity.argv"))
     # Not set up, but LAUNCH_NOTICE=0, or no display (ssh): no notice either.
     os.remove(os.path.join(root, "prefix", "system.reg"))
-    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+    with open(os.path.join(root, "config", "launch.env"), "w", encoding="utf-8") as f:
         f.write("LAUNCH_NOTICE=0\n")
     assert launch(launcher, home, bindir + ":/usr/bin:/bin", DISPLAY=":0").returncode == 0
     os.remove(os.path.join(root, "config", "launch.env"))
@@ -1236,7 +1236,7 @@ def test_notice_notification_without_window_tools(d, home):
                 break
     r = launch(launcher, home, bindir + ":" + tools, WAYLAND_DISPLAY="wayland-0")
     assert r.returncode == 0, r.stdout
-    with open(os.path.join(home, "notify.argv")) as f:
+    with open(os.path.join(home, "notify.argv"), encoding="utf-8") as f:
         assert "Setting up Proton" in f.read()
 
 
@@ -1253,7 +1253,7 @@ def test_launch_caps_old_logs(d, home):
         with open(os.path.join(logs, name), "wb") as f:
             f.write(body)
     os.makedirs(os.path.join(root, "config"))
-    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+    with open(os.path.join(root, "config", "launch.env"), "w", encoding="utf-8") as f:
         f.write("LOG_MAX_MB=2\nPROTON_LOG=1\n")
     env_dump = 'echo "$PROTON_LOG_DIR" > "$HOME/proton_log_dir"\n'
     make_exe(os.path.join(home, ".local", "bin", "umu-run"), env_dump + FAKE_UMU)
@@ -1264,12 +1264,12 @@ def test_launch_caps_old_logs(d, home):
     cut = b"\n[launcher: %d bytes cut here (LOG_MAX_MB)]\n" % (len(big) - 2 * mib)
     assert got == big[:mib] + cut + big[-mib:], len(got)
     assert not os.path.exists(os.path.join(logs, "steam-default.log.cap"))
-    with open(os.path.join(home, "proton_log_dir")) as f:
+    with open(os.path.join(home, "proton_log_dir"), encoding="utf-8") as f:
         assert f.read().strip() == logs
     # LOG_MAX_MB=0: nothing cut.
     with open(os.path.join(logs, "steam-default.log"), "wb") as f:
         f.write(big)
-    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+    with open(os.path.join(root, "config", "launch.env"), "w", encoding="utf-8") as f:
         f.write("LOG_MAX_MB=0\n")
     assert launch(launcher, home, "/usr/bin:/bin").returncode == 0
     with open(os.path.join(logs, "steam-default.log"), "rb") as f:
@@ -1288,7 +1288,7 @@ echo x >> "$HOME/umu.count"
 
 
 def read_text(path):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return f.read().strip()
 
 
@@ -1307,7 +1307,7 @@ def test_launch_pinned_proton(d, home):
     assert not os.path.exists(os.path.join(home, "umu.protonpath"))
     # PROTONPATH=GE-Proton in config/launch.env: the explicit opt-in to the
     # newest release, passed to umu-run as is.
-    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+    with open(os.path.join(root, "config", "launch.env"), "w", encoding="utf-8") as f:
         f.write("PROTONPATH=GE-Proton\n")
     assert launch(launcher, home, "/usr/bin:/bin").returncode == 0
     assert read_text(os.path.join(home, "umu.protonpath")) == "GE-Proton"
@@ -1319,7 +1319,9 @@ def test_launch_default_protonpath_ignored(d, home):
     environment's PROTONPATH and config/launch.env's still win."""
     root, launcher = fake_install(d, home)
     make_exe(os.path.join(home, ".local", "bin", "umu-run"), FAKE_UMU_ENV + FAKE_UMU)
-    with open(os.path.join(root, "versions", "v", "launch.env.default"), "a") as f:
+    with open(
+        os.path.join(root, "versions", "v", "launch.env.default"), "a", encoding="utf-8"
+    ) as f:
         f.write("PROTONPATH=GE-Proton\n")
 
     def protonpath(**env):
@@ -1329,7 +1331,7 @@ def test_launch_default_protonpath_ignored(d, home):
 
     assert protonpath() == pinned_proton(home)
     assert protonpath(PROTONPATH="/opt/my-proton") == "/opt/my-proton"
-    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+    with open(os.path.join(root, "config", "launch.env"), "w", encoding="utf-8") as f:
         f.write("PROTONPATH=GE-Proton\n")
     assert protonpath() == "GE-Proton"
 
@@ -1351,14 +1353,14 @@ def test_launch_runtime_update(d, home):
     # download is the newest runtime, so the mark goes, and the next launch
     # neither checks again nor shows the notice for it.
     mark = os.path.join(root, "state", "runtime-update")
-    open(mark, "w").close()
+    open(mark, "w", encoding="utf-8").close()
     assert runtime() == "unset" and not os.path.exists(mark)
     os.makedirs(os.path.join(home, ".local", "share", "umu", "steamrt4"))
     assert runtime() == "0"
-    open(mark, "w").close()
+    open(mark, "w", encoding="utf-8").close()
     assert runtime() == "unset" and not os.path.exists(mark)
     assert runtime() == "0"
-    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+    with open(os.path.join(root, "config", "launch.env"), "w", encoding="utf-8") as f:
         f.write("UMU_RUNTIME_UPDATE=1\n")
     assert runtime() == "1"
 
@@ -1369,9 +1371,9 @@ def test_codename_notice(d, home):
     root, launcher = fake_install(d, home)
     os.makedirs(os.path.join(home, ".local", "share", "umu", "steamrt4"))
     os.makedirs(os.path.join(root, "prefix"))
-    open(os.path.join(root, "prefix", "system.reg"), "w").close()
+    open(os.path.join(root, "prefix", "system.reg"), "w", encoding="utf-8").close()
     os.makedirs(os.path.join(root, "config"), exist_ok=True)
-    with open(os.path.join(root, "config", "launch.env"), "w") as f:
+    with open(os.path.join(root, "config", "launch.env"), "w", encoding="utf-8") as f:
         f.write("PROTONPATH=GE-Proton\n")
     bindir = os.path.join(d, "bin")
     make_exe(os.path.join(bindir, "umu-run"), FAKE_UMU)
@@ -1389,9 +1391,9 @@ def test_runtime_check_notice(d, home):
     root, launcher = fake_install(d, home)
     os.makedirs(os.path.join(home, ".local", "share", "umu", "steamrt4"))
     os.makedirs(os.path.join(root, "prefix"))
-    open(os.path.join(root, "prefix", "system.reg"), "w").close()
+    open(os.path.join(root, "prefix", "system.reg"), "w", encoding="utf-8").close()
     os.makedirs(os.path.join(root, "state"))
-    open(os.path.join(root, "state", "runtime-update"), "w").close()
+    open(os.path.join(root, "state", "runtime-update"), "w", encoding="utf-8").close()
     bindir = os.path.join(d, "bin")
     make_exe(os.path.join(bindir, "umu-run"), FAKE_UMU)
     make_exe(os.path.join(bindir, "zenity"), FAKE_ZENITY)

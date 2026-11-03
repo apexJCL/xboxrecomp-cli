@@ -187,7 +187,7 @@ def alive(pid):
 
 def read_holder(lock):
     try:
-        with open(os.path.join(lock, "pid")) as f:
+        with open(os.path.join(lock, "pid"), encoding="utf-8") as f:
             return int(f.read().strip() or 0)
     except (OSError, ValueError):
         return 0
@@ -215,7 +215,7 @@ def mac_lock(cmd, wait=3600, lock=None, say=print, poll=5, parents=None):
             shutil.rmtree(lock, ignore_errors=True)
             continue
         try:
-            with open(os.path.join(lock, "cmd")) as f:
+            with open(os.path.join(lock, "cmd"), encoding="utf-8") as f:
                 what = f.read().strip()
         except OSError:
             what = ""
@@ -232,9 +232,9 @@ def mac_lock(cmd, wait=3600, lock=None, say=print, poll=5, parents=None):
         time.sleep(poll)
         waited += poll
     if ours:
-        with open(os.path.join(lock, "pid"), "w") as f:
+        with open(os.path.join(lock, "pid"), "w", encoding="utf-8") as f:
             f.write("%d\n" % os.getpid())
-        with open(os.path.join(lock, "cmd"), "w") as f:
+        with open(os.path.join(lock, "cmd"), "w", encoding="utf-8") as f:
             f.write(cmd[:200] + "\n")
     try:
         yield waited
@@ -469,9 +469,9 @@ def run_game(o, sc, d, env, secs, say):
             "golden run: WARNING the host load rose to %.1f on %d CPUs during the run: its "
             "pace may be off" % (max_load, cpus)
         )
-    with open(os.path.join(d, "run-info.txt"), "w") as f:
+    with open(os.path.join(d, "run-info.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(info) + "\n")
-    with open(os.path.join(d, "exit-code"), "w") as f:
+    with open(os.path.join(d, "exit-code"), "w", encoding="utf-8") as f:
         f.write("%s\n" % p.returncode)
     return p.returncode, why, wall, flog.last
 
@@ -489,7 +489,7 @@ def foreign_games(exe):
 def end_check(d, why, rc, crash_tag):
     """(rc, lines): 1 on a crash or an end before the last needed flip."""
     try:
-        with open(os.path.join(d, "game-stdio.log"), errors="replace") as f:
+        with open(os.path.join(d, "game-stdio.log"), encoding="utf-8", errors="replace") as f:
             crash = next((x.rstrip("\n") for x in f if x.startswith(crash_tag)), "")
     except OSError:
         crash = ""
@@ -699,7 +699,7 @@ def check_and_prune(d, scen, erc, lines, keep):
     finally:
         os.remove(used)
     word = verdict_word(erc, 0, r.returncode, text)
-    with open(os.path.join(d, "golden.txt"), "w") as f:
+    with open(os.path.join(d, "golden.txt"), "w", encoding="utf-8") as f:
         f.write("".join(x + "\n" for x in lines) + text + "verdict: %s %s\n" % (scen, word))
     if word == "pass" and not keep:
         rc, _paths = res.get(scen, (None, []))
@@ -964,7 +964,7 @@ def cmd_play(args):
     flog = FlipLog(logp)
     flog.poll()
     info.append("stop:   %s at flip %d after %.1f s, exit %s" % (why, flog.last, wall, rc))
-    with open(os.path.join(d, "run-info.txt"), "w") as f:
+    with open(os.path.join(d, "run-info.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(info) + "\n")
     from .benchdb import live
 
@@ -978,7 +978,7 @@ def cmd_play(args):
         exit_code=rc,
     )
     try:
-        with open(o["record"]) as f:
+        with open(o["record"], encoding="utf-8") as f:
             n = sum(1 for x in f if x.strip() and not x.startswith("#"))
     except OSError:
         n = -1

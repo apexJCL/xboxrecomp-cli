@@ -26,7 +26,7 @@ def host_script():
 
 def stub(bindir, name, body):
     p = os.path.join(bindir, name)
-    with open(p, "w") as f:
+    with open(p, "w", encoding="utf-8") as f:
         f.write("#!/bin/sh\n" + body + "\n")
     os.chmod(p, os.stat(p).st_mode | stat.S_IXUSR)
 
@@ -49,7 +49,7 @@ def run(home, systemd_run_body):
         text=True,
         timeout=60,
     )
-    calls = open(log).read().splitlines() if os.path.exists(log) else []
+    calls = open(log, encoding="utf-8").read().splitlines() if os.path.exists(log) else []
     return p.returncode, time.time() - t0, calls
 
 

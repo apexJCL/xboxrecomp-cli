@@ -117,7 +117,7 @@ def recomp_has_flag(tk, flag):
     pat = recomp_flag_re(flag)
     for p in sorted(glob.glob(os.path.join(tk, "tools", "recomp", "*.py"))):
         try:
-            with open(p, errors="replace") as f:
+            with open(p, encoding="utf-8", errors="replace") as f:
                 if pat.search(f.read()):
                     return True
         except OSError:
@@ -246,12 +246,12 @@ def exclude_pin_mark(tk, mark=PIN_MARK):
     excl = os.path.join(tk, r.stdout.decode().strip())
     os.makedirs(os.path.dirname(excl), exist_ok=True)
     try:
-        with open(excl) as f:
+        with open(excl, encoding="utf-8") as f:
             if "/" + mark in f.read().split():
                 return
     except OSError:
         pass
-    with open(excl, "a") as f:
+    with open(excl, "a", encoding="utf-8") as f:
         f.write("\n/%s\n" % mark)
 
 
@@ -344,8 +344,83 @@ def checkout_pin(d, pin, what):
             "%s: could not check out %s in %s (files there were changed by "
             "hand?): delete %s and run this again to clone it afresh" % (what, commit[:12], d, d)
         ) from None
-    with open(os.path.join(d, PIN_MARK), "w") as f:
+    with open(os.path.join(d, PIN_MARK), "w", encoding="utf-8") as f:
         f.write(commit + "\n")
+
+
+# A clone this CLI makes keeps the commit's bytes: Git for Windows'
+# default core.autocrlf=true checked text out with CRLF, and package then
+# refused the bundle's shaders/param-kinds.toml.
+NO_AUTOCRLF = ["-c", "core.autocrlf=false"]
+
+
+def line_endings_unset(d):
+    """A clone this CLI made (marked) without core.autocrlf=false: one an
+    older CLI cloned, which on Windows holds CRLF copies of LF files.
+    setup heals it (heal_line_endings) before the build reads them."""
+    if not host.read_text(os.path.join(d, PIN_MARK)):
+        return False
+    r = subprocess.run(
+        ["git", "-C", d, "config", "--local", "--get", "core.autocrlf"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    return r.stdout.decode().strip() != "false"
+
+
+def heal_line_endings(d):
+    """Set core.autocrlf=false in a clone this CLI made (marked) and put
+    back the LF bytes of every file an autocrlf checkout wrote with CRLF.
+    A file the player changed is left as it is (a missing one comes back),
+    and a developer's own checkout (no mark) is never touched. Returns
+    the paths rewritten."""
+    if not host.read_text(os.path.join(d, PIN_MARK)):
+        return []
+
+    def git(*args, **kw):
+        return subprocess.run(
+            ["git", "-C", d] + list(args), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **kw
+        )
+
+    r = git("config", "--local", "--get", "core.autocrlf")
+    if r.returncode == 0 and r.stdout.decode().strip() == "false" and not _crlf_paths(git):
+        return []
+    # Asked under the old setting: with autocrlf on, a CRLF copy of an LF
+    # blob is clean, so what is listed here is the player's own edit. A
+    # failed diff would list nothing and put back the player's edits too.
+    # Deletions are left out: a heal cut short after its removes left
+    # those files missing, and they go back with the rest.
+    r = git("diff", "--name-only", "-z", "--diff-filter=d", "HEAD")
+    gone = git("ls-files", "-d", "-z")
+    if r.returncode or gone.returncode:
+        return []
+    edited = set(r.stdout.decode("utf-8").split("\0")) - {""}
+    paths = [p for p in _crlf_paths(git) if p not in edited]
+    paths += [p for p in gone.stdout.decode("utf-8").split("\0") if p and p not in paths]
+    for p in paths:
+        if os.path.lexists(os.path.join(d, p)):
+            os.remove(os.path.join(d, p))
+    if paths:
+        git("-c", "core.autocrlf=false", "checkout", "--", *paths, check=True)
+        host.say("%s: %d files back to LF line endings" % (d, len(paths)))
+    # Last: until it is set, line_endings_unset keeps asking setup to heal,
+    # so a heal cut short anywhere above runs again under the old setting.
+    git("config", "--local", "core.autocrlf", "false", check=True)
+    return paths
+
+
+def _crlf_paths(git):
+    """Tracked files stored LF but checked out CRLF, unless .gitattributes
+    asks for CRLF (eol=crlf)."""
+    out = git("ls-files", "--eol", "-z").stdout.decode("utf-8")
+    paths = []
+    for entry in out.split("\0"):
+        info, _, path = entry.partition("\t")
+        f = info.split()
+        if path and len(f) >= 2 and f[0] == "i/lf" and f[1] in ("w/crlf", "w/mixed"):
+            if "eol=crlf" not in info:
+                paths.append(path)
+    return paths
 
 
 def clone_toolkit():
@@ -353,6 +428,7 @@ def clone_toolkit():
     tk = toolkit_dir()
     if os.path.isdir(os.path.join(tk, "tools")):
         rename_legacy_mark(tk)
+        heal_line_endings(tk)
         before = host.git_head(tk)
         checkout_pin(tk, pin, "toolkit")
         if host.git_head(tk) == before:
@@ -373,15 +449,17 @@ def clone_toolkit():
     host.say("toolkit: cloning %s %s into external/xboxrecomp" % (pin["url"], gitpin.describe(pin)))
     try:
         if pin["tag"]:
-            host.run(["git", "clone", "--no-checkout", "--", pin["url"], tmp])
+            host.run(["git", "clone", *NO_AUTOCRLF, "--no-checkout", "--", pin["url"], tmp])
             commit = gitpin.resolve(tmp, pin, "toolkit", fresh=True)
         else:
-            host.run(["git", "clone", "--branch", pin["branch"], "--", pin["url"], tmp])
+            host.run(
+                ["git", "clone", *NO_AUTOCRLF, "--branch", pin["branch"], "--", pin["url"], tmp]
+            )
             commit = pin["commit"]
         host.run(["git", "-C", tmp, "checkout", "--quiet", commit])
         if host.git_head(tmp) != commit:
             raise CliError("toolkit: the clone is not at the pin %s" % commit[:12])
-        with open(os.path.join(tmp, PIN_MARK), "w") as f:
+        with open(os.path.join(tmp, PIN_MARK), "w", encoding="utf-8") as f:
             f.write(commit + "\n")
         exclude_pin_mark(tmp)
         os.makedirs(os.path.dirname(dest), exist_ok=True)

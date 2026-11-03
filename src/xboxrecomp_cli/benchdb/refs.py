@@ -168,7 +168,7 @@ class Refs:
                     % (os.path.normpath(path), MAX_REF_FILE >> 20)
                 )
                 return
-            with open(real, errors="replace") as f:
+            with open(real, encoding="utf-8", errors="replace") as f:
                 text = f.read()
         except OSError as e:
             self.missing.append("%s (%s)" % (os.path.normpath(path), e.strerror or e))

@@ -44,7 +44,7 @@ def test_proc_reader(d):
         os.makedirs(p)
         with open(os.path.join(p, "cmdline"), "wb") as f:
             f.write(b"\0".join(a.encode() for a in argv) + b"\0")
-        with open(os.path.join(p, "stat"), "w") as f:
+        with open(os.path.join(p, "stat"), "w", encoding="utf-8") as f:
             f.write("%d (%s) S %d 1 1 0" % (pid, comm, ppid))
 
     mk(10, 1, ["wine64", "Z:\\g\\cat_recomp.exe"], comm="a) b")
@@ -108,9 +108,9 @@ def test_exe_required(d):
     assert r.returncode == 2 and "--exe NAME" in r.stderr, r
     # A bundle's copy: DEFAULT_EXE baked in, no argument needed.
     baked = os.path.join(d, "running_game.py")
-    with open(script) as f:
+    with open(script, encoding="utf-8") as f:
         text = f.read().replace("DEFAULT_EXE = None", 'DEFAULT_EXE = "no_such_game_xyz"', 1)
-    with open(baked, "w") as f:
+    with open(baked, "w", encoding="utf-8") as f:
         f.write(text)
     r = subprocess.run([sys.executable, baked], capture_output=True, text=True)
     assert r.returncode == 0 and r.stdout == "", r

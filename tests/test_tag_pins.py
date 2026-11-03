@@ -54,9 +54,9 @@ class Remote:
         git("init", "-q", "-b", "main", self.src)
         self.c = []
         for i in range(3):
-            with open(os.path.join(self.src, "tools", "x.py"), "w") as f:
+            with open(os.path.join(self.src, "tools", "x.py"), "w", encoding="utf-8") as f:
                 f.write("# %d\n" % i)
-            with open(os.path.join(self.src, "pyproject.toml"), "w") as f:
+            with open(os.path.join(self.src, "pyproject.toml"), "w", encoding="utf-8") as f:
                 f.write("# %d\n" % i)
             git("add", "-A", cwd=self.src)
             git("commit", "-q", "-m", "c%d" % (i + 1), cwd=self.src)
@@ -279,7 +279,7 @@ def test_clone_toolkit_at_a_tag(d, remote, tag_game, capsys):
     dest = toolkit.clone_toolkit()
     assert dest == os.path.join(tag_game.root, "external", "xboxrecomp")
     assert host.git_head(dest) == remote.c[1]
-    with open(os.path.join(dest, toolkit.PIN_MARK)) as f:
+    with open(os.path.join(dest, toolkit.PIN_MARK), encoding="utf-8") as f:
         assert f.read() == remote.c[1] + "\n"
     assert not os.path.exists(dest + ".partial")
     assert "blinx2-v0.1.0 (%s)" % remote.c[1][:12] in capsys.readouterr().out
@@ -307,6 +307,102 @@ def test_clone_toolkit_at_a_tag(d, remote, tag_game, capsys):
     )
     pin.update(tag="blinx2-v9.0.0", commit="")
     assert toolkit.pin_note(dest, pin) == " (pin blinx2-v9.0.0: not in this checkout's tags)"
+
+
+def test_clone_toolkit_keeps_lf_and_heals_a_crlf_clone(d, remote, tag_game, capsys, monkeypatch):
+    """Git for Windows' default core.autocrlf=true checked the toolkit out
+    with CRLF and package refused the bundle: the clone turns it
+    off, and an older clone is healed on the next setup, keeping the
+    player's own edits."""
+    dest = toolkit.clone_toolkit()
+    assert git("-C", dest, "config", "--local", "core.autocrlf") == "false"
+    # An older CLI's clone on Windows: autocrlf on, every file CRLF.
+    git("-C", dest, "config", "--local", "core.autocrlf", "true")
+    for rel in ("tools/x.py", "pyproject.toml"):
+        os.remove(os.path.join(dest, rel))
+    git("-C", dest, "checkout", "--", "tools/x.py", "pyproject.toml")
+    x = os.path.join(dest, "tools", "x.py")
+    with open(x, "rb") as f:
+        assert f.read() == b"# 1\r\n"
+    edited = os.path.join(dest, "pyproject.toml")
+    with open(edited, "wb") as f:
+        f.write(b"# mine\r\n")
+    # The clone is at the pin, so only this need makes package run setup.
+    from xboxrecomp_cli import setup
+
+    monkeypatch.setattr(toolkit, "tool_python", lambda env=None: sys.executable)
+    monkeypatch.setenv("LLVM_MINGW_ROOT", d)
+    assert setup.setup_needs("macos", True) == ["toolkit line endings"]
+    assert setup.TOOLKIT_NEEDS & {"toolkit line endings"}
+    capsys.readouterr()
+    toolkit.clone_toolkit()
+    assert git("-C", dest, "config", "--local", "core.autocrlf") == "false"
+    assert setup.setup_needs("macos", True) == []
+    with open(x, "rb") as f:
+        assert f.read() == b"# 1\n"
+    with open(edited, "rb") as f:
+        assert f.read() == b"# mine\r\n"
+    assert "1 files back to LF line endings" in capsys.readouterr().out
+    # Healed once: the next setup has nothing to do.
+    assert toolkit.heal_line_endings(dest) == []
+    # A developer's own checkout (no mark) is never touched.
+    os.remove(os.path.join(dest, toolkit.PIN_MARK))
+    git("-C", dest, "config", "--local", "core.autocrlf", "true")
+    assert toolkit.heal_line_endings(dest) == []
+    assert git("-C", dest, "config", "--local", "core.autocrlf") == "true"
+
+
+def _crlf_clone(dest):
+    """An older CLI's clone on Windows: autocrlf on, every file CRLF, and
+    the player's own edit to pyproject.toml."""
+    git("-C", dest, "config", "--local", "core.autocrlf", "true")
+    for rel in ("tools/x.py", "pyproject.toml"):
+        os.remove(os.path.join(dest, rel))
+    git("-C", dest, "checkout", "--", "tools/x.py", "pyproject.toml")
+    with open(os.path.join(dest, "pyproject.toml"), "wb") as f:
+        f.write(b"# mine\r\n")
+
+
+def _read(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def test_heal_line_endings_resumes_a_heal_cut_short(d, remote, tag_game):
+    """A heal killed after its removes, before the checkout, left the
+    files missing and core.autocrlf as it was: the next setup still sees
+    the need, puts them back with LF and keeps the player's edit."""
+    from xboxrecomp_cli import setup
+
+    dest = toolkit.clone_toolkit()
+    _crlf_clone(dest)
+    os.remove(os.path.join(dest, "tools", "x.py"))
+    assert toolkit.line_endings_unset(dest)
+    assert "toolkit line endings" in setup.TOOLKIT_NEEDS
+    assert toolkit.heal_line_endings(dest) == ["tools/x.py"]
+    assert _read(os.path.join(dest, "tools", "x.py")) == b"# 1\n"
+    assert _read(os.path.join(dest, "pyproject.toml")) == b"# mine\r\n"
+    assert not toolkit.line_endings_unset(dest)
+
+
+def test_heal_line_endings_leaves_the_clone_when_git_diff_fails(d, remote, tag_game, monkeypatch):
+    """Without the player's edits (git diff failed) nothing is rewritten
+    and the clone stays marked for the next setup."""
+    dest = toolkit.clone_toolkit()
+    _crlf_clone(dest)
+    run = subprocess.run
+
+    def failing_diff(argv, *a, **kw):
+        if "diff" in argv:
+            return subprocess.CompletedProcess(argv, 128, b"", b"")
+        return run(argv, *a, **kw)
+
+    monkeypatch.setattr(subprocess, "run", failing_diff)
+    assert toolkit.heal_line_endings(dest) == []
+    monkeypatch.setattr(subprocess, "run", run)
+    assert _read(os.path.join(dest, "tools", "x.py")) == b"# 1\r\n"
+    assert _read(os.path.join(dest, "pyproject.toml")) == b"# mine\r\n"
+    assert toolkit.line_endings_unset(dest)
 
 
 def test_clone_toolkit_refuses_a_moved_tag(d, remote, tag_game):
@@ -390,7 +486,7 @@ def boot_game(d, remote, cli_lines):
     os.makedirs(b, exist_ok=True)
     for name, body in (("uv", FAKE_UV), ("git", '#!/bin/sh\nexec "%s" "$@"\n' % GIT)):
         p = os.path.join(b, name)
-        with open(p, "w") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write(body)
         os.chmod(p, 0o755)
     return root, b
@@ -428,7 +524,7 @@ def test_bootstrap_clones_at_a_tag_with_its_lock(d, remote):
     dest = os.path.join(root, "external", "xboxrecomp-cli")
     assert "cloning %s v0.1.0 (%s)" % (remote.url, remote.c[0][:12]) in r.stderr
     assert host.git_head(dest) == remote.c[0]
-    with open(os.path.join(dest, ".xbr-pin")) as f:
+    with open(os.path.join(dest, ".xbr-pin"), encoding="utf-8") as f:
         assert f.read() == remote.c[0] + "\n"
     # At the lock, the next run needs no remote at all.
     shutil.move(remote.url, remote.url + ".away")
@@ -555,14 +651,14 @@ def test_checkout_pin_failures_name_the_cause_and_the_fix(d, remote, tag_game):
     dest = toolkit.clone_toolkit()
     pin = tag_game.m["toolkit"]
     pin.update(tag="", commit=remote.c[2])
-    with open(os.path.join(dest, "tools", "x.py"), "w") as f:
+    with open(os.path.join(dest, "tools", "x.py"), "w", encoding="utf-8") as f:
         f.write("# edited by hand\n")
     with pytest.raises(CliError, match="files there were changed by hand.*delete %s" % dest):
         toolkit.clone_toolkit()
     assert host.git_head(dest) == remote.c[1]
     git("-C", dest, "checkout", "-q", "--", ".")
     # A commit the clone lacks, with the server unreachable.
-    with open(os.path.join(remote.src, "tools", "x.py"), "w") as f:
+    with open(os.path.join(remote.src, "tools", "x.py"), "w", encoding="utf-8") as f:
         f.write("# 4\n")
     git("commit", "-q", "-am", "c4", cwd=remote.src)
     pin.update(commit=git("rev-parse", "HEAD", cwd=remote.src))
@@ -575,7 +671,7 @@ def test_checkout_pin_failures_name_the_cause_and_the_fix(d, remote, tag_game):
 def test_clone_toolkit_refuses_a_full_dest_without_tools(tag_game):
     dest = os.path.join(tag_game.root, "external", "xboxrecomp")
     os.makedirs(dest)
-    with open(os.path.join(dest, "notes.txt"), "w") as f:
+    with open(os.path.join(dest, "notes.txt"), "w", encoding="utf-8") as f:
         f.write("mine\n")
     with pytest.raises(CliError, match="is not empty and has no tools/"):
         toolkit.clone_toolkit()

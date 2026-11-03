@@ -358,7 +358,7 @@ def test_gltf_is_valid_and_complete(tmp_path):
     out = str(tmp_path)
     s = w.write(out)
     assert (s.meshes, s.triangles, s.materials, s.textures) == (1, 2, 1, 1)
-    j = json.load(open(os.path.join(out, "MAP11.gltf")))
+    j = json.load(open(os.path.join(out, "MAP11.gltf"), encoding="utf-8"))
     binary = open(os.path.join(out, "MAP11.bin"), "rb").read()
     assert j["asset"]["version"] == "2.0"
     assert j["buffers"] == [{"uri": "MAP11.bin", "byteLength": len(binary)}]
@@ -409,7 +409,7 @@ def up_facing_share(out, name):
     """Share of the stage's horizontal area (|n.y| > 0.8, the normal from
     the triangle's winding, in world space) that faces +Y: a floor that
     imports upside down shows here."""
-    j = json.load(open(os.path.join(out, name + ".gltf")))
+    j = json.load(open(os.path.join(out, name + ".gltf"), encoding="utf-8"))
     binary = open(os.path.join(out, name + ".bin"), "rb").read()
 
     def read(i):
@@ -476,7 +476,7 @@ def test_empty_stage_writes_valid_gltf(tmp_path):
     w = gltf.Writer("E", [], None)
     w.add_tree(SEC, r.tree(SEC))
     w.write(str(tmp_path))
-    j = json.load(open(os.path.join(str(tmp_path), "E.gltf")))
+    j = json.load(open(os.path.join(str(tmp_path), "E.gltf"), encoding="utf-8"))
     assert "buffers" not in j and "bufferViews" not in j and "accessors" not in j
     assert not any(isinstance(v, list) and not v for v in j.values())
     assert not os.path.exists(os.path.join(str(tmp_path), "E.bin"))
@@ -1032,12 +1032,18 @@ def test_white_merges_materials_that_differ_only_in_diffuse(tmp_path):
 
 def test_extract_passes_textured_colour_to_the_writer(game, capsys):
     toml = os.path.join(game.root, "game.toml")
-    body = open(toml).read().replace("[extract]\n", '[extract]\ntextured_colour = "white"\n')
-    with open(toml, "w") as f:
+    body = (
+        open(toml, encoding="utf-8")
+        .read()
+        .replace("[extract]\n", '[extract]\ntextured_colour = "white"\n')
+    )
+    with open(toml, "w", encoding="utf-8") as f:
         f.write(body)
     manifest.use(manifest.load(game.root))
     assert cli.run(Args()) == 0
-    j = json.load(open(game.path("dist", "extract", "stages", "MAP11", "MAP11.gltf")))
+    j = json.load(
+        open(game.path("dist", "extract", "stages", "MAP11", "MAP11.gltf"), encoding="utf-8")
+    )
     assert j["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"] == [1.0, 1.0, 1.0, 1.0]
 
 
@@ -1123,33 +1129,33 @@ def test_extract_writes_the_project(game, capsys):
         "stages/MAP11/textures/Tex0.png",
     ):
         assert os.path.isfile(os.path.join(root, rel)), rel
-    tscn = open(os.path.join(root, "MAP11.tscn")).read()
+    tscn = open(os.path.join(root, "MAP11.tscn"), encoding="utf-8").read()
     assert 'path="res://stages/MAP11/MAP11.gltf"' in tscn
-    proj = open(os.path.join(root, "project.godot")).read()
+    proj = open(os.path.join(root, "project.godot"), encoding="utf-8").read()
     assert 'run/main_scene="res://MAP11.tscn"' in proj and 'driver/driver="Dummy"' in proj
     assert not [p for p in os.listdir(root) if p.endswith(".pck")]
-    rep = json.load(open(os.path.join(root, "stages", "MAP11", "report.json")))
+    rep = json.load(open(os.path.join(root, "stages", "MAP11", "report.json"), encoding="utf-8"))
     assert rep["trees"] == [{"root": "0x00020000", "texlist": "0x00020300"}]
     assert (rep["meshes"], rep["triangles"], rep["missing"]) == (1, 2, [])
-    txt = open(os.path.join(root, "report.txt")).read()
+    txt = open(os.path.join(root, "report.txt"), encoding="utf-8").read()
     assert txt.startswith("MAP11: 1 meshes, 2 triangles") and "approximated:" in txt
 
 
 def test_report_txt_keeps_every_stage(game, capsys):
     # A second stage over the same tree; re-running one keeps both.
     toml = os.path.join(game.root, "game.toml")
-    with open(toml, "a") as f:
+    with open(toml, "a", encoding="utf-8") as f:
         f.write('[[extract.stage]]\nname = "MAP12"\nsection = "MAP11"\n')
         f.write("root = 0x20000\ntexlist = 0x20300\n")
     manifest.use(manifest.load(game.root))
     assert cli.run(Args()) == 0
     assert cli.run(Args(stage=["MAP12"])) == 0
     out = os.path.join(game.root, "dist", "extract")
-    txt = open(os.path.join(out, "report.txt")).read()
+    txt = open(os.path.join(out, "report.txt"), encoding="utf-8").read()
     assert "MAP11: 1 meshes" in txt and "MAP12: 1 meshes" in txt
     os.remove(os.path.join(out, "stages", "MAP11", "report.json"))
     assert cli.run(Args(stage=["MAP12"])) == 0
-    txt = open(os.path.join(out, "report.txt")).read()
+    txt = open(os.path.join(out, "report.txt"), encoding="utf-8").read()
     assert "MAP11: no report (re-extract)\n" in txt and "MAP12: 1 meshes" in txt
 
 
@@ -1385,14 +1391,14 @@ def test_transform_wraps_the_tree_inside_the_up_turn(tmp_path):
 
 
 def test_extract_reports_and_lists_the_transform(game, capsys):
-    with open(os.path.join(game.root, "game.toml"), "a") as f:
+    with open(os.path.join(game.root, "game.toml"), "a", encoding="utf-8") as f:
         f.write(SKY_TWICE)
     manifest.use(manifest.load(game.root))
     assert cli.run(Args(list=True)) == 0
     assert "0x00020000/0x00020300 scale(1, -1, 1) translation(0, 5, 0)" in capsys.readouterr().out
     assert cli.run(Args(stage=["SKY"])) == 0
     root = game.path("dist", "extract")
-    rep = json.load(open(os.path.join(root, "stages", "SKY", "report.json")))
+    rep = json.load(open(os.path.join(root, "stages", "SKY", "report.json"), encoding="utf-8"))
     assert rep["trees"] == [
         {"root": "0x00020000", "texlist": "0x00020300"},
         {
@@ -1401,12 +1407,12 @@ def test_extract_reports_and_lists_the_transform(game, capsys):
             "transform": {"scale": [1, -1, 1], "translation": [0, 5, 0]},
         },
     ]
-    j = json.load(open(os.path.join(root, "stages", "SKY", "SKY.gltf")))
+    j = json.load(open(os.path.join(root, "stages", "SKY", "SKY.gltf"), encoding="utf-8"))
     assert any(n.get("scale") == [1.0, -1.0, 1.0] for n in j["nodes"])
 
 
 def test_single_root_takes_a_transform(game):
-    with open(os.path.join(game.root, "game.toml"), "a") as f:
+    with open(os.path.join(game.root, "game.toml"), "a", encoding="utf-8") as f:
         f.write(
             '[[extract.stage]]\nname = "ONE"\nsection = "MAP11"\nroot = 0x20000\n'
             "texlist = 0x20300\ntransform = [{scale = [2, 2, 2]}]\n"
@@ -1414,11 +1420,11 @@ def test_single_root_takes_a_transform(game):
     manifest.use(manifest.load(game.root))
     assert cli.run(Args(stage=["ONE"])) == 0
     root = game.path("dist", "extract", "stages", "ONE")
-    rep = json.load(open(os.path.join(root, "report.json")))
+    rep = json.load(open(os.path.join(root, "report.json"), encoding="utf-8"))
     assert rep["trees"] == [
         {"root": "0x00020000", "texlist": "0x00020300", "transform": {"scale": [2, 2, 2]}}
     ]
-    j = json.load(open(os.path.join(root, "ONE.gltf")))
+    j = json.load(open(os.path.join(root, "ONE.gltf"), encoding="utf-8"))
     assert any(n.get("scale") == [2.0, 2.0, 2.0] for n in j["nodes"])
 
 
@@ -1434,10 +1440,13 @@ def test_extract_reports_an_additive_strip_as_supported(game):
     )
     assert cli.run(Args(stage=["MAP11"])) == 0
     out = game.path("dist", "extract")
-    rep = json.load(open(os.path.join(out, "stages", "MAP11", "report.json")))
+    rep = json.load(open(os.path.join(out, "stages", "MAP11", "report.json"), encoding="utf-8"))
     assert rep["supported"] == {ninja.SUPPORTED_ADD: 1}
     assert "blend mode 0x21" not in rep["unsupported"]
-    assert "supported: %s (1)" % ninja.SUPPORTED_ADD in open(os.path.join(out, "report.txt")).read()
+    assert (
+        "supported: %s (1)" % ninja.SUPPORTED_ADD
+        in open(os.path.join(out, "report.txt"), encoding="utf-8").read()
+    )
 
 
 # ---- texture_alpha (a floor a planar reflection shows through) -------------
@@ -1481,17 +1490,19 @@ def test_texture_alpha_scales_the_white_constant_and_leaves_others_alone(tmp_pat
 
 
 def test_extract_reports_the_texture_alpha(game):
-    with open(os.path.join(game.root, "game.toml"), "a") as f:
+    with open(os.path.join(game.root, "game.toml"), "a", encoding="utf-8") as f:
         f.write(FLOOR)
     manifest.use(manifest.load(game.root))
     assert cli.run(Args(stage=["FLOOR", "MAP11"])) == 0
     root = game.path("dist", "extract", "stages", "FLOOR")
-    rep = json.load(open(os.path.join(root, "report.json")))
+    rep = json.load(open(os.path.join(root, "report.json"), encoding="utf-8"))
     assert rep["texture_alpha"] == {"tex0": 0.5}
-    j = json.load(open(os.path.join(root, "FLOOR.gltf")))
+    j = json.load(open(os.path.join(root, "FLOOR.gltf"), encoding="utf-8"))
     (mat,) = j["materials"]
     assert mat["alphaMode"] == "BLEND" and mat["pbrMetallicRoughness"]["baseColorFactor"][3] == 0.5
-    plain = json.load(open(game.path("dist", "extract", "stages", "MAP11", "report.json")))
+    plain = json.load(
+        open(game.path("dist", "extract", "stages", "MAP11", "report.json"), encoding="utf-8")
+    )
     assert "texture_alpha" not in plain
 
 
@@ -1537,15 +1548,19 @@ def test_texture_alpha_lists_the_names_no_strip_drew_with(tmp_path):
 
 
 def test_extract_warns_of_an_unmatched_texture_alpha(game):
-    with open(os.path.join(game.root, "game.toml"), "a") as f:
+    with open(os.path.join(game.root, "game.toml"), "a", encoding="utf-8") as f:
         f.write(FLOOR.replace("{tex0 = 0.5}", "{tex0 = 0.5, Floor9 = 0.4}"))
     manifest.use(manifest.load(game.root))
     assert cli.run(Args(stage=["FLOOR", "MAP11"])) == 0
-    rep = json.load(open(game.path("dist", "extract", "stages", "FLOOR", "report.json")))
+    rep = json.load(
+        open(game.path("dist", "extract", "stages", "FLOOR", "report.json"), encoding="utf-8")
+    )
     assert rep["texture_alpha_unmatched"] == ["Floor9"]
-    txt = open(game.path("dist", "extract", "report.txt")).read()
+    txt = open(game.path("dist", "extract", "report.txt"), encoding="utf-8").read()
     assert "warning: texture_alpha matched no texture: Floor9" in txt
-    plain = json.load(open(game.path("dist", "extract", "stages", "MAP11", "report.json")))
+    plain = json.load(
+        open(game.path("dist", "extract", "stages", "MAP11", "report.json"), encoding="utf-8")
+    )
     assert "texture_alpha_unmatched" not in plain
 
 
@@ -1675,15 +1690,15 @@ def test_tree_bounds_places_children_and_skips_hidden_nodes():
 
 
 def test_extract_reports_the_backdrop(game):
-    with open(os.path.join(game.root, "game.toml"), "a") as f:
+    with open(os.path.join(game.root, "game.toml"), "a", encoding="utf-8") as f:
         f.write(FLOOR.replace("{scale = [1, -1, 1]}", "{scale = [1, -1, 1], backdrop = [0, 0, 0]}"))
     manifest.use(manifest.load(game.root))
     assert cli.run(Args(stage=["FLOOR"])) == 0
     out = game.path("dist", "extract")
-    rep = json.load(open(os.path.join(out, "stages", "FLOOR", "report.json")))
+    rep = json.load(open(os.path.join(out, "stages", "FLOOR", "report.json"), encoding="utf-8"))
     assert rep["approximated"]["render target clear colour as a backdrop box"] == 1
     assert rep["trees"][1]["transform"]["backdrop"] == [0, 0, 0]
-    txt = open(os.path.join(out, "report.txt")).read()
+    txt = open(os.path.join(out, "report.txt"), encoding="utf-8").read()
     assert "approximated: render target clear colour as a backdrop box (1)" in txt
 
 
@@ -1783,7 +1798,7 @@ def test_collision_gltf_names_shapes_and_skips(tmp_path):
     w = collision.Writer("M", "-y")
     w.add_trees([_hidden_tree()])
     rep = w.write(str(tmp_path))
-    j = json.load(open(tmp_path / "M_col.gltf"))
+    j = json.load(open(tmp_path / "M_col.gltf", encoding="utf-8"))
     assert os.path.getsize(tmp_path / "M_col.bin") == j["buffers"][0]["byteLength"]
     names = [n["name"] for n in j["nodes"]]
     assert names == ["col_0xc08040-col", "M_col"]
@@ -1797,11 +1812,11 @@ def test_collision_gltf_names_shapes_and_skips(tmp_path):
         "classes": {"C08040": {"triangles": 2, "shape": True}},
         "left_out": {},
     }
-    assert json.load(open(tmp_path / "collision.json")) == rep
+    assert json.load(open(tmp_path / "collision.json", encoding="utf-8")) == rep
     w = collision.Writer("M", skip=[CLASS])
     w.add_trees([_hidden_tree()])
     rep = w.write(str(tmp_path))
-    j = json.load(open(tmp_path / "M_col.gltf"))
+    j = json.load(open(tmp_path / "M_col.gltf", encoding="utf-8"))
     assert j["nodes"][0]["name"] == "col_0xc08040" and "rotation" not in j["nodes"][1]
     assert rep["classes"]["C08040"]["shape"] is False
 
@@ -1816,7 +1831,7 @@ def test_collision_class_names_nodes_and_keeps_the_colour(tmp_path):
     w = collision.Writer("M", classes=ROWS)
     w.add_trees([_hidden_tree()])
     rep = w.write(str(tmp_path))
-    j = json.load(open(tmp_path / "M_col.gltf"))
+    j = json.load(open(tmp_path / "M_col.gltf", encoding="utf-8"))
     assert [n["name"] for n in j["nodes"]] == ["col_green_mid_0xc08040-col", "M_col"]
     assert j["meshes"][0]["name"] == j["materials"][0]["name"] == "col_green_mid_0xc08040"
     rgb = j["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"][:3]
@@ -1830,7 +1845,7 @@ def test_collision_class_names_nodes_and_keeps_the_colour(tmp_path):
         w = collision.Writer("M", skip=[CLASS], classes=rows)
         w.add_trees([_hidden_tree()])
         rep = w.write(str(tmp_path))
-        j = json.load(open(tmp_path / "M_col.gltf"))
+        j = json.load(open(tmp_path / "M_col.gltf", encoding="utf-8"))
         assert j["nodes"][0]["name"] == name
         rgb = j["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"][:3]
         assert rgb == [collision._srgb_to_linear((rgb_of >> s) & 0xFF) for s in (16, 8, 0)]
@@ -1848,7 +1863,7 @@ def test_collision_counts_strips_without_a_colour():
 @pytest.fixture
 def col_game(game):
     toml = os.path.join(game.root, "game.toml")
-    with open(toml, "a") as f:
+    with open(toml, "a", encoding="utf-8") as f:
         f.write("collision = 0x20000\n")
     G = manifest.load(game.root)
     manifest.use(G)
@@ -1860,17 +1875,21 @@ def test_extract_collision_is_opt_in(col_game, capsys):
     assert cli.run(Args()) == 0
     assert not os.path.exists(os.path.join(root, "stages", "MAP11", "MAP11_col.gltf"))
     assert not os.path.exists(os.path.join(root, "collision.gd"))
-    assert open(os.path.join(root, "MAP11.tscn")).read() == godot.SCENE.format(name="MAP11")
+    assert open(os.path.join(root, "MAP11.tscn"), encoding="utf-8").read() == godot.SCENE.format(
+        name="MAP11"
+    )
     assert cli.run(Args(collision=True)) == 0
     assert "MAP11 collision: 2 triangles in 1 classes" in capsys.readouterr().out
     for rel in ("collision.gd", "stages/MAP11/MAP11_col.gltf", "stages/MAP11/collision.json"):
         assert os.path.isfile(os.path.join(root, rel)), rel
-    tscn = open(os.path.join(root, "MAP11.tscn")).read()
+    tscn = open(os.path.join(root, "MAP11.tscn"), encoding="utf-8").read()
     assert 'path="res://stages/MAP11/MAP11_col.gltf"' in tscn
     assert 'path="res://collision.gd"' in tscn
     # A later run without the flag drops the layer again.
     assert cli.run(Args()) == 0
-    assert open(os.path.join(root, "MAP11.tscn")).read() == godot.SCENE.format(name="MAP11")
+    assert open(os.path.join(root, "MAP11.tscn"), encoding="utf-8").read() == godot.SCENE.format(
+        name="MAP11"
+    )
     assert not os.path.exists(os.path.join(root, "collision.gd"))
 
 
@@ -2052,7 +2071,7 @@ def test_placements_gltf_draws_rigid_models_and_marks_the_rest(tmp_path):
         "enemy": {"records": 2, "drawn": 1, "skinned": 0, "unreadable": 0, "marker": 1}
     }
     assert rep["classes_without_model"] == ["enemy 0x02"]
-    j = json.load(open(tmp_path / "MAP11_placements.gltf"))
+    j = json.load(open(tmp_path / "MAP11_placements.gltf", encoding="utf-8"))
     nodes = {n["name"]: n for n in j["nodes"]}
     top = j["nodes"][j["scenes"][0]["nodes"][0]]
     assert top["name"] == "enemy" and "rotation" not in top
@@ -2069,7 +2088,7 @@ def test_placements_gltf_draws_rigid_models_and_marks_the_rest(tmp_path):
     marker = j["nodes"][b["children"][0]]
     assert marker["name"] == "enemy_l0_001_cls2_marker"
     assert j["meshes"][marker["mesh"]]["name"] == "marker_enemy"
-    rows = json.load(open(tmp_path / "placements.json"))["placements"]
+    rows = json.load(open(tmp_path / "placements.json", encoding="utf-8"))["placements"]
     assert rows[1]["raw"] == data_section()[0xA0:0xC0].hex()
 
 
@@ -2091,7 +2110,7 @@ def test_placements_turn_the_world_back_into_the_data(tmp_path, world, up, top, 
     # The turn sits on the placement node, outside its rotation; the
     # model under it carries none.
     placements.extract(_pl_image(), cli.fmt_of(cfg), cfg, cfg["stage"][0], None, str(tmp_path))
-    j = json.load(open(tmp_path / "MAP11_placements.gltf"))
+    j = json.load(open(tmp_path / "MAP11_placements.gltf", encoding="utf-8"))
     nodes = {n["name"]: n for n in j["nodes"]}
     assert "rotation" not in nodes["enemy_l0_000_cls101_model"]
     s = math.sqrt(0.5)
@@ -2127,7 +2146,7 @@ def test_placements_follow_the_games_turn_order(tmp_path):
     placements.extract(
         _pl_image(bytes(d)), cli.fmt_of(cfg), cfg, cfg["stage"][0], None, str(tmp_path)
     )
-    j = json.load(open(tmp_path / "MAP11_placements.gltf"))
+    j = json.load(open(tmp_path / "MAP11_placements.gltf", encoding="utf-8"))
     q = {n["name"]: n for n in j["nodes"]}["enemy_l0_000_cls101"]["rotation"]
     for v in ([1, 0, 0], [0, 1, 0], [0, 0, 1], [0.2, -0.4, 0.9]):
         want = v
@@ -2168,7 +2187,7 @@ def test_placements_carry_on_past_a_bad_layer(tmp_path):
     c = rep["sets"]["enemy"]
     assert c["records"] == 3 and len(c["errors"]) == 1
     assert c["errors"][0].startswith("layer 0: ")
-    assert json.load(open(tmp_path / "placements.json"))["sets"] == rep["sets"]
+    assert json.load(open(tmp_path / "placements.json", encoding="utf-8"))["sets"] == rep["sets"]
 
 
 def test_placements_stage_layers_replace_a_sets_own(tmp_path):
@@ -2184,7 +2203,9 @@ def test_placements_stage_layers_replace_a_sets_own(tmp_path):
     assert rep["sets"]["enemy"]["records"] == 5 and rep["layers"] == {"enemy": [-1, 0]}
     names = {r["name"] for r in rep["placements"]}
     assert "enemy_l-1_000_cls101" in names and "enemy_l0_000_cls103" in names
-    assert json.load(open(tmp_path / "placements.json"))["layers"] == {"enemy": [-1, 0]}
+    assert json.load(open(tmp_path / "placements.json", encoding="utf-8"))["layers"] == {
+        "enemy": [-1, 0]
+    }
     stage["placement_layers"] = {"enemy": []}
     rep = placements.extract(_pl_image(), cli.fmt_of(cfg), cfg, stage, None, str(tmp_path))
     assert rep["sets"] == {} and rep["layers"] == {"enemy": []}
@@ -2210,7 +2231,7 @@ def test_placements_layers_flagged_tables_fixed_objects_and_bad_trees(tmp_path):
     assert rows["enemy_l1_001_cls4"]["model"] == "0x%08X" % SEC
     bad = rows["enemy_l1_002_cls5"]
     assert bad["unreadable"] is True and bad["model"] == "0x00030200"
-    j = json.load(open(tmp_path / "MAP11_placements.gltf"))
+    j = json.load(open(tmp_path / "MAP11_placements.gltf", encoding="utf-8"))
     nodes = {n["name"]: n for n in j["nodes"]}
     assert nodes["enemy_l1_000_cls103"]["translation"] == [7, 8, 9]
     assert "enemy_l1_002_cls5_marker" in nodes and "enemy_l1_002_cls5_model" not in nodes
@@ -2231,8 +2252,8 @@ def test_placements_without_a_finite_transform_are_unreadable(tmp_path, at, valu
     assert rep["sets"]["enemy"]["unreadable"] == 1
     # Strict JSON both: no bare NaN or Infinity.
     for f in ("placements.json", "MAP11_placements.gltf"):
-        json.loads(open(tmp_path / f).read(), parse_constant=pytest.fail)
-    j = json.load(open(tmp_path / "MAP11_placements.gltf"))
+        json.loads(open(tmp_path / f, encoding="utf-8").read(), parse_constant=pytest.fail)
+    j = json.load(open(tmp_path / "MAP11_placements.gltf", encoding="utf-8"))
     n = {n["name"]: n for n in j["nodes"]}["enemy_l0_000_cls101"]
     assert "translation" not in n and "rotation" not in n
     assert j["nodes"][n["children"][0]]["name"] == "enemy_l0_000_cls101_marker"
@@ -2280,7 +2301,7 @@ def pl_game(game):
         xbe([("MAP11", SEC, stage_section("b1")), ("DATA", DATA, data_section())]),
     )
     toml = os.path.join(game.root, "game.toml")
-    with open(toml, "a") as f:
+    with open(toml, "a", encoding="utf-8") as f:
         f.write("placements = 1\n" + PLACEMENTS)
     G = manifest.load(game.root)
     manifest.use(G)
@@ -2297,9 +2318,13 @@ def test_extract_placements_is_opt_in(pl_game, capsys):
     assert "MAP11 placements: enemy 2 (1 drawn, 0 skinned, 0 unreadable, 1 markers)" in out
     for rel in ("MAP11_placements.gltf", "MAP11_placements.bin", "placements.json"):
         assert os.path.isfile(os.path.join(sdir, rel)), rel
-    assert open(os.path.join(root, "MAP11.tscn")).read() == godot.scene("MAP11", False, True)
+    assert open(os.path.join(root, "MAP11.tscn"), encoding="utf-8").read() == godot.scene(
+        "MAP11", False, True
+    )
     assert cli.run(Args()) == 0
-    assert open(os.path.join(root, "MAP11.tscn")).read() == godot.SCENE.format(name="MAP11")
+    assert open(os.path.join(root, "MAP11.tscn"), encoding="utf-8").read() == godot.SCENE.format(
+        name="MAP11"
+    )
     assert cli.run(Args(list=True)) == 0
     assert "; placements 1 (enemy [0])" in capsys.readouterr().out
 
@@ -2308,7 +2333,7 @@ def test_extract_list_shows_a_stages_placement_layers(game, capsys):
     """--list prints the layers the stage reads: its own placement_layers
     over each set's, [] for a set it does not load."""
     second = PLACEMENTS.split("[[extract.placement_model]]")[0].replace("enemy", "emitter")
-    with open(os.path.join(game.root, "game.toml"), "a") as f:
+    with open(os.path.join(game.root, "game.toml"), "a", encoding="utf-8") as f:
         f.write(
             "placements = 2\nplacement_layers = {enemy = [-2], emitter = []}\n"
             + PLACEMENTS

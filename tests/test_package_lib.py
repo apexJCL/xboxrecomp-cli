@@ -93,15 +93,15 @@ def test_tree_state_dirt(d):
         subprocess.run(["git", "-C", d] + list(a), check=True, stdout=subprocess.DEVNULL)
 
     g("init", "-q")
-    with open(os.path.join(d, "f"), "w") as f:
+    with open(os.path.join(d, "f"), "w", encoding="utf-8") as f:
         f.write("1")
     g("add", "f")
     g("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x")
     assert not pl.tree_state(d)["dirty"]
-    with open(os.path.join(d, "new"), "w") as f:
+    with open(os.path.join(d, "new"), "w", encoding="utf-8") as f:
         f.write("a")
     s1 = pl.tree_state(d)
-    with open(os.path.join(d, "new"), "w") as f:
+    with open(os.path.join(d, "new"), "w", encoding="utf-8") as f:
         f.write("b")
     s2 = pl.tree_state(d)
     assert s1["dirty"] and s1["_dirt"] != s2["_dirt"]
@@ -228,7 +228,7 @@ def test_manifest_source(d):
     root = os.path.join(d, "src")
     os.makedirs(root)
     _git(root, "init", "-q")
-    with open(os.path.join(root, "a"), "w") as f:
+    with open(os.path.join(root, "a"), "w", encoding="utf-8") as f:
         f.write("a")
     _git(root, "add", "a")
     _git(root, "commit", "-qm", "a")
@@ -242,7 +242,7 @@ def test_manifest_source(d):
     _git(root, "remote", "add", "origin", src)
     os.makedirs(os.path.join(root, ".git", "xbr"))
     mark = {"origin": "local", "via": "bundle", "ref": "wip", "commit": head, "url": src}
-    with open(os.path.join(root, ".git", "xbr", "wizard.json"), "w") as f:
+    with open(os.path.join(root, ".git", "xbr", "wizard.json"), "w", encoding="utf-8") as f:
         json.dump(mark, f)
     assert pl.read_mark(root) == mark
     rec = pl.source_record(st, pl.read_mark(root), repo)
@@ -364,7 +364,7 @@ def test_game_files_exclusions(d):
     ):
         p = os.path.join(src, rel)
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write(rel)
     dst = os.path.join(d, "dst")
     pl.stage_game_files(src, dst)
@@ -379,7 +379,7 @@ def test_game_files_read_only_dump(d):
     src = os.path.join(d, "src")
     os.makedirs(os.path.join(src, "media", "sub"))
     for rel in ("default.xbe", "media/a.xpr", "media/sub/b.xpr"):
-        with open(os.path.join(src, rel), "w") as f:
+        with open(os.path.join(src, rel), "w", encoding="utf-8") as f:
             f.write(rel)
     for rel in ("media/sub", "media"):
         os.chmod(os.path.join(src, rel), 0o555)
@@ -404,7 +404,7 @@ def test_staged_refusals(d):
     # Windows cannot create the names refused here ("nul", "trail.").
     if os.name != "nt":
         os.makedirs(os.path.join(d, "game_files", "nul"))
-        with open(os.path.join(d, "trail."), "w") as f:
+        with open(os.path.join(d, "trail."), "w", encoding="utf-8") as f:
             f.write("")
         want = [
             "game_files/nul: reserved name on Windows",
@@ -451,7 +451,7 @@ def test_nsis_lists(d):
     root = os.path.join(d, "pay$load")
     os.makedirs(os.path.join(root, "game_files"))
     for n in ("cat_recomp.exe", "BLiNX2.exe", "game_files/default.xbe"):
-        with open(os.path.join(root, n), "w") as f:
+        with open(os.path.join(root, n), "w", encoding="utf-8") as f:
             f.write("x")
     names, inst, uninst = pl.nsis_lists(root)
     assert names == ["BLiNX2.exe", "cat_recomp.exe"]
@@ -461,7 +461,7 @@ def test_nsis_lists(d):
     # SetOutPath and removed file by file, then with a plain RMDir.
     os.makedirs(os.path.join(root, "enhance", "sub"))
     for n in ("enhance/hud.pack", "enhance/sub/y"):
-        with open(os.path.join(root, n), "w") as f:
+        with open(os.path.join(root, n), "w", encoding="utf-8") as f:
             f.write("x")
     names, inst, uninst = pl.nsis_lists(root)
     assert names == ["BLiNX2.exe", "cat_recomp.exe", "enhance/hud.pack", "enhance/sub/y"]

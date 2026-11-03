@@ -25,7 +25,7 @@ PLACEHOLDER = re.compile(r"@[A-Z_]+@")
 
 def render_launcher(dst):
     pkg.render(pkg.template("windows", "launcher.c"), windows.launcher_values(), dst)
-    with open(dst) as f:
+    with open(dst, encoding="utf-8") as f:
         return f.read()
 
 
@@ -34,7 +34,7 @@ def render_installer(dst):
         pl, "v1", "C:/out/setup.exe", "C:/stage", "C:/icon/app.ico", "  File a\n", "  Delete a\n"
     )
     pkg.render(pkg.template("windows", "installer.nsi.in"), values, dst)
-    with open(dst) as f:
+    with open(dst, encoding="utf-8") as f:
         return f.read()
 
 
@@ -43,9 +43,9 @@ def game2(d):
     """game2 with a [package] table, the current game while the test runs."""
     root = os.path.join(d, "game2")
     os.makedirs(root)
-    with open(os.path.join(GAME2, "game.toml")) as f:
+    with open(os.path.join(GAME2, "game.toml"), encoding="utf-8") as f:
         text = f.read()
-    with open(os.path.join(root, "game.toml"), "w") as f:
+    with open(os.path.join(root, "game.toml"), "w", encoding="utf-8") as f:
         # A data folder one level deeper than the app's own default.
         text = text.replace("[data]\n", '[data]\nwindows = "%LOCALAPPDATA%\\\\Second\\\\Game"\n')
         f.write(text + '\n[package]\napp = "Second"\ncontent = "packaging"\n')
@@ -63,7 +63,7 @@ def test_templates_game_agnostic():
     """The CLI's windows and README templates name no game."""
     names = [os.path.join("windows", n) for n in WIN] + ["README.txt.in", "README.intro"]
     for name in names:
-        with open(os.path.join(pkg.DEFAULTS, name)) as f:
+        with open(os.path.join(pkg.DEFAULTS, name), encoding="utf-8") as f:
             text = f.read()
         for word in ("BLiNX", "blinx", "BLINX", "cat_recomp", "Burnout"):
             assert word not in text, (name, word)
@@ -224,7 +224,7 @@ def test_game_override_wins(d, monkeypatch):
     tdir = os.path.join(d, "tpl")
     os.makedirs(os.path.join(tdir, "windows"))
     own = os.path.join(tdir, "windows", "launcher.c")
-    open(own, "w").close()
+    open(own, "w", encoding="utf-8").close()
     monkeypatch.setattr(G, "templates", tdir)
     assert pkg.template("windows", "launcher.c") == own
     assert pkg.template("windows", "app.rc.in") == os.path.join(
@@ -241,11 +241,11 @@ def readme_text(d, monkeypatch, target="windows"):
     monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
     monkeypatch.setattr(toolkit, "toolkit_dir", lambda: d)
     os.makedirs(os.path.join(G.content, target), exist_ok=True)
-    with open(os.path.join(G.content, target, "README.part"), "w") as f:
+    with open(os.path.join(G.content, target, "README.part"), "w", encoding="utf-8") as f:
         f.write("\nInstall @VERSION@\n")
     dst = os.path.join(d, "README.txt")
     pkg.readme(target, "v1", pl, dst)
-    with open(dst) as f:
+    with open(dst, encoding="utf-8") as f:
         return f.read()
 
 
@@ -267,7 +267,7 @@ def test_readme_game_intro(d, monkeypatch, game2):
     monkeypatch.setattr(game2, "content", content)
     monkeypatch.setattr(game2, "templates", "")
     os.makedirs(content)
-    with open(os.path.join(content, "README.intro"), "w") as f:
+    with open(os.path.join(content, "README.intro"), "w", encoding="utf-8") as f:
         f.write("Our own words about @NAME@ (@SOURCES@).\n\n")
     text = readme_text(d, monkeypatch)
     assert "\n\nOur own words about Second Game: Test (Second Game abcdef0" in text
@@ -292,7 +292,7 @@ def test_readme_pacing_paragraph(d, monkeypatch, game2, defaults, note):
     monkeypatch.setattr(game2, "templates", "")
     monkeypatch.setattr(game2, "spin_waits", os.path.join(game2.root, "config", "spin_waits.json"))
     if defaults is not None:
-        with open(os.path.join(d, "config.default.toml"), "w") as f:
+        with open(os.path.join(d, "config.default.toml"), "w", encoding="utf-8") as f:
             f.write(defaults)
     text = readme_text(d, monkeypatch)
     assert not PLACEHOLDER.findall(text)
@@ -316,22 +316,22 @@ def test_readme_pacing_needs_spin_waits(d, monkeypatch, game2):
     gets both."""
     monkeypatch.setattr(game2, "content", os.path.join(d, "content"))
     monkeypatch.setattr(game2, "templates", "")
-    with open(os.path.join(d, "config.default.toml"), "w") as f:
+    with open(os.path.join(d, "config.default.toml"), "w", encoding="utf-8") as f:
         f.write('[present]\npacing = "sleep"\n')
     monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
     monkeypatch.setattr(toolkit, "toolkit_dir", lambda: d)
     os.makedirs(os.path.join(game2.content, "windows"), exist_ok=True)
-    with open(os.path.join(game2.content, "windows", "README.part"), "w") as f:
+    with open(os.path.join(game2.content, "windows", "README.part"), "w", encoding="utf-8") as f:
         f.write("\nInstall\n")
     dst = os.path.join(d, "README.txt")
     assert game2.spin_waits == ""
     assert pkg.readme("windows", "v1", pl, dst) is False
-    with open(dst) as f:
+    with open(dst, encoding="utf-8") as f:
         text = f.read()
     assert "console-original" not in text and "battery" not in text
     monkeypatch.setattr(game2, "spin_waits", os.path.join(game2.root, "config", "spin_waits.json"))
     assert pkg.readme("windows", "v1", pl, dst) is True
-    with open(dst) as f:
+    with open(dst, encoding="utf-8") as f:
         assert "saves CPU and battery" in f.read()
 
 
@@ -360,21 +360,21 @@ def test_readme_pacing_game_template_without_placeholder(d, monkeypatch, game2):
     goes in, so readme() says so and package prints no note."""
     tdir = os.path.join(d, "tpl")
     os.makedirs(tdir)
-    with open(os.path.join(tdir, "README.txt.in"), "w") as f:
+    with open(os.path.join(tdir, "README.txt.in"), "w", encoding="utf-8") as f:
         f.write("@NAME@ @VERSION@\n\nOur own README.\n")
     monkeypatch.setattr(game2, "content", os.path.join(d, "content"))
     monkeypatch.setattr(game2, "templates", tdir)
     monkeypatch.setattr(game2, "spin_waits", os.path.join(game2.root, "config", "spin_waits.json"))
-    with open(os.path.join(d, "config.default.toml"), "w") as f:
+    with open(os.path.join(d, "config.default.toml"), "w", encoding="utf-8") as f:
         f.write('[present]\npacing = "sleep"\n')
     monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
     monkeypatch.setattr(toolkit, "toolkit_dir", lambda: d)
     os.makedirs(os.path.join(game2.content, "windows"), exist_ok=True)
-    with open(os.path.join(game2.content, "windows", "README.part"), "w") as f:
+    with open(os.path.join(game2.content, "windows", "README.part"), "w", encoding="utf-8") as f:
         f.write("\nInstall\n")
     dst = os.path.join(d, "README.txt")
     assert pkg.readme("windows", "v1", pl, dst) is False
-    with open(dst) as f:
+    with open(dst, encoding="utf-8") as f:
         text = f.read()
     assert "Our own README." in text and "console-original" not in text
     # The CLI's own frame has the placeholder: the same file gives the paragraph.
@@ -398,7 +398,7 @@ def test_installer_counts_game_files(d):
     )
     dst = os.path.join(d, "installer.nsi")
     pkg.render(pkg.template("windows", "installer.nsi.in"), values, dst)
-    with open(dst) as f:
+    with open(dst, encoding="utf-8") as f:
         text = f.read()
     assert not PLACEHOLDER.findall(text)
     main = text[text.index('Section "') :]
@@ -422,11 +422,11 @@ def readme_bytes(d, monkeypatch, target, enhance, bindings=True):
     monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
     monkeypatch.setattr(toolkit, "toolkit_dir", lambda: d)
     os.makedirs(os.path.join(G.content, "windows"), exist_ok=True)
-    with open(os.path.join(G.content, "windows", "README.part"), "w") as f:
+    with open(os.path.join(G.content, "windows", "README.part"), "w", encoding="utf-8") as f:
         f.write("\nInstall @VERSION@\n")
     out = os.path.join(d, target)
     os.makedirs(out, exist_ok=True)
-    with open(os.path.join(out, "config.default.toml"), "w") as f:
+    with open(os.path.join(out, "config.default.toml"), "w", encoding="utf-8") as f:
         f.write('[present]\npacing = "sleep"\n')
         if bindings == "empty":
             f.write("[input.bindings]\n")
@@ -502,17 +502,17 @@ def test_readme_part_capability_blocks(d, monkeypatch, game2):
     monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
     monkeypatch.setattr(toolkit, "toolkit_dir", lambda: d)
     os.makedirs(os.path.join(game2.content, "windows"))
-    with open(os.path.join(game2.content, "windows", "README.part"), "w") as f:
+    with open(os.path.join(game2.content, "windows", "README.part"), "w", encoding="utf-8") as f:
         f.write(
             "\nInstall @VERSION@\n@if enhance@\nOptions: config.toml\n@endif@\n"
             "@if !enhance@\nNo options file.\n@endif@\nEnd\n"
         )
     dst = os.path.join(d, "README.txt")
     pkg.readme("windows", "v1", pl, dst, True)
-    with open(dst) as f:
+    with open(dst, encoding="utf-8") as f:
         assert f.read().endswith("\nInstall v1\nOptions: config.toml\nEnd\n")
     pkg.readme("windows", "v1", pl, dst, False)
-    with open(dst) as f:
+    with open(dst, encoding="utf-8") as f:
         assert f.read().endswith("\nInstall v1\nNo options file.\nEnd\n")
 
 
@@ -525,22 +525,22 @@ def test_readme_intro_and_macos_blocks(d, monkeypatch, game2):
     monkeypatch.setattr(pl, "tree_state", lambda root: {"commit": "abcdef0123"})
     monkeypatch.setattr(toolkit, "toolkit_dir", lambda: d)
     os.makedirs(os.path.join(content, "macos"))
-    with open(os.path.join(content, "README.intro"), "w") as f:
+    with open(os.path.join(content, "README.intro"), "w", encoding="utf-8") as f:
         f.write(
             "About @NAME@.\n@if enhance@\nFork build.\n@endif@\n@if !enhance@\nUpstream build.\n@endif@\n"
         )
-    with open(os.path.join(content, "macos", "README.part"), "w") as f:
+    with open(os.path.join(content, "macos", "README.part"), "w", encoding="utf-8") as f:
         f.write("\nOpen the dmg.\n@if enhance@\nconfig.toml lives in config/.\n@endif@\n")
     dst = os.path.join(d, "README.txt")
     assert pkg.readme("macos", "v1", pl, dst, False) is False
-    with open(dst) as f:
+    with open(dst, encoding="utf-8") as f:
         text = f.read()
     assert text.startswith("Second Game: Test v1 - macos-arm64\n")
     assert "About Second Game: Test.\nUpstream build.\n\nSaves and" in text
     assert "Fork build." not in text and "config.toml" not in text
     assert "@if" not in text and text.endswith("\nOpen the dmg.\n")
     pkg.readme("macos", "v1", pl, dst, True)
-    with open(dst) as f:
+    with open(dst, encoding="utf-8") as f:
         text = f.read()
     assert "About Second Game: Test.\nFork build.\n\nSaves and" in text
     assert text.endswith("\nOpen the dmg.\nconfig.toml lives in config/.\n")

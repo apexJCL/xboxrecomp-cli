@@ -236,7 +236,7 @@ def scenario_errors(env, root=None):
             if root is None or not path or path.startswith("seed:"):
                 continue
             try:
-                with open(os.path.join(root, path)) as f:
+                with open(os.path.join(root, path), encoding="utf-8") as f:
                     v = f.read()
             except OSError:
                 continue

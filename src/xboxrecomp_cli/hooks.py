@@ -254,13 +254,25 @@ def resolve(G, xbe_data=None):
 
 
 def write_json(path, slots, m):
+    """Write config/hook_functions.json, or leave it alone when it already
+    says the same (line endings aside). The file is tracked: on a Windows
+    checkout (core.autocrlf=true) it sits there with CRLF, and rewriting it
+    with LF makes git call the clone modified, which the wizard's Retry
+    then refuses as local changes."""
+    doc = {"version": JSON_VERSION, "mods": mods_key(m), "functions": slots}
+    text = json.dumps(doc, indent=1) + "\n"
+    try:
+        with open(path, "rb") as f:
+            if f.read().replace(b"\r\n", b"\n") == text.encode("utf-8"):
+                return False
+    except OSError:
+        pass
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
-    with open(tmp, "w", newline="\n") as f:
-        doc = {"version": JSON_VERSION, "mods": mods_key(m), "functions": slots}
-        json.dump(doc, f, indent=1)
-        f.write("\n")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
     os.replace(tmp, path)
+    return True
 
 
 def untracked(root, path):
@@ -282,7 +294,7 @@ def load_json(G):
     or an override changed."""
     path = G.hook_functions
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             doc = json.load(f)
     except (OSError, ValueError) as e:
         raise CliError("no %s: run analyze (game.toml lists hook_functions)" % G.rel(path)) from e
@@ -326,7 +338,7 @@ def write_scan(G, slots):
             text = ""
     path = scan_path(G)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", newline="\n") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(scan_text(text, slots))
 
 

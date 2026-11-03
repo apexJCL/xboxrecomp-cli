@@ -157,7 +157,7 @@ def _write_report(s, stage, out_dir, unmatched=()):
         rep["texture_alpha"] = dict(sorted(stage["texture_alpha"].items()))
     if unmatched:
         rep["texture_alpha_unmatched"] = list(unmatched)
-    with open(os.path.join(out_dir, "report.json"), "w") as f:
+    with open(os.path.join(out_dir, "report.json"), "w", encoding="utf-8") as f:
         json.dump(rep, f, indent=1)
         f.write("\n")
 
@@ -193,7 +193,7 @@ def _report_lines(rep):
 
 
 def _summary(out_dir):
-    with open(os.path.join(out_dir, "report.json")) as f:
+    with open(os.path.join(out_dir, "report.json"), encoding="utf-8") as f:
         for line in _report_lines(json.load(f)):
             host.say(line)
 
@@ -207,11 +207,11 @@ def write_report_txt(out, names):
         sdir = os.path.join(out, "stages", n)
         p = os.path.join(sdir, "report.json")
         if os.path.isfile(p):
-            with open(p) as f:
+            with open(p, encoding="utf-8") as f:
                 lines += _report_lines(json.load(f))
         elif os.path.isdir(sdir):
             lines.append("%s: no report (re-extract)" % n)
-    with open(os.path.join(out, "report.txt"), "w") as f:
+    with open(os.path.join(out, "report.txt"), "w", encoding="utf-8") as f:
         f.write("".join(line + "\n" for line in lines))
 
 
@@ -284,7 +284,7 @@ def run(a):
         if a.collision:
             cj = os.path.join(sdir, "collision.json")
             if os.path.isfile(cj):
-                with open(cj) as f:
+                with open(cj, encoding="utf-8") as f:
                     rep = json.load(f)
                 host.say(
                     "  %s collision: %d triangles in %d classes"
@@ -295,7 +295,7 @@ def run(a):
         if a.placements:
             pj = os.path.join(sdir, "placements.json")
             if os.path.isfile(pj):
-                with open(pj) as f:
+                with open(pj, encoding="utf-8") as f:
                     rep = json.load(f)
                 host.say(
                     "  %s placements: %s"

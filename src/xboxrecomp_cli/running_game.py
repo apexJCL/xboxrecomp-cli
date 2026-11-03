@@ -64,7 +64,7 @@ def processes_linux(proc="/proc"):
         try:
             with open(os.path.join(proc, name, "cmdline"), "rb") as f:
                 raw = f.read()
-            with open(os.path.join(proc, name, "stat")) as f:
+            with open(os.path.join(proc, name, "stat"), encoding="utf-8") as f:
                 stat = f.read()
         except OSError:
             continue

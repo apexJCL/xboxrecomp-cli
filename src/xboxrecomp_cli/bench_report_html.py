@@ -712,7 +712,7 @@ def range_section(model, s):
 
 def run_json(result, run_dir):
     try:
-        with open(os.path.join(result, run_dir, "run.json")) as f:
+        with open(os.path.join(result, run_dir, "run.json"), encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return None
@@ -1005,7 +1005,7 @@ def md(text):
 def notes_section(result):
     p = os.path.join(result, "report-notes.md")
     try:
-        with open(p) as f:
+        with open(p, encoding="utf-8") as f:
             return '<div class="prose notes">%s</div>' % md(f.read())
     except OSError:
         return '<p class="prose">No <code>report-notes.md</code> in the result: key findings, hypotheses and follow-ups go there.</p>'

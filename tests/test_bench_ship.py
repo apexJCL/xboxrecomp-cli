@@ -52,7 +52,7 @@ def tree(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         cat, tk, bindir, digest = scratch(tmp)
         for name, body in (("ssh", FAKE_SSH_SHA), ("rsync", FAKE_RSYNC_LS)):
-            with open(os.path.join(bindir, name), "w") as f:
+            with open(os.path.join(bindir, name), "w", encoding="utf-8") as f:
                 f.write(body)
         rec = os.path.join(tmp, "rec")
         os.makedirs(rec)
@@ -81,7 +81,7 @@ def tree(monkeypatch):
                 with open(os.path.join(bdir, n), "wb") as f:
                     f.write(body)
             if t.get("touch_gen"):
-                with open(os.path.join(g.gen, "recomp_0001.c"), "a") as f:
+                with open(os.path.join(g.gen, "recomp_0001.c"), "a", encoding="utf-8") as f:
                     f.write("/* regenerated */\n")
             return exe
 
@@ -100,7 +100,7 @@ def calls(t):
         stdin = None
         ls = os.path.join(rec, n[: -len(".argv")] + ".ls")
         if os.path.exists(ls):
-            stdin = open(ls).read()
+            stdin = open(ls, encoding="utf-8").read()
         if kind == "ssh":
             stdin = open(os.path.join(rec, n[: -len(".argv")] + ".stdin"), "rb").read().decode()
         out.append((kind, argv, stdin))
@@ -155,7 +155,9 @@ def test_build_ships_and_never_compiles_on_host(tree, capsys):
     ], listing
     assert listing[-1] == sha  # the snapshot shipped is the exe hashed
     assert cs[2][1][-2].endswith("running_game.py")
-    prov = open(os.path.join(t["cat"], "build-win", ship_mod.LOCAL_PROVENANCE)).read()
+    prov = open(
+        os.path.join(t["cat"], "build-win", ship_mod.LOCAL_PROVENANCE), encoding="utf-8"
+    ).read()
     assert prov.startswith("built: ") and "(BENCH_BUILD=local)" in prov, prov
     assert "\ngen: sha256 %s (2 files)\n" % os.environ["FAKE_GEN_DIGEST"] in prov, prov
     assert prov.endswith("exe: %s cat_recomp.exe\n" % sha), prov
@@ -374,7 +376,7 @@ def test_ship_refuses_exe_changed_since_build(tree, capsys):
 
 def test_build_refuses_while_gen_regenerates(tree, capsys):
     t = tree
-    open(t["game"].regen_marker, "w").close()
+    open(t["game"].regen_marker, "w", encoding="utf-8").close()
     assert run(t, "build") == 1
     assert "gen/ is mid-regeneration" in capsys.readouterr().err
     assert t["builds"] == [] and calls(t) == []

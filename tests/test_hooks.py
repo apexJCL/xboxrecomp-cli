@@ -11,6 +11,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 
 import pytest
 from test_cli import fake_tree, write
@@ -391,7 +392,7 @@ def hooked(d, entries, manual="", signatures=None, xbe_data=None, st0=(), no_st0
     vas = listing(os.path.join(d, "out"), FUNCS, CALLERS)
     if more:
         p = os.path.join(d, "out", "disasm", "functions.json")
-        with open(p) as f:
+        with open(p, encoding="utf-8") as f:
             table = json.load(f)
         write(p, json.dumps(table + list(more)))
 
@@ -541,12 +542,77 @@ def test_untracked(d):
     assert not hooks.untracked(d, p)
 
 
+LOCALE_SCAN = """
+import locale, sys, types
+enc = locale.getpreferredencoding(False)
+if enc.lower().replace("-", "") == "utf8":
+    sys.exit(77)
+from xboxrecomp_cli import hooks
+G = types.SimpleNamespace(recomp_manual=sys.argv[1], out=sys.argv[2])
+hooks.write_scan(G, [{"name": "sub_00011000"}])
+print(enc)
+"""
+
+
+def test_write_scan_under_a_non_utf8_locale(tmp_path):
+    # A player's Windows Python writes text in the ANSI code page (cp1252)
+    # unless told; the game's manual file carries characters outside it and
+    # the scan writer died with 'charmap' codec can't encode.
+    # LC_ALL=C gives POSIX Python an ASCII default, the same trap.
+    manual = tmp_path / "manual.c"
+    manual.write_text("/* walls → shop, ≤ 4 */\nvoid sub_00099000(void) {}\n", "utf-8")
+    env = dict(os.environ, PYTHONUTF8="0", PYTHONCOERCECLOCALE="0", LC_ALL="C", LANG="C")
+    r = subprocess.run(
+        [sys.executable, "-c", LOCALE_SCAN, str(manual), str(tmp_path / "out")],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if r.returncode == 77:
+        pytest.skip("this host's Python has a UTF-8 default even under LC_ALL=C")
+    assert r.returncode == 0, r.stderr
+    with open(hooks.scan_path(type("G", (), {"out": str(tmp_path / "out")})), "rb") as f:
+        assert "→".encode() in f.read()
+
+
+def test_write_json_leaves_a_crlf_checkout_clean(tmp_path):
+    # A player's Windows clone (core.autocrlf=true) holds the tracked file
+    # with CRLF; rewriting the same content with LF made git call the clone
+    # modified, and the wizard's Retry refused it.
+    d = str(tmp_path)
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", d, "-c", "core.autocrlf=true", *args], check=True, capture_output=True
+        ).stdout
+
+    m = {"mods": {"hook_functions": ["0x11000"], "signatures": {}, "st0": [], "no_st0": []}}
+    slots = [{"name": "sub_00011000", "va": "0x00011000"}]
+    p = os.path.join(d, "config", "hook_functions.json")
+    assert hooks.write_json(p, slots, m)
+    git("init", "-q")
+    git("add", ".")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c")
+    os.remove(p)
+    git("checkout", "--", "config")
+    with open(p, "rb") as f:
+        assert b"\r\n" in f.read()
+    assert not hooks.write_json(p, slots, m)
+    with open(p, "rb") as f:
+        assert b"\r\n" in f.read()
+    assert git("status", "--porcelain") == b""
+    # A real change is still written.
+    assert hooks.write_json(p, slots + [{"name": "sub_00012000", "va": "0x00012000"}], m)
+    assert git("status", "--porcelain") == b" M config/hook_functions.json\n"
+
+
 # ── the pipeline ─────────────────────────────────────────────────────────
 
 
 def use_mods(root, text):
     """Append text to the tree's game.toml and make it the current game."""
-    with open(os.path.join(root, "game.toml"), "a") as f:
+    with open(os.path.join(root, "game.toml"), "a", encoding="utf-8") as f:
         f.write("\n" + text + "\n")
     G = manifest.load(root)
     manifest.use(G)
@@ -555,10 +621,10 @@ def use_mods(root, text):
 
 def edit_toml(root, old, new):
     p = os.path.join(root, "game.toml")
-    with open(p) as f:
+    with open(p, encoding="utf-8") as f:
         text = f.read()
     assert old in text
-    with open(p, "w") as f:
+    with open(p, "w", encoding="utf-8") as f:
         f.write(text.replace(old, new))
     return use_mods(root, "")
 
@@ -591,7 +657,7 @@ def recomp(G, monkeypatch):
         monkeypatch.undo()
         if os.path.exists(G.regen_marker):
             os.remove(G.regen_marker)
-    with open(G.gen_key) as f:
+    with open(G.gen_key, encoding="utf-8") as f:
         return gen_tree(G), f.read()
 
 
@@ -623,7 +689,7 @@ def test_slots_through_the_pipeline(d, monkeypatch):
     with fake_tree(d) as (root, tk):
         G = host.g()
         argv = pipeline.stage_argv()
-        with open(G.recomp_manual, "w") as f:
+        with open(G.recomp_manual, "w", encoding="utf-8") as f:
             f.write("void sub_00099000(void) { }\n")
         G = use_mods(root, '[mods]\nhook_functions = ["0x00011020", "0x00011010"]')
         assert [n for n, _ in pipeline.analyze_stages()][-1] == "hooks"
@@ -635,7 +701,7 @@ def test_slots_through_the_pipeline(d, monkeypatch):
         with pytest.raises(CliError, match="no extra arguments"):
             pipeline.stage_hooks(["--x"])
         pipeline.stage_hooks()
-        with open(G.hook_functions) as f:
+        with open(G.hook_functions, encoding="utf-8") as f:
             doc = json.load(f)
         assert doc["version"] == 1 and [s["ret_pop"] for s in doc["functions"]] == [0, 12]
         assert doc["mods"] == hooks.mods_key(G.m)
@@ -651,7 +717,7 @@ def test_slots_through_the_pipeline(d, monkeypatch):
         r = json.loads(pipeline.stage_argv())[-1][2]
         scan = r[r.index("--exclude-manual") + 1]
         assert scan == "$ROOT/analysis/hooks/exclude_manual.c"
-        with open(hooks.scan_path(G)) as f:
+        with open(hooks.scan_path(G), encoding="utf-8") as f:
             text = f.read()
         assert text.startswith("void sub_00099000(void) { }\n")
         assert "extern void sub_00011020_gen(void);\nvoid sub_00011020(void) {}\n" in text
@@ -697,5 +763,5 @@ def test_mods_edits_stale_gen_before_analyze(d, monkeypatch):
         pipeline.stage_hooks()
         recomp(G, monkeypatch)
         assert pipeline.gen_stale_reasons() == []
-        with open(G.hook_functions) as f:
+        with open(G.hook_functions, encoding="utf-8") as f:
             assert json.load(f)["functions"][0]["x87_from"] == "override"

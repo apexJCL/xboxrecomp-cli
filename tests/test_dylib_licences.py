@@ -22,7 +22,7 @@ def keg(root, formula, version, files):
 def stage_toolkit(res, *names):
     os.makedirs(os.path.join(res, "LICENSES"), exist_ok=True)
     for n in names:
-        with open(os.path.join(res, "LICENSES", n), "w") as f:
+        with open(os.path.join(res, "LICENSES", n), "w", encoding="utf-8") as f:
             f.write("toolkit")
 
 
@@ -70,11 +70,11 @@ def test_licences_staged(tmp_path):
         "sdl3-LICENSE.txt",
         "sdl3-yuv2rgb-BSD-3-Clause.txt",
     ]
-    with open(os.path.join(d, "sdl3-yuv2rgb-BSD-3-Clause.txt")) as f:
+    with open(os.path.join(d, "sdl3-yuv2rgb-BSD-3-Clause.txt"), encoding="utf-8") as f:
         assert f.read().startswith("Copyright (c) 2016, Adrien Descamps\n")
     with open(os.path.join(d, "sdl3-LICENSE.txt"), "rb") as f:
         assert f.read() == b"zlib\n"
-    with open(os.path.join(d, "BUNDLED-LIBRARIES.md")) as f:
+    with open(os.path.join(d, "BUNDLED-LIBRARIES.md"), encoding="utf-8") as f:
         text = f.read()
     # One entry per keg, with the version from its Cellar path and the
     # licence the wizard's credits give.
@@ -91,7 +91,7 @@ def test_unknown_formula_named_plainly(tmp_path):
     root = str(tmp_path)
     k = keg(root, "zstd", "1.5.7", {"LICENSE": b"bsd"})
     macos.stage_dylib_licences(os.path.join(root, "R"), [lib(k, "libzstd.1.dylib")])
-    with open(os.path.join(root, "R", "LICENSES", "BUNDLED-LIBRARIES.md")) as f:
+    with open(os.path.join(root, "R", "LICENSES", "BUNDLED-LIBRARIES.md"), encoding="utf-8") as f:
         assert "- zstd 1.5.7: `libzstd.1.dylib`" in f.read()
 
 
@@ -164,7 +164,7 @@ def test_toolkit_clash_fails(tmp_path):
     with pytest.raises(CliError) as e:
         macos.stage_dylib_licences(res, [lib(k, "libSDL3.0.dylib")])
     assert "LICENSES/sdl3-LICENSE.txt is already staged" in str(e.value)
-    with open(os.path.join(res, "LICENSES", "sdl3-LICENSE.txt")) as f:
+    with open(os.path.join(res, "LICENSES", "sdl3-LICENSE.txt"), encoding="utf-8") as f:
         assert f.read() == "toolkit"
 
 

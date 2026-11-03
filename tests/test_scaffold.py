@@ -77,7 +77,7 @@ FAKE_MANUAL = "/* overrides */\n"
 
 def write(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(text)
 
 
@@ -354,6 +354,7 @@ def test_gitignore_and_attributes(d, tk, game):
     attrs = read(os.path.join(root, ".gitattributes"))
     assert "*.cmd     text eol=crlf" in attrs and "g    text eol=lf" in attrs
     assert "*.py      text eol=lf" in attrs and "*.toml    text eol=lf" in attrs
+    assert "*.json    text eol=lf" in attrs
     # The game's pyproject is the tools environment, nothing installed.
     py = read(os.path.join(root, "pyproject.toml"))
     assert "capstone==5.0.9" in py and "package = false" in py and "no-build = true" in py
@@ -492,7 +493,7 @@ def test_a_path_packages_a_packaged_game(d, tk, game, monkeypatch):
 
     root = os.path.join(d, "g")
     assert new(root, "--offline", "--cli-commit", CLI, "--toolkit-commit", TK)[0] == 0
-    with open(os.path.join(root, "game.toml"), "a") as f:
+    with open(os.path.join(root, "game.toml"), "a", encoding="utf-8") as f:
         f.write('\n[package]\napp = "G"\ntargets = ["windows"]\n')
     assert "package" in manifest.load(root).m
     monkeypatch.setattr(main, "native_target", lambda: "windows")

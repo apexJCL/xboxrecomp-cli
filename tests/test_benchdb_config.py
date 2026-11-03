@@ -19,7 +19,7 @@ def test_env_then_cwd_walk(tmp_path, monkeypatch):
     lone = str(tmp_path / "lone")
     os.makedirs(lone)
     alt = str(tmp_path / "cfg.toml")
-    with open(alt, "w") as f:
+    with open(alt, "w", encoding="utf-8") as f:
         f.write('db = "x.db"\n')
     monkeypatch.delenv(config.ENV, raising=False)
     assert config.find(deep) == os.path.join(ws, config.NAME)

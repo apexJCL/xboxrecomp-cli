@@ -27,7 +27,7 @@ def load_pins(path=None):
     offline) gets the command that writes it, not a traceback."""
     path = path or host.g().pins
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except OSError as e:
         raise CliError(
@@ -204,7 +204,7 @@ def fetch_mingw(pins, force=False):
     part = dest + ".partial"
     shutil.rmtree(part, ignore_errors=True)
     extract(arc, part)
-    with open(os.path.join(part, ".tag"), "w") as f:
+    with open(os.path.join(part, ".tag"), "w", encoding="utf-8") as f:
         f.write(tag + "\n")
     shutil.rmtree(dest, ignore_errors=True)
     os.rename(part, dest)

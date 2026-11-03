@@ -246,7 +246,7 @@ def test_cache_and_out_dir(d):
 def test_staged_icon_check(d):
     os.makedirs(os.path.join(d, "game_files"))
     for rel in ("icon.png", "game_files/icon.png", "BLiNX2.ico"):
-        open(os.path.join(d, rel), "w").close()
+        open(os.path.join(d, rel), "w", encoding="utf-8").close()
     probs = pl.staged_problems(d)
     assert sorted(p.split(":")[0] for p in probs) == ["BLiNX2.ico", "game_files/icon.png"], probs
 

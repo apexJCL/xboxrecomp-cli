@@ -37,7 +37,7 @@ def commit(repo, files, msg, date="2026-10-19T10:00:00Z"):
     for rel, text in files.items():
         p = os.path.join(repo, rel)
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write(text)
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", msg, date=date)
@@ -61,12 +61,12 @@ def public_tag(repo, tag, date, annotated=True):
 @pytest.fixture
 def rel(d, monkeypatch):
     g = game_dir(d)
-    with open(os.path.join(g, "game.toml")) as f:
+    with open(os.path.join(g, "game.toml"), encoding="utf-8") as f:
         toml = f.read()
     toml = toml.replace(
         'commit = "6d51fa2d2b9eae4a31b22022925c6e72ad14dd04"', 'commit = "%s"' % PUB_TK
     ).replace('commit = "0000000000000000000000000000000000000000"', 'commit = "%s"' % CLI_SHA)
-    with open(os.path.join(g, "game.toml"), "w") as f:
+    with open(os.path.join(g, "game.toml"), "w", encoding="utf-8") as f:
         f.write(toml)
     git(g, "init", "-q", "-b", "main")
     c0 = commit(g, {"src/a.c": "int a;\n"}, "c0", "2026-10-18T10:00:00Z")
@@ -75,9 +75,9 @@ def rel(d, monkeypatch):
     maps = os.path.join(d, "maps")
     os.makedirs(maps)
     pub = public_tag(g, "v1", "2026-10-20T10:00:00Z")
-    with open(os.path.join(maps, "demo.map"), "w") as f:
+    with open(os.path.join(maps, "demo.map"), "w", encoding="utf-8") as f:
         f.write("%s %s 2026-10-20T10:00:00Z\n" % (pub, c2))
-    with open(os.path.join(d, "map.txt"), "w") as f:
+    with open(os.path.join(d, "map.txt"), "w", encoding="utf-8") as f:
         f.write("%s %s\n" % (PRIV_TK, PUB_TK))
     extra = '\n[games]\ndemo = "demo"\n\n[release]\nexport_maps = "maps"\ntoolkit_map = "map.txt"\n'
     db = open_db(d, extra, monkeypatch)
@@ -205,7 +205,7 @@ def test_after_tag_hook(rel, d, tmp_path):
     other.mkdir()
     assert releases.after_tag(str(other), say=out.append) is None
     # A broken config warns and never raises.
-    with open(cfg.path, "a") as f:
+    with open(cfg.path, "a", encoding="utf-8") as f:
         f.write("\n[[[ not toml\n")
     assert releases.after_tag(g, say=out.append) is None
     assert out and "refresh after the tag failed" in out[-1]

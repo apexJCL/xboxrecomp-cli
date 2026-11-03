@@ -224,7 +224,7 @@ class Writer:
         for k in list(j):
             if isinstance(j[k], list) and not j[k]:
                 del j[k]
-        with open(os.path.join(out_dir, self.name + ".gltf"), "w") as f:
+        with open(os.path.join(out_dir, self.name + ".gltf"), "w", encoding="utf-8") as f:
             json.dump(j, f, indent=1)
             f.write("\n")
         rep = {
@@ -232,7 +232,7 @@ class Writer:
             "classes": {"%06X" % c: self._entry(c, n) for c, n in sorted(self.tris.items())},
             "left_out": dict(sorted(self.stats.items())),
         }
-        with open(os.path.join(out_dir, "collision.json"), "w") as f:
+        with open(os.path.join(out_dir, "collision.json"), "w", encoding="utf-8") as f:
             json.dump(rep, f, indent=1, sort_keys=True)
             f.write("\n")
         return rep

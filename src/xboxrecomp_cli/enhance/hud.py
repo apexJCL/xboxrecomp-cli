@@ -502,7 +502,7 @@ def run(a):
         spill.discard()
     with open(G.xbe, "rb") as f:
         xbe_sha = hashlib.sha256(f.read()).hexdigest()
-    with open(os.path.join(out_dir, "hud-pack.toml"), "w", newline="\n") as f:
+    with open(os.path.join(out_dir, "hud-pack.toml"), "w", encoding="utf-8", newline="\n") as f:
         f.write(
             pack.manifest_text(
                 entries,

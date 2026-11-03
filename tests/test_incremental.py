@@ -102,14 +102,14 @@ def test_directory_output_skips_the_manifest_files(d):
 def test_corrupt_state_reads_empty(d):
     sdir = os.path.join(d, "state")
     os.makedirs(sdir)
-    with open(os.path.join(sdir, buildstate.STATE_NAME), "w") as f:
+    with open(os.path.join(sdir, buildstate.STATE_NAME), "w", encoding="utf-8") as f:
         f.write("{not json")
     st = buildstate.State(d, sdir)
     assert st.check("s", "k", {}) == ["not built yet"]
     st.record("s", "k", {})
     assert buildstate.State(d, sdir).check("s", "k", {}) == []
     # Another schema is foreign: read as empty too.
-    with open(os.path.join(sdir, buildstate.STATE_NAME), "w") as f:
+    with open(os.path.join(sdir, buildstate.STATE_NAME), "w", encoding="utf-8") as f:
         json.dump({"schema": 99, "stages": {"s": {"key": "k"}}}, f)
     assert buildstate.State(d, sdir).check("s", "k", {}) == ["not built yet"]
 
@@ -175,7 +175,7 @@ def test_sync_tree_keeps_equal_files(d):
     ino = os.stat(os.path.join(dst, "same.txt")).st_ino
     incr.sync_tree(src, dst)
     assert os.stat(os.path.join(dst, "same.txt")).st_ino == ino
-    assert open(os.path.join(dst, "sub", "x.txt")).read() == "x2"
+    assert open(os.path.join(dst, "sub", "x.txt"), encoding="utf-8").read() == "x2"
     assert os.path.isfile(os.path.join(dst, "new.txt"))
     assert not os.path.exists(os.path.join(dst, "old.txt"))
     assert not os.path.exists(os.path.join(dst, "gone"))
@@ -197,7 +197,7 @@ def test_sync_game_files(d, monkeypatch):
     write(os.path.join(src, "c.bin"), "c")
     incr.sync_game_files(src, dst, pl)
     assert sorted(pl.list_files(dst)) == ["a.bin", "c.bin"]
-    assert open(os.path.join(dst, "a.bin")).read() == "a2"
+    assert open(os.path.join(dst, "a.bin"), encoding="utf-8").read() == "a2"
     del ino
 
 
@@ -426,6 +426,39 @@ def test_present_shader_files(d):
     assert incr.present_shader_files("macos", None) == (None, None)
 
 
+def test_stale_crlf_shader_copies_take_the_toolkit_bytes(d):
+    """A Windows exe built from an autocrlf toolkit clone keeps CRLF shader
+    copies beside it after setup heals the clone (the copy runs on link
+    only): the staged copies that differ from the toolkit only by CRLF get
+    its LF bytes, and anything else is left for staged_problems."""
+    src = os.path.join(d, "tk", "assets", "shaders")
+    staged = os.path.join(d, "payload", "shaders")
+    files = {
+        "param-kinds.toml": (b"a = 1\nb = 2\n", b"a = 1\r\nb = 2\r\n"),
+        "crt/x.slangp": (b"#reference x\n", b"#reference x\r\n"),
+        "edited.toml": (b"a = 1\n", b"a = 2\r\n"),
+        "LICENSE-librashader.txt": (None, b"MPL\r\n"),
+    }
+    for rel, (ref, got) in files.items():
+        if ref is not None:
+            os.makedirs(os.path.dirname(os.path.join(src, rel)), exist_ok=True)
+            with open(os.path.join(src, rel), "wb") as f:
+                f.write(ref)
+        os.makedirs(os.path.dirname(os.path.join(staged, rel)), exist_ok=True)
+        with open(os.path.join(staged, rel), "wb") as f:
+            f.write(got)
+    pkg.refresh_shader_line_endings(staged, src)
+
+    def read(rel):
+        with open(os.path.join(staged, rel), "rb") as f:
+            return f.read()
+
+    assert read("param-kinds.toml") == b"a = 1\nb = 2\n"
+    assert read("crt/x.slangp") == b"#reference x\n"
+    assert read("edited.toml") == b"a = 2\r\n"
+    assert read("LICENSE-librashader.txt") == b"MPL\r\n"
+
+
 def test_macos_companions_add_librashader(d, monkeypatch):
     from xboxrecomp_cli.package import macos
 
@@ -503,7 +536,9 @@ def test_deleted_outputs_rerun_their_stage(game):
 def test_corrupt_state_reruns_once(game):
     G, calls = game["G"], game["calls"]
     game["run"]()
-    with open(os.path.join(G.root, ".git", "xbr", buildstate.STATE_NAME), "w") as f:
+    with open(
+        os.path.join(G.root, ".git", "xbr", buildstate.STATE_NAME), "w", encoding="utf-8"
+    ) as f:
         f.write("garbage")
     game["run"]()
     assert calls["build"] == 2
@@ -538,7 +573,7 @@ def test_moved_folder_keeps_the_keys(game, d):
     game["run"]()
     st = buildstate.State(G.root)
     assert all(p.startswith("$ROOT/") for rec in st.data["stages"].values() for p in rec["outputs"])
-    assert G.root not in open(st.path).read()
+    assert G.root not in open(st.path, encoding="utf-8").read()
     moved = os.path.join(d, "moved")
     shutil.copytree(G.root, moved, symlinks=True)
     G2 = manifest.load(moved)
@@ -1197,7 +1232,7 @@ def test_plan_json_contract(game, d, monkeypatch):
     assert all(isinstance(r["why"], list) for r in doc["stages"])
     if os.environ.get("XBR_WRITE_PLAN_FIXTURE"):
         text = json.dumps(doc, indent=1).replace(str(d), "/tmp/game") + "\n"
-        with open(PLAN_FIXTURE, "w", newline="\n") as f:
+        with open(PLAN_FIXTURE, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
     with open(PLAN_FIXTURE, encoding="utf-8") as f:
         fixture = json.load(f)
@@ -1230,7 +1265,7 @@ def test_incremental_equals_clean(game, d, monkeypatch):
         b = build_mod.pkg_build_dir("windows")
         write(os.path.join(b, "CMakeCache.txt"), "CMAKE_BUILD_TYPE:STRING=Release\n")
         exe = g.exe(b, "windows")
-        write(exe, "exe of " + open(os.path.join(tk, "src", "runtime.c")).read())
+        write(exe, "exe of " + open(os.path.join(tk, "src", "runtime.c"), encoding="utf-8").read())
         return exe
 
     monkeypatch.setattr(build_mod, "build", det_build)

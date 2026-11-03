@@ -863,9 +863,9 @@ def hud_game(d):
     the 32x32 atlas (LZSS), a 64x64 one over max_texels, one that is no
     DDS, and one outside the patterns."""
     G = host.g()
-    G.m["enhance"] = manifest.parse_text(open(os.path.join(G.root, "game.toml")).read() + HUD_TOML)[
-        "enhance"
-    ]
+    G.m["enhance"] = manifest.parse_text(
+        open(os.path.join(G.root, "game.toml"), encoding="utf-8").read() + HUD_TOML
+    )["enhance"]
     atlas_dds = dds_file(ATLAS_W, ATLAS_H, b"DXT5", dxt5_blocks(ATLAS_W, ATLAS_H, stock_ink))
     write_archive(
         G.game_files,
@@ -905,7 +905,7 @@ def test_hud_list_and_pack(d, capsys):
         assert "5 glyphs rendered" in out and "'z': not in the font" in out
         p = os.path.join(G.dist, "enhance", "hud", "hud.pack")
         assert pack.read_header(p) == (2, 2)
-        with open(os.path.join(G.dist, "enhance", "hud", "hud-pack.toml")) as f:
+        with open(os.path.join(G.dist, "enhance", "hud", "hud-pack.toml"), encoding="utf-8") as f:
             man = f.read()
         assert 'font = "test.ttf"' in man and "font (5 glyphs)" in man
         assert 'name = "media:dds/ui_bar.dds"' in man and "guest = [8, 4]" in man
@@ -931,7 +931,7 @@ def test_hud_list_and_pack(d, capsys):
             assert hud.run(hud_args(out=os.path.join(d, "byname"))) == 0
             out = capsys.readouterr().out
             assert "font: Test Narrow, " in out and "5 glyphs rendered from Test Narrow" in out
-            man = open(os.path.join(d, "byname", "hud-pack.toml")).read()
+            man = open(os.path.join(d, "byname", "hud-pack.toml"), encoding="utf-8").read()
             assert 'font = "family.ttc"' in man and 'font_face = "Test Narrow"' in man
             # The same glyphs as the one-font file: the face is the same font.
             assert open(os.path.join(d, "byname", "hud.pack"), "rb").read() == open(p, "rb").read()
@@ -1141,7 +1141,7 @@ def test_hud_mix_textures(d, capsys):
         assert "%016X  mis/mis_one.mix/mis_one" % texhash.tex_hash(text) in out
         assert "5 entries, 3 usable" in out
         assert hud.run(hud_args()) == 0
-        man = open(os.path.join(G.dist, "enhance", "hud", "hud-pack.toml")).read()
+        man = open(os.path.join(G.dist, "enhance", "hud", "hud-pack.toml"), encoding="utf-8").read()
         assert 'name = "lng:mis/mis_one.mix/mis_one"' in man
 
 
@@ -1231,7 +1231,7 @@ def test_hud_kinds_and_languages(d, capsys):
         assert entries[h(tex["pic"])][:3] == (16, 16, pack.KIND_ART)
         assert entries[h(tex["sm"])][2] == pack.KIND_TEXT | pack.FLAG_BC3
         assert entries[h(dxt5_blocks(ATLAS_W, ATLAS_H, stock_ink))][2] == pack.KIND_FONT
-        man = open(os.path.join(G.dist, "enhance", "hud", "hud-pack.toml")).read()
+        man = open(os.path.join(G.dist, "enhance", "hud", "hud-pack.toml"), encoding="utf-8").read()
         assert (
             'languages = ["us"]' in man and "[kinds.text]\nentries = 2\nscale = 2\nbc3 = 2" in man
         )
@@ -1292,7 +1292,7 @@ def test_package_hud_pack(d):
             staged = pkg.stage_hud_pack(payload, target, info)
             assert staged["path"] == rel and staged["entries"] == 1
             assert pack.read_header(os.path.join(payload, "enhance", "hud.pack")) == (1, 4)
-            with open(os.path.join(payload, "config.default.toml")) as f:
+            with open(os.path.join(payload, "config.default.toml"), encoding="utf-8") as f:
                 text = f.read()
             assert text.startswith("[render]\nscale = 1\n") and "[textures]" in text
             assert 'pack = "%s"' % rel in text
@@ -1452,7 +1452,7 @@ def test_hud_pinned_to_5ae107c(d):
         out = os.path.join(G.dist, "enhance", "hud")
         assert host.sha256_path(os.path.join(out, "hud.pack")) == PIN_PACK
         assert not os.path.exists(os.path.join(out, "hud.pack.payload.tmp"))
-        with open(os.path.join(out, "hud-pack.toml"), newline="") as f:
+        with open(os.path.join(out, "hud-pack.toml"), encoding="utf-8", newline="") as f:
             assert _tool_line(f.read()) == _tool_line(PIN_TOML)
         made = {"pack_sha256": PIN_PACK, "only": [], "config": PIN_DIGEST}
         assert tweaks.remake_problem(made) == ("", None)
@@ -1471,7 +1471,7 @@ def test_hud_text_path_pinned_to_5ae107c(d):
         assert hud.run(hud_args(jobs=3)) == 0
         out = os.path.join(G.dist, "enhance", "hud")
         assert host.sha256_path(os.path.join(out, "hud.pack")) == PIN_TEXT_PACK
-        with open(os.path.join(out, "hud-pack.toml"), newline="") as f:
+        with open(os.path.join(out, "hud-pack.toml"), encoding="utf-8", newline="") as f:
             assert _tool_line(f.read()) == _tool_line(PIN_TEXT_TOML)
 
 
@@ -1587,7 +1587,7 @@ def hook_game(d, hook=HOOK):
     12x4 texture pow2 skips, a mipped one and one outside the patterns."""
     G = host.g()
     G.m["enhance"] = manifest.parse_text(
-        open(os.path.join(G.root, "game.toml")).read() + HOOK_TOML
+        open(os.path.join(G.root, "game.toml"), encoding="utf-8").read() + HOOK_TOML
     )["enhance"]
     write(os.path.join(G.root, "scripts", "dat_index.py"), hook)
     bar = dds_file(8, 4, b"DXT1", dxt1_blocks(8, 4))
@@ -1622,7 +1622,7 @@ def test_hud_hook_source(d, capsys):
         out_dir = os.path.join(G.dist, "enhance", "hud")
         got = read_pack(os.path.join(out_dir, "hud.pack"))
         assert list(got) == [bar_hash] and got[bar_hash][:2] == (16, 8)
-        man = open(os.path.join(out_dir, "hud-pack.toml")).read()
+        man = open(os.path.join(out_dir, "hud-pack.toml"), encoding="utf-8").read()
         assert 'name = "Data/data4.dat:Data/UI/Bar.dds"' in man
         st, (_key, inputs, _up) = hud.hud_record(hud_args(), G.m["enhance"]["hud"], 2, [], out_dir)
         hook_file = os.path.join(G.root, "scripts", "dat_index.py")

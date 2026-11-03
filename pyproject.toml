@@ -39,7 +39,13 @@ target-version = "py312"
 extend-exclude = ["external", "third_party", ".venv*", "build*", "dist"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B"]
+select = ["E", "F", "W", "I", "UP", "B", "PLW1514"]
+# PLW1514 (a text open() without encoding=) is a preview rule: only it is
+# taken from preview. Windows reads and writes text in the ANSI code page
+# (cp1252) unless told, and a player's build then fails on the first
+# character outside it.
+preview = true
+explicit-preview-rules = true
 ignore = [
   "E501",     # format wraps code; long strings and comments are left to review
   "UP031",    # the code uses %-formatting throughout; f-strings by hand would be churn,

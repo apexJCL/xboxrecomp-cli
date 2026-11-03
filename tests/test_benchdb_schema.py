@@ -242,8 +242,10 @@ def test_daily_backup_and_rotation(d):
     start = datetime.date(2026, 9, 1)
     days = [start + datetime.timedelta(days=i) for i in range(40)]
     for day in days:
-        open(os.path.join(bdir, "bench-%s.db" % day.strftime("%Y%m%d")), "w").close()
-    open(os.path.join(bdir, "bench-pre-v2.db"), "w").close()
+        open(
+            os.path.join(bdir, "bench-%s.db" % day.strftime("%Y%m%d")), "w", encoding="utf-8"
+        ).close()
+    open(os.path.join(bdir, "bench-pre-v2.db"), "w", encoding="utf-8").close()
     store.rotate(bdir)
     kept = sorted(os.listdir(bdir))
     assert "bench-pre-v2.db" in kept

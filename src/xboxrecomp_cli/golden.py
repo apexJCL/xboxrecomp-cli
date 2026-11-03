@@ -900,7 +900,7 @@ def config_argv():
 
 
 def load_golden():
-    with open(GOLDEN_JSON) as f:
+    with open(GOLDEN_JSON, encoding="utf-8") as f:
         g = json.load(f)
     check_anchor_chains(g)
     check_pad_scripts(g)
@@ -971,7 +971,7 @@ def flip_batches(log):
         FLIP_RE = re.compile(r"^\[(D3D11|METAL|GPU)\] flip (\d+)\b.*?\bbatches (\d+)")
     out = {}
     try:
-        with open(log, errors="replace") as f:
+        with open(log, encoding="utf-8", errors="replace") as f:
             for line in f:
                 m = FLIP_RE.match(line)
                 if m:
@@ -998,7 +998,7 @@ def flip_times(log):
         TIME_RE = re.compile(r"^\[GPU\] flip (\d+) (\d+) ms\b")
     out = {}
     try:
-        with open(log, errors="replace") as f:
+        with open(log, encoding="utf-8", errors="replace") as f:
             for line in f:
                 m = TIME_RE.match(line)
                 if m:
@@ -1119,7 +1119,7 @@ def run_backend(log):
     log or flip lines."""
     seen = None
     try:
-        with open(log, errors="replace") as f:
+        with open(log, encoding="utf-8", errors="replace") as f:
             for line in f:
                 if line.startswith("[D3D11] flip "):
                     return "d3d11"
@@ -1210,7 +1210,7 @@ def enhance_nonstock(log, allow=()):
     enhance_allowed instead."""
     why = []
     try:
-        with open(log, errors="replace") as f:
+        with open(log, encoding="utf-8", errors="replace") as f:
             for line in f:
                 if "[ENHANCE]" not in line:
                     continue
@@ -1235,7 +1235,7 @@ def enhance_allowed(log, allow):
         return []
     seen = []
     try:
-        with open(log, errors="replace") as f:
+        with open(log, encoding="utf-8", errors="replace") as f:
             for line in f:
                 if "[ENHANCE]" not in line:
                     continue
@@ -1480,7 +1480,7 @@ def cmd_check(args):
 
 def write_used(path, used, scen_rc):
     """SCEN<TAB>path per kept image, SCEN<TAB>#verdict<TAB>rc per scenario."""
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         for scen, paths in used.items():
             for p in dict.fromkeys(paths):
                 f.write("%s\t%s\n" % (scen, p))
@@ -1490,7 +1490,7 @@ def write_used(path, used, scen_rc):
 def read_used(path):
     """{scen: (rc, [paths])} from a --used file."""
     out = {}
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             parts = line.rstrip("\n").split("\t")
             if len(parts) == 3 and parts[1] == "#verdict":
@@ -2166,7 +2166,7 @@ def cmd_record(args):
                 f"recorded {scen}/{fr['name']} dump {fr['dump']} {fr['sha256'][:16]}"
                 + ("" if A is None else f" (anchor {fr['anchor']['event']} at flip {A})")
             )
-        with open(GOLDEN_JSON + ".tmp", "w") as f:
+        with open(GOLDEN_JSON + ".tmp", "w", encoding="utf-8") as f:
             json.dump(g, f, indent=2)
             f.write("\n")
         renames.append((GOLDEN_JSON + ".tmp", GOLDEN_JSON))
@@ -2217,7 +2217,7 @@ def cmd_reference(args):
     os.makedirs(FRAMES_DIR, exist_ok=True)
     dst = os.path.join(FRAMES_DIR, f"{name}.{label}.png")
     write_png(dst + ".tmp", *img)
-    with open(GOLDEN_JSON + ".tmp", "w") as f:
+    with open(GOLDEN_JSON + ".tmp", "w", encoding="utf-8") as f:
         json.dump(g, f, indent=2)
         f.write("\n")
     os.replace(dst + ".tmp", dst)
@@ -2364,7 +2364,7 @@ def pad_steps_expected(env, root=None):
     if v.startswith("@"):
         path = v[1:].split(",", 1)[0]
         try:
-            with open(os.path.join(root or REPO, path)) as f:
+            with open(os.path.join(root or REPO, path), encoding="utf-8") as f:
                 v = f.read()
         except OSError:
             return None
@@ -2378,7 +2378,7 @@ def pad_steps_loaded(log):
     """The step count the runtime printed ("PAD: script of N step(s)") in
     a run's log, or None without the line."""
     try:
-        with open(log, errors="replace") as f:
+        with open(log, encoding="utf-8", errors="replace") as f:
             for line in f:
                 m = _PAD_LOADED.search(line)
                 if m:
@@ -2489,7 +2489,7 @@ def cmd_pad(args):
         print("golden pad: usage: golden pad REC [--from F] [--to F] [--shift N]", file=sys.stderr)
         return 2
     try:
-        with open(rec) as f:
+        with open(rec, encoding="utf-8") as f:
             steps = from_record(f.read(), opts["--from"], opts["--to"], opts["--shift"])
     except OSError as e:
         print("golden pad: %s" % e, file=sys.stderr)

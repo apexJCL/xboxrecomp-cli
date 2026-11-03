@@ -77,7 +77,7 @@ def cmd_pacing(b, args):
                         lock_held="1",
                         defaults=True,
                     )
-                with open(os.path.join(out, "runs.txt"), "a") as fh:
+                with open(os.path.join(out, "runs.txt"), "a", encoding="utf-8") as fh:
                     fh.write("%d %s\n" % (k, stamp))
                 # The run row again with its arm, so the db can split A from B.
                 b.record_run(stamp, kind="pacing", scenario=scen, arm="AB"[k], arm_env=envs[k])
@@ -105,7 +105,7 @@ def cmd_pacing(b, args):
     sys.stdout.flush()
     r = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     text = head + r.stdout.decode(errors="replace")
-    with open(os.path.join(out, "pacing-report.txt"), "w") as fh:
+    with open(os.path.join(out, "pacing-report.txt"), "w", encoding="utf-8") as fh:
         fh.write(text)
     b.say(text, end="")
     b.say("report: %s" % os.path.join(out, "pacing-report.txt"))

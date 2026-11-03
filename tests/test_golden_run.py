@@ -113,7 +113,7 @@ def test_mac_lock(tmp_path):
     said = []
     with R.mac_lock("golden run x", lock=lock, say=said.append, parents=[]) as waited:
         assert waited == 0 and R.read_holder(lock) == os.getpid()
-        assert open(os.path.join(lock, "cmd")).read() == "golden run x\n"
+        assert open(os.path.join(lock, "cmd"), encoding="utf-8").read() == "golden run x\n"
         # Busy: a live holder that is not an ancestor; waits, then 75.
         with pytest.raises(R.RunError) as e:
             with R.mac_lock("other", wait=0, lock=lock, say=said.append, parents=[]):
@@ -128,7 +128,7 @@ def test_mac_lock(tmp_path):
     p = subprocess.Popen([sys.executable, "-c", "pass"])
     p.wait()
     os.mkdir(lock)
-    with open(os.path.join(lock, "pid"), "w") as f:
+    with open(os.path.join(lock, "pid"), "w", encoding="utf-8") as f:
         f.write("%d\n" % p.pid)
     with R.mac_lock("again", lock=lock, say=said.append, parents=[]):
         assert R.read_holder(lock) == os.getpid()
@@ -160,7 +160,7 @@ def test_run_stops_after_the_last_needed_flip(tmp_path, monkeypatch, capsys):
     root = str(tmp_path / "game")
     shutil.copytree(GAME, root)
     os.makedirs(os.path.join(root, "game_files"))
-    g = json.load(open(os.path.join(root, "analysis", "golden", "golden.json")))
+    g = json.load(open(os.path.join(root, "analysis", "golden", "golden.json"), encoding="utf-8"))
     frames = os.path.join(root, "analysis", "golden", "frames")
     os.makedirs(frames, exist_ok=True)
     for sc in g["scenarios"].values():
@@ -169,7 +169,7 @@ def test_run_stops_after_the_last_needed_flip(tmp_path, monkeypatch, capsys):
             for n in ["%s.%s.png" % (fr["name"], x) for x in labels] or [fr["name"] + ".png"]:
                 open(os.path.join(frames, n), "wb").close()
     exe = str(tmp_path / "fake_game")
-    with open(exe, "w") as f:
+    with open(exe, "w", encoding="utf-8") as f:
         f.write(FAKE_GAME)
     os.chmod(exe, 0o755)
     monkeypatch.setattr(R, "LOCK", str(tmp_path / "lock"))
@@ -187,14 +187,14 @@ def test_run_stops_after_the_last_needed_flip(tmp_path, monkeypatch, capsys):
     assert record.read(os.path.join(out, record.SESSIONS, sess))["kind"] == "golden-run"
     # attract: title-3d at 230 -> 230 + 301 - 228 = 303; first-3d at 900 ->
     # 900 + 1141 - 897 = 1144; + window 2 + 3: stop from flip 1149.
-    info = open(os.path.join(d, "run-info.txt")).read()
+    info = open(os.path.join(d, "run-info.txt"), encoding="utf-8").read()
     stop = int(info.split("stop:   done at flip ")[1].split()[0])
     assert 1149 <= stop < 1600, info
-    log = open(os.path.join(d, "game-stdio.log")).read()
+    log = open(os.path.join(d, "game-stdio.log"), encoding="utf-8").read()
     assert "fake: SIGINT after flip" in log, log[-300:]
     assert "RECOMP_PB_BACKEND=metal" in info and "RECOMP_HEADLESS=1" in info, info
-    assert open(os.path.join(d, "exit-code")).read().strip() == "0"
-    verdict = open(os.path.join(d, "golden.txt")).read().splitlines()[-1]
+    assert open(os.path.join(d, "exit-code"), encoding="utf-8").read().strip() == "0"
+    verdict = open(os.path.join(d, "golden.txt"), encoding="utf-8").read().splitlines()[-1]
     # No frames were dumped (the fake writes none): not a pass.
     assert verdict.startswith("verdict: attract ") and verdict != "verdict: attract pass"
     assert rc in (1, 2) and "golden run: verdicts: attract " in text, text

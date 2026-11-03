@@ -254,7 +254,7 @@ def ps1(tmp_path):
     scene = B.load_scene(_scene_file(tmp_path))
     out = str(tmp_path / "pc")
     B.write_windows(scene, {"dir": "D:\\b", "app": "Game"}, out, "game_recomp")
-    with open(os.path.join(out, "run-arm.ps1"), newline="") as f:
+    with open(os.path.join(out, "run-arm.ps1"), encoding="utf-8", newline="") as f:
         return os.path.join(out, "run-arm.ps1"), f.read()
 
 

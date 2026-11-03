@@ -35,7 +35,7 @@ func TestCommandDeveloperMode(t *testing.T) {
 
 func TestEnviron(t *testing.T) {
 	tools := filepath.Join("r", "tools")
-	env := Environ([]string{"PATH=/usr/bin", "VIRTUAL_ENV=/v", "HOME=/h", "UV_CACHE_DIR=/elsewhere"}, tools, "/r/tools/uv", "/r/tools/git/cmd")
+	env := Environ([]string{"PATH=/usr/bin", "VIRTUAL_ENV=/v", "HOME=/h", "UV_CACHE_DIR=/elsewhere", "PYTHONUTF8=0"}, tools, "/r/tools/uv", "/r/tools/git/cmd")
 	sep := string(os.PathListSeparator)
 	if !slices.Contains(env, "PATH=/r/tools/uv"+sep+"/r/tools/git/cmd"+sep+"/usr/bin") {
 		t.Fatal(env)
@@ -52,6 +52,11 @@ func TestEnviron(t *testing.T) {
 		}
 	}
 	if slices.Contains(env, "UV_CACHE_DIR=/elsewhere") {
+		t.Fatal(env)
+	}
+	// UTF-8 mode, whatever the player's shell says: Windows text files
+	// are cp1252 otherwise.
+	if !slices.Contains(env, "PYTHONUTF8=1") || slices.Contains(env, "PYTHONUTF8=0") {
 		t.Fatal(env)
 	}
 	if long := slices.Contains(env, "GIT_CONFIG_KEY_0=core.longpaths"); long != (runtime.GOOS == "windows") {

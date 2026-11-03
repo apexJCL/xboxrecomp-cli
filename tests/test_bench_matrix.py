@@ -388,7 +388,7 @@ def make_run(root, scene, host, arm_id, ms, prof=True, suffix="", busy=None, war
     if warm_ms:
         k = int(2000 / warm_ms[0])
         ms = [warm_ms[0]] * k + ms * ((n - k) // len(ms) + 1)
-    with open(os.path.join(d, "game.log"), "w") as f:
+    with open(os.path.join(d, "game.log"), "w", encoding="utf-8") as f:
         f.write(flip_log(scene_ms=ms, n=n))
     a = B.find_arm(scene, host, arm_id)
     info = B.base_info(scene, dict(scene["hosts"][host], _name=host), a, prof, "/none", {}, 0, [])
@@ -406,7 +406,7 @@ def test_collect_and_analyse(scene, tmp_path):
     rows, overhead, arms = B.analyse(root)
     assert len(rows) == 3 and len(arms) == 3
     assert overhead and overhead[0]["host"] == "mac" and overhead[0]["cost_pct"] > 0
-    with open(os.path.join(root, "summary.csv")) as f:
+    with open(os.path.join(root, "summary.csv"), encoding="utf-8") as f:
         got = list(csv.DictReader(f))
     # The arm column is the arm; prof says whether the sampler ran.
     assert sorted((r["arm"], r["prof"]) for r in got) == [
@@ -417,7 +417,7 @@ def test_collect_and_analyse(scene, tmp_path):
     # The axes follow host, backend, arm and prof; the repeat comes after them.
     cols = list(got[0])
     assert cols[4].startswith("axis_") and "rep" in cols
-    with open(os.path.join(root, "summary.json")) as f:
+    with open(os.path.join(root, "summary.json"), encoding="utf-8") as f:
         js = json.load(f)
     assert js["runs"][0]["fps_per_s"] and js["verdict_rules"]
     assert "table" not in js and "steady_fps" in B.table(rows)
@@ -471,7 +471,7 @@ def test_write_windows_and_info(scene, tmp_path):
         B.write_windows(scene, {"dir": "D:\\b", "app": "Game"}, out)
     ids = B.write_windows(scene, {"dir": "D:\\b", "app": "Game"}, out, "game_recomp")
     assert len(ids) == 12
-    with open(os.path.join(out, "run-arm.ps1"), newline="") as f:
+    with open(os.path.join(out, "run-arm.ps1"), encoding="utf-8", newline="") as f:
         ps1 = f.read()
     # The game's exe and the host's backend, not constants of this CLI.
     assert "'game_recomp.exe'" in ps1 and "RECOMP_PB_BACKEND = 'vulkan'" in ps1
@@ -556,7 +556,7 @@ def test_write_windows_and_info(scene, tmp_path):
     # A run that did not get its arm stops before the game starts.
     assert "not applied" in ps1 and "exit 3" in ps1
     assert ps1.index("exit 3") < ps1.index("Start-Process $exe")
-    with open(os.path.join(out, "arms", "s2-dsp1-169", "env.txt")) as f:
+    with open(os.path.join(out, "arms", "s2-dsp1-169", "env.txt"), encoding="utf-8") as f:
         env = f.read()
     assert "prof_out=@R\\prof.txt" in env and "RECOMP_APU_DSP=1" in env
     assert "RECOMP_PRESENT_FULLSCREEN=1" in env
@@ -628,7 +628,7 @@ def make_pc_run(root, scene, gpu=True, cpu_tsv=False, **info_extra):
     d = os.path.join(root, "windows", "s1-dsp0-43")
     os.makedirs(d)
     qpc0 = 1_000_000_000  # launch; the flips start here, the scene 2 s later
-    with open(os.path.join(d, "game.log"), "w") as f:
+    with open(os.path.join(d, "game.log"), "w", encoding="utf-8") as f:
         f.write(flip_log(scene_ms=[16.0], n=800, t0_us=qpc0))
     d_us = qpc0 - PC_INFO["unix_us"]
     local = datetime.timezone(datetime.timedelta(hours=-6))
@@ -638,13 +638,13 @@ def make_pc_run(root, scene, gpu=True, cpu_tsv=False, **info_extra):
         dt = datetime.datetime.fromtimestamp((q - d_us) / 1e6, local)
         lines.append("%s, 1500, 30" % dt.strftime("%Y/%m/%d %H:%M:%S.%f")[:-3])
     if gpu:
-        with open(os.path.join(d, "gpu.csv"), "w") as f:
+        with open(os.path.join(d, "gpu.csv"), "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
     # 1.25 cores the whole run.
-    with open(os.path.join(d, "cpu.csv"), "w") as f:
+    with open(os.path.join(d, "cpu.csv"), "w", encoding="utf-8") as f:
         f.write("t,total_ms\n" + "".join("%d,%d\n" % (t, 1250 * t) for t in range(25)))
     if cpu_tsv:
-        with open(os.path.join(d, "cpu.tsv"), "w") as f:
+        with open(os.path.join(d, "cpu.tsv"), "w", encoding="utf-8") as f:
             f.write("not a sampler log\n")
     a = B.find_arm(scene, "windows", "s1-dsp0-43")
     info = B.base_info(
@@ -775,9 +775,9 @@ def test_collect_deck_busy_tsv(scene, tmp_path):
     r = make_run(root, scene, "deck", "s1-dsp0-43", [16.7])
     d = os.path.join(root, "deck", "s1-dsp0-43")
     t0 = 1_000_000_000 + 100 * 20_000  # the scene starts after the intro
-    with open(os.path.join(d, "cpu.tsv"), "w") as f:
+    with open(os.path.join(d, "cpu.tsv"), "w", encoding="utf-8") as f:
         f.write("".join("%d %d 1000 1000\n" % ((t0 + k * 1_000_000,) * 2) for k in range(-3, 15)))
-    with open(os.path.join(d, "busy.tsv"), "w") as f:
+    with open(os.path.join(d, "busy.tsv"), "w", encoding="utf-8") as f:
         # One before the scene (the load), one inside it.
         f.write(
             "%d %d 90 steam\n%d %d 70 baloo\n" % ((t0 - 2_000_000,) * 2 + (t0 + 5_000_000,) * 2)
@@ -798,7 +798,7 @@ def test_run_names_and_misnamed(scene, tmp_path):
     row = {"arm": "a1", "prof": 1, "rep": 1}
     assert B.misnamed([dict(row, run_dir="h/a10-noprof")]) == [("h/a10-noprof", "a1")]
     assert B.misnamed([dict(row, run_dir="h/a1-noprof-r2"), dict(row, run_dir="h/a1")]) == []
-    with open(os.path.join(root, "summary.json")) as f:
+    with open(os.path.join(root, "summary.json"), encoding="utf-8") as f:
         assert json.load(f)["misnamed"] == [["mac/noprof-3", "s1-dsp0-43-noprof"]]
 
 
@@ -878,10 +878,10 @@ def test_windows_series_and_quoting(scene, tmp_path):
     out = str(tmp_path / "pc")
     plan = B.series_plan(["s1-dsp0-43"], 1)
     B.write_windows(scene, {"dir": "D:\\it's", "app": "Game"}, out, "game", None, plan)
-    with open(os.path.join(out, "run-arm.ps1")) as f:
+    with open(os.path.join(out, "run-arm.ps1"), encoding="utf-8") as f:
         ps1 = f.read()
     assert "$S = 'D:\\it''s'" in ps1
-    with open(os.path.join(out, "run-series.ps1"), newline="") as f:
+    with open(os.path.join(out, "run-series.ps1"), encoding="utf-8", newline="") as f:
         ser = f.read()
     assert "\r\n" in ser
     assert ser.index("-Arm 's1-dsp0-43' -Rep 1 -SkipDone") < ser.index(
@@ -890,7 +890,7 @@ def test_windows_series_and_quoting(scene, tmp_path):
     assert 'if ($SkipDone -and (Test-Path "$R\\run-info.json"))' in ps1
     sc = dict(scene, scene=dict(scene["scene"], quiet_ignore=["obs64.exe", "game"]))
     B.write_windows(sc, {"dir": "D:\\b", "app": "G"}, out, "game")
-    with open(os.path.join(out, "run-arm.ps1")) as f:
+    with open(os.path.join(out, "run-arm.ps1"), encoding="utf-8") as f:
         assert "'WmiPrvSE', 'obs64')" in f.read()
     with pytest.raises(B.MatrixError, match="no arm"):
         B.write_windows(scene, {"dir": "D:\\b", "app": "G"}, out, "game", None, [("x", True, 1)])
@@ -925,7 +925,7 @@ def test_compare(scene, tmp_path):
     md = B.compare_table(rows, before, after)
     assert "### deck" in md and "### mac" in md and "->" in md
     B.write_compare(rows, str(tmp_path / "cmp"), before, after)
-    with open(tmp_path / "cmp" / "compare.csv") as f:
+    with open(tmp_path / "cmp" / "compare.csv", encoding="utf-8") as f:
         got = list(csv.DictReader(f))
     assert len(got) == 2 and "spin_pct_delta" in got[0]
 
@@ -1098,7 +1098,7 @@ def test_run_local_locks_first_and_kills_the_group(scene, tmp_path, monkeypatch,
     host = dict(scene["hosts"]["mac"], _name="mac")
     out = str(tmp_path / "run")
     B.run_local(sc, host, local, B.find_arm(scene, "mac", "s1-dsp0-43"), out, False, None)
-    info = json.loads(open(os.path.join(out, "run-info.json")).read())
+    info = json.loads(open(os.path.join(out, "run-info.json"), encoding="utf-8").read())
     assert held_in_wait == [True, True]
     assert info["rc"] == "killed"
     # On macOS the Mac lock too, though the local TOML names another.
@@ -1464,7 +1464,7 @@ def test_run_local_pauses_tmux_and_takes_the_mac_lock(scene, tmp_path, monkeypat
     host = dict(scene["hosts"]["mac"], _name="mac")
     out = str(tmp_path / "run")
     B.run_local(scene, host, local, B.find_arm(scene, "mac", "s1-dsp0-43"), out, False, None)
-    info = json.loads(open(os.path.join(out, "run-info.json")).read())
+    info = json.loads(open(os.path.join(out, "run-info.json"), encoding="utf-8").read())
     assert info["locks"] == [str(tmp_path / "other.lock"), mac_lock]
     assert info["tmux_status_paused"] is True and info["tmux_status_interval"] == "5"
     assert log.read_text().splitlines()[-1] == "set -g status-interval 5"

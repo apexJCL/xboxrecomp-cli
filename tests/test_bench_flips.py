@@ -119,9 +119,9 @@ def test_report_flips_silent(tmp_path, flips):
 def test_report_flips_no_limit(tmp_path):
     log = run_dir(tmp_path, "2700")
     info = os.path.join(log, "run-info.txt")
-    with open(info) as f:
+    with open(info, encoding="utf-8") as f:
         text = f.read().replace("limit:  90 s (SIGINT)", "limit:  none")
-    with open(info, "w") as f:
+    with open(info, "w", encoding="utf-8") as f:
         f.write(text)
     assert said(checks.report_flips, log)[0] == []
 

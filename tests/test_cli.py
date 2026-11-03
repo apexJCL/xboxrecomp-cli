@@ -39,7 +39,7 @@ def raises(fn, *a, match=""):
 
 def write(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(text)
 
 
@@ -66,7 +66,7 @@ def fake_tree(d):
         (G.spin_waits, "{}"),
     ):
         write(p, text)
-    open(os.path.join(G.gen, "recomp_funcs.h"), "w").close()
+    open(os.path.join(G.gen, "recomp_funcs.h"), "w", encoding="utf-8").close()
     os.makedirs(os.path.join(tk, "tools", "recomp", "output"), exist_ok=True)
     # The fork's recomp parser has --spin-waits (upstream's has none).
     write(os.path.join(tk, "tools", "recomp", "spin_waits_flag.py"), SPIN_FLAG)
@@ -269,10 +269,10 @@ def test_ninja_required_on_windows(d):
     with fake_tree(d):
         venv = host.g().venv
         os.makedirs(os.path.join(venv, "Scripts"))
-        open(os.path.join(venv, "Scripts", "cmake.exe"), "w").close()
+        open(os.path.join(venv, "Scripts", "cmake.exe"), "w", encoding="utf-8").close()
         raises(build.build_tools, False, "windows", match="Ninja is required")
         os.makedirs(os.path.join(venv, "bin"))
-        open(os.path.join(venv, "bin", "cmake"), "w").close()
+        open(os.path.join(venv, "bin", "cmake"), "w", encoding="utf-8").close()
         assert build.build_tools(False, "linux") == (os.path.join(venv, "bin", "cmake"), None)
 
 
@@ -488,7 +488,7 @@ def test_package_dump_refuses_a_hand_placed_dump(d, monkeypatch):
         a = A(target="macos", dump=src, replace=False, hud_pack=None, out=os.path.join(d, "o"))
         e = raises(pkg.package, a, match="already holds a dump that was put there by hand")
         assert "rerun with --replace to replace it, or run %s alone" % host.cli_name() in e
-        with open(G.xbe) as f:
+        with open(G.xbe, encoding="utf-8") as f:
             assert f.read() == "xbe"  # untouched
 
 
@@ -864,7 +864,7 @@ def test_gen_key_staleness(d, monkeypatch):
         pkg.run_plan_prefix(A(), [("generate", "stale")])
         monkeypatch.undo()
         assert pipeline.gen_stale_reasons() == []
-        open(G.regen_marker, "w").close()
+        open(G.regen_marker, "w", encoding="utf-8").close()
         assert pipeline.gen_stale_reasons() == ["the last recomp did not finish"]
 
 
@@ -913,7 +913,7 @@ def test_exclude_pin_mark(d):
         toolkit.exclude_pin_mark(tk)
         toolkit.exclude_pin_mark(tk)  # once only
         assert git("status", "--porcelain", cwd=tk) == "", tk
-    with open(os.path.join(main_, ".git", "info", "exclude")) as f:
+    with open(os.path.join(main_, ".git", "info", "exclude"), encoding="utf-8") as f:
         assert f.read().count(toolkit.PIN_MARK) == 1
 
 
@@ -924,7 +924,7 @@ def test_legacy_pin_mark_renamed(d):
     write(os.path.join(tk, ".blinx2-pin"), "abc\n")
     toolkit.rename_legacy_mark(tk)
     assert not os.path.exists(os.path.join(tk, ".blinx2-pin"))
-    with open(os.path.join(tk, toolkit.PIN_MARK)) as f:
+    with open(os.path.join(tk, toolkit.PIN_MARK), encoding="utf-8") as f:
         assert f.read() == "abc\n"
 
 
@@ -1033,7 +1033,7 @@ def test_packaging_build_dir(d, monkeypatch):
     assert not any(str(x) == dev or str(x).startswith(dev + os.sep) for c in calls for x in c), (
         calls
     )
-    with open(dev_cache) as f:
+    with open(dev_cache, encoding="utf-8") as f:
         assert f.read() == "XBOXRECOMP_ENHANCE:BOOL=OFF\n"
 
 
@@ -1078,10 +1078,10 @@ def test_gen_key_toolkit_trees(d):
 def test_gen_key_version_1_is_stale(d):
     with fake_tree(d):
         pipeline.write_gen_key()
-        with open(host.g().gen_key) as f:
+        with open(host.g().gen_key, encoding="utf-8") as f:
             rec = json.load(f)
         rec["version"] = 1
-        with open(host.g().gen_key, "w") as f:
+        with open(host.g().gen_key, "w", encoding="utf-8") as f:
             json.dump(rec, f)
         assert pipeline.gen_stale_reasons() == ["key format changed"]
 

@@ -25,7 +25,7 @@ GAME2 = os.path.join(HERE, "testdata", "game2")
 
 def write(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(text)
 
 
@@ -43,7 +43,7 @@ def game2_tree(d):
     write(G.xbe, "xbe")
     write(G.seeds[0], "[]")
     write(G.recomp_manual, "/* */")
-    open(os.path.join(G.gen, "recomp_funcs.h"), "w").close()
+    open(os.path.join(G.gen, "recomp_funcs.h"), "w", encoding="utf-8").close()
     os.makedirs(os.path.join(tk, "tools", "recomp", "output"))
     os.chmod(G.game_files, 0o555)
     saved_env = os.environ.get("XBOXRECOMP_DIR")
@@ -75,7 +75,7 @@ def test_manifest_paths(d):
 
 
 def test_analysis_json_must_stay_inside():
-    text = open(os.path.join(GAME2, "game.toml")).read()
+    text = open(os.path.join(GAME2, "game.toml"), encoding="utf-8").read()
     bad = text.replace(
         'analysis_json = "build/xr/analysis.json"', 'analysis_json = "../dump/a.json"'
     )
@@ -516,7 +516,7 @@ def test_macos_defaults_in_resources(d, monkeypatch):
         write(icns, "icns")
         macos.wrap_macos(stage, payload, "v", exe, d, [], pl, icns)
         res = os.path.join(stage, "dmg", pkg.app() + ".app", "Contents", "Resources")
-        with open(os.path.join(res, "config.default.toml")) as f:
+        with open(os.path.join(res, "config.default.toml"), encoding="utf-8") as f:
             text = f.read()
         assert text.startswith("[render]\nscale = 1\n"), text
         assert 'pack = "../Resources/enhance/hud.pack"' in text
@@ -598,7 +598,7 @@ def test_macos_dmg_rerun(d, monkeypatch):
             os.makedirs(payload)
             dmg = macos.wrap_macos(stage, payload, "v", exe, out, [], pl, icns)
         assert made == [dmg, dmg]
-        with open(dmg) as f:
+        with open(dmg, encoding="utf-8") as f:
             assert f.read() == "dmg 1"
 
 
@@ -714,7 +714,9 @@ def test_other_toolkit_reset(d, monkeypatch, capsys):
 
 def host_fresh_if_stale(script):
     """fresh_if_stale from a host script, as bash source."""
-    with open(os.path.join(os.path.dirname(build.__file__), "bench", "host", script)) as f:
+    with open(
+        os.path.join(os.path.dirname(build.__file__), "bench", "host", script), encoding="utf-8"
+    ) as f:
         text = f.read()
     start = text.index("fresh_if_stale() {")
     return text[start : text.index("\n}\n", start) + 3]
@@ -866,7 +868,7 @@ def test_package_pacing_note(d, monkeypatch, capsys):
             capsys.readouterr()
             pkg.package(a)
             out = capsys.readouterr().out
-            readme = open(os.path.join(payload, "README.txt")).read()
+            readme = open(os.path.join(payload, "README.txt"), encoding="utf-8").read()
             assert ("console-original" in readme) == note
             assert out.count("note: frame pacing") == (1 if note else 0), out
             assert out.index("bundle: ") < out.index("PRIVATE: ")
@@ -891,4 +893,6 @@ def test_package_pacing_note(d, monkeypatch, capsys):
         assert out.index(note) < out.index("bundle: ")
         assert "note: frame pacing" not in out
         assert not os.path.exists(os.path.join(payload, "config.default.toml"))
-        assert "config.toml" not in open(os.path.join(payload, "README.txt")).read()
+        assert (
+            "config.toml" not in open(os.path.join(payload, "README.txt"), encoding="utf-8").read()
+        )

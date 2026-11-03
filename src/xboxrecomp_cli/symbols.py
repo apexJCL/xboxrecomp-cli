@@ -145,7 +145,7 @@ def apply_names(functions_json, entries):
 
     A rerun first resets every entry an earlier run renamed whose name it
     still holds, so a name dropped from the map leaves gen/ too."""
-    with open(functions_json) as f:
+    with open(functions_json, encoding="utf-8") as f:
         data = json.load(f)
     for e in data:
         mark = e.pop(MARK, None)
@@ -172,7 +172,7 @@ def apply_names(functions_json, entries):
         elif e.get("name") != want[va]["name"]:
             kept.append(va)
     tmp = functions_json + ".tmp"
-    with open(tmp, "w", newline="\n") as f:
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, functions_json)
     return renamed, kept, sorted(set(want) - seen)

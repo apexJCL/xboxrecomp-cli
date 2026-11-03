@@ -67,7 +67,7 @@ def module_dir():
 
 
 def load_pins(mod=None):
-    with open(os.path.join(mod or module_dir(), "pins.json")) as f:
+    with open(os.path.join(mod or module_dir(), "pins.json"), encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -174,7 +174,12 @@ def stage_module(mod, dest, cfg_json, icon_png=None):
     pixels, replaces the generic window icon the module embeds."""
     shutil.rmtree(dest, ignore_errors=True)
     shutil.copytree(mod, dest, ignore=lambda d, names: [n for n in names if n in SKIP])
-    with open(os.path.join(dest, "internal", "gamecfg", "config.json"), "w", newline="\n") as f:
+    with open(
+        os.path.join(dest, "internal", "gamecfg", "config.json"),
+        "w",
+        encoding="utf-8",
+        newline="\n",
+    ) as f:
         f.write(cfg_json)
     if icon_png is not None:
         with open(os.path.join(dest, "internal", "gamecfg", "icon.png"), "wb") as f:
@@ -325,7 +330,7 @@ def notice_sections(cli_root, goroot, modules):
     Go standard library, the Tabler glyphs the module embeds, then each
     linked module. A module without a licence file stops the build: its
     notice cannot be shipped."""
-    with open(os.path.join(goroot, "VERSION")) as f:
+    with open(os.path.join(goroot, "VERSION"), encoding="utf-8") as f:
         gov = f.readline().strip()
     secs = [
         ("The wizard (xboxrecomp-cli)", os.path.join(cli_root, "LICENSE")),
@@ -585,7 +590,7 @@ def build_macos(go, env, src, work, name, tag, icon, appid, tool, epoch, out, no
 def build_windows(go, env, src, work, name, tag, mingw, epoch, out, icons, notices):
     exe = os.path.join(work, name + ".exe")
     rc = os.path.join(icons, "wizard.rc")
-    with open(rc, "w", newline="\n") as f:
+    with open(rc, "w", encoding="utf-8", newline="\n") as f:
         f.write('1 ICON "wizard.ico"\n')
     syso = os.path.join(src, "cmd", "wizard", "rsrc_windows_amd64.syso")
     # The script names the .ico relative to itself: run where both are.
@@ -609,7 +614,7 @@ def stage_linux_icon(src, icons, game, name):
     d = os.path.join(src, "icon")
     os.makedirs(d, exist_ok=True)
     shutil.copyfile(os.path.join(icons, "icon-256.png"), os.path.join(d, name + ".png"))
-    with open(os.path.join(d, name + ".desktop"), "w", newline="\n") as f:
+    with open(os.path.join(d, name + ".desktop"), "w", encoding="utf-8", newline="\n") as f:
         f.write(desktop_entry(game, name))
 
 
@@ -756,7 +761,7 @@ def build(G, tag="", dev=False, only=ASSETS, out="", keep_work=False, gocache=""
         built.update(b)
         done.append(names["linux"])
     paths = [os.path.join(out, n) for n in done]
-    with open(os.path.join(out, "SHA256SUMS"), "w", newline="\n") as f:
+    with open(os.path.join(out, "SHA256SUMS"), "w", encoding="utf-8", newline="\n") as f:
         f.write(sums_text(paths))
     for note in dry_runs(built, pins, src, name, tag_v, epoch, image):
         host.say(note)

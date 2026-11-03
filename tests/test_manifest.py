@@ -217,7 +217,7 @@ def test_game_tables():
 def test_path_with_a_space(d):
     root = os.path.join(d, "my games", "some game")
     os.makedirs(root)
-    with open(os.path.join(root, "game.toml"), "w") as f:
+    with open(os.path.join(root, "game.toml"), "w", encoding="utf-8") as f:
         f.write(MINIMAL.replace('gen = "src/gen"', 'gen = "src/gen files"'))
     g = manifest.load(root)
     assert g.gen == os.path.join(root, "src", "gen files")

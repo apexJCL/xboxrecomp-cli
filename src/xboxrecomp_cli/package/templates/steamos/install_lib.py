@@ -110,7 +110,7 @@ def utcnow():
 
 def read_sums(path):
     sums = {}
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for n, line in enumerate(f, 1):
             line = line.rstrip("\n")
             if not line:
@@ -146,7 +146,7 @@ class Bundle:
         mp = os.path.join(self.path, "manifest.json")
         if not os.path.isfile(mp):
             raise InstallError("%s is not a %s bundle (no manifest.json)" % (self.path, APP))
-        with open(mp) as f:
+        with open(mp, encoding="utf-8") as f:
             self.manifest = json.load(f)
         if self.manifest.get("product") != PRODUCT:
             raise InstallError("%s: manifest names another product" % mp)
@@ -241,7 +241,7 @@ class Root:
 
     def history(self):
         try:
-            with open(self.p("state", "history")) as f:
+            with open(self.p("state", "history"), encoding="utf-8") as f:
                 lines = [line.split() for line in f if line.strip()]
         except OSError:
             return []
@@ -272,7 +272,7 @@ class Root:
         return sorted(mine, key=lambda v: (last.get(v, -1), v))
 
     def manifest(self, version):
-        with open(self.p("versions", version, "manifest.json")) as f:
+        with open(self.p("versions", version, "manifest.json"), encoding="utf-8") as f:
             return json.load(f)
 
 
@@ -280,7 +280,7 @@ def is_product_dir(d):
     if d.endswith((".partial", ".old")) or not os.path.isdir(d):
         return False
     try:
-        with open(os.path.join(d, "manifest.json")) as f:
+        with open(os.path.join(d, "manifest.json"), encoding="utf-8") as f:
             return json.load(f).get("product") == PRODUCT
     except (OSError, ValueError):
         return False
@@ -461,7 +461,7 @@ def ensure_umu(want_fetch, umu_dir, fetch=None, ask=None):
 def record_umu(root, path):
     """state/umu-run: the launcher's last place to look (a --umu-dir)."""
     p = root.p("state", "umu-run")
-    with open(p + ".tmp-install", "w") as f:
+    with open(p + ".tmp-install", "w", encoding="utf-8") as f:
         f.write(path + "\n")
     os.replace(p + ".tmp-install", p)
 
@@ -592,7 +592,7 @@ def ensure_proton(compat=None, fetch=None):
 def mark_runtime_update(root):
     """state/runtime-update: the next launch may update the Steam Linux
     Runtime; every other launch runs with UMU_RUNTIME_UPDATE=0."""
-    with open(root.p("state", "runtime-update"), "w") as f:
+    with open(root.p("state", "runtime-update"), "w", encoding="utf-8") as f:
         f.write("%s\n" % utcnow())
 
 
@@ -619,7 +619,7 @@ def check_ours(root, installing):
 
 def check_layout(root):
     try:
-        with open(root.p("state", "layout")) as f:
+        with open(root.p("state", "layout"), encoding="utf-8") as f:
             have = int(f.read().strip() or 0)
     except OSError:
         return
@@ -720,7 +720,7 @@ def take_launch_lock(root):
     if fcntl is None:
         return None
     os.makedirs(root.p("state"), exist_ok=True)
-    f = open(root.p("state", "launch.lock"), "a")
+    f = open(root.p("state", "launch.lock"), "a", encoding="utf-8")
     try:
         fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -866,7 +866,7 @@ def switch(root, version, what):
     fsync_dir(root.path)
     step("switched")
     os.makedirs(root.p("state"), exist_ok=True)
-    with open(root.p("state", "history"), "a") as f:
+    with open(root.p("state", "history"), "a", encoding="utf-8") as f:
         f.write("%s %s %s -> %s\n" % (utcnow(), what, old, version))
         f.flush()
         os.fsync(f.fileno())
@@ -876,14 +876,14 @@ def switch(root, version, what):
 def write_stable_launcher(root):
     p = root.p(APP)
     try:
-        with open(p) as f:
+        with open(p, encoding="utf-8") as f:
             if f.read() == STABLE_LAUNCHER and os.access(p, os.X_OK):
                 return
     except OSError:
         pass
     if os.path.islink(p):
         os.remove(p)
-    with open(p + ".tmp-install", "w") as f:
+    with open(p + ".tmp-install", "w", encoding="utf-8") as f:
         f.write(STABLE_LAUNCHER)
     os.chmod(p + ".tmp-install", 0o755)
     os.replace(p + ".tmp-install", p)
@@ -905,7 +905,7 @@ def desktop_name(root):
     """The Name= of the installed .desktop entry (the Steam shortcut's
     name), or None."""
     try:
-        with open(root.p(APP + ".desktop")) as f:
+        with open(root.p(APP + ".desktop"), encoding="utf-8") as f:
             for line in f:
                 if line.startswith("Name="):
                     return line[5:].strip()
@@ -928,7 +928,7 @@ def write_desktop(root, name):
             root.p("current", "icon.png").replace("\\", "\\\\"),
         )
     )
-    with open(p + ".tmp-install", "w") as f:
+    with open(p + ".tmp-install", "w", encoding="utf-8") as f:
         f.write(text)
     os.replace(p + ".tmp-install", p)
     return p
@@ -1090,9 +1090,9 @@ class Patch:
     def __init__(self, path):
         self.path = os.path.abspath(path)
         try:
-            with open(os.path.join(self.path, "manifest.json")) as f:
+            with open(os.path.join(self.path, "manifest.json"), encoding="utf-8") as f:
                 self.manifest = json.load(f)
-            with open(os.path.join(self.path, PATCH_JSON)) as f:
+            with open(os.path.join(self.path, PATCH_JSON), encoding="utf-8") as f:
                 self.doc = json.load(f)
         except (OSError, ValueError) as e:
             raise InstallError("%s is not a %s patch (%s)" % (self.path, APP, e)) from None
@@ -1464,7 +1464,7 @@ def runtime_steps(root, seed_dir, fetch_umu_now, umu_dir, umu, proton):
         say("proton: not checked (--no-proton); set PROTONPATH in config/launch.env")
     os.makedirs(root.p("versions"), exist_ok=True)
     os.makedirs(root.p("state"), exist_ok=True)
-    with open(root.p("state", "layout"), "w") as f:
+    with open(root.p("state", "layout"), "w", encoding="utf-8") as f:
         f.write("%d\n" % LAYOUT)
     if umu_run:
         record_umu(root, umu_run)
@@ -1639,7 +1639,7 @@ def cmd_status(root, bundle_dir):
         )
     p, where = find_umu()
     try:
-        with open(root.p("state", "umu-run")) as f:
+        with open(root.p("state", "umu-run"), encoding="utf-8") as f:
             recorded = f.read().strip()
     except OSError:
         recorded = ""

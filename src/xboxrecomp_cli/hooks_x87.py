@@ -41,7 +41,7 @@ class Listing:
 
     def __init__(self, disasm_dir):
         self.dir = disasm_dir
-        with open(os.path.join(disasm_dir, "functions.json")) as f:
+        with open(os.path.join(disasm_dir, "functions.json"), encoding="utf-8") as f:
             funcs = json.load(f)
         self.funcs = {int(x["start"], 16): x for x in funcs}
         self._files = {}

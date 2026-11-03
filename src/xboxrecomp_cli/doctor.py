@@ -43,7 +43,7 @@ def makensis_path():
 
 def linux_flavour():
     try:
-        with open("/etc/os-release") as f:
+        with open("/etc/os-release", encoding="utf-8") as f:
             info = dict(line.rstrip("\n").split("=", 1) for line in f if "=" in line)
     except OSError:
         return "debian"

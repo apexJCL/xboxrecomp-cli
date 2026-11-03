@@ -30,7 +30,7 @@ def workspace(d, extra="", text=None):
     os.makedirs(os.path.join(d, "bench-logs"), exist_ok=True)
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
     p = os.path.join(d, config.NAME)
-    with open(p, "w") as f:
+    with open(p, "w", encoding="utf-8") as f:
         f.write((BASE if text is None else text) + extra)
     return config.load(p)
 
@@ -128,7 +128,7 @@ def run_dir(base, name, info=None, golden=None, log=None, extra=None):
             os.makedirs(p, exist_ok=True)
             continue
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write(text)
     return d
 
@@ -140,11 +140,11 @@ def game_dir(d, slug="demo", exe="demo_recomp"):
     """d/<slug>: testdata's game.toml renamed to slug and exe."""
     root = os.path.join(d, slug)
     os.makedirs(root, exist_ok=True)
-    with open(os.path.join(TESTDATA_GAME, "game.toml")) as f:
+    with open(os.path.join(TESTDATA_GAME, "game.toml"), encoding="utf-8") as f:
         toml = f.read()
     toml = toml.replace('slug = "blinx2"', 'slug = "%s"' % slug)
     toml = toml.replace('exe = "cat_recomp"', 'exe = "%s"' % exe)
-    with open(os.path.join(root, "game.toml"), "w") as f:
+    with open(os.path.join(root, "game.toml"), "w", encoding="utf-8") as f:
         f.write(toml)
     return root
 

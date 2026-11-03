@@ -28,7 +28,7 @@ REF = os.environ.get("BENCH_PARITY_REF")
 def bash_funcs():
     if not REF or not shutil.which("bash") or sys.platform == "win32":
         return None
-    text = open(REF).read()
+    text = open(REF, encoding="utf-8").read()
     out = []
     for name in ("check_present_mismatch", "check_run_end"):
         m = re.search(r"^%s\(\) \{\n.*?\n\}\n" % name, text, re.S | re.M)
@@ -60,15 +60,15 @@ def make(d, name, rc="124", stdio="[D3D11] flip 1\n", run_info=None, survived=No
     p = os.path.join(d, name)
     os.makedirs(p)
     if stdio is not None:
-        with open(os.path.join(p, "game-stdio.log"), "w") as f:
+        with open(os.path.join(p, "game-stdio.log"), "w", encoding="utf-8") as f:
             f.write(stdio)
     if rc is not None:
-        with open(os.path.join(p, "exit-code"), "w") as f:
+        with open(os.path.join(p, "exit-code"), "w", encoding="utf-8") as f:
             f.write(rc + "\n")
-    with open(os.path.join(p, "run-info.txt"), "w") as f:
+    with open(os.path.join(p, "run-info.txt"), "w", encoding="utf-8") as f:
         f.write(info() if run_info is None else run_info)
     if survived is not None:
-        with open(os.path.join(p, "survived"), "w") as f:
+        with open(os.path.join(p, "survived"), "w", encoding="utf-8") as f:
             f.write(survived)
     return p
 
@@ -248,7 +248,7 @@ def test_check_present_mismatch():
         for name, text, want, code in PRESENT:
             log = os.path.join(d, name + ".log")
             if text is not None:
-                with open(log, "w") as f:
+                with open(log, "w", encoding="utf-8") as f:
                     f.write(text)
             want = want.replace("{log}", log)
             got = py_run(checks.check_present_mismatch, log)
@@ -264,7 +264,7 @@ def test_gen_digest_matches_shasum():
         gen = os.path.join(d, "src", "recomp", "gen")
         os.makedirs(gen)
         for n, t in (("b.c", "b"), ("a.c", "a"), ("Z.h", "z"), (".hidden", "h")):
-            with open(os.path.join(gen, n), "w") as f:
+            with open(os.path.join(gen, n), "w", encoding="utf-8") as f:
                 f.write(t)
         want = subprocess.run(
             "shasum -a 256 -- * | LC_ALL=C sort -k2 | shasum -a 256 | cut -d' ' -f1",
@@ -281,15 +281,15 @@ def test_tree_state():
         assert checks.tree_state("x", d) == "x: (not a git checkout: %s)" % d
         g = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-C", d]
         subprocess.run(g + ["init", "-q", "-b", "main"], check=True)
-        open(os.path.join(d, "f"), "w").close()
+        open(os.path.join(d, "f"), "w", encoding="utf-8").close()
         subprocess.run(g + ["add", "f"], check=True)
         subprocess.run(g + ["commit", "-qm", "f"], check=True)
         sha = subprocess.run(
             g + ["rev-parse", "HEAD"], capture_output=True, text=True
         ).stdout.strip()
         assert checks.tree_state("cat", d) == "cat: %s main clean" % sha
-        open(os.path.join(d, "g"), "w").close()
-        with open(os.path.join(d, "f"), "w") as f:
+        open(os.path.join(d, "g"), "w", encoding="utf-8").close()
+        with open(os.path.join(d, "f"), "w", encoding="utf-8") as f:
             f.write("x")
         assert checks.tree_state("cat", d) == "cat: %s main dirty (2 paths)" % sha
 

@@ -292,7 +292,7 @@ def _copy(src, dst):
 
 
 def _text(path, text):
-    with open(path, "w", newline="\n") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
 
 

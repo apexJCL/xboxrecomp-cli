@@ -117,7 +117,7 @@ def test_host_paths_refused(tmp_path, monkeypatch):
             errs = P.scenario_errors(env, str(tmp_path))
             assert len(errs) == 1 and "under the game root" in errs[0], (env, errs)
     assert P.scenario_errors({"RECOMP_DEBUG": "pad_script=@seed:fx"}, str(tmp_path)) == []
-    g = json.load(open(os.path.join(GAME, "analysis", "golden", "golden.json")))
+    g = json.load(open(os.path.join(GAME, "analysis", "golden", "golden.json"), encoding="utf-8"))
     scen = next(iter(g["scenarios"]))
     g["scenarios"][scen].setdefault("env", {})["RECOMP_DEBUG"] = "pad_script=@/abs/x.pad"
     p = tmp_path / "golden.json"
@@ -139,7 +139,7 @@ def test_from_record_sorts_by_start():
 
 
 def test_load_golden_refuses_a_bad_script(tmp_path, monkeypatch):
-    g = json.load(open(os.path.join(GAME, "analysis", "golden", "golden.json")))
+    g = json.load(open(os.path.join(GAME, "analysis", "golden", "golden.json"), encoding="utf-8"))
     scen = next(iter(g["scenarios"]))
     g["scenarios"][scen].setdefault("env", {})["RECOMP_DEBUG"] = "pad_script=f100:strat"
     p = tmp_path / "golden.json"
@@ -264,7 +264,7 @@ def test_play_records_into_a_new_file(tmp_path, monkeypatch, capsys):
     root = str(tmp_path / "game")
     shutil.copytree(GAME, root)
     exe = str(tmp_path / "fake_game")
-    with open(exe, "w") as f:
+    with open(exe, "w", encoding="utf-8") as f:
         f.write(FAKE_GAME)
     os.chmod(exe, 0o755)
     monkeypatch.setattr(R, "LOCK", str(tmp_path / "lock"))
@@ -280,9 +280,9 @@ def test_play_records_into_a_new_file(tmp_path, monkeypatch, capsys):
     assert "closed at flip 40" in text and "2 steps in " + rec in text, text
     (d,) = [os.path.join(out, n) for n in os.listdir(out)]
     assert d.endswith("-play-attract")
-    info = open(os.path.join(d, "run-info.txt")).read()
+    info = open(os.path.join(d, "run-info.txt"), encoding="utf-8").read()
     assert "pad_record=" + rec in info and "RECOMP_HEADLESS" not in info, info
-    log = open(os.path.join(d, "game-stdio.log")).read()
+    log = open(os.path.join(d, "game-stdio.log"), encoding="utf-8").read()
     assert "keyboard=1" in log
     # No seed: the game still booted on an empty hdd of the run's own (the
     # default hdd root is the player's disk), and the copy is gone after.

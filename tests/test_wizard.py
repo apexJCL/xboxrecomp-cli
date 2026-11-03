@@ -55,7 +55,7 @@ DEFAULTS = "[render]\nscale = 1\n\n[present]\nfullscreen = false\n"
 
 
 def base_text():
-    with open(os.path.join(GAME, "game.toml")) as f:
+    with open(os.path.join(GAME, "game.toml"), encoding="utf-8") as f:
         return f.read()
 
 
@@ -651,10 +651,10 @@ def test_config_refusals(wgame):
 def test_config_icon_optional_or_svg(wgame):
     # No icon: the config passes and the wizard's own icon applies.
     toml = os.path.join(wgame.root, "game.toml")
-    with open(toml) as f:
+    with open(toml, encoding="utf-8") as f:
         text = f.read()
     write(toml, text.replace('icon = "packaging/wizard-icon.png"\n', ""))
-    m = manifest.parse_text(open(toml).read())
+    m = manifest.parse_text(open(toml, encoding="utf-8").read())
     assert m["wizard"]["icon"] == ""
     _, icon = wizard.resolve(wgame, dev=True)
     assert icon is None
@@ -731,7 +731,7 @@ def test_manifest_wizard_private():
 
 def _private(wgame, keep_repo):
     toml = os.path.join(wgame.root, "game.toml")
-    with open(toml) as f:
+    with open(toml, encoding="utf-8") as f:
         text = f.read()
     new = (REPO_LINE if keep_repo else "") + "private = true\n"
     write(toml, text.replace(REPO_LINE, new))
@@ -833,11 +833,11 @@ def test_stage_module(d):
     write(os.path.join(mod, "dist", "y"), "y")
     dest = os.path.join(d, "work", "src")
     wizard_build.stage_module(mod, dest, '{"schema": 1}\n')
-    with open(os.path.join(dest, "internal", "gamecfg", "config.json")) as f:
+    with open(os.path.join(dest, "internal", "gamecfg", "config.json"), encoding="utf-8") as f:
         assert f.read() == '{"schema": 1}\n'
     assert not os.path.exists(os.path.join(dest, ".tools"))
     assert not os.path.exists(os.path.join(dest, "dist"))
-    with open(os.path.join(mod, "internal", "gamecfg", "config.json")) as f:
+    with open(os.path.join(mod, "internal", "gamecfg", "config.json"), encoding="utf-8") as f:
         assert f.read() == "{}\n"  # the module itself is never written
     # The generic window icon stays unless the game has its own.
     write(os.path.join(mod, "internal", "gamecfg", "icon.png"), PNG)
@@ -869,7 +869,9 @@ def test_icon_commands(d):
     wizard_build.stage_linux_icon(src, icons, "G", "g-wizard")
     assert sorted(os.listdir(os.path.join(src, "icon"))) == ["g-wizard.desktop", "g-wizard.png"]
     # The tar holds the binary, its icon and its menu entry.
-    with open(os.path.join(wizard_build.module_dir(), "linux", "Dockerfile")) as f:
+    with open(
+        os.path.join(wizard_build.module_dir(), "linux", "Dockerfile"), encoding="utf-8"
+    ) as f:
         df = f.read()
     assert "-cf - ${NAME} ${NAME}.png ${NAME}.desktop NOTICES.txt" in df
     assert "cp icon/${NAME}.png icon/${NAME}.desktop NOTICES.txt /out/" in df
@@ -942,7 +944,9 @@ def test_mingw_notice(d):
     write(os.path.join(mingw, wizard_build.MINGW_RUNTIME), "notices v2\n")
     with pytest.raises(CliError, match="runtime notices changed"):
         wizard_build.mingw_notice(mingw, mod)
-    with open(os.path.join(wizard_build.module_dir(), wizard_build.MINGW_NOTICE)) as f:
+    with open(
+        os.path.join(wizard_build.module_dir(), wizard_build.MINGW_NOTICE), encoding="utf-8"
+    ) as f:
         assert f.read().startswith("MinGW-w64 runtime licensing")
 
 
@@ -1071,7 +1075,7 @@ def test_wizard_pins_refresh(d, capsys):
         return uv if "astral-sh" in url else git_
 
     pins.wizard_pins_refresh(path, get_json)
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         out = json.load(f)
     assert out["go"] == {"version": "1"}  # moved by hand only
     assert out["uv"]["version"] == "0.14.0"
@@ -1253,7 +1257,7 @@ def test_steamos_install_seeds_once(d, monkeypatch):
     seed = {"config.seed.toml": b"[render]\nscale = 1\n"}
     rc, out = _install(il, make_bundle(os.path.join(d, "b2"), "20261002.0000-a", extra=seed), root)
     assert rc == 0 and "config: your options" not in out, out
-    with open(cfg) as f:
+    with open(cfg, encoding="utf-8") as f:
         assert f.read() == "[render]\nscale = 3\n"
     # A bundle without a seed writes no config.toml.
     root2 = os.path.join(d, "r2")

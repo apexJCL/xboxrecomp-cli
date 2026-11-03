@@ -325,7 +325,7 @@ def patch_doc(base, new_manifest, d):
 
 
 def write_doc(dst, doc):
-    with open(dst, "w", newline="\n") as f:
+    with open(dst, "w", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps(doc, indent=1) + "\n")
 
 

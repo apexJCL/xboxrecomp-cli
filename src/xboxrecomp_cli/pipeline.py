@@ -404,12 +404,14 @@ def stage_ghidra(extra=()):
     shutil.copy2(
         os.path.join(src, "ghidra_scripts", "SetAnalysisOptions.java"), os.path.join(gd, "scripts")
     )
-    with open(os.path.join(src, "ghidra_scripts", "ExportXbeNames.py")) as f:
+    with open(os.path.join(src, "ghidra_scripts", "ExportXbeNames.py"), encoding="utf-8") as f:
         text = f.read()
     text = "\n".join(
         "# @runtime PyGhidra" if line == "# @runtime Jython" else line for line in text.split("\n")
     )
-    with open(os.path.join(gd, "scripts", "ExportXbeNames.py"), "w", newline="\n") as f:
+    with open(
+        os.path.join(gd, "scripts", "ExportXbeNames.py"), "w", encoding="utf-8", newline="\n"
+    ) as f:
         f.write(text)
     host.run(
         [
@@ -524,7 +526,7 @@ def stage_recomp(extra=()):
     host.require(os.path.join(g().out, "abi", "abi_functions.json"), "abi")
     marker = g().regen_marker
     os.makedirs(os.path.dirname(marker), exist_ok=True)
-    open(marker, "a").close()
+    open(marker, "a", encoding="utf-8").close()
     # The names again, from the map as it is now: an edit followed by recomp
     # alone must not pair new comments with the old identifiers.
     apply_symbols()
@@ -536,7 +538,7 @@ def stage_recomp(extra=()):
     # output, so it is left out of the argv the generation key hashes.
     run_cmds(recomp_cmds(("-v",) + tuple(extra)))
     if slots:
-        with open(os.path.join(g().gen, hooks.SLOTS_C), "w", newline="\n") as f:
+        with open(os.path.join(g().gen, hooks.SLOTS_C), "w", encoding="utf-8", newline="\n") as f:
             f.write(hooks.slots_c(slots))
     if entries is not None:
         n = symbols.annotate_gen(g().gen, entries, before)
@@ -578,7 +580,7 @@ GEN_KEY_VERSION = 2
 
 def _load_json(path, default):
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return default
@@ -587,7 +589,7 @@ def _load_json(path, default):
 def _write_json(path, obj):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
-    with open(tmp, "w", newline="\n") as f:
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         json.dump(obj, f, indent=1, sort_keys=True)
         f.write("\n")
     os.replace(tmp, path)
