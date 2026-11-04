@@ -385,7 +385,8 @@ class Source:
 
 def verify_title(src):
     """The certificate's title ID against [xbe] title_id; another title is
-    refused by name."""
+    refused by name, unless it is another release of this game
+    (fingerprint.title_match), which goes on with a warning."""
     G = g()
     data = src.xbe_header()
     try:
@@ -394,6 +395,13 @@ def verify_title(src):
         raise CliError("%s: %s: %s" % (src.path, xbe_name(), e)) from e
     want = G.m["xbe"]["title_id"]
     if h["title_id"] != want:
+        c = xbe.cert_release(data)
+        if fingerprint.title_match(h, c, G.m):
+            host.say(
+                "WARNING: %s: %s; importing it anyway"
+                % (src.path, fingerprint.other_title_text(h, c, G.m, G.name))
+            )
+            return h
         title = '"%s"' % h["title"] if h["title"] else "an XBE with an empty title"
         raise CliError(
             "%s: this is %s (0x%08X), not %s (0x%08X)"

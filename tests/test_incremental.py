@@ -1047,7 +1047,18 @@ def test_manifest_and_plan_record_the_xbe(game):
     assert m["xbe"] == {"sha256": sha, "verdict": "known", "sections": []}
     assert tar_text(G.path("dist", b), "/launch.env.default") == "LOG_KEEP=10\n"
     doc = json.loads(game["run"](plan=True, json=True))
-    assert doc["xbe"] == {"sha256": sha, "verdict": "known", "sections": [], "note": ""}
+    assert doc["xbe"] == {
+        "sha256": sha,
+        "verdict": "known",
+        "sections": [],
+        "note": "",
+        "why": "",
+        "release": "",
+        "region": None,
+        "version": None,
+        "reference_release": "",
+        "other_release": False,
+    }
 
 
 def test_unknown_dump_builds_and_stamps(game):

@@ -17,6 +17,17 @@ HEADER_LEN = 0x12C
 # The certificate: size, time, title ID, then the title in UTF-16LE (40
 # wide characters).
 CERT_LEN = 0xC + 80
+# Further in: 16 alternate title IDs at +0x5C, the game region flags at
+# +0xA0 and the version at +0xAC. Together they tell one release of a game
+# from another (cert_release).
+CERT_ALT_IDS, CERT_REGION, CERT_VERSION = 0x5C, 0xA0, 0xAC
+CERT_RELEASE_LEN = 0xB0
+REGION_NA, REGION_JAPAN, REGION_REST = 0x1, 0x2, 0x4
+REGION_MANUFACTURING = 0x80000000
+# Short names, with no spaces: the launch.env stamp keeps the value one
+# token per field.
+REGION_NAMES = ((REGION_NA, "NTSC-U"), (REGION_JAPAN, "NTSC-J"), (REGION_REST, "PAL"))
+REGION_ALL = REGION_NA | REGION_JAPAN | REGION_REST
 # A section header: flags, VA, virtual size, raw offset, raw size, name VA,
 # then reference counts and the digest.
 SECTION_LEN = 0x38
@@ -71,6 +82,52 @@ def read_header(data):
         raw = data[off + 0xC : off + CERT_LEN]
         title = raw.decode("utf-16-le", errors="replace").split("\0", 1)[0].strip()
     return {"title": title, "title_id": tid, "base": base, "entry": entry, "kind": kind}
+
+
+def cert_release(data):
+    """{alt_title_ids, region, version} from the certificate: the nonzero
+    alternate title IDs, the game region flags and the version, each None
+    when the certificate is out of reach or too short to hold it."""
+    _check(data)
+    (base,) = struct.unpack_from("<I", data, 0x104)
+    (cert,) = struct.unpack_from("<I", data, 0x118)
+    off = cert - base
+    out = {"alt_title_ids": None, "region": None, "version": None}
+    if off < 0 or off + CERT_RELEASE_LEN > len(data):
+        return out
+    (size,) = struct.unpack_from("<I", data, off)
+    if size < CERT_RELEASE_LEN:
+        return out
+    alt = struct.unpack_from("<16I", data, off + CERT_ALT_IDS)
+    out["alt_title_ids"] = [a for a in alt if a]
+    (out["region"],) = struct.unpack_from("<I", data, off + CERT_REGION)
+    (out["version"],) = struct.unpack_from("<I", data, off + CERT_VERSION)
+    return out
+
+
+def region_text(flags):
+    """The region flags as words: 'NTSC-U', 'PAL', 'NTSC-U/NTSC-J',
+    'region-free' for all three, '/manufacturing' for a test disc."""
+    if flags & REGION_ALL == REGION_ALL:
+        parts = ["region-free"]
+    else:
+        parts = [name for bit, name in REGION_NAMES if flags & bit]
+    if flags & REGION_MANUFACTURING:
+        parts.append("manufacturing")
+    rest = flags & ~(REGION_ALL | REGION_MANUFACTURING)
+    if rest:
+        parts.append("0x%X" % rest)
+    return "/".join(parts) or "no-region"
+
+
+def release_text(region, version):
+    """'PAL, version 2': the parts that are known, '' for neither."""
+    parts = []
+    if region is not None:
+        parts.append(region_text(region))
+    if version is not None:
+        parts.append("version %d" % version)
+    return ", ".join(parts)
 
 
 def read_file(path):

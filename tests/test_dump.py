@@ -181,6 +181,30 @@ def test_a_wrong_title_is_refused_before_any_write(game, d):
     raises(dump.run_import, nameless, match="an XBE with an empty title (0x00000001)")
 
 
+def test_another_release_is_imported_with_a_warning(game, d, capsys):
+    """Another title ID that names this game, by its title or alternate
+    title IDs, is another release: imported, with the warning. Without
+    either it stays refused."""
+    game.m["xbe"].update(region=0x7, version=1)
+    other = header("BLiNX 2", 0x4D530099, region=0x4, version=2)
+    iso = build_image(os.path.join(d, "pal.iso"), [("default.xbe", other)] + TREE[1:])
+    dump.run_import(iso, False, False, False)
+    out = capsys.readouterr()
+    text = out.out + out.err
+    assert "WARNING: %s: title ID 0x4D530099, not BLiNX 2's 0x4D530065, but its title" % iso in text
+    assert (
+        "another release (PAL, version 2; this port was made from region-free, version 1)" in text
+    )
+    assert files_of(game.game_files)["default.xbe"] == other
+    by_alt = header("Blinx Zwei", 0x4D530099, region=0x4, version=2, alt=(TITLE_ID,))
+    iso = build_image(os.path.join(d, "alt.iso"), [("default.xbe", by_alt)] + TREE[1:])
+    dump.run_import(iso, True, False, False)
+    assert "its alternate title IDs name 0x4D530065" in capsys.readouterr().out
+    stranger = header("Blinx Zwei", 0x4D530099, region=0x4, version=2)
+    iso = build_image(os.path.join(d, "x.iso"), [("default.xbe", stranger)] + TREE[1:])
+    raises(dump.run_import, iso, match='this is "Blinx Zwei" (0x4D530099), not BLiNX 2')
+
+
 def test_what_is_not_a_source(game, d):
     raises(dump.run_import, os.path.join(d, "nope"), match="no such file or folder")
     os.makedirs(os.path.join(d, "empty"))

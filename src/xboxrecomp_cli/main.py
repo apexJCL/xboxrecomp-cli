@@ -467,8 +467,12 @@ def cmd_fingerprint(a):
     if a.json:
         print(json.dumps(fingerprint.plan_record(v), indent=2))
         return
-    host.say("%s: %s (sha256 %s)" % (path, v.verdict, v.sha))
+    rel = fingerprint.words_of(v.title_id, v.region, v.version)
+    host.say("%s: %s (sha256 %s%s)" % (path, v.verdict, v.sha, "; " + rel if rel else ""))
     n = fingerprint.note(v)
+    if not n and v.other:
+        # header: no warning, the code is the reference's; still say so.
+        n = "another release than this port's (%s), with the same sections" % v.ref
     if n:
         host.say(n)
 

@@ -164,8 +164,8 @@ func (w *Wizard) showPlans(ps []*runner.Plan) {
 	case p != nil:
 		items = append(items, para(fmt.Sprintf(summaryFresh, sized(p.FullSize))))
 	}
-	if p != nil && p.Xbe != nil && p.Xbe.Verdict == "data" {
-		items = append(items, para(fmt.Sprintf(summaryModData, strings.Join(p.Xbe.Sections, ", "))))
+	if line := xbeSummary(p); line != "" {
+		items = append(items, para(line))
 	}
 	w.summaryPlan.Objects = items
 	w.summaryPlan.Refresh()
@@ -193,6 +193,25 @@ func (w *Wizard) showPlans(ps []*runner.Plan) {
 		tech += strings.TrimRight(b.String(), "\n")
 	}
 	w.summaryTech.SetText(tech)
+}
+
+// xbeSummary is the Summary line for the plan's XBE: modded data,
+// another release or unknown files; "" for a known dump, and for
+// modded code, which the question before the build covers.
+func xbeSummary(p *runner.Plan) string {
+	switch p.XbeRisk() {
+	case runner.XbeRelease:
+		return fmt.Sprintf(releaseText, p.Xbe.Release, p.Xbe.ReferenceRelease)
+	case runner.XbeUnknown:
+		if p.Xbe.Why == "truncated" {
+			return summaryTruncated
+		}
+		return summaryUnknown
+	}
+	if p != nil && p.Xbe != nil && p.Xbe.Verdict == "data" {
+		return fmt.Sprintf(summaryModData, strings.Join(p.Xbe.Sections, ", "))
+	}
+	return ""
 }
 
 // diskVolume is one volume of the platforms' summed disk needs.

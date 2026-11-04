@@ -27,6 +27,7 @@ from .. import (
     resources,
     setup,
     toolkit,
+    xbe,
 )
 from ..host import CliError
 from . import incr, patch, tweaks
@@ -473,14 +474,25 @@ def stage_payload(target, a, lib, seed=None, hud_pack=None):
         )
     host.require(G.xbe, pipeline.dump_hint())
     with open(G.xbe, "rb") as f:
-        try:
-            tid = lib.xbe_title_id(f.read(0x10000))
-        except ValueError as e:
-            raise CliError("%s: %s" % (G.xbe, e)) from e
+        head = f.read(0x10000)
+    try:
+        tid = lib.xbe_title_id(head)
+    except ValueError as e:
+        raise CliError("%s: %s" % (G.xbe, e)) from e
     if tid != lib.TITLE_ID:
-        raise CliError(
-            "%s: title ID 0x%08X is not %s (0x%08X)" % (G.xbe, tid, lib.PRODUCT_NAME, lib.TITLE_ID)
-        )
+        # Another release of this game, which import let in: warned, not
+        # refused (fingerprint.title_match).
+        try:
+            h, c = xbe.read_header(head), xbe.cert_release(head)
+        except xbe.XbeError as e:
+            # A head long enough for the title ID but cut before the rest.
+            raise CliError("%s: %s" % (G.xbe, e)) from e
+        if not fingerprint.title_match(h, c, G.m):
+            raise CliError(
+                "%s: title ID 0x%08X is not %s (0x%08X)"
+                % (G.xbe, tid, lib.PRODUCT_NAME, lib.TITLE_ID)
+            )
+        host.say("WARNING: %s: %s" % (G.xbe, fingerprint.other_title_text(h, c, G.m, G.name)))
     fingerprint.warn(fingerprint.current(), "; packaging it anyway")
     btarget = build_target(target)
     bdir = build_mod.pkg_build_dir(btarget)

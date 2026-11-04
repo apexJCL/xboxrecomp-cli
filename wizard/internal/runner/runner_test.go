@@ -362,20 +362,53 @@ func TestParsePlanFixture(t *testing.T) {
 	}
 }
 
-// The plan's xbe verdict: absent from an older CLI, and only "code" asks.
+// The plan's xbe block: absent from an older CLI, parsed when there.
 func TestPlanXbe(t *testing.T) {
 	p, err := ParsePlan([]byte(`{"schema": 1, "stages": []}`))
-	if err != nil || p.Xbe != nil || p.ModdedCode() {
+	if err != nil || p.Xbe != nil || p.XbeRisk() != XbeFine {
 		t.Fatalf("%+v %v", p, err)
 	}
 	p, err = ParsePlan([]byte(`{"schema": 1, "stages": [], "xbe": {"sha256": "ab", "verdict": "code",
 		"sections": [".text", "D3D"], "note": "modded code"}}`))
-	if err != nil || !p.ModdedCode() || len(p.Xbe.Sections) != 2 {
+	if err != nil || p.XbeRisk() != XbeCode || len(p.Xbe.Sections) != 2 {
 		t.Fatalf("%+v %v", p, err)
 	}
-	p.Xbe.Verdict = "data"
-	if p.ModdedCode() || (*Plan)(nil).ModdedCode() {
-		t.Error("data or no plan asks")
+}
+
+// XbeRisk: what the Summary asks about, from each verdict and the
+// release fields; an older CLI's plan (no release fields) keeps asking
+// only about modded code and unknown files.
+func TestPlanXbeRisk(t *testing.T) {
+	p, err := ParsePlan([]byte(`{"schema": 1, "stages": [], "xbe": {"sha256": "ab", "verdict": "code",
+		"sections": [".text"], "note": "another release", "why": "", "release": "PAL, version 2",
+		"region": 4, "version": 2, "reference_release": "NTSC-U, version 6", "other_release": true}}`))
+	if err != nil || p.Xbe.Release != "PAL, version 2" || p.Xbe.ReferenceRelease != "NTSC-U, version 6" {
+		t.Fatalf("%+v %v", p.Xbe, err)
+	}
+	for _, c := range []struct {
+		verdict, why string
+		other        bool
+		want         string
+	}{
+		{"code", "", true, XbeRelease},
+		{"data", "", true, XbeRelease},
+		{"unknown", "", true, XbeRelease},
+		{"unknown", "truncated", true, XbeUnknown},
+		{"header", "", true, XbeFine},
+		{"known", "", false, XbeFine},
+		{"header", "", false, XbeFine},
+		{"data", "", false, XbeFine},
+		{"code", "", false, XbeCode},
+		{"unknown", "", false, XbeUnknown},
+		{"unknown", "truncated", false, XbeUnknown},
+	} {
+		p.Xbe.Verdict, p.Xbe.Why, p.Xbe.OtherRelease = c.verdict, c.why, c.other
+		if got := p.XbeRisk(); got != c.want {
+			t.Errorf("%s/%s other=%v: %q, want %q", c.verdict, c.why, c.other, got, c.want)
+		}
+	}
+	if (*Plan)(nil).XbeRisk() != XbeFine || (&Plan{}).XbeRisk() != XbeFine {
+		t.Error("no plan or no xbe asks")
 	}
 }
 

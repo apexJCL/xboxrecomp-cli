@@ -462,6 +462,16 @@ const (
 	summaryRemove1  = "Removes 1 game file from that build."
 	doneWrongBuild  = "If the device has another version, the update refuses and changes nothing. Make a Fresh build then."
 	failedFresh     = "This update cannot be made for that build. A Fresh build makes the complete installer."
+
+	// Another release or unknown game files: a Summary line, then the
+	// same question as modded code before the build.
+	summaryUnknown   = "Your game's files are not ones this port knows. The build may fail or the game may misbehave."
+	summaryTruncated = "Your game's main file looks cut short, as from an unfinished copy. Copy the game again if the build fails."
+	releaseTitle     = "A different release of the game"
+	releaseText      = "Your game is a different release (%s) than the one this port was made for (%s). The build may fail or the game may misbehave."
+	unknownTitle     = "Unknown game files"
+	unknownText      = "Your game's files are not ones this port knows: another release, a mod or a damaged copy. The build may fail or the game may misbehave."
+	truncatedText    = "Your game's main file looks cut short, as from an unfinished copy. The build may fail or the game may misbehave. Copying the game again may fix it."
 )
 
 // Tweak words by the plan's key: the name on the device, what ticking

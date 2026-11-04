@@ -14,9 +14,20 @@ BASE = 0x10000
 CERT = 0x180
 
 
-def header(title="Some Game", title_id=0x4B4C0001, entry=0x00123456, key=xbe.ENTRY_RETAIL_XOR):
+def header(
+    title="Some Game",
+    title_id=0x4B4C0001,
+    entry=0x00123456,
+    key=xbe.ENTRY_RETAIL_XOR,
+    region=None,
+    version=None,
+    alt=(),
+):
     """A header whose image spans 0x10000..0x110000, with the certificate
-    at +0x180 and the entry point encoded with key."""
+    at +0x180 and the entry point encoded with key. With region or
+    version, the certificate is a full one (size 0x1D0) carrying them and
+    the alternate title IDs alt; without, its size is 0, too short for
+    them, as before."""
     h = bytearray(0x400)
     h[:4] = b"XBEH"
     struct.pack_into("<3I", h, 0x104, BASE, 0x400, 0x100000)
@@ -24,6 +35,11 @@ def header(title="Some Game", title_id=0x4B4C0001, entry=0x00123456, key=xbe.ENT
     struct.pack_into("<I", h, 0x128, entry ^ key)
     struct.pack_into("<I", h, CERT + 8, title_id)
     h[CERT + 0xC : CERT + 0xC + 80] = title.encode("utf-16-le").ljust(80, b"\0")
+    if region is not None or version is not None:
+        struct.pack_into("<I", h, CERT, 0x1D0)
+        struct.pack_into("<16I", h, CERT + 0x5C, *(list(alt) + [0] * (16 - len(alt))))
+        struct.pack_into("<I", h, CERT + 0xA0, region or 0)
+        struct.pack_into("<I", h, CERT + 0xAC, version or 0)
     return bytes(h)
 
 
@@ -57,6 +73,35 @@ def test_empty_title_and_bad_headers():
     struct.pack_into("<I", h, 0x118, BASE + 0x10000)
     with pytest.raises(ValueError):
         xbe.title_id(bytes(h))
+
+
+def test_cert_release():
+    c = xbe.cert_release(header(region=0x4, version=2, alt=(0x4D530099,)))
+    assert c == {"alt_title_ids": [0x4D530099], "region": 0x4, "version": 2}
+    # A certificate too short for the fields (or out of reach): unknown.
+    assert xbe.cert_release(header()) == {"alt_title_ids": None, "region": None, "version": None}
+    h = bytearray(header(region=1, version=6))
+    struct.pack_into("<I", h, 0x118, BASE + 0x3A0)
+    assert xbe.cert_release(bytes(h))["region"] is None
+    with pytest.raises(xbe.XbeError):
+        xbe.cert_release(b"MZ" + bytes(0x400))
+
+
+def test_region_and_release_words():
+    assert [xbe.region_text(f) for f in (1, 2, 4, 5, 7, 0, 0x80000001, 0x10)] == [
+        "NTSC-U",
+        "NTSC-J",
+        "PAL",
+        "NTSC-U/PAL",
+        "region-free",
+        "no-region",
+        "NTSC-U/manufacturing",
+        "0x10",
+    ]
+    assert xbe.release_text(4, 2) == "PAL, version 2"
+    assert xbe.release_text(None, 6) == "version 6"
+    assert xbe.release_text(1, None) == "NTSC-U"
+    assert xbe.release_text(None, None) == ""
 
 
 # D3D's fence wait as the three XDK 5849 titles have it, the device pointer

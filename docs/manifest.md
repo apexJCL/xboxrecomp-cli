@@ -45,9 +45,13 @@ BLiNX 2's manifest is the full example
 | Key | Default | Meaning |
 |---|---|---|
 | `path` | `<data.game_files>/default.xbe` | The dumped executable. |
-| `title_id` | required | `package` refuses an XBE with another title ID. |
+| `title_id` | required | `import` and `package` refuse an XBE with another title ID, unless it is another release of this game (`title`, `alt_title_ids`). `fingerprint` calls such a dump another release, as for `region`. |
 | `sha256` | `[]` | The known dumps, the ones the goldens were recorded on. Another dump still builds, packages and plays, with the warning its fingerprint calls for (below), but `bench golden` refuses it. An empty list turns the check off. |
 | `sections` | `{}` | A table, `[xbe.sections]`: each section's name and the sha256 of its raw bytes, for the dumps `sha256` lists (`xbr fingerprint --toml` prints it). It classifies an unlisted XBE: `header` when every section matches (no warning), `data` when only data sections differ ("modded data, code stock"), `code` when a section the pipeline translates (`.text` and `[pipeline.disasm] extra_sections`, or every executable section without `text_only`) differs ("modded code, unsupported, may crash", naming them). Empty: an unlisted XBE is `unknown`. `manifest.json` records `xbe` = `{sha256, verdict, sections}`. Nothing refuses but `bench golden`. |
+| `region` | not recorded | The reference dump's certificate game region flags (`0x1` NTSC-U, `0x2` NTSC-J, `0x4` PAL, `0x7` region-free; `0x80000000` marks a manufacturing disc), as `xbr fingerprint --toml` prints them. A dump with other flags is another release: its warning says so and names both, before any section verdict, and with neither `sha256` nor `sections` it is `unknown` rather than `known`. Record `sections` with it: a stock dump whose region flags alone were patched has the same sections, so with them it reads `header` (no warning), without them it reads another release. CLI v0.20.0 and earlier refuse `region`, `version`, `title` and `alt_title_ids` as unknown keys. |
+| `version` | not recorded | The reference dump's certificate version; another one is another release, as for `region`. |
+| `title` | `game.name` | The reference certificate's title. `import` and `package` take a dump with another title ID whose title matches it (case, spaces and punctuation aside) as another release, with a warning. |
+| `alt_title_ids` | `[]` | The reference certificate's alternate title IDs, only those of this same game (other regions): a sequel may list its prequel's, so `fingerprint --toml` prints them commented out. A dump whose title ID is among them, or whose own alternate title IDs hold `title_id`, is another release too, when both IDs have the same publisher (the high 16 bits). |
 
 ## [cli]
 

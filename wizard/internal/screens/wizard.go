@@ -581,7 +581,7 @@ func (w *Wizard) onNext() {
 			return
 		}
 	case pSummary:
-		if w.plan.ModdedCode() {
+		if w.plan.XbeRisk() != runner.XbeFine {
 			d, _ := w.modCodeDialog()
 			d.Show()
 			return
@@ -593,8 +593,9 @@ func (w *Wizard) onNext() {
 	w.move(1)
 }
 
-// modCodeDialog asks once before building modded code, as stopDialog
-// does: the way back first, and no default, so Enter never starts it.
+// modCodeDialog asks once before building modded code, unknown game
+// files or another release, as stopDialog does: the way back first, and
+// no default, so Enter never starts it.
 func (w *Wizard) modCodeDialog() (_ dialog.Dialog, body fyne.CanvasObject) {
 	var d *dialog.CustomDialog
 	back := widget.NewButtonWithIcon(modCodeBack, theme.NavigateBackIcon(), func() { d.Hide() })
@@ -603,11 +604,27 @@ func (w *Wizard) modCodeDialog() (_ dialog.Dialog, body fyne.CanvasObject) {
 		w.move(1)
 	})
 	build.Importance = widget.DangerImportance
-	text := fmt.Sprintf(modCodeText, strings.Join(w.plan.Xbe.Sections, ", "))
+	title, text := xbeQuestion(w.plan)
 	body = container.NewVBox(para(text), container.NewHBox(layout.NewSpacer(), back, build))
-	d = dialog.NewCustomWithoutButtons(modCodeTitle, body, w.win)
+	d = dialog.NewCustomWithoutButtons(title, body, w.win)
 	d.Resize(fyne.NewSize(stopWidth(w.win.Canvas().Size().Width), 0))
 	return d, body
+}
+
+// xbeQuestion is the build-anyway dialog's title and text for the plan's
+// XbeRisk.
+func xbeQuestion(p *runner.Plan) (title, text string) {
+	x := p.Xbe
+	switch p.XbeRisk() {
+	case runner.XbeRelease:
+		return releaseTitle, fmt.Sprintf(releaseText, x.Release, x.ReferenceRelease)
+	case runner.XbeUnknown:
+		if x.Why == "truncated" {
+			return unknownTitle, truncatedText
+		}
+		return unknownTitle, unknownText
+	}
+	return modCodeTitle, fmt.Sprintf(modCodeText, strings.Join(x.Sections, ", "))
 }
 
 func (w *Wizard) onClose() {

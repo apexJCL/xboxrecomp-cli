@@ -516,6 +516,26 @@ def write_hook_slots():
     return slots
 
 
+def _dump_hint():
+    """After a failed recomp: what the fingerprint says of this game's
+    dump, when it is not the one the port was made from (the toolkit's
+    error says only that it may be), and the command that shows it."""
+    from . import fingerprint
+
+    try:
+        v = fingerprint.current()
+    except (CliError, OSError):
+        return ""
+    n = fingerprint.note(v) if v is not None else ""
+    if not n:
+        return ""
+    return "\nYour game's main file: %s.\n'%s fingerprint %s' says more." % (
+        n,
+        host.cli_name(),
+        g().rel(g().xbe),
+    )
+
+
 def stage_recomp(extra=()):
     """gen/ is half-written while this runs; bench sync and the build
     refuse while the marker exists. It is removed only on success, so a
@@ -536,7 +556,10 @@ def stage_recomp(extra=()):
     # -v makes the translator print "[i/n] Translating" every 500 functions,
     # the progress view's only signal in a 10-20 minute step. It changes no
     # output, so it is left out of the argv the generation key hashes.
-    run_cmds(recomp_cmds(("-v",) + tuple(extra)))
+    try:
+        run_cmds(recomp_cmds(("-v",) + tuple(extra)))
+    except CliError as e:
+        raise CliError("%s%s" % (e, _dump_hint())) from e
     if slots:
         with open(os.path.join(g().gen, hooks.SLOTS_C), "w", encoding="utf-8", newline="\n") as f:
             f.write(hooks.slots_c(slots))

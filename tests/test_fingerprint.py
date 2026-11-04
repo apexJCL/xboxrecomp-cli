@@ -14,7 +14,7 @@ import shutil
 import pytest
 from test_xbe import image
 
-from xboxrecomp_cli import doctor, fingerprint, main, manifest
+from xboxrecomp_cli import doctor, fingerprint, main, manifest, xbe
 from xboxrecomp_cli import package as pkg
 from xboxrecomp_cli.manifest import ManifestError
 from xboxrecomp_cli.package import lib as pl
@@ -32,12 +32,15 @@ STOCK = [
 ]
 
 
-def m_for(stock=STOCK, listed=(), code=("D3D",), text_only=True):
-    """A manifest's tables for a game whose reference is stock."""
+def m_for(stock=STOCK, listed=(), code=("D3D",), text_only=True, region=None, version=None):
+    """A manifest's tables for a game whose reference is stock (of that
+    region and version, when given)."""
     return {
         "xbe": {
             "sha256": list(listed),
             "sections": dict((s.name, h) for s, h in fingerprint.section_hashes(image(stock))),
+            "region": region,
+            "version": version,
         },
         "pipeline": {"disasm": {"text_only": text_only, "extra_sections": list(code)}},
     }
@@ -54,7 +57,8 @@ def sha(b):
 def test_known_by_its_sha256():
     data = image(STOCK)
     v = fingerprint.classify(data, m_for(listed=[sha(data)]))
-    assert v == (sha(data), "known", [], "")
+    assert v[:4] == (sha(data), "known", [], "")
+    assert (v.region, v.version, v.ref, v.other) == (None, None, "", False)
 
 
 def test_header_only():
@@ -91,7 +95,9 @@ def test_added_and_missing_sections():
     # An added section is code by its own flags when no code set names it.
     added = fingerprint.classify(image(STOCK + [("PATCH", 0, b"x" * 16)]), m)
     assert (added.verdict, added.sections) == ("data", ["PATCH"])
-    assert fingerprint.classify(image(STOCK + [("XPATCH", X, b"x")]), m_for(text_only=False)) == (
+    assert fingerprint.classify(image(STOCK + [("XPATCH", X, b"x")]), m_for(text_only=False))[
+        :4
+    ] == (
         sha(image(STOCK + [("XPATCH", X, b"x")])),
         "code",
         ["XPATCH"],
@@ -143,10 +149,197 @@ def test_messages_name_the_sections():
 def test_toml_table_round_trips(d):
     import tomllib
 
-    text = fingerprint.toml_table(image(STOCK))
-    assert text.startswith("[xbe.sections]\n")
-    table = tomllib.loads(text)["xbe"]["sections"]
-    assert table == m_for()["xbe"]["sections"]
+    data = image(STOCK, title="Some Game", region=0x4, version=2, alt=(0x4D530099,))
+    text = fingerprint.toml_table(data)
+    # The sha256 is a comment: pasted under an [xbe] that has the list,
+    # a second sha256 key would not parse.
+    assert text.startswith('# Under [xbe]. Add this to the sha256 list:\n#   "%s"\n' % sha(data))
+    assert "v0.20.0" in text
+    assert "\nregion = 0x4  # PAL\nversion = 2\n" in text
+    # Alternate IDs commented out, with the same-game line above them.
+    assert (
+        "# Keep only IDs of this same game (other regions), never another game's:\n"
+        "# alt_title_ids = [0x4D530099]\n"
+    ) in text
+    doc = tomllib.loads(text)
+    assert doc["xbe"]["sections"] == m_for()["xbe"]["sections"]
+    assert (doc["region"], doc["version"], doc["title"]) == (4, 2, "Some Game")
+    assert "sha256" not in doc and "alt_title_ids" not in doc
+    # A certificate too short for the fields: no region or version lines.
+    bare = tomllib.loads(fingerprint.toml_table(image(STOCK, title="")))
+    assert sorted(bare) == ["xbe"]
+
+
+# ── another release ───────────────────────────────────────────────────
+
+NA6 = dict(region=0x1, version=6)
+PAL2 = dict(region=0x4, version=2)
+
+
+def test_another_release_with_other_code():
+    """A player's dump of another region and version, other code. The
+    verdict is still code; the note says another release first."""
+    m = m_for(listed=[sha(image(STOCK, **NA6))], **NA6)
+    v = fingerprint.classify(image(changed(".text"), **PAL2), m)
+    assert (v.verdict, v.sections, v.other) == ("code", [".text"], True)
+    assert (v.region, v.version, v.ref) == (4, 2, "NTSC-U, version 6")
+    n = fingerprint.note(v)
+    assert n.startswith(
+        "another release: PAL, version 2, where this port was made from NTSC-U, version 6; "
+        "the build may fail or the game misbehave: XBE sha256 "
+    )
+    assert n.endswith("; code sections differ: .text") and "modded" not in n
+    d = fingerprint.classify(image(changed(".rdata"), **PAL2), m)
+    assert fingerprint.note(d).endswith("; only data sections differ: .rdata")
+    rec = fingerprint.plan_record(v)
+    assert rec["verdict"] == "code" and rec["note"] == n
+    assert (rec["release"], rec["region"], rec["version"]) == ("PAL, version 2", 4, 2)
+    assert (rec["reference_release"], rec["other_release"]) == ("NTSC-U, version 6", True)
+    assert rec["why"] == ""
+    assert fingerprint.stamp(v) == "%s code .text release=PAL,v2" % v.sha
+    # Only the version differs: another revision of the same region.
+    r = fingerprint.classify(image(changed(".text"), region=1, version=7), m)
+    assert r.other and fingerprint.note(r).startswith("another release: NTSC-U, version 7, ")
+
+
+def test_the_same_release_modded_stays_modded():
+    m = m_for(**NA6)
+    v = fingerprint.classify(image(changed(".text"), **NA6), m)
+    assert (v.verdict, v.other) == ("code", False)
+    assert fingerprint.note(v).startswith("modded code, unsupported, may crash")
+    assert fingerprint.plan_record(v)["release"] == "NTSC-U, version 6"
+    assert fingerprint.plan_record(v)["other_release"] is False
+    assert " release=" not in fingerprint.stamp(v)
+    # Not recorded on either side: never another release.
+    for ref, dump in ((m_for(), PAL2), (m_for(**NA6), {})):
+        assert not fingerprint.classify(image(changed(".text"), **dump), ref).other
+
+
+def test_another_release_when_the_check_is_off():
+    """No sha256 list nor sections, but a recorded release: a dump of
+    another one is unknown, one of the same release is known."""
+    m = m_for(**NA6)
+    m["xbe"]["sections"] = {}
+    v = fingerprint.classify(image(STOCK, **PAL2), m)
+    assert (v.verdict, v.other) == ("unknown", True)
+    assert fingerprint.note(v) == (
+        "another release: PAL, version 2, where this port was made from NTSC-U, version 6; "
+        "the build may fail or the game misbehave: XBE sha256 %s" % v.sha[:12]
+    )
+    assert fingerprint.classify(image(STOCK, **NA6), m).verdict == "known"
+
+
+def test_a_listed_dump_is_never_another_release():
+    data = image(STOCK, **PAL2)
+    v = fingerprint.classify(data, m_for(listed=[sha(data)], **NA6))
+    assert (v.verdict, v.other) == ("known", False)
+
+
+def test_another_release_with_the_same_sections():
+    """Sections match: the port works, no warning; doctor names it."""
+    m = m_for(listed=["0" * 64], **NA6)
+    v = fingerprint.classify(image(STOCK, **PAL2), m)
+    assert (v.verdict, v.other, fingerprint.note(v)) == ("header", True, "")
+    assert fingerprint.doctor_text(v).endswith("sections match; another release, PAL, version 2)")
+
+
+def test_truncated_beats_another_release():
+    m = m_for(**NA6)
+    v = fingerprint.classify(image(STOCK, **PAL2)[:-48], m)
+    # A cut file's certificate may be garbage: no release is claimed, in
+    # the plan record or the stamp either.
+    assert (v.verdict, v.why, v.other, v.title_id) == ("unknown", "truncated", False, None)
+    assert fingerprint.note(v).startswith("truncated dump: ")
+    assert fingerprint.plan_record(v)["other_release"] is False
+    assert "release=" not in fingerprint.stamp(v)
+
+
+REF_ID, OTHER_ID = 0x4D530065, 0x4D530099
+
+
+def ref_with_id(**kw):
+    m = m_for(**kw)
+    m["xbe"]["title_id"] = REF_ID
+    return m
+
+
+def test_another_title_id_is_another_release():
+    """Import lets in another title ID that names this game: classify must
+    not call it known (check off) or modded (same region and version)."""
+    m = ref_with_id(**NA6)
+    v = fingerprint.classify(image(changed(".text"), title_id=OTHER_ID, **NA6), m)
+    assert (v.verdict, v.other, v.title_id) == ("code", True, OTHER_ID)
+    # The two sides never read the same: the IDs lead.
+    assert fingerprint.note(v).startswith(
+        "another release: title ID 0x4D530099, NTSC-U, version 6, where this port "
+        "was made from title ID 0x4D530065, NTSC-U, version 6; "
+    )
+    assert fingerprint.stamp(v).endswith(" release=NTSC-U,v6,id=0x4D530099")
+    rec = fingerprint.plan_record(v)
+    assert (rec["release"], rec["reference_release"], rec["other_release"]) == (
+        "title ID 0x4D530099, NTSC-U, version 6",
+        "title ID 0x4D530065, NTSC-U, version 6",
+        True,
+    )
+    # The check off (no lists): unknown, not known.
+    off = ref_with_id()
+    off["xbe"]["sections"] = {}
+    v = fingerprint.classify(image(STOCK, title_id=OTHER_ID), off)
+    assert (v.verdict, v.other) == ("unknown", True)
+    assert fingerprint.note(v).startswith(
+        "another release: title ID 0x4D530099, where this port was made from title ID 0x4D530065"
+    )
+    # The same ID, the check off: known as before.
+    assert fingerprint.classify(image(STOCK, title_id=REF_ID), off).verdict == "known"
+    # A listed sha256 stays the reference whatever its ID.
+    data = image(STOCK, title_id=OTHER_ID)
+    listed = ref_with_id(listed=[sha(data)])
+    assert fingerprint.classify(data, listed)[:2] == (sha(data), "known")
+
+
+def test_alternate_ids_need_one_publisher():
+    """A sequel that lists its prequel's ID is another game: the alternate
+    ID rules hold only within one publisher (the ID's high half)."""
+    m = {"game": {"name": "BLiNX: the time sweeper"}, "xbe": {"title_id": 0x4D530013}}
+    m["xbe"].update(region=1, version=6, title="", alt_title_ids=[])
+    sequel = image(STOCK, title="Sequel", title_id=0x4B4C0002, alt=(0x4D530013,), **PAL2)
+    h, c = xbe.read_header(sequel), xbe.cert_release(sequel)
+    assert fingerprint.title_match(h, c, m) == ""
+    m["xbe"]["alt_title_ids"] = [0x4B4C0002]
+    assert fingerprint.title_match(h, c, m) == ""
+
+
+def test_title_match():
+    from test_xbe import header
+
+    from xboxrecomp_cli import xbe
+
+    m = {"game": {"name": "BLiNX: the time sweeper"}, "xbe": {"title_id": 0x4D530013}}
+    m["xbe"].update(region=1, version=6, title="", alt_title_ids=[])
+
+    def why(**kw):
+        h = header(**kw)
+        return fingerprint.title_match(xbe.read_header(h), xbe.cert_release(h), m)
+
+    assert why(title="Burnout 3", title_id=0x4541000A, **PAL2) == ""
+    assert why(title="BLiNX - The Time Sweeper", title_id=0x4D530099, **PAL2) == (
+        'its title is "BLiNX - The Time Sweeper"'
+    )
+    assert why(title="Other", title_id=0x4D530099, alt=(0x4D530013,), **PAL2) == (
+        "its alternate title IDs name 0x4D530013"
+    )
+    m["xbe"]["alt_title_ids"] = [0x4D530099]
+    assert why(title="Other", title_id=0x4D530099) == "game.toml's alternate title IDs name it"
+    # [xbe] title, when set, is the name to match instead of the game's.
+    m["xbe"].update(title="BLiNX", alt_title_ids=[])
+    assert why(title="BLiNX: the time sweeper", title_id=0x4D530099) == ""
+    h = header(title="blinx", title_id=0x4D530099, **PAL2)
+    text = fingerprint.other_title_text(xbe.read_header(h), xbe.cert_release(h), m, "BLiNX 1")
+    assert text == (
+        'title ID 0x4D530099, not BLiNX 1\'s 0x4D530013, but its title is "blinx": another '
+        "release (PAL, version 2; this port was made from NTSC-U, version 6). The build may "
+        "fail or the game misbehave"
+    )
 
 
 @contextlib.contextmanager
@@ -156,6 +349,12 @@ def game_with(d, xbe_bytes, **tables):
     it runs."""
     shutil.copy(os.path.join(GAME, "game.toml"), d)
     G = manifest.load(d)
+    # The dump is this game unless a test says otherwise: another title
+    # ID is another release (classify).
+    try:
+        G.m["xbe"]["title_id"] = xbe.title_id(xbe_bytes)
+    except xbe.XbeError:
+        pass
     for k, v in tables.items():
         t, key = k.split("__")
         G.m[t][key] = v
@@ -196,6 +395,12 @@ def test_manifest_validates_the_new_keys(d):
             with pytest.raises(ManifestError, match="sections"):
                 manifest.load(d)
     for old, new, ok in (
+        ("[xbe]\n", "[xbe]\nregion = 0x4\nversion = 2\n", True),
+        ("[xbe]\n", '[xbe]\ntitle = "BLiNX2"\nalt_title_ids = [0x4D530099]\n', True),
+        ("[xbe]\n", "[xbe]\nregion = -1\n", False),
+        ("[xbe]\n", "[xbe]\nversion = 0x100000000\n", False),
+        ("[xbe]\n", "[xbe]\nalt_title_ids = [0]\n", False),
+        ("[xbe]\n", '[xbe]\nregion = "PAL"\n', False),
         ("[package]\n", '[package]\nstamp_env = "GAME_BUILD_XBE"\n', True),
         ("[package]\n", '[package]\nstamp_env = "1 bad"\n', False),
         ("[data]\n", "[data]\nreference_files = 485\n", True),
@@ -309,6 +514,26 @@ def test_warn_never_refuses(d, capsys):
     assert out.rstrip().endswith("; packaging it anyway")
 
 
+def test_doctor_and_fingerprint_name_another_release(d, capsys):
+    with game_with(
+        d,
+        image(changed(".text"), **PAL2),
+        xbe__sections=ref_sections(),
+        xbe__region=1,
+        xbe__version=6,
+    ) as G:
+        lines, _, _ = doctor.doctor_report()
+        line = next(x for x in lines if x.startswith("game files: "))
+        assert "another release: PAL, version 2, where this port was made from NTSC-U" in line
+        main.register()
+        ap, _ = main.make_parser()
+        main.cmd_fingerprint(ap.parse_args(["fingerprint", G.xbe]))
+        out = capsys.readouterr()
+        text = out.out + out.err
+        assert ": code (sha256 " in text and "; PAL, version 2)" in text
+        assert "another release: PAL, version 2" in text
+
+
 def test_fingerprint_command(d, capsys):
     data = image(changed(".rdata"))
     with game_with(d, data, xbe__sections=ref_sections()) as G:
@@ -322,3 +547,35 @@ def test_fingerprint_command(d, capsys):
         a = ap.parse_args(["fingerprint", G.xbe, "--toml"])
         main.cmd_fingerprint(a)
         assert capsys.readouterr().out == fingerprint.toml_table(data)
+
+
+def test_failed_recomp_names_the_dump(d):
+    """recomp's wrap error says the dump may be another release; the CLI
+    adds what the fingerprint says and the command that shows it."""
+    from xboxrecomp_cli import pipeline
+
+    other = image(changed(".text"), **PAL2)
+    with game_with(d, other, xbe__sections=ref_sections(), xbe__region=1, xbe__version=6) as G:
+        hint = pipeline._dump_hint()
+        assert hint.startswith("\nYour game's main file: another release: PAL, version 2, ")
+        assert hint.endswith("fingerprint %s' says more." % G.rel(G.xbe))
+    with game_with(d, image(STOCK, **NA6), xbe__sections=ref_sections(), xbe__region=1) as G:
+        assert pipeline._dump_hint() == ""
+
+
+def test_fingerprint_command_names_a_header_only_release(d, capsys):
+    """Another title ID with the reference's sections: no warning (the
+    code is the reference's), but the command still names both."""
+    data = image(STOCK, title_id=OTHER_ID, **NA6)
+    with game_with(
+        d, data, xbe__sections=ref_sections(), xbe__title_id=REF_ID, xbe__region=1, xbe__version=6
+    ) as G:
+        main.register()
+        ap, _ = main.make_parser()
+        main.cmd_fingerprint(ap.parse_args(["fingerprint", G.xbe]))
+        out = capsys.readouterr().out
+    assert ": header (sha256 %s; title ID 0x4D530099, NTSC-U, version 6)\n" % sha(data) in out
+    assert out.endswith(
+        "another release than this port's (title ID 0x4D530065, NTSC-U, version 6), "
+        "with the same sections\n"
+    )

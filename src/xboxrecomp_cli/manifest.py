@@ -58,6 +58,14 @@ SPEC = {
         # Section name -> sha256 of its raw bytes, for the XBEs sha256
         # lists (fingerprint.py): an unlisted XBE is judged by them.
         "sections": (STRMAP, {}),
+        # The reference release, from its certificate (fingerprint.py): a
+        # dump whose region or version differs is another release, and a
+        # dump with another title ID is one too when it names this title
+        # by its alternate title IDs or its name. None: not recorded.
+        "region": (INT, None),
+        "version": (INT, None),
+        "title": (STR, ""),
+        "alt_title_ids": (INTS, []),
     },
     # A pin is a release tag, a commit, or both (the commit then locks the
     # tag); _check_values requires one of them (gitpin.py).
@@ -1468,6 +1476,13 @@ def _check_values(m):
     for name, s in m["xbe"]["sections"].items():
         if not re.match(r"^[0-9a-f]{64}$", s):
             errors.append("xbe.sections.%s: %r is not a sha256" % (name, s))
+    for k in ("region", "version"):
+        v = m["xbe"][k]
+        if v is not None and not 0 <= v <= 0xFFFFFFFF:
+            errors.append("xbe.%s: %r is not a 32-bit certificate field" % (k, v))
+    for t in m["xbe"]["alt_title_ids"]:
+        if not 0 < t <= 0xFFFFFFFF:
+            errors.append("xbe.alt_title_ids: %r is not a title ID" % t)
     if m["data"]["reference_files"] < 0:
         errors.append("data.reference_files: must not be negative")
     stamp = m.get("package", {}).get("stamp_env", "")

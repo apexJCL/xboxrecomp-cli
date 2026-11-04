@@ -136,7 +136,13 @@
   "sha256": "9410ab98ab7a3ef7346b85d11dd591cd101b8cd439bf72c0d07906de3148cf66",
   "verdict": "known",
   "sections": [],
-  "note": ""
+  "note": "",
+  "why": "",
+  "release": "",
+  "region": null,
+  "version": null,
+  "reference_release": "",
+  "other_release": false
  },
  "disk": [
   {

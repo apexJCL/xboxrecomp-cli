@@ -20,6 +20,25 @@ a release by its tag in `game.toml`'s `[cli]` table.
   `--dry-run` and `--json` show the plan.
 - `[saves]` in `game.toml`: `title_ids`, `signing`, `tdata` and
   `[[saves.signed]]` recipes, checked on load.
+- The release gate: `[xbe] region`, `version`, `title` and
+  `alt_title_ids` record the reference release (`fingerprint --toml` prints
+  them, with the `sha256` as a comment and `alt_title_ids` commented out).
+  A dump whose certificate title ID, region or version differs is another
+  release (a listed `sha256` never is, a truncated dump claims none): the warning, `doctor`, `fingerprint` and the
+  plan say "another release: PAL, version 2, where this port was made from
+  NTSC-U, version 6" instead of "modded code"; the plan's `xbe` gains
+  `release`, `region`, `version`, `reference_release` and `other_release`;
+  the `stamp_env` value ends in `release=<region>,v<version>` (plus
+  `,id=0x<title id>` for another title ID). A failed `recomp` adds the
+  dump's warning and the `fingerprint` command. The verdict values are
+  unchanged; with neither `sha256` nor `sections`, such a dump
+  is `unknown`.
+
+### Changed
+- `import` and `package` take a dump with another title ID as another
+  release, with a warning, when one certificate's alternate title IDs name
+  the other's title ID (both IDs of one publisher) or its title matches
+  `[xbe] title` (else the game's name). Any other title is still refused.
 
 ## [0.20.0] - 2026-11-03
 

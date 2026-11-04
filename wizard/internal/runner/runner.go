@@ -436,19 +436,50 @@ type PlanDisk struct {
 
 // PlanXbe is the CLI's fingerprint verdict: "known", "header", "data"
 // (modded data, the code is stock), "code" (modded code, which may crash)
-// or "unknown". Sections are the ones that differ; Note is the CLI's
-// warning, empty for known and header.
+// or "unknown" (Why "truncated" for a cut-short copy). Sections are the
+// ones that differ; Note is the CLI's warning, empty for known and
+// header. Release and ReferenceRelease are the dump's release and the
+// one the port was made from, in words ("PAL, version 2"); OtherRelease
+// says they differ. An older CLI sends none of the last four.
 type PlanXbe struct {
-	Sha256   string   `json:"sha256"`
-	Verdict  string   `json:"verdict"`
-	Sections []string `json:"sections"`
-	Note     string   `json:"note"`
+	Sha256           string   `json:"sha256"`
+	Verdict          string   `json:"verdict"`
+	Sections         []string `json:"sections"`
+	Note             string   `json:"note"`
+	Why              string   `json:"why"`
+	Release          string   `json:"release"`
+	ReferenceRelease string   `json:"reference_release"`
+	OtherRelease     bool     `json:"other_release"`
 }
 
-// ModdedCode says whether the plan builds from an XBE whose code is not
-// the one the port was made from.
-func (p *Plan) ModdedCode() bool {
-	return p != nil && p.Xbe != nil && p.Xbe.Verdict == "code"
+// What a dump risks, for the question before the build: none, modded
+// code, unknown files (Why tells a truncated copy) or another release.
+const (
+	XbeFine    = ""
+	XbeCode    = "code"
+	XbeUnknown = "unknown"
+	XbeRelease = "release"
+)
+
+// XbeRisk says what the plan's XBE risks. Another release outranks the
+// verdict, which then only says what differs; one whose sections all
+// match (header) builds as the known dump does.
+func (p *Plan) XbeRisk() string {
+	if p == nil || p.Xbe == nil {
+		return XbeFine
+	}
+	x := p.Xbe
+	switch {
+	case x.Verdict == "known" || x.Verdict == "header":
+		return XbeFine
+	case x.OtherRelease && x.Why != "truncated" && x.ReferenceRelease != "":
+		return XbeRelease
+	case x.Verdict == "code":
+		return XbeCode
+	case x.Verdict == "unknown":
+		return XbeUnknown
+	}
+	return XbeFine
 }
 
 // PlanStage is one stage of the plan: "reuse", "run", "keep" or

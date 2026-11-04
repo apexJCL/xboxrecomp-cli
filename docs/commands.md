@@ -26,7 +26,9 @@ Put the dump in `game_files/` from a disc image (`.iso`, `.xiso`, any
 extension: the image is recognised by its XDVDFS descriptor, at any of the
 usual partition offsets) or a folder holding `default.xbe` (the disc's
 root). Before anything is written it checks the XBE's title ID against
-`xbe.title_id` (another game is refused by name), every file name (one
+`xbe.title_id` (another game is refused by name; another release of this
+game, whose certificate names it by its alternate title IDs or its title,
+is imported with an "another release" warning), every file name (one
 Windows refuses, a directory loop, nesting deeper than 32) and the free
 space. The files land in `game_files.partial/` first and are renamed into
 place, so an interrupted import leaves the old `game_files/` as it was; the
@@ -234,12 +236,24 @@ references were recorded on those. `package` records the verdict in
 `manifest.json` (`xbe`: `sha256`, `verdict`, `sections`), and with
 `[package] stamp_env` set it ends the bundle's `launch.env.default` with
 that key, for the game to print at boot. `package --plan --json` reports it
-as `xbe`, and the build wizard asks before building modded code.
+as `xbe`, and the build wizard asks before building modded code, an
+unknown dump or another release.
+
+The certificate tells the release apart from the verdict: its title ID,
+region flags and version against `[xbe] title_id`, `region` and `version`.
+A dump that differs in any is another release (another region or
+revision; a listed `sha256` never is, and a truncated dump claims none). Its code sits at
+other addresses than the ones the hand-written parts were written for, so
+the warning says "another release: PAL, version 2, where this port was made
+from NTSC-U, version 6" before the sections, the stamp ends in
+`release=PAL,v2` (`,id=0x<title id>` added when the title IDs differ), and
+with neither `sha256` nor `[xbe.sections]` such a dump
+is `unknown` rather than `known`.
 
 | Option | Effect |
 |---|---|
-| `--toml` | maintainers: print the `[xbe.sections]` table for the XBE, to paste in `game.toml` |
-| `--json` | the verdict as JSON: `sha256`, `verdict`, `sections`, `note` |
+| `--toml` | maintainers: print the `[xbe]` reference keys and the `[xbe.sections]` table for the XBE, to paste in `game.toml`: the sha256 as a comment (add it to the list), `region`, `version` and `title` (CLI v0.20.0 and earlier refuse them), and `alt_title_ids` commented out (keep only IDs of the same game) |
+| `--json` | the verdict as JSON: `sha256`, `verdict`, `sections`, `note`, `why` (`truncated` or `""`), and the release: `release` (the dump's, in words), `region`, `version` (its certificate fields, `null` when unreadable), `reference_release` (`""` when `game.toml` records none) and `other_release` |
 
 ### `mygame saves <list|import>`
 
