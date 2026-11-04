@@ -7,7 +7,22 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-04
+
 ### Added
+- `[system] languages` in `game.toml`: the languages a title's copy ships
+  in. The CLI passes them to the toolkit as `XBOXRECOMP_LANGUAGES`, so the
+  in-game menu's language setting offers only those; a dropped table is
+  cleared at build time, and a toolkit too old to read it is refused with
+  an error naming the `[toolkit]` pin. `package` rebuilds the stage when
+  the list changes.
+- `extract --collision`: a shaded collision view. Faces are shaded by
+  direction and get crease and open-edge lines in their own mesh; F
+  colours faces by their angle off flat or vertical (under 0.1, 2 and 10
+  degrees, above, and slivers) and O makes them opaque. C, E, F and O are
+  independent toggles that fade meshes and never touch `visible`, so the
+  Scene dock's eye still wins. Lines and flat copies never become
+  collision shapes.
 - `saves list` and `saves import --from SRC`: a player's own saves from a
   folder or zip (another install, a console's or Cxbx-Reloaded's copy, the
   in-game menu's saves export) into the installed game. The save root is
@@ -24,9 +39,10 @@ a release by its tag in `game.toml`'s `[cli]` table.
   `alt_title_ids` record the reference release (`fingerprint --toml` prints
   them, with the `sha256` as a comment and `alt_title_ids` commented out).
   A dump whose certificate title ID, region or version differs is another
-  release (a listed `sha256` never is, a truncated dump claims none): the warning, `doctor`, `fingerprint` and the
-  plan say "another release: PAL, version 2, where this port was made from
-  NTSC-U, version 6" instead of "modded code"; the plan's `xbe` gains
+  release (a listed `sha256` never is, a truncated dump claims none):
+  the warning, `doctor`, `fingerprint` and the plan say "another release: PAL, version 2, where this port was made from
+  NTSC-U, version 6" instead of "modded code", and the build wizard asks
+  before building such a dump (or an unknown one); the plan's `xbe` gains
   `release`, `region`, `version`, `reference_release` and `other_release`;
   the `stamp_env` value ends in `release=<region>,v<version>` (plus
   `,id=0x<title id>` for another title ID). A failed `recomp` adds the
@@ -866,7 +882,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.17.0...v0.18.0
