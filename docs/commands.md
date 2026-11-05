@@ -450,7 +450,7 @@ pin. Ends with `doctor`.
 
 | Command | Stage |
 |---|---|
-| `mygame analyze` | `parse`, `disasm`, `funcid`, `abi`, `names` when a Ghidra export or a symbol map exists, then `hooks` when `[mods]` lists hook functions |
+| `mygame analyze` | with `[pipeline] names`, first the check that the code builds for this release ([names.md](names.md)); then `parse`, `disasm`, `funcid`, `abi`, `names` when a Ghidra export or a symbol map exists, then `hooks` when `[mods]` lists hook functions |
 | `mygame recomp` | lift x86 to C into `pipeline.gen` |
 | `mygame all [--system-tools] [--jobs N]` | `analyze`, `recomp`, then `build` for the host's default target |
 | `mygame parse\|disasm\|funcid\|abi\|ghidra\|names [-- ARGS]` | one stage; extra arguments go to the stage's tool |
@@ -532,6 +532,16 @@ inputs). The CLI never pushes; `export` prints the push.
 Exit 1 on a hit (no ref moves), 2 when a check cannot run: no private
 patterns, no network, an `XBR_PUBLIC_DIR` inside the work tree, no
 `rewrite` file in export mode, or a layout block that could not be checked.
+
+### `mygame match PATH [--release ID]`
+
+Maintainers: a release map for another release of the game, from the
+reference dump in `game_files` (analysed) and PATH, the other release's XBE
+or its folder. It writes `config/releases/<id>.toml` with each name of
+`[pipeline] names` placed and marked `sure` or `unsure`, and keeps the rows
+already marked `reviewed`. `--release` sets the id; the default comes
+from the certificate (`pal-v3`). Values are left for a person to fill in.
+See [names.md](names.md).
 
 ### `mygame hud-map <capture|propose|review|emit|check>`
 

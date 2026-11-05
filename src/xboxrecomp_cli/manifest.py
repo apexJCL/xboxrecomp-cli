@@ -101,6 +101,9 @@ SPEC = {
         "names_hooks": (STRS, []),
         "ghidra": (BOOL, True),
         "symbols": (STR, ""),
+        # The port's names and their per-release maps (docs/names.md).
+        "names": (STR, ""),
+        "releases": (STR, "config/releases"),
     },
     "pipeline.disasm": {
         "text_only": (BOOL, False),
@@ -1632,7 +1635,7 @@ def _paths(m):
     ]
     out += [("pipeline.seeds", s) for s in p["seeds"]]
     out += [("pipeline.names_hooks", s) for s in p["names_hooks"]]
-    for k in ("spin_waits", "exclude_manual", "analysis_json", "symbols"):
+    for k in ("spin_waits", "exclude_manual", "analysis_json", "symbols", "names", "releases"):
         if p[k]:
             out.append(("pipeline." + k, p[k]))
     b = m["build"]
@@ -1738,6 +1741,10 @@ class Game:
         self.spin_waits = j(p["spin_waits"]) if p["spin_waits"] else ""
         # The game's symbol map (docs/symbols.md): names and notes for gen/.
         self.symbols = j(p["symbols"]) if p["symbols"] else ""
+        # The port's names (docs/names.md): one per address or value the
+        # hand-written side uses, resolved per release through releases/.
+        self.names = j(p["names"]) if p["names"] else ""
+        self.releases = j(p["releases"])
         # analyze's resolved hook slots, beside the seeds; recomp reads it.
         self.hook_functions = j("config", "hook_functions.json")
         self.pins = j("config", "setup-pins.json")

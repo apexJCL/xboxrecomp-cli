@@ -7,6 +7,24 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+### Added
+- Port names (`[pipeline] names`, `docs/names.md`): the hand-written
+  code and seeds name the functions, globals and values they use, and the CLI
+  resolves the names per release. `analyze` and `recomp` pick the map for the
+  dump in `game_files` by its fingerprint, write `gen/recomp_names.h`
+  (`XBR_FN`, `XBR_GEN`, `XBR_VA`, `XBR_VAL`, `XBR_HAVE`), resolve seeds by
+  name and pass recomp `--names`. A name a release lacks leaves out the code
+  under `#if XBR_HAVE(name)` (the plain one-name form only); any other use,
+  and a name in `XBR_HAVE` that `names.toml` lacks, stops `analyze`,
+  `recomp` and `build` by name. A dump a map lists by sha256 gets that map;
+  a header-patched or data-modded reference keeps `names.toml`. The
+  reference's generated code is unchanged. It needs a toolkit whose recomp
+  takes `--names` with its `have` list.
+- `match PATH`: a release map for another release of the game
+  (`config/releases/<id>.toml`), from the release matcher. Each row records
+  the reference address it came from (`ref`); rows a person marked
+  `reviewed` are kept when it runs again, unless `names.toml` moved them.
+
 ## [0.21.0] - 2026-11-04
 
 ### Added

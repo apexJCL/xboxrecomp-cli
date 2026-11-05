@@ -51,6 +51,8 @@ Developer commands:
                                         (dist/wizard/; config, check)
   @slug@ public init|export|pr|audit    maintainers: the public repo (one commit
                                         per round; docs/layout.md)
+  @slug@ match PATH [--release ID]      maintainers: the port's names in another
+                                        release (config/releases/; docs/names.md)
   @slug@ hud-map <action>               the HUD table: capture, propose, review,
                                         emit, check (frames stay on this machine)
   @slug@ frames compact DIR...          frame dumps to lossless PNG, each checked

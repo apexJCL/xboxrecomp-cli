@@ -7,7 +7,7 @@ import re
 import shutil
 import sys
 
-from . import fetch, host, pipeline, resources, toolkit
+from . import fetch, host, names, pipeline, resources, toolkit
 from .host import CliError
 
 
@@ -304,6 +304,10 @@ def build(
     host.require(os.path.join(g.gen, "recomp_funcs.h"), "recomp")
     if not stale_ok:
         pipeline.refuse_stale_gen("--stale-gen-ok")
+    # The game's sources are no gen/ input, so a name use added since
+    # recomp is caught here, by name, not at link.
+    if g.names:
+        names.check_sources(g, names.select(g))
     host.refuse_while_regenerating()
     cmake, ninja = build_tools(system_tools)
     env = host.build_env()

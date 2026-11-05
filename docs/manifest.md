@@ -107,6 +107,8 @@ and the wizard leaves out the config options (see
 | `names_hooks` | `[]` | Scripts run after `names`, given the functions.json path. |
 | `ghidra` | `true` | Whether the optional Ghidra stage is offered. |
 | `symbols` | `""` | A symbol map ([docs/symbols.md](symbols.md)): its function names become gen's identifiers, and its notes, globals, fields and labels become comments. Empty leaves gen as it was. |
+| `names` | `""` | The port's names ([docs/names.md](names.md)): the functions, globals and values the hand-written code and seeds use, at the reference's addresses. `analyze` and `recomp` write `gen/recomp_names.h` for the release in `game_files` and pass recomp `--names`. Empty changes nothing. |
+| `releases` | `"config/releases"` | The release maps `match` writes: one `<id>.toml` per other release, giving the names its addresses. Read only with `names`. |
 
 ### [pipeline.disasm]
 

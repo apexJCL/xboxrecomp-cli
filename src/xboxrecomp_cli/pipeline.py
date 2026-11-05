@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 
-from . import doctor, hooks, host, resources, symbols, toolkit
+from . import doctor, hooks, host, names, resources, symbols, toolkit
 from .host import CliError
 
 
@@ -83,8 +83,10 @@ def disasm_cmds(extra=()):
     G, d = g(), g().m["pipeline"]["disasm"]
     cmds = []
     seeds = []
+    # A seed file with rows by name is read from its resolved copy
+    # (names.write_seeds); one by address is passed as it is.
     for s in G.seeds:
-        seeds += ["--seed-functions", s]
+        seeds += ["--seed-functions", names.seed_path(G, s)]
     if has_icall_db():
         cmds.append(
             tool_cmd(
@@ -255,6 +257,11 @@ def toolkit_has_seeds():
     )
 
 
+def toolkit_has_names():
+    """--names (the port's names in the manual file) came with port names."""
+    return _recomp_has("--names", "")
+
+
 def toolkit_has_spin_waits():
     """--spin-waits is the fork's (upstream xboxrecomp has none): there the
     loops stay as the XBE has them, and gen/ is what the toolkit's own
@@ -315,7 +322,12 @@ def recomp_cmds(extra=()):
     # game's own seed files: icall_seeds.json carries no "observed" field.
     if G.seeds and toolkit_has_seeds():
         for s in G.seeds:
-            args += ["--seeds", s]
+            args += ["--seeds", names.seed_path(G, s)]
+    # --names: the port's names for this dump's release, which the manual
+    # file's XBR_FN/XBR_GEN/XBR_VA forms resolve through (docs/names.md).
+    # Only with [pipeline] names, so another game's argv is unchanged.
+    if G.names:
+        args += ["--names", names.names_json(G)]
     args += ["-o", os.path.join(out, "recomp")]
     return [tool_cmd("recomp", G.xbe, *args, *extra)]
 
@@ -348,6 +360,9 @@ def stage_disasm(extra=()):
     host.require(g().analysis_json, "parse")
     if has_icall_db():
         os.makedirs(g().out, exist_ok=True)
+    sel = names.select(g())
+    if sel is not None:
+        names.prepare(g(), sel)
     run_cmds(disasm_cmds(extra))
 
 
@@ -550,6 +565,14 @@ def stage_recomp(extra=()):
     # The names again, from the map as it is now: an edit followed by recomp
     # alone must not pair new comments with the old identifiers.
     apply_symbols()
+    sel = names.select(g())
+    if sel is not None:
+        if not toolkit_has_names():
+            raise CliError(
+                "[pipeline] names needs a toolkit whose recomp takes --names; "
+                "this one does not: update it, or set XBOXRECOMP_DIR"
+            )
+        names.write_recomp_inputs(g(), sel)
     slots = write_hook_slots()
     entries = symbol_entries()
     before = symbols.snapshot(g().gen) if entries is not None else {}
@@ -654,6 +677,17 @@ def gen_inputs():
     # Only with a map, so a game without one keeps its key.
     if G.symbols:
         files.append(G.symbols)
+    # The names and the release map this dump selects; only with names.
+    rel = None
+    if G.names:
+        files.append(G.names)
+        try:
+            sel = names.select(G)
+            rel = sel.id
+            if sel.path:
+                files.append(sel.path)
+        except CliError:
+            rel = "unmapped"
     # Only with slots, so a game without [mods] keeps its key. The table
     # itself is an input too: an edited list stales gen/ before analyze
     # rewrites the json.
@@ -666,6 +700,8 @@ def gen_inputs():
     }
     if hooks.entries(G.m):
         out["game.toml [mods]"] = hooks.mods_digest(G.m)
+    if rel is not None:
+        out["release"] = rel
     return out
 
 

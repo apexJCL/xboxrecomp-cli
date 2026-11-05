@@ -477,6 +477,21 @@ def cmd_fingerprint(a):
         host.say(n)
 
 
+def _cfg_match(p):
+    p.add_argument("path", help="the other release's XBE, or the folder that holds it")
+    p.add_argument(
+        "--release",
+        metavar="ID",
+        help="the release file's name (default: from its certificate, e.g. pal-v3)",
+    )
+
+
+def cmd_match(a):
+    from . import release_map
+
+    release_map.run(a.path, a.release)
+
+
 def _cfg_enhance(p):
     from .enhance import hud
 
@@ -559,6 +574,12 @@ def register():
         "the XBE's verdict against game.toml: known, header, modded data or modded code",
         _cfg_fingerprint,
     )(cmd_fingerprint)
+    command(
+        "match",
+        "maintainers: map the port's names (docs/names.md) onto another release of "
+        "the game: writes its config/releases/<id>.toml for review",
+        _cfg_match,
+    )(cmd_match)
     command(
         "enhance",
         "owner-made enhancement assets from your own dump (enhance hud: the HUD texture pack)",
