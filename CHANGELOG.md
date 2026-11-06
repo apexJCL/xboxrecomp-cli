@@ -8,6 +8,16 @@ a release by its tag in `game.toml`'s `[cli]` table.
 ## [Unreleased]
 
 ### Added
+- The game README standard (`docs/readme.md`): one player-first
+  README for every game repo, in a fixed section order, with the parts that
+  restate `game.toml` (the wizard downloads, the supported release, the
+  wizard's options) between `<!-- xbr:readme:NAME -->` marks, a mods table
+  (each mod's menu name, page, effect and default, from the build's
+  descriptor dump) with an on/off pair or an origin note per mod, settings
+  named only as the in-game menu shows them, the image rules and a
+  checklist. `templates/readme/` holds the skeleton and a GitHub
+  issue form (`.github/ISSUE_TEMPLATE/bug_report.yml`, `config.yml`) with
+  `@TOKEN@` slots. No command uses them yet: `<slug> readme` is planned.
 - Port names (`[pipeline] names`, `docs/names.md`): the hand-written
   code and seeds name the functions, globals and values they use, and the CLI
   resolves the names per release. `analyze` and `recomp` pick the map for the
