@@ -16,8 +16,9 @@ The guards (D11.3), each checked at plan and again at clean time:
   3. nothing in the reference text cites it (refs.collect, failing closed);
   4. a worktree has no tracked changes, and every untracked file has the
      same bytes somewhere under notes/<name>/ (--force-dirty skips this);
+     a merged worktree (Planner.merged) needs that of its notes only;
   5. it has an exit-code if it is a run, and its newest mtime is older than
-     the root's days (or --older-than);
+     the root's days (or --older-than); a merged worktree has no age;
   6. in the store, D10 decides: a superseded run loses its heavy files, and
      a run dir goes whole only when every row of it is unparsed;
   7. a host tree's bench-logs/<stamp> runs each have a whole local copy.
@@ -53,6 +54,58 @@ RUNS_GUARD_HOURS = 24.0
 LARGE_BYTES = 100 * 10**9
 LARGE_SHARE = 0.20
 PLAN_ID_RE = re.compile(r"^[0-9]{14}-[a-z]{6}$")
+# A HEAD reflog entry that makes a new commit in that worktree. A fresh
+# worktree's HEAD is main's tip, and one that caught up with main (a
+# fast-forward merge, pull or rebase) is again a commit of main's: both are
+# about to be worked in, never merged work.
+OWN_WORK_RE = re.compile(
+    r"^((commit( \([a-z]+\))?|cherry-pick|revert|am):"
+    r"|(merge|pull)\b[^:]*: Merge made by )"
+)
+# A rebase's last entry: its own work only when the result is not onto.
+REBASE_END_RE = re.compile(r"^rebase( -i)? \(finish\):")
+REBASE_START_RE = re.compile(r"^rebase( -i)? \(start\):")
+# What ends a rebase's run of entries: a finish, an abort, or a new start.
+REBASE_STOP_RE = re.compile(r"^rebase( -i)? \((finish|abort|start)\):")
+# A checkout's git dir while an operation is under way: its state (the
+# original commits of a rebase, the other side of a merge) lives there
+# only (Opus review 3, 2026-11-06). locked is git worktree lock's.
+IN_PROGRESS = (
+    "rebase-merge",
+    "rebase-apply",
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "BISECT_LOG",
+    "sequencer",
+    "locked",
+)
+# A tip prefix this long is taken as it is; a shorter one must name one
+# object in the repo.
+TIP_UNIQUE = 12
+# How a squash merge names the branch it took ("Branch x, tip <sha>").
+TIP_RE = re.compile(r"(?<![A-Za-z0-9])tip:?\s+([0-9a-f]{7,40})(?![0-9A-Za-z])")
+# The untracked files a merged worktree keeps (the user, 2026-11-06):
+# its notes and scripts, copied to notes/<name>/ before it goes, matched
+# in any case, and patches, which may be a piece of work's only copy.
+# Build trees, logs, results and saves go with it.
+KEEP_SUFFIXES = (
+    ".md",
+    ".markdown",
+    ".txt",
+    ".rst",
+    ".sh",
+    ".py",
+    ".ps1",
+    ".bat",
+    ".cmd",
+    ".patch",
+    ".diff",
+)
+# A checkout detached at an ancestor of its integration branch made no
+# commit there that the reflog shows: it is merged only once nothing in
+# its dir was written for a day (the user, 2026-11-06).
+DETACHED_QUIET_DAYS = 1.0
 # A name that is a short or full build sha (a Deck run dir) pins as a bare
 # word: unlike ssx3 or cli, it is no word of prose.
 HEX_RE = re.compile(r"[0-9a-f]{7,}")
@@ -402,12 +455,17 @@ def sha_tree(d):
     return out
 
 
+def has_dot_git(names):
+    # APFS is case-insensitive: scratch/clone/.GIT is a repo there.
+    return any(n.lower() == ".git" for n in names)
+
+
 def git_dirs(top):
-    """The repository checkouts under a worktree dir (a .git file or dir),
-    without entering them or any link."""
+    """The repository checkouts under a worktree dir (a .git file or dir,
+    in any case), without entering them or any link."""
     out = []
     for dp, dirs, files in os.walk(top, followlinks=False):
-        if ".git" in files or ".git" in dirs:
+        if has_dot_git(files) or has_dot_git(dirs):
             out.append(dp)
             dirs[:] = []
             continue
@@ -423,9 +481,178 @@ def main_of(checkout):
     with open(g, encoding="utf-8", errors="replace") as f:
         text = f.read()
     gitdir = text.split("gitdir:", 1)[-1].strip()
+    if not os.path.isabs(gitdir):
+        # worktree.useRelativePaths writes it relative to the checkout.
+        gitdir = os.path.normpath(os.path.join(checkout, gitdir))
+    gitdir = gitdir.replace(os.sep, "/")
     if "/.git/worktrees/" not in gitdir:
         return None
     return gitdir.split("/.git/worktrees/")[0]
+
+
+def all_git_dirs(top):
+    """Every checkout at or under top, nested ones too (for the prune
+    after a delete), without entering .git dirs or links."""
+    out = []
+    for dp, dirs, files in os.walk(top, followlinks=False):
+        if has_dot_git(files) or has_dot_git(dirs):
+            out.append(dp)
+        dirs[:] = [
+            d for d in dirs if d.lower() != ".git" and not os.path.islink(os.path.join(dp, d))
+        ]
+    return out
+
+
+def is_git_dir(d):
+    """A repository by its contents (a bare clone, a --separate-git-dir
+    target, a .git dir under any name): HEAD, objects/ and refs/."""
+    return (
+        os.path.isfile(os.path.join(d, "HEAD"))
+        and os.path.isdir(os.path.join(d, "objects"))
+        and os.path.isdir(os.path.join(d, "refs"))
+    )
+
+
+def head_bytes(f, n, most=None):
+    """The first n bytes of f when it is a regular file (of at most most
+    bytes), else b"". A FIFO, socket or device is never opened: opening
+    a FIFO blocks the plan, and clean holds its lock meanwhile (Opus
+    review 4, 2026-11-06)."""
+    try:
+        st = os.lstat(f)
+        if not stat.S_ISREG(st.st_mode) or (most is not None and st.st_size > most):
+            return b""
+        fd = os.open(f, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            return os.read(fd, n)
+        finally:
+            os.close(fd)
+    except OSError:
+        return b""
+
+
+def gitdir_file(f):
+    """Whether f is a small file that points at a git dir (gitdir: ...)."""
+    return head_bytes(f, 7, 4096) == b"gitdir:"
+
+
+def git_data(top, checkouts):
+    """Why top holds git data that no judged checkout accounts for, or
+    None: a .git (file, dir or link, in any case) beside the checkouts
+    judged, a dir that is a repository by its contents, a file starting
+    with gitdir:, a *.bundle, or a dir the walk could not read. A judged
+    checkout's own .git is its rules' (the checkouts' own work)."""
+    own = {os.path.join(os.path.normpath(c), ".git").lower() for c in checkouts}
+    errs = []
+    for dp, dirs, files in os.walk(top, followlinks=False, onerror=errs.append):
+        keep = []
+        for n in dirs:
+            p = os.path.join(dp, n)
+            if os.path.normpath(p).lower() in own:
+                continue
+            if n.lower() == ".git" or is_git_dir(p):
+                return "%s is a git dir" % os.path.relpath(p, top)
+            if not os.path.islink(p):
+                keep.append(n)
+        dirs[:] = keep
+        for n in files:
+            p = os.path.join(dp, n)
+            if os.path.normpath(p).lower() in own:
+                continue
+            rel = os.path.relpath(p, top)
+            if n.lower() == ".git":
+                return "%s is a .git" % rel
+            if n.lower().endswith(".bundle"):
+                return "%s is a git bundle" % rel
+            if not os.path.islink(p) and gitdir_file(p):
+                return "%s points at a git dir" % rel
+    if errs:
+        return "cannot read %s" % (errs[0].filename or top)
+    return None
+
+
+def keeper(f):
+    if f.lower().endswith(KEEP_SUFFIXES):
+        return True
+    if os.path.splitext(os.path.basename(f))[1]:
+        return False
+    # An extension-less script (#!/bin/sh).
+    return head_bytes(f, 2) == b"#!"
+
+
+def in_build_tree(f, top, seen):
+    """Whether f lies in a CMake build dir below top (one holding
+    CMakeCache.txt): its .txt and .py files are CMake's and its fetched
+    deps', which go with the build tree. The climb stops at a checkout
+    root or top and counts neither: a notes dir that holds a stray
+    CMakeCache.txt is no build tree. seen caches each dir."""
+    d = os.path.dirname(f)
+    top = os.path.normpath(top)
+    walked = []
+    hit = False
+    while under(d, top) and d != top:
+        if d in seen:
+            hit = seen[d]
+            break
+        if os.path.lexists(os.path.join(d, ".git")):
+            break
+        walked.append(d)
+        if os.path.isfile(os.path.join(d, "CMakeCache.txt")):
+            hit = True
+            break
+        d = os.path.dirname(d)
+    for w in walked:
+        seen[w] = hit
+    return hit
+
+
+def git_text(d, *args):
+    """A git command's stdout in d, or None when it fails."""
+    r = subprocess.run(["git", "-C", d, *args], capture_output=True)
+    return r.stdout.decode(errors="replace") if r.returncode == 0 else None
+
+
+def processes():
+    """(pid, command, path) of every file a process visible to this user
+    has open, its cwd and executables included, or None when they cannot
+    be listed: lsof, else /proc."""
+    try:
+        r = subprocess.run(["lsof", "-n", "-w", "-F", "pcn"], capture_output=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        r = None
+    if r is not None and r.stdout:
+        out, pid, cmd = [], None, ""
+        for line in r.stdout.decode(errors="replace").splitlines():
+            if line[:1] == "p":
+                pid, cmd = line[1:], ""
+            elif line[:1] == "c":
+                cmd = line[1:]
+            elif line[:1] == "n" and pid is not None:
+                out.append((pid, cmd, line[1:]))
+        return out
+    if not os.path.isdir("/proc/self"):
+        return None
+    out = []
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            with open("/proc/%s/comm" % pid, encoding="utf-8", errors="replace") as f:
+                cmd = f.read().strip()
+        except OSError:
+            continue
+        links = ["/proc/%s/cwd" % pid, "/proc/%s/exe" % pid]
+        try:
+            fd = "/proc/%s/fd" % pid
+            links += [os.path.join(fd, n) for n in os.listdir(fd)]
+        except OSError:
+            pass
+        for link in links:
+            try:
+                out.append((pid, cmd, os.readlink(link)))
+            except OSError:
+                pass
+    return out
 
 
 # Untracked or ignored paths that are regenerable output, never an agent's
@@ -613,26 +840,30 @@ class Planner:
         self._floor = None
         self._names = {}
         self._bench_floor = None
+        self._history = {}
+        self._procs = False
 
     # ---- results -----------------------------------------------------------
 
-    def add(self, root, path, rel, kind, size, mtime, rule, host="local"):
+    def add(self, root, path, rel, kind, size, mtime, rule, host="local", copy=None):
         if (host, path) in self.seen:
             return
         self.seen.add((host, path))
-        self.items.append(
-            dict(
-                root=root.name,
-                host=host,
-                path=path,
-                rel=rel,
-                kind=kind,
-                bytes=int(size),
-                mtime=int(mtime),
-                rule=rule,
-                age=int(self.days(root) * 86400),
-            )
+        it = dict(
+            root=root.name,
+            host=host,
+            path=path,
+            rel=rel,
+            kind=kind,
+            bytes=int(size),
+            mtime=int(mtime),
+            rule=rule,
+            age=int(self.days(root) * 86400),
         )
+        if copy:
+            # [source, destination] pairs remove_local copies first.
+            it["copy"] = copy
+        self.items.append(it)
 
     def refuse(self, path, why, root=None, host="local"):
         if (host, path) in self.seen:
@@ -827,11 +1058,55 @@ class Planner:
                 return
             if held:
                 return self.split(r, res, held)
-        if kind == "worktree" and not self.force_dirty:
-            why = self.dirty(res)
+        merged = unmerged = copy = None
+        if kind == "worktree":
+            why = self.live_tree(res)
             if why:
                 self.refuse(res, why, r)
                 return
+            # One walk finds the checkouts both guard 4 and merged judge.
+            err, checkouts, lost = self.scan(res)
+            if err:
+                unmerged = err
+            else:
+                merged, unmerged = self.merged(res, checkouts)
+            if not self.force_dirty:
+                if err:
+                    self.refuse(res, err, r)
+                    return
+                kept = [] if merged else lost
+                if kept:
+                    why = "untracked files not under notes/%s/: %s" % (
+                        os.path.basename(res),
+                        ", ".join(sorted(x[0] for x in kept)[:8])
+                        + (" ..." if len(kept) > 8 else ""),
+                    )
+                    if unmerged:
+                        why += "; not merged: %s" % unmerged
+                    self.refuse(res, why, r)
+                    return
+            if merged:
+                copy, why = self.keepers(res, lost)
+                if why and not self.force_dirty:
+                    self.refuse(res, why, r)
+                    return
+                if copy:
+                    many = "" if len(copy) == 1 else "s"
+                    merged += "; keeps %d note%s or script%s (%s) in notes/%s/" % (
+                        len(copy),
+                        many,
+                        many,
+                        human(sum(os.lstat(x[0]).st_size for x in copy)),
+                        os.path.basename(res),
+                    )
+                gone = sorted(x for x in lost if not x[2])
+                if gone:
+                    merged += "; %d untracked %s (%s): %s" % (
+                        len(gone),
+                        "file goes" if len(gone) == 1 else "files go",
+                        human(sum(x[1] for x in gone)),
+                        ", ".join(x[0] for x in gone[:5]) + (" ..." if len(gone) > 5 else ""),
+                    )
         if r.kind == "store":
             why = self.store_dir(res, rel)
             if why:
@@ -846,9 +1121,17 @@ class Planner:
             self.refuse(res, live, r)
             return
         mt = refs_mod.newest_mtime(res)
+        if merged is not None:
+            # Its work is on the integration branch and no agent is in it:
+            # its age tells nothing more.
+            self.add(r, res, rel, kind, refs_mod.allocated(res), mt, merged, copy=copy)
+            return
         y, d = self.young(r, mt, rel)
         if y:
-            self.refuse(res, "written within %s" % span(d), r)
+            why = "written within %s" % span(d)
+            if unmerged:
+                why += "; not merged: %s" % unmerged
+            self.refuse(res, why, r)
             return
         if kind == "worktree":
             rule = "a worktree with its notes kept, older than %s" % span(d)
@@ -939,35 +1222,48 @@ class Planner:
                         )
         return None
 
-    def dirty(self, top):
-        """Guard 4: why a worktree dir must stay, or None. Every file the
-        delete would take must be committed on a branch, regenerable build
-        output, or a copy (by sha) of a file under notes/<name>/ or of the
-        same path in the main checkout."""
-        notes = None
-        for r in self.cfg.roots.values():
-            if r.local and r.kind == "notes":
-                notes = r.path
-                break
+    def scan(self, top):
+        """Guard 4's walk of a worktree dir: (why it must stay whatever,
+        every checkout in it, the untracked files it alone holds). A file
+        is held elsewhere when it is committed on a branch, regenerable
+        build output, or a copy (by sha) of a file under notes/<name>/ or
+        of the same path in the main checkout. Each lost file is (path
+        below the dir, bytes, whether it is a note or script to keep)."""
+        notes = self.notes_root()
         name = os.path.basename(top)
+        trees = {}
         have = None
         lost = []
-        checkouts = git_dirs(top)
+
+        def keep(f):
+            nonlocal have
+            if have is None:
+                have = sha_tree(os.path.join(notes, name)) if notes else set()
+            if refs_mod.sha256_file(f) not in have:
+                lost.append(
+                    (
+                        os.path.relpath(f, top),
+                        os.lstat(f).st_size,
+                        keeper(f) and not in_build_tree(f, top, trees),
+                    )
+                )
+
+        checkouts = [os.path.normpath(c) for c in git_dirs(top)]
         queue = list(checkouts)
         while queue:
             d = queue.pop(0)
             got = repo_state(d)
             if isinstance(got, str):
-                return got
-            keep, nested = got
+                return got, checkouts, lost
+            files_at, nested = got
             queue += nested
             checkouts += nested
             main = main_of(d)
             regen = pipeline_output(d)
-            for rel in keep:
+            for rel in files_at:
                 p = os.path.join(d, rel)
                 if not os.path.lexists(p):
-                    return "cannot read an untracked name in %s: %r" % (d, rel)
+                    return "cannot read an untracked name in %s: %r" % (d, rel), checkouts, lost
                 files, more = regular_files(p)
                 queue += more
                 checkouts += more
@@ -978,29 +1274,311 @@ class Planner:
                         continue
                     if main and same_file(f, os.path.join(main, frel)):
                         continue
-                    if have is None:
-                        have = sha_tree(os.path.join(notes, name)) if notes else set()
-                    if refs_mod.sha256_file(f) not in have:
-                        lost.append(os.path.relpath(f, top))
+                    keep(f)
         # Files beside the checkouts (wt/<name>/NOTES.md, a scratch dir) are
         # in no repo: they are kept only as copies under notes/<name>/.
         inside = {os.path.normpath(c) for c in checkouts}
-        for dp, dirs, files in os.walk(top, followlinks=False):
+        errs = []
+        for dp, dirs, files in os.walk(top, followlinks=False, onerror=errs.append):
             dirs[:] = [x for x in dirs if os.path.normpath(os.path.join(dp, x)) not in inside]
             for n in files:
                 f = os.path.join(dp, n)
                 if os.path.islink(f) or not os.path.isfile(f):
                     continue
-                if have is None:
-                    have = sha_tree(os.path.join(notes, name)) if notes else set()
-                if refs_mod.sha256_file(f) not in have:
-                    lost.append(os.path.relpath(f, top))
-        if lost:
-            return "untracked files not under notes/%s/: %s" % (
-                name,
-                ", ".join(sorted(lost)[:8]) + (" ..." if len(lost) > 8 else ""),
-            )
+                # A .venv or node_modules beside the checkouts regenerates
+                # as it does inside one.
+                if build_output(top, os.path.relpath(f, top).replace(os.sep, "/")):
+                    continue
+                keep(f)
+        if errs:
+            # An unread dir may hold anything: its files are not known kept.
+            return "cannot read %s" % (errs[0].filename or top), checkouts, lost
+        return None, checkouts, lost
+
+    # ---- merged worktrees ----------------------------------------------------
+
+    def live_tree(self, top):
+        """Why a worktree dir is in use now, or None: a process has a file
+        (its cwd, an executable, any open file) in it, or (with tracker states) a started
+        item carries its name as agent:<name> or its blxNNN."""
+        if self._procs is False:
+            self._procs = processes()
+        for pid, cmd, path in self._procs or ():
+            if under(path, top):
+                return "live: pid %s (%s) has %s open" % (
+                    pid,
+                    cmd or "?",
+                    os.path.relpath(path, top),
+                )
+        if self.judge is not None:
+            why = self.judge.live_topic(os.path.basename(top), ())
+            if why:
+                return why
         return None
+
+    def integration(self, main):
+        """A repo's integration branch: [clean.integration] by its main
+        checkout, else a game's [bench] main_branch, else main."""
+        real = os.path.realpath(main)
+        for p, b in self.cfg.integration.items():
+            if os.path.realpath(p) == real:
+                return b
+        if os.path.isfile(os.path.join(main, "game.toml")):
+            from .. import manifest
+
+            try:
+                return manifest.load(main).m["bench"]["main_branch"]
+            except Exception:
+                pass
+        return "main"
+
+    def history(self, main, branch):
+        """The tip shas an integration branch's commit bodies name, each
+        with the commit naming it; None when the branch is missing."""
+        k = (os.path.realpath(main), branch)
+        if k not in self._history:
+            text = git_text(main, "log", "--format=%H%x00%B%x1e", "refs/heads/" + branch)
+            if text is None:
+                self._history[k] = None
+            else:
+                tips = {}
+                for rec in text.split("\x1e"):
+                    parts = rec.strip("\n").split("\0", 1)
+                    if len(parts) < 2:
+                        continue
+                    for m in TIP_RE.finditer(parts[1]):
+                        tips.setdefault(m.group(1), parts[0])
+                self._history[k] = tips
+        return self._history[k]
+
+    def own_commit(self, d, head):
+        """Whether HEAD is a commit made in this worktree: its HEAD reflog
+        has an entry that made it (OWN_WORK_RE), or a rebase whose result
+        is not where it started (onto)."""
+        log = git_text(d, "log", "-g", "--format=%H %gs", "HEAD")
+        rows = [x.split(" ", 1) for x in (log or "").splitlines()]
+        rows = [x if len(x) == 2 else [x[0], ""] for x in rows]
+        for i, (sha, subject) in enumerate(rows):
+            if sha != head:
+                continue
+            if OWN_WORK_RE.match(subject):
+                return True
+            if REBASE_END_RE.match(subject):
+                # The log is newest first: the start is further down.
+                onto = next((x[0] for x in rows[i + 1 :] if REBASE_START_RE.match(x[1])), None)
+                if onto is not None and onto != head:
+                    return True
+        return False
+
+    def reflog_only(self, d):
+        """A commit that only this worktree's HEAD reflog holds (it goes
+        with the worktree), or None: any sha HEAD was at that no shared
+        ref reaches, such as a detached commit or merge left by a checkout,
+        a reset or a switch back to the branch. Exempt are only an amend's
+        predecessor and a finished rebase's start, picks and original tip;
+        the amend and the finish are checked themselves (Opus reviews 2
+        and 3, 2026-11-06). "?" when it cannot be checked."""
+        log = git_text(d, "log", "-g", "--format=%H %gs", "HEAD")
+        if not (log or "").strip():
+            # Deleted, expired or never written (logAllRefUpdates=false):
+            # what HEAD held is unknown (Opus review 4).
+            return "?"
+        rows = [x.split(" ", 1) for x in log.splitlines()]
+        rows = [x if len(x) == 2 else [x[0], ""] for x in rows]
+        rows.reverse()  # oldest first
+        exempt = set()
+        for i, (_sha, subject) in enumerate(rows):
+            if subject.startswith("commit (amend)") and i:
+                exempt.add(i - 1)
+            elif REBASE_START_RE.match(subject):
+                stop = next(
+                    (j for j in range(i + 1, len(rows)) if REBASE_STOP_RE.match(rows[j][1])),
+                    None,
+                )
+                # An aborted, restarted or unfinished rebase replaced nothing.
+                if stop is not None and REBASE_END_RE.match(rows[stop][1]):
+                    exempt.update(range(max(i - 1, 0), stop))
+        check = {sha for i, (sha, _s) in enumerate(rows) if i not in exempt}
+        if not check:
+            return None
+        refs = git_text(d, "for-each-ref", "--format=%(refname)")
+        if refs is None:
+            return "?"
+        # Per-worktree refs go with the worktree.
+        shared = [
+            x
+            for x in refs.split()
+            if not x.startswith(("refs/worktree/", "refs/bisect/", "refs/rewritten/"))
+        ]
+        # The branches' reflogs stay in the main repo: a branch's commits
+        # from before its rebase are held there (Opus review 4).
+        heads = [x for x in shared if x.startswith("refs/heads/")]
+        held = git_text(d, "log", "-g", "--format=%H", *heads) if heads else ""
+        if held is None:
+            return "?"
+        r = subprocess.run(
+            ["git", "-C", d, "rev-list", "--stdin"],
+            input="".join(x + "\n" for x in sorted(check))
+            + "".join("^%s\n" % x for x in shared)
+            + "".join("^%s\n" % x for x in sorted(set(held.split()))),
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode != 0:
+            return "?"
+        out = r.stdout.split()
+        return out[0] if out else None
+
+    def unique_tip(self, d, tip):
+        if len(tip) >= TIP_UNIQUE:
+            return True
+        out = git_text(d, "rev-parse", "--disambiguate=" + tip)
+        return out is not None and len(out.split()) == 1
+
+    def notes_root(self):
+        for r in self.cfg.roots.values():
+            if r.local and r.kind == "notes":
+                return r.path
+        return None
+
+    def keepers(self, top, lost):
+        """The [source, destination] copies that keep a merged dir's lost
+        notes and scripts under notes/<name>/, and why they cannot be
+        made: no notes root, or a destination holding other bytes."""
+        keep = sorted(x[0] for x in lost if x[2])
+        if not keep:
+            return [], None
+        notes = self.notes_root()
+        name = os.path.basename(top)
+        if notes is None:
+            return [], "no notes root to copy its notes and scripts to: %s" % ", ".join(keep[:8])
+        big = [x[0] for x in lost if x[2] and x[1] > refs_mod.MAX_REF_FILE]
+        if big:
+            # notes/ is a ref source, and every later plan refuses a file
+            # it cannot read whole.
+            return [], "notes or scripts over %d MB, too big for notes/: %s" % (
+                refs_mod.MAX_REF_FILE >> 20,
+                ", ".join(sorted(big)[:8]) + (" ..." if len(big) > 8 else ""),
+            )
+        copy, clash = [], []
+        for rel in keep:
+            dst = os.path.join(notes, name, rel)
+            # scan found no copy of these bytes under notes/<name>/.
+            if os.path.lexists(dst):
+                clash.append(rel)
+            else:
+                copy.append([os.path.join(top, rel), dst])
+        if clash:
+            return copy, "notes/%s/ already has other bytes at: %s" % (
+                name,
+                ", ".join(clash[:8]) + (" ..." if len(clash) > 8 else ""),
+            )
+        return copy, None
+
+    def merged_checkout(self, d, top):
+        """(how, None) when one checkout's HEAD is merged work, else (None,
+        why not). Its tracked state is guard 4's (repo_state)."""
+        rel = os.path.relpath(d, top)
+        main = main_of(d)
+        if main is None:
+            # A clone (or a main checkout): its commits may live only here.
+            return None, "%s is no linked worktree" % rel
+        if under(os.path.realpath(main), os.path.realpath(top)):
+            return None, "%s: its main checkout %s is in the dir" % (rel, main)
+        head = (git_text(d, "rev-parse", "-q", "--verify", "HEAD^{commit}") or "").strip()
+        if not head:
+            return None, "%s: no HEAD" % rel
+        name = (git_text(d, "symbolic-ref", "-q", "--short", "HEAD") or "").strip()
+        name = name or "detached HEAD"
+        branch = self.integration(main)
+        tips = self.history(main, branch)
+        if tips is None:
+            return None, "%s: no integration branch %s" % (rel, branch)
+        gd = (git_text(d, "rev-parse", "--absolute-git-dir") or "").strip()
+        busy = [x for x in IN_PROGRESS if gd and os.path.lexists(os.path.join(gd, x))]
+        if not gd or busy:
+            return None, "%s: %s" % (
+                rel,
+                "its git dir is unreadable" if not gd else "%s in its git dir" % busy[0],
+            )
+        lost = self.reflog_only(d)
+        if lost == "?":
+            return None, "%s: its HEAD reflog or refs cannot be read" % rel
+        if lost:
+            return None, "%s: commit %s is only in its HEAD reflog" % (rel, lost[:12])
+        r = subprocess.run(
+            ["git", "-C", d, "merge-base", "--is-ancestor", head, "refs/heads/" + branch],
+            capture_output=True,
+        )
+        ancestor = r.returncode == 0
+        if not self.own_commit(d, head):
+            why = "%s: HEAD %s is no commit made in it" % (rel, head[:12])
+            if not ancestor or name != "detached HEAD":
+                return None, why
+            # A test checkout of a merged commit: nothing of its own to
+            # lose once nobody has written in the dir for a day.
+            quiet = (self.now - refs_mod.newest_mtime(top)) / 86400.0
+            if quiet < DETACHED_QUIET_DAYS:
+                return None, "%s, and the dir was written within %s" % (
+                    why,
+                    "a day" if DETACHED_QUIET_DAYS == 1 else span(DETACHED_QUIET_DAYS),
+                )
+            return "%s: detached HEAD %s is in %s, nothing written for %s" % (
+                rel,
+                head[:12],
+                branch,
+                span(round(quiet, 1)),
+            ), None
+        if ancestor:
+            return "%s: %s %s is in %s" % (rel, name, head[:12], branch), None
+        for tip, at in sorted(tips.items()):
+            if head.startswith(tip) and self.unique_tip(d, tip):
+                return "%s: %s squash-merged, tip %s in %s %s" % (
+                    rel,
+                    name,
+                    tip,
+                    branch,
+                    at[:12],
+                ), None
+        return None, "%s: %s %s is not in %s" % (rel, name, head[:12], branch)
+
+    def merged(self, top, checkouts):
+        """(rule, None) when every checkout in a worktree dir (as scan
+        found them) holds only merged work, else (None, why not). Merged
+        is: a linked worktree whose main checkout is outside the dir, a
+        HEAD the worktree committed itself, and that HEAD an ancestor of
+        its repo's integration branch or a tip a squash merge's body names
+        ("tip <sha>"). Tracked edits are scan's. It needs the tracker
+        states, so a started item tells a live agent, and the process
+        list."""
+        if self.judge is None or self.judge.items is None:
+            # No reason shown: without the tracker the guards are as before.
+            return None, None
+        if self._procs is None:
+            return None, "the processes could not be listed"
+        checkouts = {os.path.normpath(c) for c in checkouts}
+        # Git data no checkout accounts for (a bare clone, a bundle, a
+        # .GIT) would go as untracked files: its commits may be the only
+        # copy (Opus review 2, 2026-11-06).
+        why = git_data(top, checkouts)
+        if why:
+            return None, ("no checkout judged, yet %s" if not checkouts else "%s") % why
+        if not checkouts:
+            # No checkout left (the user, 2026-11-06), so no .git at all.
+            return "a worktree dir with no checkout left, its notes kept", None
+        stray = sorted(
+            os.path.relpath(x, top)
+            for x in {os.path.normpath(x) for x in all_git_dirs(top)} - checkouts
+        )
+        if stray:
+            return None, "%s has a .git no walk judged" % stray[0]
+        hows = []
+        for d in sorted(checkouts):
+            how, why = self.merged_checkout(d, top)
+            if how is None:
+                return None, why
+            hows.append(how)
+        return "a merged worktree, its notes kept (%s)" % "; ".join(hows), None
 
     # ---- store sweeps and retention ----------------------------------------
 
@@ -1770,6 +2348,30 @@ def human(n):
     return str(n)
 
 
+def copy_keepers(cfg, top, copy):
+    """Copies a merged dir's notes and scripts to notes/<name>/ before it
+    goes; raises OSError, with nothing deleted, when one cannot be kept."""
+    roots = [os.path.realpath(r.path) for r in cfg.roots.values() if r.local and r.kind == "notes"]
+    for src, dst in copy:
+        if not under(os.path.realpath(src), os.path.realpath(top)):
+            raise OSError("%s is not in %s: nothing deleted" % (src, top))
+        if not any(under(os.path.realpath(os.path.dirname(dst)), n) for n in roots):
+            raise OSError("%s is not under a notes root: nothing deleted" % dst)
+        if os.path.lexists(dst) and not (
+            os.path.isfile(dst)
+            and not os.path.islink(dst)
+            and refs_mod.sha256_file(dst) == refs_mod.sha256_file(src)
+        ):
+            raise OSError("%s already has other bytes: nothing deleted" % dst)
+    for src, dst in copy:
+        if os.path.lexists(dst):
+            continue
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(src, dst, follow_symlinks=False)
+        if refs_mod.sha256_file(dst) != refs_mod.sha256_file(src):
+            raise OSError("the copy of %s to %s differs: nothing deleted" % (src, dst))
+
+
 def remove_local(cfg, it):
     """Deletes one local item; raises OSError on a failure. Returns the
     notes for the journal: a git worktree remove that failed (the rmtree
@@ -1781,7 +2383,10 @@ def remove_local(cfg, it):
         return []
     mains, notes = set(), []
     if it["kind"] == "worktree":
-        for d in git_dirs(p):
+        copy_keepers(cfg, p, it.get("copy") or [])
+        # The deepest first, so a nested worktree goes before the one
+        # holding it; each repo's records are pruned after the rmtree.
+        for d in sorted(all_git_dirs(p), key=len, reverse=True):
             m = main_of(d)
             if m:
                 mains.add(m)

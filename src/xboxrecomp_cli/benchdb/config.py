@@ -40,6 +40,10 @@ finds .git.
   [games]
   mygame = "mygame"                     # slug = game dir
 
+  [clean.integration]                   # a repo's integration branch, by its
+  xboxrecomp = "posix-host/portability" # main checkout (default: the game's
+                                        # [bench] main_branch, else main)
+
 Every relative local path is relative to the config file's directory.
 Without a config, the clean verbs are refused (D3).
 
@@ -70,7 +74,8 @@ REFS_KEYS = {"paths", "exclude"}
 PENDING_KEYS = {"states", "states_file", "prefixes", "cache_minutes"}
 # [pending] prefixes when the table names none: the tracker project ids.
 DEFAULT_PREFIXES = ("BLX",)
-CLEAN_KEYS = {"guard_hours"}
+CLEAN_KEYS = {"guard_hours", "integration"}
+BRANCH_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*")
 RELEASE_KEYS = {"export_maps", "toolkit_map", "toolkit", "cli"}
 
 
@@ -297,6 +302,18 @@ class Config:
             errors.append("clean.guard_hours: a number of hours, at least 1")
             gh = None
         self.guard_hours = float(gh) if gh is not None else None
+        # The branch a merged worktree's work must be on, by its repo's
+        # main checkout (clean.Planner.merged).
+        integ = doc.get("clean", {}).get("integration", {})
+        self.integration = {}
+        if not isinstance(integ, dict):
+            errors.append("clean.integration: not a table of checkout = branch")
+        else:
+            for k, v in sorted(integ.items()):
+                if not isinstance(v, str) or not BRANCH_RE.fullmatch(v) or ".." in v:
+                    errors.append("clean.integration.%s: %r is not a branch name" % (k, v))
+                    continue
+                self.integration[self.local_path(k)] = v
         if errors:
             raise ConfigError("%s: %s" % (path or NAME, "; ".join(errors)))
 

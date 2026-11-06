@@ -825,7 +825,56 @@ tracker states were read. A run with any other verdict keeps the games'
 `[bench.gc] days`, in the store and in the retention. A runs-root topic
 stays while it is live: a `wt/<topic>` exists, or an item Ready, In
 Progress, Blocked or In Review carries `agent:<topic>` or the topic's
-`blxNNN`. `plan --frames` plans only the `frames/` dirs of runs in
+`blxNNN`.
+
+A worktree dir (`plan wt/<name>`) whose work is merged goes without
+`--force-dirty` and at any age. Its notes, scripts and patches (`.md`,
+`.markdown`, `.txt`, `.rst`, `.sh`, `.py`, `.ps1`, `.bat`, `.cmd`,
+`.patch`, `.diff`, in any case, and extension-less files starting with
+`#!`; outside a CMake build dir below a checkout root, one holding
+`CMakeCache.txt`; each at most 8 MB, the ref files' limit) are copied to
+`notes/<name>/<path in the dir>` first, unless a copy of the same bytes is
+already there; `clean` deletes nothing when a copy cannot be made, and the
+plan refuses a dir whose copy would land on a file with other bytes. Its
+other untracked files (build trees, logs, results, saves) go with it; the
+plan row counts them, their size and the first names. `.venv`,
+`node_modules` and the other build output are regenerable wherever they
+sit. Merged needs the tracker
+states, a process list (`lsof`, else `/proc`), and for every checkout in
+the dir, nested ones and those under an ignored dir included: a linked
+worktree whose main checkout is outside the dir (a clone may hold the
+only copy of its commits), no tracked edit, a HEAD the worktree made
+itself (a commit, cherry-pick, revert, am, or a rebase that moved it; a
+fresh worktree, or one that only caught up with main, is about to be
+worked in), and that HEAD an ancestor of its repo's integration branch,
+or a tip that a commit body there names (`tip <sha>`: 12 hex digits or
+more, or a shorter prefix that names one object). A checkout detached
+at an ancestor of the integration branch that made no commit there (a
+test checkout) is merged only when nothing in the dir was written for a
+day. No sha in a checkout's HEAD reflog may be out of reach of every
+shared ref and of the branches' reflogs, which stay in the main repo (a
+detached commit or merge left by a checkout, a reset or a switch back),
+except an amend's predecessor and the picks and original tip of a rebase
+that finished. A missing or empty HEAD reflog (deleted, expired, or
+`core.logAllRefUpdates=false`) keeps the checkout. A checkout with an operation under way
+(`rebase-merge/`, `rebase-apply/`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`,
+`REVERT_HEAD`, `BISECT_LOG`, `sequencer/`) or locked (`git worktree
+lock`) stays. Git data that no judged checkout accounts for keeps the dir: a `.git`
+in any case, a dir that is a repository by its contents (a bare clone, a
+`--separate-git-dir` target), a file starting with `gitdir:`, a
+`*.bundle`, or a dir the walk cannot read. A dir with no checkout left
+and none of these is merged. The plan row names each checkout's form. A worktree is refused while a process has any file
+open in it (its cwd and executables included), or an item Ready, In
+Progress, Blocked or In Review carries `agent:<name>` or its `blxNNN`.
+The integration branch is `[clean.integration]` by main checkout, else a
+game's `[bench] main_branch`, else `main`:
+
+```toml
+[clean.integration]
+xboxrecomp = "posix-host/portability"
+```
+
+`plan --frames` plans only the `frames/` dirs of runs in
 the db whose verdicts are all `pass`, when nothing pins them.
 
 `regress` compares build B (by default the game's newest integration build)
