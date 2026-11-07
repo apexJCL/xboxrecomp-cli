@@ -419,6 +419,26 @@ loopback it needs a token. See [upscale-service.md](upscale-service.md).
 | `--token-env VAR` | the variable holding the token clients send (required off loopback) |
 | `--config FILE` | the config with the backend's table |
 
+### `mygame enhance preview`
+
+A local page over the texture pack's choices, opened in your browser; Ctrl-C or its Quit button stops it.
+
+- **Upscalers**: the built-ins, the presets with whether their tool is here, a tool's settings and path, and a service you register (its URL and token's env var), with Test.
+- **Coverage**: render scale, preset, per-class and per-rule rows, and per preset the pack size, the busiest dumped scene's VRAM and the build minutes; what the preset leaves out, and why.
+- **Compare**: any texture, grouped by class; a crop you drag through each upscaler, side by side or as a wipe, with the seconds and bytes of each, BC1 and BC3 beside raw, the crop as drawn on screen at a magnification (the trace's or yours) and the render scale, the whole texture on request, and a rule from the texture.
+- **Runtime**: a `RECOMP_TRACE=tex_pack` log's misses, joined to the inventory: what the pack lacks and why.
+
+Save writes `config/enhance-textures.toml`, editing only the keys that changed so your comments stay, and puts tool paths, service URLs and token names in `enhance-textures.local.toml` only; it prints the `enhance textures build` line to run. A table written with dotted keys or inline (`class.world.scale = 2`, `hud = {scale = 2}`) is one Save cannot edit: it names it and writes nothing, and you edit it by hand.
+
+| Option | Effect |
+|---|---|
+| `--config FILE` | the config (default `config/enhance-textures.toml`) |
+| `--inventory FILE`, `--dump DIR` | as `build` |
+| `--port N` | the port (default: a free one) |
+| `--no-browser` | print the URL and open nothing |
+
+The page listens on 127.0.0.1 only and takes a token in its URL, which the CLI prints to the terminal and writes nowhere. It refuses another host or origin and any POST that is not JSON. The page drops the token from the address bar once it has read it; to reload, open the printed URL again. Treat that URL like a shell: the page runs your local upscalers, templates included, so whoever has the token can run them. It shows your game's textures: keep it on this machine.
+
 ### `mygame enhance hud`
 
 The HUD texture pack from the owner's own dump, into `dist/enhance/hud/hud.pack`.

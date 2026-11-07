@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<title>xbr enhance preview</title>
+<!-- One file, nothing from elsewhere: the server's CSP allows inline script and
+     style, data: images and fetches to itself, and nothing more. -->
+<style>
+:root { --bg: #16181c; --panel: #1f2228; --line: #343943; --fg: #e4e6ea; --dim: #9aa1ad;
+        --accent: #6aa6ff; --warn: #f0b45a; --bad: #ff7a7a; --ok: #7bd88f; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 13px/1.4 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+header { display: flex; gap: 12px; align-items: center; padding: 8px 14px;
+         border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 5; }
+header h1 { font-size: 15px; margin: 0 12px 0 0; }
+header .grow { flex: 1; color: var(--dim); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+button, select, input { font: inherit; color: var(--fg); background: var(--panel);
+         border: 1px solid var(--line); border-radius: 4px; padding: 3px 7px; }
+button { cursor: pointer; } button:hover { border-color: var(--accent); }
+button.primary { background: #234a80; border-color: #2f62a8; }
+button:disabled { opacity: .5; cursor: default; }
+input[type=number] { width: 6em; }
+nav { display: flex; gap: 2px; padding: 0 14px; border-bottom: 1px solid var(--line); }
+nav button { border: none; border-radius: 0; background: none; padding: 7px 12px; color: var(--dim); }
+nav button.on { color: var(--fg); border-bottom: 2px solid var(--accent); }
+main { padding: 12px 14px; }
+section { display: none; } section.on { display: block; }
+h2 { font-size: 14px; margin: 14px 0 6px; } h2:first-child { margin-top: 0; }
+table { border-collapse: collapse; } td, th { padding: 3px 8px; border-bottom: 1px solid var(--line);
+        text-align: left; vertical-align: top; }
+th { color: var(--dim); font-weight: normal; }
+.dim { color: var(--dim); } .warn { color: var(--warn); } .bad { color: var(--bad); } .ok { color: var(--ok); }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin: 8px 0; }
+.split { display: grid; grid-template-columns: 320px 1fr; gap: 14px; }
+#list { max-height: 78vh; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+#list details { border-bottom: 1px solid var(--line); } #list summary { padding: 4px 8px; cursor: pointer; }
+#list .item { padding: 2px 8px 2px 18px; cursor: pointer; white-space: nowrap; overflow: hidden;
+              text-overflow: ellipsis; } #list .item:hover, #list .item.on { background: #2a3140; }
+.checker { background-color: #888; background-image:
+  linear-gradient(45deg, #aaa 25%, transparent 25%), linear-gradient(-45deg, #aaa 25%, transparent 25%),
+  linear-gradient(45deg, transparent 75%, #aaa 75%), linear-gradient(-45deg, transparent 75%, #aaa 75%);
+  background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0; }
+img.px { image-rendering: pixelated; display: block; }
+#stockbox { position: relative; display: inline-block; cursor: move; user-select: none; }
+#cropbox { position: absolute; border: 2px solid var(--accent); box-shadow: 0 0 0 9999px rgba(0,0,0,.35);
+           pointer-events: none; }
+.results { display: flex; flex-wrap: wrap; gap: 12px; }
+.result { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+.result .label { margin-bottom: 6px; }
+.wipe { position: relative; display: inline-block; }
+.wipe img { display: block; }
+.wipe .top { position: absolute; left: 0; top: 0; }
+.bar { height: 10px; background: var(--accent); border-radius: 2px; min-width: 1px; }
+.bar.vram { background: #9a7bff; } .bar.time { background: var(--ok); }
+.bars td { min-width: 120px; }
+#status { min-height: 1.4em; }
+code { background: #2a2e36; padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>enhance preview</h1>
+  <span class="grow" id="where"></span>
+  <button class="primary" id="save">Save</button>
+  <button id="quit">Quit</button>
+</header>
+<nav id="tabs">
+  <button data-tab="upscalers" class="on">Upscalers</button>
+  <button data-tab="coverage">Coverage</button>
+  <button data-tab="compare">Compare</button>
+  <button data-tab="runtime">Runtime</button>
+  <button data-tab="font" title="enhance hud's font page comes here">Font</button>
+</nav>
+<main>
+<div id="status" class="dim"></div>
+
+<section id="upscalers" class="on">
+  <h2>Upscalers</h2>
+  <p class="dim">Built-ins are always here. A preset's tool is yours to install; the CLI downloads nothing.
+     A path or URL goes in the local file, never the tracked one.</p>
+  <table id="uptable"></table>
+  <div id="params" class="card" hidden></div>
+  <div class="card">
+    <h2>Register a service</h2>
+    <div class="row">
+      <label>name <input id="svname" placeholder="myservice" size="12"></label>
+      <label>URL <input id="svurl" placeholder="https://host:port" size="34"></label>
+      <label>token env <input id="svtoken" placeholder="MY_UPSCALER_TOKEN" size="18"></label>
+      <label><input type="checkbox" id="svplain"> allow plain http</label>
+      <button id="svadd">Add</button> <button id="svtest">Test</button>
+    </div>
+    <div id="svout" class="dim"></div>
+  </div>
+</section>
+
+<section id="coverage">
+  <h2>Coverage</h2>
+  <div class="row">
+    <label>render scale <input type="number" id="rscale" min="1" max="8"></label>
+    <label>preset <select id="preset"></select></label>
+    <label>mode <select id="covmode"><option>classes</option><option>traced</option></select></label>
+    <label>untraced <select id="untraced"><option>class</option><option>skip</option></select></label>
+    <label>pack budget MB <input type="number" id="bpack" min="0"></label>
+    <label>VRAM budget MB <input type="number" id="bvram" min="0"></label>
+  </div>
+  <h2>Classes</h2>
+  <p class="dim">An empty field keeps the class default (shown greyed).</p>
+  <table id="classtable"></table>
+  <h2>Rules</h2>
+  <p class="dim">Added from a texture in Compare; a key is a name pattern or <code>hash:HASH</code>.</p>
+  <table id="ruletable"></table>
+  <h2>Cost per preset</h2>
+  <table id="bars" class="bars"></table>
+  <h2>Left out of the preset</h2>
+  <table id="excluded"></table>
+</section>
+
+<section id="compare">
+  <div class="split">
+    <div>
+      <input id="search" placeholder="search names and hashes" style="width:100%;margin-bottom:6px">
+      <div id="list"></div>
+    </div>
+    <div>
+      <div id="tex" class="dim">Pick a texture on the left.</div>
+      <div id="texpanel" hidden>
+        <div class="row" id="texinfo"></div>
+        <div class="row">
+          <div id="stockbox" class="checker"><img id="stock" class="px" alt=""><div id="cropbox"></div></div>
+        </div>
+        <div class="row">
+          <label>crop <select id="cropsize"><option>64</option><option selected>128</option><option>256</option></select></label>
+          <label>scale <select id="scale"><option value="">class</option><option>2</option><option>3</option><option>4</option></select></label>
+          <span id="upchecks"></span>
+        </div>
+        <div class="row">
+          <label><input type="checkbox" id="bc"> BC1/BC3 beside raw</label>
+          <label>view <select id="view"><option value="texels">texels</option><option value="wipe">wipe</option><option value="screen">on screen</option></select></label>
+          <label>magnification <input type="number" id="mag" step="0.25" min="0.25" placeholder="trace"></label>
+          <label>zoom <select id="zoom"><option>1</option><option selected>2</option><option>4</option></select></label>
+          <button class="primary" id="render">Render crop</button>
+          <button id="whole">Whole texture</button>
+        </div>
+        <div class="row">
+          <span class="dim">rule:</span>
+          <select id="ruleup"></select>
+          <button id="rulethis">this one with it</button>
+          <button id="ruleskip">skip this one</button>
+          <input id="rulepat" placeholder="pattern, e.g. floor_*" size="16">
+          <select id="ruleedges"><option value="">edges…</option><option>wrap</option><option>mirror</option><option>clamp</option></select>
+          <button id="rulepatadd">add for pattern</button>
+        </div>
+        <div id="out"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="runtime">
+  <h2>What the runtime missed</h2>
+  <p class="dim">A log from a run with <code>RECOMP_TRACE=tex_pack</code> and a pack loaded. Only its
+     <code>[TEXPACK] miss</code> lines leave this page for the server.</p>
+  <div class="row"><input type="file" id="logs" multiple accept=".log,.txt"></div>
+  <table id="misses"></table>
+  <h2>Magnification (the trace)</h2>
+  <table id="traced"></table>
+</section>
+
+<section id="font">
+  <h2>Font</h2>
+  <p class="dim">The font page (enhance hud) comes here.</p>
+</section>
+</main>
+
+<script>
+"use strict";
+const TOKEN = new URLSearchParams(location.search).get("t") || "";
+// Out of the address bar, the history and a shared screenshot: requests send it
+// as a header. A reload then needs the URL the terminal printed.
+history.replaceState(null, "", location.pathname);
+let S = null;           // /api/state
+let UP = [];            // /api/upscalers rows
+let draft = null;       // {tracked, local}: what Save writes
+let entries = [];       // /api/inventory
+let cur = null;         // the texture shown
+let crop = [0, 0, 128, 128];
+let last = null;        // the last render
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "on") for (const [ev, f] of Object.entries(v)) e.addEventListener(ev, f);
+    else if (k in e && typeof v !== "string") e[k] = v; else e.setAttribute(k, v);
+  }
+  for (const k of kids) if (k != null) e.append(k.nodeType ? k : String(k));
+  return e;
+};
+const mb = (n) => (n < 1e6 ? (n / 1024).toFixed(1) + " KiB" : (n / 1e6).toFixed(1) + " MB");
+const say = (msg, cls) => { const s = $("status"); s.textContent = msg; s.className = cls || "dim"; };
+
+async function api(path, body) {
+  const init = { headers: { "X-Xbr-Token": TOKEN } };
+  if (body !== undefined) {
+    init.method = "POST";
+    init.headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(body);
+  }
+  const r = await fetch(path, init);
+  const j = r.headers.get("Content-Type") === "application/json" ? await r.json() : {};
+  if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+const guard = (f) => async (...a) => { try { await f(...a); } catch (e) { say(e.message, "bad"); } };
+
+// ---- the draft --------------------------------------------------------------
+const T = () => draft.tracked;
+const table = (root, ...path) => {
+  let o = root;
+  for (const k of path) { if (!o[k] || typeof o[k] !== "object") o[k] = {}; o = o[k]; }
+  return o;
+};
+function setKey(root, path, key, value) {
+  const t = table(root, ...path);
+  if (value === "" || value == null) delete t[key]; else t[key] = value;
+  prune(root, path);
+  changed();
+}
+function prune(root, path) {
+  // An emptied table goes from the file, as the owner cleared it.
+  for (let n = path.length; n > 0; n--) {
+    let o = root;
+    for (const k of path.slice(0, n - 1)) o = o[k];
+    const last = path[n - 1];
+    if (o[last] && !Object.keys(o[last]).length) delete o[last]; else break;
+  }
+}
+let timer = null;
+function changed() {
+  $("save").textContent = "Save *";
+  clearTimeout(timer);
+  timer = setTimeout(guard(refreshCoverage), 400);
+}
+
+// ---- tabs ---------------------------------------------------------------------
+for (const b of $("tabs").children) {
+  b.addEventListener("click", () => {
+    for (const x of $("tabs").children) x.classList.toggle("on", x === b);
+    for (const s of document.querySelectorAll("section")) s.classList.toggle("on", s.id === b.dataset.tab);
+  });
+}
+
+// ---- upscalers ------------------------------------------------------------------
+function renderUpscalers() {
+  const t = $("uptable");
+  t.replaceChildren(el("tr", {}, ...["name", "kind", "found", "version", "licence", "homepage", ""].map((h) => el("th", {}, h))));
+  for (const u of UP) {
+    const found = u.found ? el("span", { class: "ok" }, "found") : el("span", { class: "dim" }, u.kind === "service" ? "service" : "not found");
+    let ver = "";
+    if (u.source === "preset" && u.found) {
+      ver = u.version || el("button", { on: { click: guard(async () => {
+        const r = await api("/api/tool/version", { name: u.name }); u.version = r.version; renderUpscalers();
+      }) } }, "version");
+    }
+    const extra = u.flag ? el("span", { class: "warn" }, " " + u.flag) : null;
+    t.append(el("tr", {},
+      el("td", {}, u.name, extra),
+      el("td", { class: "dim" }, u.source === "config" ? (u.kind + (u.url ? " " + u.url : "")) : u.kind),
+      el("td", {}, found, u.why ? el("div", { class: "dim" }, u.why) : null),
+      el("td", {}, ver),
+      el("td", { class: "dim" }, u.licence || ""),
+      el("td", { class: "dim" }, u.homepage || ""),
+      el("td", {}, el("button", { on: { click: () => showParams(u) } }, "settings"))));
+  }
+  fillUpscalerChoices();
+}
+
+function showParams(u) {
+  const box = $("params");
+  box.hidden = false;
+  const kids = [el("h2", {}, u.name)];
+  const tracked = table(T(), "upscaler", u.name);
+  for (const p of u.params || []) {
+    const v = tracked[p.name];
+    let input;
+    if (p.type === "bool") {
+      input = el("select", { on: { change: (e) => setKey(T(), ["upscaler", u.name], p.name, e.target.value === "" ? "" : e.target.value === "true") } },
+        el("option", { value: "" }, "default (" + p.default + ")"), el("option", {}, "true"), el("option", {}, "false"));
+      input.value = v === undefined ? "" : String(v);
+    } else if (p.type === "int") {
+      input = el("input", { type: "number", min: p.min ?? "", max: p.max ?? "", placeholder: String(p.default),
+        on: { change: (e) => setKey(T(), ["upscaler", u.name], p.name, e.target.value === "" ? "" : parseInt(e.target.value, 10)) } });
+      if (v !== undefined) input.value = v;
+    } else if (p.type === "ints") {
+      input = el("input", { placeholder: p.default.join(", "), size: 24,
+        on: { change: (e) => setKey(T(), ["upscaler", u.name], p.name, e.target.value.trim() === "" ? "" : e.target.value.split(",").map((x) => parseInt(x, 10))) } });
+      if (v !== undefined) input.value = v.join(", ");
+    } else {
+      input = el("input", { placeholder: String(p.default), size: 24,
+        on: { change: (e) => setKey(T(), ["upscaler", u.name], p.name, e.target.value) } });
+      if (v !== undefined) input.value = v;
+    }
+    kids.push(el("div", { class: "row" }, el("label", {}, p.name + " ", input), el("span", { class: "dim" }, p.help)));
+  }
+  if (!(u.params || []).length) kids.push(el("div", { class: "dim" }, "no settings"));
+  if (u.source === "preset") {
+    const local = (draft.local.upscaler || {})[u.name] || {};
+    const path = el("input", { size: 50, placeholder: "on PATH: " + u.binary, value: local.path || "",
+      on: { change: (e) => { setKey(draft.local, ["upscaler", u.name], "path", e.target.value.trim()); } } });
+    kids.push(el("div", { class: "row" }, el("label", {}, "path (local file) ", path)));
+  }
+  prune(T(), ["upscaler", u.name]);
+  box.replaceChildren(...kids);
+}
+
+function serviceForm() {
+  return { name: $("svname").value.trim(), url: $("svurl").value.trim(), token_env: $("svtoken").value.trim(),
+           allow_plain_http: $("svplain").checked };
+}
+$("svadd").addEventListener("click", guard(async () => {
+  const f = serviceForm();
+  if (!f.name || !f.url) throw new Error("a service needs a name and a URL");
+  const t = { url: f.url };
+  if (f.token_env) t.token_env = f.token_env;
+  if (f.allow_plain_http) t.allow_plain_http = true;
+  table(draft.local, "upscaler")[f.name] = t;
+  changed();
+  await loadUpscalers();
+  $("svout").textContent = "added to the draft; Save writes it to " + S.local;
+}));
+$("svtest").addEventListener("click", guard(async () => {
+  const f = serviceForm();
+  const body = { name: f.name, url: f.url };
+  if (f.token_env) body.token_env = f.token_env;
+  if (f.allow_plain_http) body.allow_plain_http = true;
+  $("svout").textContent = "testing…";
+  try {
+    const r = await api("/api/service/test", body);
+    $("svout").textContent = JSON.stringify(r.info);
+  } catch (e) { $("svout").textContent = e.message; }
+}));
+
+async function loadUpscalers() {
+  UP = (await api("/api/upscalers", { config: draft })).upscalers;
+  renderUpscalers();
+}
+
+function usable() { return UP.filter((u) => u.found); }
+function fillUpscalerChoices() {
+  const names = usable().map((u) => u.name);
+  const box = $("upchecks");
+  const was = new Set([...box.querySelectorAll("input:checked")].map((x) => x.value));
+  if (!was.size) for (const n of ["nearest", "xbr"]) was.add(n);
+  box.replaceChildren(...names.map((n) => el("label", {}, el("input", { type: "checkbox", value: n, checked: was.has(n) }), n + " ")));
+  const r = $("ruleup");
+  r.replaceChildren(...names.map((n) => el("option", {}, n)));
+}
+
+// ---- coverage ------------------------------------------------------------------
+const ROW_FIELDS = ["scale", "upscaler", "alpha", "edges", "mips", "encode", "max_texels", "skip"];
+function fieldInput(path, key, value, placeholder) {
+  const set = (v) => setKey(T(), path, key, v);
+  const opts = {
+    scale: ["2", "3", "4"], alpha: S.alpha_modes, edges: S.edge_modes, mips: ["none", "keep", "full"],
+    encode: ["raw", "bc1", "bc3", "auto"], skip: ["true", "false"],
+    upscaler: usable().map((u) => u.name).concat(["atlas"]),
+  }[key];
+  if (opts) {
+    const s = el("select", { on: { change: (e) => {
+      const v = e.target.value;
+      set(v === "" ? "" : key === "scale" ? parseInt(v, 10) : key === "skip" ? v === "true" : v);
+    } } }, el("option", { value: "" }, placeholder === undefined ? "" : "(" + placeholder + ")"), ...opts.map((o) => el("option", {}, o)));
+    s.value = value === undefined ? "" : String(value);
+    return s;
+  }
+  const i = el("input", { type: "number", min: 0, placeholder: placeholder === undefined ? "" : String(placeholder),
+    on: { change: (e) => set(e.target.value === "" ? "" : parseInt(e.target.value, 10)) } });
+  if (value !== undefined) i.value = value;
+  return i;
+}
+function renderCoverage() {
+  const t = T();
+  $("rscale").value = t.render_scale || "";
+  $("rscale").placeholder = "1";
+  $("preset").replaceChildren(el("option", { value: "" }, "(all)"), ...S.presets.map((p) => el("option", {}, p)));
+  $("preset").value = t.preset || "";
+  $("covmode").value = (t.coverage || {}).mode || "classes";
+  $("untraced").value = (t.coverage || {}).untraced || "class";
+  $("bpack").value = (t.budget || {}).pack_mb ?? "";
+  $("bvram").value = (t.budget || {}).vram_mb ?? "";
+  const ct = $("classtable");
+  ct.replaceChildren(el("tr", {}, el("th", {}, "class"), ...ROW_FIELDS.map((f) => el("th", {}, f))));
+  for (const c of S.classes) {
+    const row = (t.class || {})[c] || {};
+    const def = S.defaults[c];
+    ct.append(el("tr", {}, el("td", {}, c), ...ROW_FIELDS.map((f) => el("td", {}, fieldInput(["class", c], f, row[f], def[f] ?? (f === "skip" ? "false" : 0))))));
+  }
+  const rt = $("ruletable");
+  rt.replaceChildren(el("tr", {}, el("th", {}, "rule"), ...ROW_FIELDS.map((f) => el("th", {}, f)), el("th", {}, "")));
+  for (const [k, row] of Object.entries(t.rule || {})) {
+    rt.append(el("tr", {}, el("td", {}, el("code", {}, k)),
+      ...ROW_FIELDS.map((f) => el("td", {}, fieldInput(["rule", k], f, row[f]))),
+      el("td", {}, el("button", { on: { click: () => { delete t.rule[k]; prune(t, ["rule"]); changed(); renderCoverage(); } } }, "remove"))));
+  }
+  if (!Object.keys(t.rule || {}).length) rt.append(el("tr", {}, el("td", { class: "dim", colspan: 9 }, "no rules")));
+}
+const topNum = (key, v) => { if (v === "") delete T()[key]; else T()[key] = parseInt(v, 10); changed(); };
+$("rscale").addEventListener("change", (e) => topNum("render_scale", e.target.value));
+$("preset").addEventListener("change", (e) => { if (e.target.value) T().preset = e.target.value; else delete T().preset; changed(); });
+$("covmode").addEventListener("change", (e) => setKey(T(), ["coverage"], "mode", e.target.value === "classes" ? "" : e.target.value));
+$("untraced").addEventListener("change", (e) => setKey(T(), ["coverage"], "untraced", e.target.value === "class" ? "" : e.target.value));
+$("bpack").addEventListener("change", (e) => setKey(T(), ["budget"], "pack_mb", e.target.value === "" ? "" : parseInt(e.target.value, 10)));
+$("bvram").addEventListener("change", (e) => setKey(T(), ["budget"], "vram_mb", e.target.value === "" ? "" : parseInt(e.target.value, 10)));
+
+let COV = null;
+async function refreshCoverage() {
+  COV = await api("/api/coverage", { config: draft });
+  say("");
+  const maxPack = Math.max(1, ...COV.bars.map((b) => b.pack_bytes));
+  const vram = (b) => Math.max(0, ...Object.values(b.scenes));
+  const maxVram = Math.max(1, ...COV.bars.map(vram));
+  const maxTime = Math.max(1, ...COV.bars.map((b) => b.build_seconds));
+  const bars = $("bars");
+  bars.replaceChildren(el("tr", {}, ...["preset", "entries", "pack", "VRAM (busiest dumped scene)", "build minutes"].map((h) => el("th", {}, h))));
+  for (const b of COV.bars) {
+    const bar = (cls, v, max, label) => el("td", {}, el("div", { class: "bar " + cls, style: "width:" + Math.round(160 * v / max) + "px" }), label);
+    const mins = b.unmeasured.length ? el("span", { class: "dim" }, "not measured yet (" + b.unmeasured.join(", ") + ")") : (b.build_seconds / 60).toFixed(1);
+    bars.append(el("tr", {}, el("td", {}, b.preset), el("td", {}, b.entries),
+      bar("", b.pack_bytes, maxPack, mb(b.pack_bytes)),
+      Object.keys(b.scenes).length ? bar("vram", vram(b), maxVram, mb(vram(b))) : el("td", { class: "dim" }, "no dump"),
+      b.unmeasured.length ? el("td", {}, mins) : bar("time", b.build_seconds, maxTime, mins),
+      b.over_budget.length ? el("td", { class: "warn" }, b.over_budget.join("; ")) : null));
+  }
+  const ex = $("excluded");
+  ex.replaceChildren(el("tr", {}, ...["hash", "name", "class", "why"].map((h) => el("th", {}, h))));
+  for (const x of COV.excluded.slice(0, 500)) ex.append(el("tr", {}, el("td", {}, el("code", {}, x.hash)), el("td", {}, x.name), el("td", {}, x.class), el("td", { class: "dim" }, x.why)));
+  if (COV.excluded.length > 500) ex.append(el("tr", {}, el("td", { colspan: 4, class: "dim" }, "… and " + (COV.excluded.length - 500) + " more")));
+  const tr = $("traced");
+  tr.replaceChildren(el("tr", {}, ...["hash", "name", "class", "mag at 1x", "proposal", "saved", "note"].map((h) => el("th", {}, h))));
+  for (const x of COV.traced.slice(0, 500)) tr.append(el("tr", {}, el("td", {}, el("code", {}, x.hash)), el("td", {}, x.name), el("td", {}, x.class),
+    el("td", {}, x.mag_scale1.toFixed(2)), el("td", {}, x.proposal ? x.proposal + "x" : "skip"), el("td", {}, mb(x.saved)), el("td", { class: "dim" }, x.note)));
+  if (!COV.traced.length) tr.append(el("tr", {}, el("td", { colspan: 7, class: "dim" }, "no sidecar has a magnification: dump a run with RECOMP_TRACE=tex_mag")));
+}
+
+// ---- compare -------------------------------------------------------------------
+function renderList() {
+  const q = $("search").value.trim().toLowerCase();
+  const groups = new Map();
+  for (const e of entries) {
+    if (q && !e.hash.toLowerCase().includes(q) && !e.names.some((n) => n.toLowerCase().includes(q))) continue;
+    const g = e.class + (e.language ? " · " + e.language : "");
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(e);
+  }
+  const list = $("list");
+  list.replaceChildren();
+  for (const [g, rows] of [...groups].sort()) {
+    const d = el("details", { open: groups.size < 4 || !!q }, el("summary", {}, g + " (" + rows.length + ")"));
+    for (const e of rows.slice(0, 400)) {
+      const label = (e.pick ? "★ " : "") + (e.name || e.hash) + "  " + e.w + "x" + e.h + (e.uses ? "  ×" + e.uses : "");
+      d.append(el("div", { class: "item" + (cur && cur.hash === e.hash ? " on" : ""), title: e.hash + (e.skip ? " (left out: " + e.skip + ")" : ""),
+        on: { click: guard(() => pick(e.hash)) } }, label));
+    }
+    if (rows.length > 400) d.append(el("div", { class: "item dim" }, "… search for the rest"));
+    list.append(d);
+  }
+}
+$("search").addEventListener("input", renderList);
+
+async function pick(h) {
+  say("reading " + h + "…");
+  cur = await api("/api/texture?h=" + h);
+  say("");
+  const e = entries.find((x) => x.hash === cur.hash);
+  $("tex").hidden = true;
+  $("texpanel").hidden = false;
+  crop = cur.crop.slice();
+  $("cropsize").value = String(Math.max(crop[2], crop[3]) >= 256 ? 256 : Math.max(crop[2], crop[3]) > 64 ? 128 : 64);
+  $("texinfo").replaceChildren(el("b", {}, cur.name || cur.hash), el("code", {}, cur.hash),
+    el("span", { class: "dim" }, cur.w + "x" + cur.h + " " + (e ? e.format + ", " + e.class + (e.levels > 1 ? ", " + e.levels + " levels" : "") : "")),
+    el("span", { class: "dim" }, "filter " + (cur.mag_filter || "?") + "/" + (cur.min_filter || "?")),
+    el("span", { class: "dim" }, cur.mag != null ? "traced magnification " + cur.mag.toFixed(2) : "not traced"),
+    e && e.skip ? el("span", { class: "warn" }, "left out: " + e.skip) : "");
+  const img = $("stock");
+  img.src = cur.image;
+  const fit = Math.max(1, Math.floor(512 / Math.max(cur.w, cur.h)));
+  img.style.width = cur.w * fit + "px";
+  img.style.height = cur.h * fit + "px";
+  img.dataset.fit = fit;
+  $("rulepat").value = cur.name ? cur.name.split("/").pop() : "";
+  drawCrop();
+  $("out").replaceChildren();
+  renderList();
+}
+function drawCrop() {
+  const fit = Math.min($("stock").clientWidth / cur.w || 1, 1e9);
+  const b = $("cropbox");
+  b.style.left = crop[0] * fit + "px"; b.style.top = crop[1] * fit + "px";
+  b.style.width = crop[2] * fit + "px"; b.style.height = crop[3] * fit + "px";
+}
+$("cropsize").addEventListener("change", () => {
+  const n = parseInt($("cropsize").value, 10);
+  crop[2] = Math.min(n, cur.w); crop[3] = Math.min(n, cur.h);
+  crop[0] = Math.min(crop[0], cur.w - crop[2]); crop[1] = Math.min(crop[1], cur.h - crop[3]);
+  drawCrop();
+});
+(() => {
+  // The owner drags the crop; it lands on whole texels.
+  let drag = null;
+  const at = (ev) => {
+    const r = $("stock").getBoundingClientRect();
+    const fit = r.width / cur.w;
+    return [(ev.clientX - r.left) / fit, (ev.clientY - r.top) / fit];
+  };
+  $("stockbox").addEventListener("mousedown", (ev) => { if (cur) { drag = at(ev); ev.preventDefault(); move(ev); } });
+  const move = (ev) => {
+    if (!drag) return;
+    const [x, y] = at(ev);
+    crop[0] = Math.max(0, Math.min(cur.w - crop[2], Math.round(x - crop[2] / 2)));
+    crop[1] = Math.max(0, Math.min(cur.h - crop[3], Math.round(y - crop[3] / 2)));
+    drawCrop();
+  };
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", () => { drag = null; });
+})();
+
+function chosen() { return [...$("upchecks").querySelectorAll("input:checked")].map((x) => x.value); }
+function renderBody(whole) {
+  const b = { hash: cur.hash, upscalers: chosen(), config: draft, bc: $("bc").checked };
+  if (!whole) b.crop = crop;
+  if ($("scale").value) b.scale = parseInt($("scale").value, 10);
+  if ($("view").value === "screen") {
+    b.screen = { render_scale: T().render_scale || 1 };
+    if ($("mag").value) b.screen.mag = parseFloat($("mag").value);
+  }
+  return b;
+}
+const zoomed = (src, w, h, z) => el("img", { class: "px checker", src, style: "width:" + w * z + "px;height:" + h * z + "px" });
+async function doRender(whole) {
+  if (!chosen().length) throw new Error("tick an upscaler");
+  say("rendering " + (whole ? "the whole texture" : "the crop") + "…");
+  const t0 = performance.now();
+  last = await api("/api/render", renderBody(whole));
+  say("rendered in " + ((performance.now() - t0) / 1000).toFixed(1) + " s");
+  showResults();
+}
+$("render").addEventListener("click", guard(() => doRender(false)));
+$("whole").addEventListener("click", guard(() => doRender(true)));
+$("view").addEventListener("change", () => { if (last) showResults(); });
+$("zoom").addEventListener("change", () => { if (last) showResults(); });
+
+function label(r) {
+  if (r.error) return el("div", { class: "label bad" }, r.name + ": " + r.error);
+  const by = r.bytes;
+  return el("div", { class: "label" }, el("b", {}, r.name), r.flag ? el("span", { class: "warn" }, " " + r.flag) : null,
+    el("div", { class: "dim" }, r.seconds_per_texture + " s per texture · pack " + (by[r.encode] / 1024).toFixed(1) + " KiB " + r.encode +
+      " (raw " + (by.raw / 1024).toFixed(1) + ", BC1 " + (by.bc1 / 1024).toFixed(1) + ", BC3 " + (by.bc3 / 1024).toFixed(1) + ")"));
+}
+function showResults() {
+  const z = parseInt($("zoom").value, 10);
+  const view = $("view").value;
+  const out = $("out");
+  const s = last.scale;
+  const [, , cw, ch] = last.crop;
+  const ok = last.results.filter((r) => !r.error);
+  if (view === "wipe" && ok.length >= 2) {
+    const a = el("select", {}, ...ok.map((r) => el("option", {}, r.name)));
+    const b = el("select", {}, ...ok.map((r) => el("option", {}, r.name)));
+    b.selectedIndex = 1;
+    const slider = el("input", { type: "range", min: 0, max: 100, value: 50, style: "width:300px" });
+    const box = el("div", { class: "wipe checker" });
+    const draw = () => {
+      const ra = ok[a.selectedIndex], rb = ok[b.selectedIndex];
+      const bottom = zoomed(rb.image, rb.w, rb.h, z);
+      const top = zoomed(ra.image, ra.w, ra.h, z);
+      top.classList.add("top");
+      top.style.clipPath = "inset(0 " + (100 - slider.value) + "% 0 0)";
+      box.replaceChildren(bottom, top);
+    };
+    for (const x of [a, b, slider]) x.addEventListener("input", draw);
+    draw();
+    out.replaceChildren(el("div", { class: "row" }, "left ", a, slider, b, " right"), box, el("div", { class: "results" }, ...last.results.map((r) => el("div", { class: "result" }, label(r)))));
+    return;
+  }
+  const cards = [el("div", { class: "result" }, el("div", { class: "label" }, el("b", {}, "stock"), el("div", { class: "dim" }, cw + "x" + ch + " at " + s + "x zoom")),
+    zoomed(last.stock, cw, ch, z * s))];
+  for (const r of last.results) {
+    const kids = [label(r)];
+    if (!r.error && view === "screen" && r.screen) {
+      const sc = r.screen;
+      kids.push(el("div", { class: "dim" }, "magnification " + sc.mag + (sc.from_trace ? " (trace)" : "") + " × render scale " + sc.render_scale +
+        " · level " + sc.result.level + ", " + sc.result.filter));
+      kids.push(zoomed(sc.result.image, sc.result.w, sc.result.h, z));
+    } else if (!r.error) {
+      kids.push(zoomed(r.image, r.w, r.h, z));
+      if (r.bc && r.bc.bc1) kids.push(el("div", { class: "row" }, el("div", {}, "BC1", zoomed(r.bc.bc1, r.w, r.h, 1)), el("div", {}, "BC3", zoomed(r.bc.bc3, r.w, r.h, 1))));
+      else if (r.bc) kids.push(el("div", { class: "dim" }, r.bc.note));
+    }
+    cards.push(el("div", { class: "result" }, ...kids));
+  }
+  if (view === "screen") {
+    const sc = (ok[0] || {}).screen;
+    if (sc) {
+      cards[0] = el("div", { class: "result" }, el("div", { class: "label" }, el("b", {}, "stock on screen"),
+        el("div", { class: "dim" }, "level " + sc.stock.level + ", " + sc.stock.filter)), zoomed(sc.stock.image, sc.stock.w, sc.stock.h, z));
+      out.replaceChildren(el("p", { class: sc.magnified ? "dim" : "warn" }, sc.note ||
+        "A software resample of the result at its on-screen size, not the game's frame; the game is the real check."), el("div", { class: "results" }, ...cards));
+      return;
+    }
+  }
+  out.replaceChildren(el("div", { class: "results" }, ...cards));
+}
+
+function addRule(key, row) {
+  table(T(), "rule")[key] = Object.assign(table(T(), "rule")[key] || {}, row);
+  changed();
+  renderCoverage();
+  say("rule " + key + " added to the draft; Save writes it", "ok");
+}
+$("rulethis").addEventListener("click", () => addRule("hash:" + cur.hash, { upscaler: $("ruleup").value }));
+$("ruleskip").addEventListener("click", () => addRule("hash:" + cur.hash, { skip: true }));
+$("rulepatadd").addEventListener("click", guard(async () => {
+  const p = $("rulepat").value.trim();
+  if (!p) throw new Error("a pattern first");
+  const row = $("ruleedges").value ? { edges: $("ruleedges").value } : { upscaler: $("ruleup").value };
+  addRule(p, row);
+}));
+
+// ---- runtime -------------------------------------------------------------------
+$("logs").addEventListener("change", guard(async (ev) => {
+  const lines = [];
+  for (const f of ev.target.files) for (const l of (await f.text()).split(/\r?\n/)) if (l.includes("[TEXPACK] miss")) lines.push(l);
+  const r = await api("/api/log", { lines, config: draft });
+  const t = $("misses");
+  t.replaceChildren(el("tr", {}, ...["hash", "name", "class", "size", "", "why the pack lacks it"].map((h) => el("th", {}, h))));
+  for (const x of r.rows) {
+    t.append(el("tr", {}, el("td", {}, el("code", {}, x.hash)), el("td", {}, x.name || el("span", { class: "dim" }, "not in the inventory")),
+      el("td", {}, x.cls || ""), el("td", {}, x.w ? x.w + "x" + x.h : ""),
+      el("td", { class: x.lacking ? "warn" : "dim" }, x.lacking ? "lacking" : "held, unused"),
+      el("td", { class: "dim" }, x.lacking ? (x.why || (x.name ? "in the preset: build again" : "a dump with this hash names it")) : "")));
+  }
+  say(r.lacking + " lacking, " + r.held + " held and unused", "ok");
+}));
+
+// ---- save, quit ------------------------------------------------------------------
+$("save").addEventListener("click", guard(async () => {
+  const r = await api("/api/save", { config: draft });
+  $("save").textContent = "Save";
+  say((r.wrote.length ? "wrote " + r.wrote.join(", ") : "nothing changed") + ". Build with: " + r.command, "ok");
+}));
+$("quit").addEventListener("click", guard(async () => {
+  await api("/quit", {});
+  document.body.replaceChildren(el("main", {}, el("p", {}, "The preview has stopped. This tab can be closed.")));
+}));
+
+// ---- start ------------------------------------------------------------------------
+guard(async () => {
+  S = await api("/api/state");
+  $("where").textContent = S.game + " · " + S.config + " (local: " + S.local + ") · " + S.entries + " textures" +
+    (S.dumps.length ? " · dumps " + S.dumps.join(", ") : " · no dump");
+  if (S.config_error) say("the config does not parse: " + S.config_error, "bad");
+  draft = { tracked: S.tracked || {}, local: S.local_doc || {} };
+  delete draft.tracked.schema;
+  await loadUpscalers();
+  renderCoverage();
+  entries = (await api("/api/inventory")).entries;
+  renderList();
+  await refreshCoverage();
+})();
+</script>
+</body>
+</html>

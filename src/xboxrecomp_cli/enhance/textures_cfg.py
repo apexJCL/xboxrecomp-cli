@@ -10,6 +10,7 @@ refused, with the line that says where it goes.
 """
 
 import hashlib
+import json
 import os
 import re
 import tomllib
@@ -57,7 +58,8 @@ ROW_KEYS = {
     "max_side": "0 (no cap) or more",
     "skip": "true or false",
 }
-TABLE_LINE = re.compile(r"^\s*\[(?P<name>[^\[\]]+)\]\s*(#.*)?$")
+BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
+ARRAY_HEADER = re.compile(r"^\s*\[\[.*\]\]\s*(#.*)?$")
 
 
 class ConfigError(Exception):
@@ -294,28 +296,152 @@ def _toml_value(v):
     if isinstance(v, int):
         return str(v)
     if isinstance(v, str):
-        return '"%s"' % v.replace("\\", "\\\\").replace('"', '\\"')
+        # JSON's escapes are TOML's, but for DEL, which TOML wants escaped.
+        return json.dumps(v, ensure_ascii=False).replace("\x7f", "\\u007f")
+    if isinstance(v, list):
+        # A cell's [width, height], a model's scales.
+        return "[%s]" % ", ".join(_toml_value(x) for x in v)
     raise ValueError("no TOML form for %r" % (v,))
+
+
+def _keys(s, i=0):
+    """The dotted key at s[i:] as a tuple and the index past it, or None. The
+    owner may write a key bare, quoted either way, with spaces round the dots:
+    `[rule.'menu_*']` and `[ rule."menu_*" ]` are one table."""
+    parts = []
+    while True:
+        while i < len(s) and s[i] in " \t":
+            i += 1
+        if s.startswith('"', i):
+            j = i + 1
+            while j < len(s) and s[j] != '"':
+                j += 2 if s[j] == "\\" else 1
+            try:
+                parts.append(tomllib.loads("k = " + s[i : j + 1])["k"])
+            except tomllib.TOMLDecodeError:
+                return None
+            i = j + 1
+        elif s.startswith("'", i):
+            j = s.find("'", i + 1)
+            if j < 0:
+                return None
+            parts.append(s[i + 1 : j])
+            i = j + 1
+        elif m := BARE_KEY.match(s, i):
+            parts.append(m[0])
+            i = m.end()
+        else:
+            return None
+        while i < len(s) and s[i] in " \t":
+            i += 1
+        if not s.startswith(".", i):
+            return tuple(parts), i
+        i += 1
+
+
+def _header(line):
+    """`[a.b]`'s keys, or None for any other line."""
+    s = line.lstrip()
+    if not s.startswith("[") or s.startswith("[["):
+        return None
+    k = _keys(s, 1)
+    if k is None or not s.startswith("]", k[1]):
+        return None
+    rest = s[k[1] + 1 :].strip()
+    return k[0] if not rest or rest.startswith("#") else None
+
+
+def _is_header(line):
+    return _header(line) is not None or bool(ARRAY_HEADER.match(line))
+
+
+def _table_keys(table):
+    k = _keys(table)
+    if k is None or k[1] != len(table):
+        raise ValueError("no TOML table name %r" % table)
+    return k[0]
+
+
+def _value_end(lines, i, end, at):
+    """(last line, what follows the value on it) of the value at lines[i][at:],
+    which may run over several lines (an array), or None."""
+    text = lines[i][at:]
+    for j in range(i, end):
+        if j > i:
+            text += lines[j]
+        body = text.rstrip("\n")
+        last = body.rfind("\n") + 1
+        # A `#` in a string is not a comment: the value is the shortest text
+        # that reads as one.
+        for p in [q for q in range(last, len(body)) if body[q] == "#"] + [len(body)]:
+            v = body[:p].rstrip()
+            try:
+                tomllib.loads("k = " + v)
+            except tomllib.TOMLDecodeError:
+                continue
+            return j, body[len(v) :]
+    return None
+
+
+def _entries(lines, start, end):
+    """(first line, last line, keys, value's column, what follows the value)
+    of each key in lines[start:end]."""
+    i = start
+    while i < end:
+        x = lines[i]
+        k = None if x.lstrip().startswith("#") else _keys(x)
+        if k and x.startswith("=", k[1]):
+            at = k[1] + 1
+            while at < len(x) and x[at] in " \t":
+                at += 1
+            span = _value_end(lines, i, end, at)
+            if span:
+                yield i, span[0], k[0], at, span[1]
+                i = span[0] + 1
+                continue
+        i += 1
+
+
+def _edit_entries(lines, start, end, values, remove=()):
+    """lines[start:end] with the keys in `values` set, in place or after the
+    last key, and those in `remove` gone; every other line as it was."""
+    todo = dict(values)
+    out, prev = [], start
+    for first, last, keys, at, tail in _entries(lines, start, end):
+        out += lines[prev:first]
+        prev = last + 1
+        key = keys[0] if len(keys) == 1 else None
+        if key in remove:
+            continue
+        if key in todo:
+            out.append("%s%s%s\n" % (lines[first][:at], _toml_value(todo.pop(key)), tail))
+        else:
+            out += lines[first:prev]
+    out += lines[prev:end]
+    # New keys before the blank lines that end the block.
+    at = len(out)
+    while at and not out[at - 1].strip():
+        at -= 1
+    new = ["%s = %s\n" % (k, _toml_value(v)) for k, v in todo.items()]
+    return out[:at] + new + out[at:]
+
+
+def _lines(text):
+    lines = text.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    return lines
 
 
 def set_table_keys(text, table, values):
     """The config's text with `[table]`'s keys set, every other line as it was:
     the owner's comments are theirs. A new table goes at the end, or before the
     first rule, since rules read best last and class tables together."""
-    lines = text.splitlines(keepends=True)
-    if lines and not lines[-1].endswith("\n"):
-        lines[-1] += "\n"
-    start = next(
-        (i for i, x in enumerate(lines) if (m := TABLE_LINE.match(x)) and m["name"] == table),
-        None,
-    )
-    if start is None:
+    lines = _lines(text)
+    span = _table_span(lines, table)
+    if span is None:
         at = next(
-            (
-                i
-                for i, x in enumerate(lines)
-                if (m := TABLE_LINE.match(x)) and m["name"].startswith("rule.")
-            ),
+            (i for i, x in enumerate(lines) if (h := _header(x)) and h[0] == "rule"),
             len(lines),
         )
         while at and lines[at - 1].lstrip().startswith("#"):
@@ -328,18 +454,8 @@ def set_table_keys(text, table, values):
         if after:
             block.append("\n")
         return "".join(before + block + after)
-    end = next((i for i in range(start + 1, len(lines)) if TABLE_LINE.match(lines[i])), len(lines))
-    todo = dict(values)
-    for i in range(start + 1, end):
-        m = re.match(r"^(\s*)([A-Za-z_][A-Za-z0-9_-]*)(\s*=\s*)([^#]*?)(\s*(#.*)?)$", lines[i])
-        if m and m[2] in todo:
-            lines[i] = "%s%s%s%s%s\n" % (m[1], m[2], m[3], _toml_value(todo.pop(m[2])), m[5])
-    # New keys after the table's last key, before the blank line that ends it.
-    at = end
-    while at > start + 1 and not lines[at - 1].strip():
-        at -= 1
-    new = ["%s = %s\n" % (k, _toml_value(v)) for k, v in todo.items()]
-    return "".join(lines[:at] + new + lines[at:])
+    start, end = span
+    return "".join(lines[: start + 1] + _edit_entries(lines, start + 1, end, values) + lines[end:])
 
 
 def write_class_row(path, cls, upscaler, scale=None):
@@ -364,3 +480,47 @@ def write_class_row(path, cls, upscaler, scale=None):
     with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         f.write(new)
     os.replace(tmp, path)
+
+
+def _table_span(lines, table):
+    """(header, end) of `[table]`'s lines, or None."""
+    want = _table_keys(table)
+    start = next((i for i, x in enumerate(lines) if _header(x) == want), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start + 1, len(lines)) if _is_header(lines[i])), len(lines))
+    return start, end
+
+
+def remove_table_keys(text, table, keys):
+    """The text with these keys of `[table]` gone, the rest as it was."""
+    lines = _lines(text)
+    span = _table_span(lines, table)
+    if span is None:
+        return text
+    start, end = span
+    kept = _edit_entries(lines, start + 1, end, {}, remove=keys)
+    return "".join(lines[: start + 1] + kept + lines[end:])
+
+
+def drop_table(text, table):
+    """The text without `[table]` and its keys; its comments above stay, they
+    may be about the next one."""
+    lines = _lines(text)
+    span = _table_span(lines, table)
+    if span is None:
+        return text
+    start, end = span
+    while end > start + 1 and not lines[end - 1].strip():
+        end -= 1
+    rest = lines[end:]
+    if rest and not rest[0].strip() and start and not lines[start - 1].strip():
+        rest = rest[1:]
+    return "".join(lines[:start] + rest)
+
+
+def set_top_keys(text, values, remove=()):
+    """The keys before the first table (`render_scale`, `preset`), set or gone."""
+    lines = _lines(text)
+    first = next((i for i, x in enumerate(lines) if _is_header(x)), len(lines))
+    return "".join(_edit_entries(lines, 0, first, values, remove) + lines[first:])

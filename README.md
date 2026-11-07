@@ -204,6 +204,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | `mygame bench <command>` | Builds and runs on a Proton host over ssh: runs, goldens, pacing |
 | `mygame enhance hud` | Makes a HUD texture pack from your own dump |
 | `mygame enhance textures <inventory\|estimate\|build\|compare\|pick\|backend>` | Makes a whole-game texture pack, owner-generated from your own game files; it ships and downloads no model |
+| `mygame enhance preview` | A local page to choose upscalers and coverage, compare crops and save the texture config |
 | `mygame extract` | Turns your dump's stages into a local Godot project |
 | `mygame pins refresh` | Moves the toolchain pins and lock, and names newer releases |
 

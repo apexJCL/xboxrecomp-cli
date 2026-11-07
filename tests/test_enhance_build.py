@@ -1693,10 +1693,12 @@ def test_a_scene_that_only_counts_stays_current_and_a_fact_the_build_reads_does_
 def test_the_counts_left_out_of_the_key_are_read_by_nothing_that_makes_a_pack():
     # A fact on this list goes unseen by the stage key, so a new reader of one
     # would let a pack go stale in silence: it fails here first. `estimate`
-    # reports the scenes and makes no pack; inventory writes them; build names them.
+    # reports the scenes and makes no pack; inventory writes them; build names them;
+    # preview shows them in its list and makes no pack either.
     src = os.path.dirname(os.path.abspath(pack.__file__))
+    exempt = ("inventory.py", "estimate.py", "build.py", "preview.py")
     for name in sorted(os.listdir(src)):
-        if not name.endswith(".py") or name in ("inventory.py", "estimate.py", "build.py"):
+        if not name.endswith(".py") or name in exempt:
             continue
         with open(os.path.join(src, name), encoding="utf-8") as f:
             text = f.read()

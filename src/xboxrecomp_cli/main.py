@@ -562,6 +562,15 @@ def _cfg_enhance(p):
             "another machine's builds (docs/upscale-service.md)",
         )
     )
+    from .enhance import preview
+
+    preview.configure(
+        sub.add_parser(
+            "preview",
+            description="a local page to choose the upscalers and coverage, compare crops "
+            "and import a run's misses; writes config/enhance-textures.toml",
+        )
+    )
 
 
 def cmd_enhance(a):
@@ -573,6 +582,10 @@ def cmd_enhance(a):
         from .enhance import serve
 
         return serve.run(a)
+    if a.asset == "preview":
+        from .enhance import preview
+
+        return preview.run(a)
     assert a.asset == "hud", a.asset
     return hud.run(a)
 
