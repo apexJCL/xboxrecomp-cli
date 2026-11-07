@@ -3,6 +3,8 @@
   inventory  every texture the sources name or the dump holds, joined on the
              runtime's hash, into dist/enhance/inventory.json
   estimate   the bytes, VRAM and minutes of a preset, from that inventory
+  export     a dump's textures as <hash>.png, to edit and bring back with
+             enhance hud --import
 
 The sources are game.toml's [enhance.textures] sources; the dump is the
 directory a run wrote with RECOMP_DEBUG=tex_dump=<dir>. The dump alone is a
@@ -16,7 +18,7 @@ import sys
 from .. import host, resources
 from ..host import CliError
 from ..package.progress import load_timings
-from . import classes, estimate, inventory, traced
+from . import classes, estimate, imported, inventory, traced
 from .sources import SourceError
 
 LIST_CAP = 20
@@ -81,6 +83,33 @@ def configure(p):
     e.add_argument("--inventory", help="the inventory file (default dist/enhance/inventory.json)")
     e.add_argument("--json", action="store_true", help="print the estimate as JSON")
     resources.add_jobs(e, "the job count to divide by (default: the cores)")
+    x = sub.add_parser(
+        "export",
+        description="a dump's textures as <hash>.png (level 0) and an index.json, to edit "
+        "and bring back with enhance hud --import; a PNG already there is left as it is",
+    )
+    x.add_argument(
+        "--dump",
+        action="append",
+        required=True,
+        metavar="DIR",
+        help="a directory a run wrote with RECOMP_DEBUG=tex_dump=DIR (repeatable)",
+    )
+    x.add_argument("--out", help="the folder (default dist/enhance/export/)")
+    x.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        metavar="HASH",
+        help="only this hash; wildcards work (repeatable)",
+    )
+    x.add_argument(
+        "--misses",
+        action="append",
+        default=[],
+        metavar="LOG",
+        help="only the textures this RECOMP_TRACE=tex_pack log missed (repeatable)",
+    )
 
 
 def _inventory_path(a):
@@ -337,4 +366,6 @@ def run_estimate(a):
 def run(a):
     if a.verb == "inventory":
         return run_inventory(a)
+    if a.verb == "export":
+        return imported.run_export(a)
     return run_estimate(a)

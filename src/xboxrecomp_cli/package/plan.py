@@ -240,11 +240,23 @@ def build_step(btarget, bdir):
 
 def hud_row(a, p, st, imp_key):
     """The pack `enhance hud` (as the wizard runs it, no options) would make
-    for --hud-pack. Returns (runs, the pack's sha256 when reused)."""
+    for --hud-pack. A named DIR is another thing: the run copies the pack in
+    it, whatever made it, and no game config is read. Returns (runs, the
+    pack's sha256 when reused)."""
     from ..enhance import hud
+    from . import hud_pack_path
 
     G = g()
-    out_dir = os.path.abspath(a.hud_pack or os.path.join(G.dist, "enhance", "hud"))
+    if a.hud_pack:
+        try:
+            info = hud_pack_path(a.hud_pack)
+        except CliError as e:
+            p.hud["refusal"] = str(e)
+            p.row("hud", "refuse", [str(e)])
+            return False, ""
+        p.row("hud", "reuse", ["from %s" % G.rel(os.path.dirname(info["path"]))])
+        return False, host.sha256_path(info["path"])
+    out_dir = os.path.join(G.dist, "enhance", "hud")
     pack = os.path.join(out_dir, "hud.pack")
     steps = [hud.TIMING_LABEL]
     if imp_key is None:
@@ -575,7 +587,8 @@ def plan_output(a, p, target, version, newest, proxy):
         if p.hud["choice"] is None and tweaks.base_pack(p.base) is not None:
             out.update(kind="none", why=tweaks.guard_message(p.base), why_codes=[patch.HUD_GUARD])
         elif p.hud["refusal"]:
-            out.update(kind="none", why=p.hud["refusal"], why_codes=[p.hud["code"]])
+            codes = [p.hud["code"]] if p.hud["code"] else []
+            out.update(kind="none", why=p.hud["refusal"], why_codes=codes)
     return out
 
 

@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import tarfile
+import types
 
 import pytest
 import test_incremental
@@ -32,6 +33,7 @@ from xboxrecomp_cli import buildstate, host, main
 from xboxrecomp_cli import package as pkg
 from xboxrecomp_cli.enhance import hud as hud_mod
 from xboxrecomp_cli.enhance import pack as pack_mod
+from xboxrecomp_cli.enhance import png as png_mod
 from xboxrecomp_cli.package import incr, tweaks
 
 PACK = "enhance/hud.pack"
@@ -72,6 +74,69 @@ def packed(game, monkeypatch):
     recompile(game)
     game["base"], game["pack"] = base, data
     return game
+
+
+def imported_pack(G):
+    """What enhance hud --import leaves: no [enhance.hud] needed, none read."""
+    folder = G.path("dist", "pngs")
+    os.makedirs(folder)
+    png_mod.write(os.path.join(folder, "00000000000000A1.png"), 2, 2, bytes((9, 8, 7, 255)) * 4)
+    out = G.path("dist", "mine")
+    a = types.SimpleNamespace(
+        scale=None,
+        out=out,
+        font=None,
+        jobs=1,
+        only=[],
+        list=False,
+        language=[],
+        import_dir=folder,
+        from_dumps=[],
+        misses=[],
+        mips="auto",
+        ignore_disk_space=True,
+    )
+    assert hud_mod.run(a) == 0
+    return out
+
+
+def test_an_imported_pack_goes_through_plan_and_package(game, monkeypatch):
+    """--hud-pack DIR copies the pack: the plan runs no enhance hud and reads
+    no [enhance.hud], and the real run then bundles exactly that file."""
+    monkeypatch.setattr(pkg, "reads_config", lambda: True)
+    monkeypatch.setattr(pkg, "config_layer", lambda enhance, lib, target: (True, {}))
+    G = game["G"]
+    bulk(G)
+    with pytest.raises(host.CliError):
+        hud_mod.hud_config()
+    out = imported_pack(G)
+    game["a"].hud_pack = out
+    p = plan_of(game)
+    game["a"].hud_pack = None
+    row = next(r for r in p["stages"] if r["stage"] == "hud")
+    assert row["action"] == "reuse" and row["why"] == ["from dist/mine"]
+    assert "hud" not in p["unknown"] and p["output"]["kind"] != "none"
+    game["run"](hud_pack=out)
+    with open(os.path.join(out, "hud.pack"), "rb") as f:
+        data = f.read()
+    m = tar_manifest(G.path("dist", bundles(G)[-1]))
+    assert m["enhance"]["hud_pack"]["sha256"] == sha_of(data)
+    assert m["enhance"]["hud_pack"]["entries"] == 1
+
+
+def test_the_plan_refuses_a_missing_pack_as_the_run_does(game, monkeypatch):
+    monkeypatch.setattr(pkg, "reads_config", lambda: True)
+    monkeypatch.setattr(pkg, "config_layer", lambda enhance, lib, target: (True, {}))
+    gone = game["G"].path("dist", "none")
+    game["a"].hud_pack = gone
+    p = plan_of(game)
+    game["a"].hud_pack = None
+    row = next(r for r in p["stages"] if r["stage"] == "hud")
+    with pytest.raises(host.CliError) as e:
+        game["run"](hud_pack=gone)
+    assert (row["action"], row["why"]) == ("refuse", [str(e.value)])
+    assert (p["output"]["kind"], p["output"]["why"]) == ("none", str(e.value))
+    assert p["output"]["why_codes"] == []
 
 
 def patch_doc(G, name):

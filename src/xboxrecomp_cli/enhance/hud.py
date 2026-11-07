@@ -30,7 +30,7 @@ import time
 
 from .. import host, resources
 from ..host import CliError
-from . import atlas, bc3, dds, font, pack, scaler, sources, texhash, xpr
+from . import atlas, bc3, dds, font, imported, pack, scaler, sources, texhash, xpr
 
 # Its duration in build-logs/timings.json, for package's plan estimate.
 TIMING_LABEL = "enhance hud"
@@ -100,6 +100,36 @@ def configure(p):
     )
     p.add_argument(
         "--list", action="store_true", help="print the set and its hashes, write nothing"
+    )
+    p.add_argument(
+        "--import",
+        dest="import_dir",
+        metavar="DIR",
+        help="make the pack from this folder's <hash>.png files, each at its own size "
+        "(default output dist/enhance/import/; no [enhance.hud] needed)",
+    )
+    p.add_argument(
+        "--from-dumps",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="a directory a run wrote with RECOMP_DEBUG=tex_dump=DIR (repeatable): its "
+        "textures upscaled into a pack; with --import, what the PNGs are checked against",
+    )
+    p.add_argument(
+        "--misses",
+        action="append",
+        default=[],
+        metavar="LOG",
+        help="with --from-dumps: only the textures this RECOMP_TRACE=tex_pack log missed "
+        "(repeatable)",
+    )
+    p.add_argument(
+        "--mips",
+        choices=("auto", "full", "none"),
+        default="auto",
+        help="with --import or --from-dumps: a new mip chain from the entry's level 0 for "
+        "a guest with mips or an unknown guest (auto), for every entry (full), or for none",
     )
 
 
@@ -413,6 +443,9 @@ def _upscale_into(usable, plans, s, a, cfg, font_path, face, spill):
 def run(a):
     from .. import __version__
 
+    # package's remake passes a namespace of its own, with none of these.
+    if imported.wanted(a):
+        return imported.run(a)
     G = host.g()
     cfg = hud_config()
     s = a.scale or cfg["scale"]

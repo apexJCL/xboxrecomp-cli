@@ -361,6 +361,15 @@ A cube map is listed and never packable (the runtime looks up no cube in a pack)
 | `--json` | print the estimate as JSON |
 | `--jobs N` | the job count to divide the minutes by (default: the cores) |
 
+`export`: a dump's textures as `<hash>.png` for `enhance hud --import` (below).
+
+| Option | Effect |
+|---|---|
+| `--dump DIR` | a directory a run wrote with `RECOMP_DEBUG=tex_dump=DIR` (repeatable; required) |
+| `--out DIR` | the folder (default `dist/enhance/export/`) |
+| `--only HASH` | only this hash; wildcards work (repeatable) |
+| `--misses LOG` | only the textures this `RECOMP_TRACE=tex_pack` log missed (repeatable) |
+
 ### `mygame enhance hud`
 
 The HUD texture pack from the owner's own dump, into `dist/enhance/hud/hud.pack`.
@@ -384,8 +393,68 @@ script in the game's repo that prints each archive's index
 `hud.pack` at the end, so memory holds the entries' metadata, not the
 pack; the disk needs about three times the last pack.
 
-A pack is made from game data and is never published; `package --hud-pack`
-puts it in the owner's private bundle.
+#### A pack from a run's dump
+
+A game needs no archive reader, and no `[enhance.hud]`, for these. The pack
+goes to `dist/enhance/import/` (`--out` moves it), and `textures.pack` in
+`config.toml` or `package --hud-pack dist/enhance/import` puts it to use.
+
+```sh
+RECOMP_DEBUG=tex_dump=scene mygame run         # play the scene to change
+mygame enhance textures export --dump scene    # dist/enhance/export/<hash>.png
+# edit or upscale a few of the PNG files
+mygame enhance hud --import dist/enhance/export
+```
+
+| Option | Effect |
+|---|---|
+| `--import DIR` | the pack from this folder's `<hash>.png` files (not its subfolders), each at its own size |
+| `--from-dumps DIR` | a dump (repeatable). Alone: its packable textures upscaled with xBR at `--scale` (default 2). With `--import`: what the PNGs are checked against, when the folder has no `index.json` |
+| `--misses LOG` | with `--from-dumps` alone: only the textures this log's `RECOMP_TRACE=tex_pack` lines miss (repeatable). The runtime records misses only while a pack is loaded |
+| `--only HASH` | only this hash; wildcards work (repeatable) |
+| `--mips {auto,full,none}` | the entry's mip levels, below |
+| `--list` | print the set, write nothing |
+
+`--import` stops on a PNG the runtime would ignore: another aspect than its
+texture (the runtime compares them exactly), over 16384 a side, or the hash of
+a cube map or a linear texture. The size to check against comes from
+`index.json`, which `export` writes beside the PNGs, or from `--from-dumps`; a
+hash neither knows is said, and goes in unchecked. PNG files still as exported
+are left out, so a folder of a whole scene with three edits makes a pack of
+three, and the game draws its own for the rest.
+
+"As exported" compares decoded texels, alpha too, with what `index.json` recorded
+or, with `--from-dumps`, with the dump. A PNG with neither behind it counts as an
+edit and goes in the pack: the count and the names are said, since a folder of
+hand-made PNG files is fair to import. With `index.json` lost, `export` run again
+finds the unchanged ones. An editor that changes the colour under alpha 0 or
+premultiplies makes an untouched PNG count as an edit; re-saves by `sips` and
+files at other PNG depths and colour types are known to compare equal, but GIMP
+and Photoshop have not been tried.
+
+Every entry is kind `art`, world textures too: the runtime draws it today.
+
+A mipped texture's levels are its old colours, so they are never kept: an
+entry's chain is always made from its own level 0 (a 2x2 box weighted by alpha,
+down to 1x1), and painted levels are not imported. With `auto`, an entry gets
+that chain when its guest has mips, when nothing is known of its guest, and when
+a one-level world texture grows, since it would shimmer at a distance without
+one. A one-level texture at its own size and a HUD piece get one level. `full`
+gives every entry the chain; `none` none, which shows no old colours but
+shimmers on a mipped guest at a distance.
+
+One image can have several hashes: a palette variant, or the same file bound
+with another level count, is a texture of its own, and each needs its PNG.
+An editor that clears the colour under alpha 0 can change how a blend draws.
+
+`mygame enhance textures export` writes each dumped texture's level 0, and never
+overwrites a PNG already in the folder, so a second run from a longer dump only
+adds textures. It leaves out what `--import` would refuse, and what changes every
+frame.
+
+A pack is made from game data and is never published; `package --hud-pack DIR`
+copies `DIR/hud.pack` into the owner's private bundle, reads no `[enhance.hud]`,
+and refuses when the file is not there. `package --plan` says the same.
 
 ### `mygame extract`
 

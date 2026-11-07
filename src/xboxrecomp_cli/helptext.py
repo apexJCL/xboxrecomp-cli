@@ -38,6 +38,11 @@ Commands:
   @slug@ enhance hud [--font FONT]      your HUD texture pack from your own dump
                                         (dist/enhance/hud/; package --hud-pack
                                         puts it in your bundle; never share it)
+  @slug@ enhance hud --import DIR       a pack from your edited <hash>.png files
+                                        (dist/enhance/import/; --from-dumps DIR
+                                        upscales a dump's textures instead)
+  @slug@ enhance textures export --dump DIR
+                                        a dump's textures as <hash>.png, to edit
   @slug@ enhance textures inventory [--dump DIR]
                                         every texture, from your dump and sources
   @slug@ enhance textures estimate [--preset P]
