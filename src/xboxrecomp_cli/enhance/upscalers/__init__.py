@@ -3,6 +3,7 @@
 
 Built-ins are always here. Command presets (presets.toml) are registered by
 `available()` from a config's choices; the CLI runs nothing it did not find.
+A table with a `url` (or an `api`) is a service (http.py).
 """
 
 from .base import Param, Upscaler, UpscalerError
@@ -17,10 +18,16 @@ def get(name):
 
 def by_name(name, config=None, local=None):
     """The upscaler a config names: a built-in, or an `[upscaler.NAME]` table's
-    command preset (command.py). UpscalerError names what is missing."""
+    service (http.py) or command preset (command.py). UpscalerError names what
+    is missing."""
     up = get(name)
     if up is not None:
         return up
+    tables = [t for t in ((config or {}).get(name), (local or {}).get(name)) if isinstance(t, dict)]
+    if any("url" in t or "api" in t for t in tables):
+        from . import http
+
+        return http.from_config(name, config or {}, local or {})
     from . import command
 
     return command.from_config(name, config or {}, local or {})

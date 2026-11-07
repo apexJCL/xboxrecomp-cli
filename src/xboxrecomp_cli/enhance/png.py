@@ -64,6 +64,12 @@ def size(path):
         return _ihdr(f.read(33))[:2]
 
 
+def header(data):
+    """(width, height) from a PNG's first bytes: what a peer sent, checked
+    against the size it should be before anything is decompressed."""
+    return _ihdr(data[:33])[:2]
+
+
 def _chunks(data):
     """The chunks after the signature, up to IEND, with their CRCs checked."""
     off = 8

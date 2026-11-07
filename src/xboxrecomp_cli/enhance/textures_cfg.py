@@ -15,7 +15,7 @@ import re
 import tomllib
 
 from . import alpha, classes, edges
-from .upscalers import UpscalerError, command, get
+from .upscalers import UpscalerError, command, get, http
 
 LOCAL_NAME = "enhance-textures.local.toml"
 LOCAL_KEYS = (
@@ -30,6 +30,9 @@ LOCAL_KEYS = (
     "binary",
     "model",
     "overrides",
+    "workflow",
+    "load_node",
+    "save_node",
 )
 TOP_KEYS = {
     "schema",
@@ -140,7 +143,19 @@ def _check_row(where, row):
 # run or pass unnoticed into the tool's arguments.
 _TABLE_TYPES = {
     **dict.fromkeys(
-        ("path", "model_dir", "url", "token_env", "device", "template", "binary", "model"),
+        (
+            "path",
+            "model_dir",
+            "url",
+            "token_env",
+            "device",
+            "template",
+            "binary",
+            "model",
+            "workflow",
+            "load_node",
+            "save_node",
+        ),
         (str, "a string"),
     ),
     "allow_plain_http": (bool, "true or false"),
@@ -162,6 +177,8 @@ def _check_table_numbers(name, up, table):
         v = table["scales"]
         if not (isinstance(v, list) and v and all(type(x) is int and x > 0 for x in v)):
             raise ConfigError("%s: [upscaler.%s] scales: a list of whole numbers" % (name, up))
+    if "api" in table and table["api"] not in http.APIS:
+        raise ConfigError("%s: [upscaler.%s] api: %s" % (name, up, " or ".join(http.APIS)))
     # It goes on the tool's command line, so it holds a hash and nothing else.
     if "sha256" in table and not (
         isinstance(table["sha256"], str) and re.fullmatch(r"[0-9a-fA-F]{64}", table["sha256"])
@@ -205,7 +222,7 @@ def validate(doc, name="the config"):
     for up, table in sorted(doc.get("upscaler", {}).items()):
         u = get(up)
         if u is None:
-            known = command.TABLE_KEYS + LOCAL_KEYS
+            known = command.TABLE_KEYS + http.TABLE_KEYS + LOCAL_KEYS
             for k in table:
                 if k not in known:
                     raise ConfigError("%s: [upscaler.%s] no key %s" % (name, up, k))
@@ -229,10 +246,12 @@ def validate(doc, name="the config"):
             get(up) is None
             and table.get("preset", up) not in command.presets()["tool"]
             and "template" not in table
+            and "url" not in table
+            and "api" not in table
         ):
             raise ConfigError(
                 "%s: no upscaler %s: a built-in, a preset, or an [upscaler.%s] table "
-                "with a template" % (name, up, up)
+                "with a template or a url" % (name, up, up)
             )
 
 

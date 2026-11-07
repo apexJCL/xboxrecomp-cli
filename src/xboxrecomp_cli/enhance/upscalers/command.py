@@ -481,8 +481,10 @@ def from_config(name, config, local):
 def stage_table(table):
     """An [upscaler.NAME] table as the build's stage key digests it: without
     where things are, since input_key has their bytes. Moving a tool or a model
-    is no reason to rebuild."""
-    out = {k: v for k, v in table.items() if k not in ("path", "model_dir")}
+    is no reason to rebuild. A service's URL and workflow file are where it
+    is too: its identity says what answered."""
+    where = ("path", "model_dir", "url", "token_env", "allow_plain_http", "workflow")
+    out = {k: v for k, v in table.items() if k not in where}
     if "model" in out:
         out["model"] = os.path.basename(out["model"])
     return out

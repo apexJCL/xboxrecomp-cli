@@ -540,6 +540,15 @@ def _cfg_enhance(p):
         "pack would cost (game.toml [enhance.textures]); never share what it reads",
     )
     textures.configure(t)
+    from .enhance import serve
+
+    serve.configure(
+        sub.add_parser(
+            "serve",
+            description="the upscale service contract over an upscaler of this machine, for "
+            "another machine's builds (docs/upscale-service.md)",
+        )
+    )
 
 
 def cmd_enhance(a):
@@ -547,6 +556,10 @@ def cmd_enhance(a):
 
     if a.asset == "textures":
         return textures.run(a)
+    if a.asset == "serve":
+        from .enhance import serve
+
+        return serve.run(a)
     assert a.asset == "hud", a.asset
     return hud.run(a)
 

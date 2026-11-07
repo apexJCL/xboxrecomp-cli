@@ -405,6 +405,20 @@ A cube map is listed and never packable (the runtime looks up no cube in a pack)
 
 `backend [list]`: the built-in upscalers, the presets over tools you install (found or not, licence, homepage) and the models they know of. `backend install torch`: prints the line that installs the optional torch plugin on each platform. It runs nothing, and the CLI downloads no tool and no model.
 
+### `mygame enhance serve`
+
+An upscaler of this machine as a service, for the texture builds of another
+(the xbr upscale service contract). Bound to 127.0.0.1 unless `--host`; off
+loopback it needs a token. See [upscale-service.md](upscale-service.md).
+
+| Option | Effect |
+|---|---|
+| `--backend NAME` | a built-in or an `[upscaler.NAME]` (default `xbr`); the torch plugin runs as one long-lived worker |
+| `--port N` | default 8711 |
+| `--host H` | default 127.0.0.1 |
+| `--token-env VAR` | the variable holding the token clients send (required off loopback) |
+| `--config FILE` | the config with the backend's table |
+
 ### `mygame enhance hud`
 
 The HUD texture pack from the owner's own dump, into `dist/enhance/hud/hud.pack`.

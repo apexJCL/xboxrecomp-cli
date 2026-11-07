@@ -58,6 +58,9 @@ Commands:
   @slug@ enhance textures backend [install torch]
                                         the local upscalers; prints the plugin's
                                         install line, downloads nothing
+  @slug@ enhance serve [--backend NAME] an upscaler of this machine as a service
+                                        for another's builds (127.0.0.1 unless
+                                        --host; a token off loopback)
   @slug@ clean --bundles|--build|--all  free space: lists what it would delete
                                         (deletes with --yes)
   @slug@ setup [--dev] [--no-toolkit]   fetch the pinned toolchain into this tree

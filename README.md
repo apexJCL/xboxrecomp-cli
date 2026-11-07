@@ -215,6 +215,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | [docs/commands.md](docs/commands.md) | Every command, option and tool |
 | [docs/manifest.md](docs/manifest.md) | `game.toml`, key by key |
 | [docs/texture-pack.md](docs/texture-pack.md) | Texture packs for owners: the pipeline, presets, config and legal framing |
+| [docs/upscale-service.md](docs/upscale-service.md) | Upscaling over a service: the contract, the a1111 and comfyui adapters, `enhance serve` |
 | [docs/symbols.md](docs/symbols.md) | The symbol map: names and notes for guest addresses, carried into gen |
 | [docs/layout.md](docs/layout.md) | A game repo's layout, its ignores and gates, and publishing it |
 | [docs/bundle.md](docs/bundle.md) | What `package` writes: `manifest.json`, patches, each target's layout and applier |

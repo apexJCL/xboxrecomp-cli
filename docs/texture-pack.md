@@ -142,6 +142,10 @@ the torch plugin, for a model file you already have, and runs nothing. A pack
 built with one of these is reproducible at most on one machine, and its record
 says so (`reproducible_scope`).
 
+Over a service: a table with a `url` upscales on another machine's GPU, or
+through AUTOMATIC1111 or ComfyUI, and `enhance serve` is the server to run on
+that machine. See [upscale-service.md](upscale-service.md).
+
 ## Reading a pack
 
 The format is the toolkit's. A newer pack than a runtime reads is refused by it
