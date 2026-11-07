@@ -7,6 +7,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-07
+
 ### Added
 - The game README standard (`docs/readme.md`): one player-first
   README for every game repo, in a fixed section order, with the parts that
@@ -34,6 +36,41 @@ a release by its tag in `game.toml`'s `[cli]` table.
   (`config/releases/<id>.toml`), from the release matcher. Each row records
   the reference address it came from (`ref`); rows a person marked
   `reviewed` are kept when it runs again, unless `names.toml` moved them.
+- `features`: the shared toolkit features every game gets, and whether this
+  one has them (the toolkit's code, the staging, the
+  `packaging/config.default.toml` row and the README mods-table row); exits
+  1 on a gap. `doctor` lists the same gaps, and `public audit` and `public
+  export` refuse them. The first row is `present.shader`. The bench ship and
+  the build-host pull now carry `shaders/`, so shader presets no longer show
+  missing on bench runs, and the scaffold's stock build turns the
+  enhancements layer on.
+- `enhance textures`: `inventory` and `estimate` over a game's archives and
+  the runtime's texture dumps, joined on the texel hash (a dump alone is
+  enough, so packs work for games with no archive reader); `export` to PNG;
+  `build` an owner's texture pack with upscaler plugins, BC1/BC3 encoding
+  and mip chains; `compare` the upscalers on the same crops; `pick` and
+  `backend`. Textures are classed from the dump's `drawn_2d`, bump and
+  render-target facts, and the owner's own rules outrank them. `package
+  --texture-pack` and `--texture-preset` ship the pack. See
+  `docs/texture-pack.md`. A pack is owner-generated and never published.
+- `enhance hud --import` packs only the PNGs that changed, `--from-dumps`
+  upscales from a run's dump with xBR and `--misses` reads the misses a run
+  logged; an imported entry the index classes as world is kind world.
+- Upscale services (`docs/upscale-service.md`): an upscaler on another
+  machine, AUTOMATIC1111 or ComfyUI, and `enhance serve`, which serves any
+  registered backend. Tokens come from an environment variable, are never
+  stored and never cross plain http off loopback; serve binds loopback by
+  default and caps bodies and images.
+- `enhance preview`: a local page on 127.0.0.1 to pick upscalers, register a
+  service, set coverage per class and rule, compare results on crops of
+  real textures and save the config. Every route needs the session token.
+
+### Changed
+- `benchdb plan` and `clean`: a merged worktree dir (every checkout in it a
+  clean linked worktree whose work is on its repo's integration branch, no
+  stray git data, no live process or tracker item) passes the dirty and age
+  guards without `--force-dirty` or `--force-young`. Its notes and scripts
+  are copied to `notes/<name>/` first.
 
 ## [0.21.0] - 2026-11-04
 
@@ -910,7 +947,8 @@ a release by its tag in `game.toml`'s `[cli]` table.
 - The bench and golden tools for testing under Proton and on the Mac.
 - `scripts/audit-public.sh` for checking a push before it goes public.
 
-[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/apexJCL/xboxrecomp-cli/compare/v0.18.0...v0.19.0
