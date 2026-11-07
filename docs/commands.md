@@ -467,7 +467,9 @@ premultiplies makes an untouched PNG count as an edit; re-saves by `sips` and
 files at other PNG depths and colour types are known to compare equal, but GIMP
 and Photoshop have not been tried.
 
-Every entry is kind `art`, world textures too: the runtime draws it today.
+An entry the index classes as world is kind `world`, so `textures.world = "off"`
+switches it off too. The others are kind `art`, which the runtime always draws. A
+pack with no world entry stays version 2, for an older toolkit.
 
 A mipped texture's levels are its old colours, so they are never kept: an
 entry's chain is always made from its own level 0 (a 2x2 box weighted by alpha,
