@@ -328,6 +328,39 @@ with a warning ([manifest.md](manifest.md#saves)). Refusals end with
 `refused: CODE` (`running`, `emulator`, `target`, `link`, `backup`,
 `source`, `save`, `empty`, `write`, `busy`, `stage`).
 
+### `mygame enhance textures`
+
+What a game's textures are and what a pack of them would cost; it builds nothing. Reads `[enhance.textures]` when `game.toml` has one. A dump alone is enough: a game with no archive reader gets a full inventory, its entries unnamed.
+
+`inventory`: every texture of the sources and dumps, joined on the runtime's hash, into `dist/enhance/inventory.json` (names, hashes, sizes, classes; never texels). It prints the entries per class, those the sources hold and no dump saw, and those a dump holds and no source names.
+
+| Option | Effect |
+|---|---|
+| `--dump DIR` | a directory a run wrote with `RECOMP_DEBUG=tex_dump=DIR`, one scene (repeatable) |
+| `--source KIND` | read only this source: `archive`, `loose`, `hook`, `dump` (repeatable) |
+| `--out FILE` | the inventory file |
+| `--json` | print the inventory as JSON |
+| `--list` | print every entry, and why a skipped one is skipped |
+| `--propose R` | per entry, the scale the magnification trace (`RECOMP_TRACE=tex_mag`) proposes at render scale R, and the bytes it saves |
+| `--untraced {class,skip}` | with `--propose`: what an entry the trace never saw gets (default: its class's scale) |
+| `--write-rules FILE` | with `--propose`: write the proposals into this config as rules, in a block of their own |
+
+`--write-rules` and `--untraced` need `--propose`, and `--json` refuses it. The rules go in a block before the config's own rules, which apply later and so win, and a hash the config already rules is left out.
+
+Where a game's load changes a DDS's bytes, no hash of the file is what the runtime sees: a DXT file whose sides are not powers of two, and with `reencodes_small_levels` in `game.toml`, a mip chain with a level under 4x4. Such a file joins a dumped texture by comparing a decoded small level and then level 0, and stays `needs_dump` (left out of a pack) until a dump holds it.
+
+A cube map is listed and never packable (the runtime looks up no cube in a pack), and neither is a sidecar with no usable `.xtd` that no source names (`no_texels`, even under a rule). A bad `.xtd` is reported as a problem of its dump.
+
+`estimate`: the pack bytes per class and scale, the VRAM of each dumped scene, and the upscale minutes of a preset, from that inventory. An upscaler with no measured rate reads "not measured yet".
+
+| Option | Effect |
+|---|---|
+| `--preset P` | `hud`, `ui`, `world`, `all`, `traced`, `custom` or one of the game's (default: the config's `preset`, else `all`) |
+| `--config FILE` | the config to apply (default `config/enhance-textures.toml`, if there) |
+| `--inventory FILE` | the inventory file |
+| `--json` | print the estimate as JSON |
+| `--jobs N` | the job count to divide the minutes by (default: the cores) |
+
 ### `mygame enhance hud`
 
 The HUD texture pack from the owner's own dump, into `dist/enhance/hud/hud.pack`.

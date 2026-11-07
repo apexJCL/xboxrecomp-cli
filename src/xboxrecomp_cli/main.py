@@ -493,7 +493,7 @@ def cmd_match(a):
 
 
 def _cfg_enhance(p):
-    from .enhance import hud
+    from .enhance import hud, textures
 
     sub = p.add_subparsers(dest="asset", metavar="asset")
     sub.required = True
@@ -503,11 +503,19 @@ def _cfg_enhance(p):
         "(game.toml [enhance.hud]); never share it",
     )
     hud.configure(h)
+    t = sub.add_parser(
+        "textures",
+        description="every texture of the game, from its sources and your dumps, and what a "
+        "pack would cost (game.toml [enhance.textures]); never share what it reads",
+    )
+    textures.configure(t)
 
 
 def cmd_enhance(a):
-    from .enhance import hud
+    from .enhance import hud, textures
 
+    if a.asset == "textures":
+        return textures.run(a)
     assert a.asset == "hud", a.asset
     return hud.run(a)
 

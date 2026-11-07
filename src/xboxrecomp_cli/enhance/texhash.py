@@ -28,3 +28,28 @@ def tex_hash(data, seed=SEED):
         l0 = ((l0 ^ data[i]) * PRIME) & MASK
         i += 1
     return ((l0 ^ ((l1 << 1) & MASK) ^ ((l2 << 2) & MASK) ^ ((l3 << 3) & MASK)) * PRIME) & MASK
+
+
+def tex_hash_prefixes(data, lengths, seed=SEED):
+    """[tex_hash(data[:n]) for n in lengths], lengths ascending, in one walk:
+    a mipped file is hashed once per level prefix, and the groups before a
+    prefix's tail are the same for every longer one."""
+    l0, l1, l2, l3 = seed, seed ^ 1, seed ^ 2, seed ^ 3
+    i = 0
+    unpack = _Q4.unpack_from
+    out = []
+    for n in lengths:
+        while i + 32 <= n:
+            w0, w1, w2, w3 = unpack(data, i)
+            l0 = ((l0 ^ w0) * PRIME) & MASK
+            l1 = ((l1 ^ w1) * PRIME) & MASK
+            l2 = ((l2 ^ w2) * PRIME) & MASK
+            l3 = ((l3 ^ w3) * PRIME) & MASK
+            i += 32
+        t = l0
+        for k in range(i, n):
+            t = ((t ^ data[k]) * PRIME) & MASK
+        out.append(
+            ((t ^ ((l1 << 1) & MASK) ^ ((l2 << 2) & MASK) ^ ((l3 << 3) & MASK)) * PRIME) & MASK
+        )
+    return out

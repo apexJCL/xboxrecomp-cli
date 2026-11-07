@@ -225,6 +225,32 @@ SPEC = {
     # Owner-made enhancement assets (xbr enhance). A game without the
     # table has no HUD set to build.
     "enhance": {},
+    "enhance.textures": {
+        # The readers, in order (enhance/sources/): archive, hook, loose,
+        # dump. Empty: the [enhance.hud] reader when it names archives, and
+        # the dump.
+        "sources": (STRS, []),
+        # Archive basenames (or hook paths) under data.game_files; empty:
+        # every archive of [enhance.hud], its languages' too.
+        "archives": (STRS, []),
+        # fnmatch patterns ('/', lower case) of the loose files under
+        # data.game_files; the hook's script, as enhance.hud.hook.
+        "loose": (STRS, []),
+        "hook": (STR, ""),
+        # Names never packed, whatever their class.
+        "exclude": (STRS, []),
+        # Class to patterns: font, text, ui, world, and grid for a sprite
+        # sheet's fact. Named world patterns keep other named textures out.
+        "classes": (STRSMAP, {}),
+        # A game's presets: name to classes and name patterns. hud and traced
+        # are not redefined.
+        "presets": (STRSMAP, {}),
+        # Entries the preview shows first (D10).
+        "preview": (STRS, []),
+        # The game's load re-encodes the levels under 4x4 of a DDS chain, so
+        # such a file's bytes are not what the runtime hashes (measure it).
+        "reencodes_small_levels": (BOOL, False),
+    },
     "enhance.hud": {
         # The archives to scan, and the entry-name patterns (fnmatch, '/'
         # separators, lower case) of the UI set to upscale; exclude drops
@@ -232,7 +258,7 @@ SPEC = {
         "archives": (STRS, []),
         "textures": (STRS, []),
         "exclude": (STRS, []),
-        # The archive reader (enhance/sources.py): "ipk", IPK1 pairs, each
+        # The archive reader (enhance/sources/): "ipk", IPK1 pairs, each
         # archive a basename under data.game_files; or "hook", a stdlib
         # script at the repo-relative path `hook` that prints an archive's
         # index, each archive a path under data.game_files.
@@ -419,6 +445,8 @@ LANGUAGES = ("en", "ja", "de", "fr", "es", "it", "ko", "zh", "pt")
 # benches (package says the manifest has no [package]). A game without
 # [public] is not published; one without [layout] has the standard one;
 # one without [hud] has no HUD table.
+TEXTURE_SOURCES = ("archive", "hook", "loose", "dump")
+TEXTURE_CLASS_KEYS = ("font", "text", "ui", "world", "grid")
 OPTIONAL = {"package", "enhance", "wizard", "public", "layout", "extract", "hud", "saves"}
 PUBLIC_MODES = ("export", "history")
 # "Name <email>", as git writes an identity.
@@ -1399,6 +1427,32 @@ def _check_values(m):
                 "golden.enhance_stock: %r is a toolkit key, which the golden check knows already"
                 % k
             )
+    tex = m.get("enhance", {}).get("textures")
+    if tex:
+        for src in tex["sources"]:
+            if src not in TEXTURE_SOURCES:
+                errors.append(
+                    "enhance.textures.sources: %r is not one of %s"
+                    % (src, ", ".join(TEXTURE_SOURCES))
+                )
+        for arc in tex["archives"]:
+            why = rel_path_problem(arc)
+            if why:
+                errors.append("enhance.textures.archives: %r %s" % (arc, why))
+        if tex["hook"]:
+            why = rel_path_problem(tex["hook"])
+            if why:
+                errors.append("enhance.textures.hook: %r %s" % (tex["hook"], why))
+        elif "hook" in tex["sources"] and not m["enhance"].get("hud", {}).get("hook"):
+            errors.append('enhance.textures.hook: required with "hook" in sources')
+        for c in tex["classes"]:
+            if c not in TEXTURE_CLASS_KEYS:
+                errors.append(
+                    "enhance.textures.classes.%s: one of %s" % (c, ", ".join(TEXTURE_CLASS_KEYS))
+                )
+        for p in tex["presets"]:
+            if p in ("hud", "traced"):
+                errors.append("enhance.textures.presets.%s: fixed, not redefined" % p)
     hud = m.get("enhance", {}).get("hud")
     if hud:
         if hud["source"] not in HUD_SOURCES:

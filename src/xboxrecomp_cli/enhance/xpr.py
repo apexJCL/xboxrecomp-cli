@@ -35,6 +35,23 @@ XPR_MAGIC = b"XPR0"
 END = 0xFFFFFFFF
 TYPE_TEXTURE = 4
 FORMATS = {0x0C: b"DXT1", 0x0E: b"DXT3", 0x0F: b"DXT5"}
+# The swizzled uncompressed formats: color id to (name, bytes a texel). The
+# resource is in GPU layout already, so it hashes as it is, never swizzled
+# a second time. Only the inventory asks for them (raw=True): a HUD set stays DXT.
+RAW_FORMATS = {
+    0x00: (b"L8", 1),
+    0x01: (b"AL8", 1),
+    0x02: (b"A1R5G5B5", 2),
+    0x03: (b"X1R5G5B5", 2),
+    0x04: (b"A4R4G4B4", 2),
+    0x05: (b"R5G6B5", 2),
+    0x06: (b"A8R8G8B8", 4),
+    0x07: (b"X8R8G8B8", 4),
+    0x19: (b"A8", 1),
+    0x1A: (b"A8L8", 2),
+    0x28: (b"G8B8", 2),
+    0x29: (b"R8B8", 2),
+}
 
 
 class XprError(Exception):
@@ -60,18 +77,18 @@ def _names(raw):
     return out
 
 
-def parse_mix(data):
+def parse_mix(data, raw=False):
     """[(name, Dds or None, note)] of the textures in a MIXF image. A
     texture that can't be used comes back as None with the reason; a MIX
-    with no texture as one ("", None, note)."""
+    with no texture as one ("", None, note). raw: parse_xpr's."""
     try:
-        return _parse_mix(data)
+        return _parse_mix(data, raw)
     except struct.error as e:
         # A backstop: the bounds checks should leave no short read.
         raise XprError("MIXF truncated (%s)" % e) from e
 
 
-def _parse_mix(data):
+def _parse_mix(data, raw=False):
     if len(data) < 0x20 or not is_mix(data):
         raise XprError("not a MIXF file")
     hsize, nsize, doff = struct.unpack_from("<III", data, 4)
@@ -81,7 +98,7 @@ def _parse_mix(data):
     if hsize + count * 32 > len(data) or nsize < count * 32:
         raise XprError("MIXF name table past the end")
     names = _names([data[hsize + 32 * i : hsize + 32 * (i + 1)] for i in range(count)])
-    texs = parse_xpr(data, doff)
+    texs = parse_xpr(data, doff, raw)
     if not texs:
         return [("", None, "skipped: no textures")]
     out = []
@@ -91,8 +108,19 @@ def _parse_mix(data):
     return out
 
 
-def parse_xpr(data, base):
-    """[(Dds or None, note)] of the textures in the XPR0 at `base`."""
+def raw_extent(bpp, w, h, levels):
+    """Bytes of `levels` uncompressed levels, each halving (minimum 1)."""
+    n = 0
+    for _ in range(levels):
+        n += w * h * bpp
+        w = max(1, w // 2)
+        h = max(1, h // 2)
+    return n
+
+
+def parse_xpr(data, base, raw=False):
+    """[(Dds or None, note)] of the textures in the XPR0 at `base`. raw: an
+    uncompressed texture comes back too, its Dds.fourcc the format's name."""
     if data[base : base + 4] != XPR_MAGIC:
         raise XprError("no XPR0 at 0x%x" % base)
     if base + 12 > len(data):
@@ -125,6 +153,14 @@ def parse_xpr(data, base):
         levels = max(1, (fmt >> 16) & 0xF)
         w, h = 1 << ((fmt >> 20) & 0xF), 1 << ((fmt >> 24) & 0xF)
         fourcc = FORMATS.get(color)
+        if fourcc is None and raw and color in RAW_FORMATS:
+            name, bpp = RAW_FORMATS[color]
+            n = raw_extent(bpp, w, h, levels)
+            if texels + off + n > len(data):
+                out.append((None, "skipped: %s data truncated" % name.decode()))
+                continue
+            out.append((dds.Dds(w, h, levels, name, data[texels + off : texels + off + n]), ""))
+            continue
         if fourcc is None:
             out.append((None, "skipped: not DXT (format 0x%02X)" % color))
             continue

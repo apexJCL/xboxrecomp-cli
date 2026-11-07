@@ -569,6 +569,22 @@ digest = 33972
 key = "roamable"
 ```
 
+## [enhance.textures]
+
+This table is optional. Without it, `enhance textures` takes what it can from `[enhance.hud]`, and reads a dump with no other source.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `sources` | from `[enhance.hud]`, plus `"dump"`; else `["dump"]` | Where textures come from: `"archive"` (IPK1 pairs), `"hook"` (`[enhance.hud]`'s protocol), `"loose"` (files under `data.game_files`), `"dump"` (a run's `RECOMP_DEBUG=tex_dump` directory). With no archive or hook, entries stay unnamed unless a loose file names them. |
+| `archives` | `[enhance.hud]`'s and its languages' | The archives to read, as in `[enhance.hud]`. |
+| `loose` | `[]` | fnmatch patterns of loose files, `/` separators. |
+| `hook` | `[enhance.hud]`'s | The hook script; required with `"hook"`. |
+| `exclude` | `[]` | Patterns of entries left out of every pack. |
+| `classes` | `{}` | Per class (`ui`, `text`, `font`, `world`, and `grid` for a sprite sheet's fact), the name patterns that make an entry of it. `world` is special: when set, a named entry that no pattern holds is excluded. |
+| `presets` | `{}` | The game's own presets: a list of classes and name patterns. `hud` and `traced` cannot be redefined. |
+| `preview` | `[]` | The game's picks for comparing upscalers. |
+| `reencodes_small_levels` | `false` | The game's load re-encodes the levels under 4x4 of a DDS mip chain. Such a file's hash is then a guess: it joins a dump by content, and stays `needs_dump` until one holds it. Set it when a dump shows it: chains of the game's DDS files with no hash match, while the rest match. |
+
 ## [enhance.hud]
 
 This table is optional. Without it, `enhance hud` says the game names no HUD set. The pack it makes is the owner's own (made from their game files, never distributed; `package --hud-pack` puts it in their private bundle).

@@ -1041,7 +1041,7 @@ def test_mix_truncated(monkeypatch):
     with pytest.raises(xpr.XprError, match="header size"):
         xpr.parse_mix(bytes(bad))
     # The backstop: a short read that slips past the checks.
-    monkeypatch.setattr(xpr, "parse_xpr", lambda data, base: struct.unpack_from("<I", b""))
+    monkeypatch.setattr(xpr, "parse_xpr", lambda *_: struct.unpack_from("<I", b""))
     with pytest.raises(xpr.XprError, match="MIXF truncated"):
         xpr.parse_mix(data)
 
@@ -1684,8 +1684,8 @@ def test_hook_index_checks(doc, match):
 def test_hook_failures(d, hook, match, monkeypatch):
     from xboxrecomp_cli.enhance import sources
 
-    monkeypatch.setattr(sources, "TIMEOUT", 1)
-    monkeypatch.setattr(sources, "STDOUT_MAX", 1 << 20)
+    monkeypatch.setattr(sources.hook, "TIMEOUT", 1)
+    monkeypatch.setattr(sources.hook, "STDOUT_MAX", 1 << 20)
     with fake_tree(d):
         hook_game(d, hook)
         with pytest.raises(host.CliError, match="data4.dat.*hook scripts/dat_index.py.*" + match):
@@ -1737,7 +1737,7 @@ def test_hook_tree_killed_on_interrupt(d, monkeypatch):
         seen["pid"] = p.pid
         real(p)
 
-    monkeypatch.setattr(sources, "_kill_tree", spy)
+    monkeypatch.setattr(sources.hook, "_kill_tree", spy)
     real_join = threading.Thread.join
 
     def join(self, timeout=None):

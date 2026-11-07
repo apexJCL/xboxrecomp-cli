@@ -1,16 +1,10 @@
-"""Archive sources of xbr enhance hud: where the set's entries are read.
+"""The `hook` source: a stdlib script in the game's repo prints an archive's
+index, the CLI reads the ranges itself. An archive is a path under
+game_files, matched case-insensitively per part (a dump copied from a disc
+or a Windows folder may spell `Data` or `data`).
 
-game.toml's [enhance.hud] source picks the reader:
-
-  ipk   IPK1 pairs (ipk.py); an archive is a basename under game_files,
-        `<name>.iph` beside `<name>.ipk`
-  hook  a stdlib script in the game's repo prints the archive's index, the
-        CLI reads the ranges itself; an archive is a path under
-        game_files, matched case-insensitively per part (a dump copied
-        from a disc or a Windows folder may spell `Data` or `data`)
-
-Hook protocol 1: `<python> -I <repo>/<hook> index <absolute archive>`,
-run in a fresh temporary folder, prints one JSON object
+Protocol 1: `<python> -I <repo>/<hook> index <absolute archive>`, run in a
+fresh temporary folder, prints one JSON object
 
   {"xbr_archive_index": 1,
    "entries": [{"name": "data\\\\ui\\\\a.dds", "offset": 1234, "size": 512}]}
@@ -30,52 +24,14 @@ import sys
 import tempfile
 import threading
 
-from ..manifest import rel_path_problem
-from . import ipk
+from ...manifest import rel_path_problem
+from .base import Entry, Source, SourceError
 
 PROTOCOL = 1
 STDOUT_MAX = 64 << 20
 STDERR_TAIL = 4096
 TIMEOUT = 60
 CHUNK = 1 << 16
-
-
-class SourceError(Exception):
-    pass
-
-
-class Entry:
-    """One stored range; the IPK1 entry's fields a reader needs."""
-
-    __slots__ = ("name", "offset", "size")
-
-    def __init__(self, name, offset, size):
-        self.name = name
-        self.offset = offset
-        self.size = size
-
-    @property
-    def path(self):
-        return self.name.replace("\\", "/").lower()
-
-
-class IpkSource:
-    """ipk.Archive with its errors as SourceError, the same text."""
-
-    def __init__(self, game_files, name):
-        self.name = name
-        self.label = os.path.join(game_files, name + ".iph")
-        try:
-            self._arc = ipk.Archive(game_files, name)
-        except ipk.ArchiveError as e:
-            raise SourceError(str(e)) from e
-        self.entries = self._arc.entries
-
-    def read(self, entry):
-        try:
-            return self._arc.read(entry)
-        except ipk.ArchiveError as e:
-            raise SourceError(str(e)) from e
 
 
 def resolve_nocase(root, rel):
@@ -251,7 +207,7 @@ def check_index(doc, size):
     return out
 
 
-class HookArchive:
+class HookArchive(Source):
     """One archive whose index a hook prints (protocol 1)."""
 
     def __init__(self, game_files, name, hook, repo):
@@ -293,18 +249,3 @@ class HookArchive:
                 "%s: %s: %d of %d bytes" % (self.path, entry.name, len(data), entry.size)
             )
         return data
-
-
-def label(game_files, name, cfg):
-    """The path errors name for an archive before it is opened."""
-    if cfg.get("source", "ipk") == "hook":
-        return os.path.join(game_files, name)
-    return os.path.join(game_files, name + ".iph")
-
-
-def open_source(game_files, name, cfg, repo):
-    """The archive `name` read by game.toml's [enhance.hud] source; OSError
-    or SourceError when it cannot be opened."""
-    if cfg.get("source", "ipk") == "hook":
-        return HookArchive(game_files, name, cfg["hook"], repo)
-    return IpkSource(game_files, name)
