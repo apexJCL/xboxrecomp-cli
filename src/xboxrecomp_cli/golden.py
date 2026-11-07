@@ -1168,6 +1168,10 @@ ENHANCE_STOCK = (
     ("display.overscan", ENHANCE_OVERSCAN_RE, "0"),
     ("present.pacing", ENHANCE_PACING_RE, "spin"),
     ("textures.pack", ENHANCE_PACK_RE, "none"),
+    # On the pack's own line, so only a run with a pack shows them.
+    ("textures.font", game_key_re("textures.font"), "on"),
+    ("textures.text", game_key_re("textures.text"), "on"),
+    ("textures.world", game_key_re("textures.world"), "on"),
     # Logged only when on; the goldens read the frame before the present,
     # but a golden run is stock all the same.
     ("present.shader", game_key_re("present.shader"), "none"),

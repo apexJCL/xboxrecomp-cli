@@ -152,6 +152,9 @@ def test_refused_paths():
         G, "openspec/changes/build-resources/design.md"
     )
     assert layout.refused_path(G, "a/runs/x") and layout.refused_path(G, "x/hud-pack.toml")
+    assert layout.refused_path(G, "x/textures-pack.toml")
+    assert layout.refused_path(G, "config/enhance-textures.local.toml")
+    assert layout.data_ext("x/0123456789ABCDEF.xtd") == "xtd"
     assert layout.data_ext("A/B.ISO") == "iso" and layout.data_ext("README.md") == ""
     # Without case (a case-insensitive file system), and a tracked symlink
     # standing for a shared folder.

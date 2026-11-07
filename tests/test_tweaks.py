@@ -452,3 +452,129 @@ def test_plan_config_overrides(game, d, monkeypatch):
     assert plan_of(game)["config_overrides"] == []
     write(cfg, '[textures]\npack = "x.pack"\n')
     assert plan_of(game)["config_overrides"] == [{"key": "textures.pack", "value": "x.pack"}]
+
+
+# ── The whole-game pack, by the same machinery ───────────────────────────
+
+
+TEXTURE_PACK = "enhance/textures.pack"
+
+
+def make_texture_pack(G, fill=b"\0\0\xff\xff"):
+    """dist/enhance/textures/ as enhance textures build leaves it."""
+    d = os.path.join(G.dist, "enhance", "textures")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, "textures.pack")
+    sha = pack_mod.write(path, [pack_mod.PackEntry(1, 1, 1, fill)], 2, version=3)
+    write(
+        os.path.join(d, "textures-pack.toml"),
+        'tool = "xbr 0.1"\nscale = 2\npack_sha256 = "%s"\nowner_generated = true\n' % sha,
+    )
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def test_texture_flags_are_exclusive_with_each_other_and_the_hud_pack(game):
+    p = main.make_parser()[0]
+    for pair in (
+        ["--texture-pack", "--hud-pack"],
+        ["--texture-preset", "all", "--texture-pack"],
+        ["--keep-texture-pack", "--clear-texture-pack"],
+        ["--keep-texture-pack", "--keep-hud-pack"],
+    ):
+        with pytest.raises(SystemExit):
+            p.parse_args(["package", "steamos"] + pair)
+    a = p.parse_args(["package", "steamos", "--texture-pack"])
+    assert tweaks.hud_choice(a) == "make" and tweaks.flag_kind(a) is tweaks.TEXTURES
+    a = p.parse_args(["package", "steamos", "--keep-texture-pack"])
+    assert tweaks.hud_choice(a) == "keep" and tweaks.flag_kind(a) is tweaks.TEXTURES
+    a = p.parse_args(["package", "steamos", "--keep-texture-pack", "--full"])
+    with pytest.raises(host.CliError, match="--full has no base"):
+        main.cmd_package(a)
+
+
+def test_a_bogus_texture_preset_is_refused_before_the_plan_runs(game, monkeypatch):
+    p = main.make_parser()[0]
+    ran = []
+    monkeypatch.setattr(pkg, "run_plan_prefix", lambda *a: ran.append(a))
+    for extra in ([], ["--plan"]):
+        a = p.parse_args(["package", "steamos", "--texture-preset", "bogus"] + extra)
+        with pytest.raises(host.CliError, match="preset bogus"):
+            main.cmd_package(a)
+    assert not ran
+
+
+@pytest.fixture
+def textured(game, monkeypatch):
+    monkeypatch.setattr(pkg, "reads_config", lambda: True)
+    monkeypatch.setattr(pkg, "config_layer", lambda enhance, lib, target: (True, {}))
+    G = game["G"]
+    bulk(G)
+    data = make_texture_pack(G)
+    game["run"](texture_pack="")
+    game["base"], game["pack"] = first_record(game), data
+    recompile(game)
+    return game
+
+
+def test_a_texture_pack_goes_in_the_bundle_and_says_it_is_owner_made(textured):
+    G = textured["G"]
+    (full,) = [b for b in bundles(G) if "patch-from" not in b]
+    full = G.path("dist", full)
+    names = tar_names(full)
+    assert TEXTURE_PACK in names and PACK not in names
+    m = tar_manifest(full)
+    rec = m["enhance"]["texture_pack"]
+    assert rec["path"] == TEXTURE_PACK and rec["sha256"] == sha_of(textured["pack"])
+    with tarfile.open(full) as t:
+        n = next(x for x in t.getnames() if x.endswith("/config.default.toml"))
+        text = t.extractfile(n).read().decode()
+    assert "[textures]" in text and "enhance/textures.pack" in text
+
+
+def test_a_patch_from_a_textured_base_needs_a_word_and_keep_keeps_the_bytes(textured):
+    G = textured["G"]
+    base = textured["base"]
+    before = bundles(G)
+    with pytest.raises(host.CliError, match="--keep-texture-pack"):
+        textured["run"](patch_from=base["sha256"])
+    assert bundles(G) == before and patches(G) == []
+    out = textured["run"](patch_from=base["sha256"], keep_texture_pack=True)
+    assert "keep: the texture pack of %s" % base["version"] in out, out
+    (p,) = patches(G)
+    # The same bytes: the patch leaves the file alone and its record stays.
+    assert TEXTURE_PACK not in tar_names(G.path("dist", p))
+    assert TEXTURE_PACK not in [e["path"] for e in patch_doc(G, p)["deleted"]]
+    rec = tar_manifest(G.path("dist", p))["enhance"]["texture_pack"]
+    assert rec["sha256"] == sha_of(textured["pack"])
+
+
+def test_keep_refuses_a_whole_game_pack_that_is_gone_rather_than_remake_it(textured):
+    G = textured["G"]
+    shutil.rmtree(store(textured))
+    os.unlink(os.path.join(G.dist, "enhance", "textures", "textures.pack"))
+    with pytest.raises(host.CliError, match=r"texture pack"):
+        textured["run"](patch_from=textured["base"]["sha256"], keep_texture_pack=True)
+
+
+def test_clear_removes_the_texture_pack(textured):
+    out = textured["run"](patch_from=textured["base"]["sha256"], clear_texture_pack=True)
+    (p,) = patches(textured["G"])
+    assert TEXTURE_PACK in [e["path"] for e in patch_doc(textured["G"], p)["deleted"]], out
+
+
+def test_a_texture_pack_replaces_a_base_hud_pack_and_the_plan_says_so(packed):
+    G = packed["G"]
+    data = make_texture_pack(G)
+    packed["a"].patch_from = packed["base"]["sha256"]
+    packed["a"].texture_pack = ""
+    try:
+        row = next(s for s in plan_of(packed)["stages"] if s["stage"] == "textures")
+    finally:
+        del packed["a"].patch_from, packed["a"].texture_pack
+    assert "it replaces the base's HUD pack" in row["why"], row
+    packed["run"](patch_from=packed["base"]["sha256"], texture_pack="")
+    (p,) = patches(G)
+    assert PACK in [e["path"] for e in patch_doc(G, p)["deleted"]]
+    enh = tar_manifest(G.path("dist", p))["enhance"]
+    assert enh["texture_pack"]["sha256"] == sha_of(data) and not enh.get("hud_pack")

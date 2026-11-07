@@ -36,7 +36,7 @@ import json
 import os
 import struct
 
-from . import classes, dds, swizzle, texhash, xpr
+from . import classes, dds, edges, swizzle, texhash, traced, xpr
 from .sources import DumpSource, HookArchive, IpkSource, LooseSource, SourceError
 from .sources.dump import hash_text
 
@@ -370,8 +370,9 @@ def _dump_entry(h, tex, name, volatile):
         if k in meta:
             e[k] = meta[k]
     # Traced runs only; written by RECOMP_TRACE=tex_mag beside the dump.
-    if isinstance(meta.get("mag_scale1"), (int, float)):
-        e["mag_scale1"] = meta["mag_scale1"]
+    mag = traced.sane_mag(meta.get("mag_scale1"))
+    if mag is not None:
+        e["mag_scale1"] = mag
         e["draws"] = meta.get("mag_draws", 0)
     return e
 
@@ -382,8 +383,8 @@ def _merge_dump(e, other, name, tex, volatile):
     e["uses"] += tex.uses
     e["has_texels"] = e["has_texels"] or bool(tex.path)
     e["volatile"] = e["volatile"] or other in volatile
-    mag = tex.meta.get("mag_scale1")
-    if isinstance(mag, (int, float)):
+    mag = traced.sane_mag(tex.meta.get("mag_scale1"))
+    if mag is not None:
         e["mag_scale1"] = max(e.get("mag_scale1", 0), mag)
         e["draws"] = e.get("draws", 0) + tex.meta.get("mag_draws", 0)
     # 2D only if every scene that drew it says so: no `drawn_2d` is a scene
@@ -394,6 +395,10 @@ def _merge_dump(e, other, name, tex, volatile):
     for k in ("bump", "rt"):
         if tex.meta.get(k):
             e[k] = True
+    # It decides the build's padding, so not whichever scene came first.
+    for k in ("wrap_u", "wrap_v"):
+        if tex.meta.get(k):
+            e[k] = edges.merged_address(e.get(k), tex.meta[k])
 
 
 def _alpha_used(tex):

@@ -1324,3 +1324,20 @@ def test_the_hud_preset_is_what_enhance_hud_reads():
     assert classes.treatment(fr, {}, "hud", cfg)["skip"] == "language fr not picked"
     assert classes.treatment(fr, {"coverage": {"languages": ["fr"]}}, "hud", cfg)["skip"] == ""
     assert classes.treatment(fr, {}, "all", cfg)["skip"] == ""
+
+
+def test_a_degenerate_magnification_does_not_set_the_maximum(d):
+    # A draw whose coordinate barely moves reads millions of pixels per texel:
+    # it is no magnification, and the sane figure of another scene survives.
+    one, two, three = (os.path.join(d, n) for n in ("one", "two", "three"))
+    dump_texture(one, "00000000000000A1", 8, 8, mag_scale1=2401180, mag_draws=1)
+    dump_texture(two, "00000000000000A1", 8, 8, mag_scale1=1.5, mag_draws=3)
+    dump_texture(three, "00000000000000A2", 8, 8, mag_scale1=2401180, mag_draws=1)
+    assert traced.sane_mag(traced.MAG_BOUND) == traced.MAG_BOUND
+    assert traced.sane_mag(78) == 78
+    assert traced.sane_mag(traced.MAG_BOUND + 1) is None
+    assert traced.sane_mag(True) is None
+    entries, _ = inventory.join([], [DumpSource(p) for p in (one, two, three)])
+    assert entries["00000000000000A1"]["mag_scale1"] == 1.5
+    assert entries["00000000000000A1"]["draws"] == 3
+    assert "mag_scale1" not in entries["00000000000000A2"]

@@ -670,13 +670,11 @@ def record_packs(st, keep=KEEP_PACKS):
             continue
         for b in bases(st, target)[:keep]:
             man = buildstate.load_json(os.path.join(d, b["sha256"] + ".json"), None)
-            hp = (
-                ((man or {}).get("enhance") or {}).get("hud_pack")
-                if isinstance(man, dict)
-                else None
-            )
-            if isinstance(hp, dict) and isinstance(hp.get("sha256"), str):
-                out.add(hp["sha256"])
+            enh = ((man or {}).get("enhance") or {}) if isinstance(man, dict) else {}
+            for field in ("hud_pack", "texture_pack"):
+                hp = enh.get(field)
+                if isinstance(hp, dict) and isinstance(hp.get("sha256"), str):
+                    out.add(hp["sha256"])
     return out
 
 

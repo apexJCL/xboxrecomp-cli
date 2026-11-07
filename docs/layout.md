@@ -67,9 +67,10 @@ The scaffold's `.gitignore` is the baseline, filled with the game's own
   `build-logs/`;
 - `.venv*`, `third_party`, `external`, `dist/`, `bench-logs`;
 - `/wt/`, `_local/`, `runs/`, `saves/`, `*.bak`, `*.bak-*`;
-- `hud-pack.toml`, `CACHE/` and the data extensions: `xbe iso xiso bmp png
+- `hud-pack.toml`, `textures-pack.toml`, `enhance-textures.local.toml`,
+  `CACHE/` and the data extensions: `xbe iso xiso bmp png
   wav sav pack xpr xwb adx sfd ipk xsv xmv rws awd ppm raw dmg exe pdb nsi
-  tar ico icns`;
+  tar ico icns xtd`;
 - `.claude/settings.local.json`, `CLAUDE.local.md`.
 
 The top-level lines are anchored (`/build-*/`, `/external`), so
@@ -109,7 +110,8 @@ Never published, whatever the content. The export refuses (not drops) them,
 so the fix lands in the private commit:
 
 - the data and bundle extensions above;
-- `hud-pack.toml` at any depth;
+- `hud-pack.toml`, `textures-pack.toml` and `enhance-textures.local.toml` at
+  any depth;
 - `[data] game_files`, `[pipeline] gen` and its `gen.*` siblings;
 - `dist/`, `bin/` and `build*/` at the top;
 - setup's clones and venv at the top: `third_party`, `external`, `.venv*`,

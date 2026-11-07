@@ -408,11 +408,11 @@ def test_pack_v2_kinds_and_bc3(d):
     with open(os.path.join(d, "v1.pack"), "wb") as f:
         f.write(v1)
     assert pack.read_header(os.path.join(d, "v1.pack")) == (3, 4)
-    struct.pack_into("<I", v1, 4, 3)
-    with open(os.path.join(d, "v3.pack"), "wb") as f:
+    struct.pack_into("<I", v1, 4, 4)
+    with open(os.path.join(d, "v4.pack"), "wb") as f:
         f.write(v1)
-    with pytest.raises(ValueError, match="version 3"):
-        pack.read_header(os.path.join(d, "v3.pack"))
+    with pytest.raises(ValueError, match="version 4"):
+        pack.read_header(os.path.join(d, "v4.pack"))
     text = pack.manifest_text([art, fnt, txt], 4, "k", "t", "x" * 64, None, 2, ["us"])
     assert 'languages = ["us"]' in text
     assert "[kinds.text]\nentries = 1\nscale = 2\nbc3 = 1\nbytes = 16\n" in text

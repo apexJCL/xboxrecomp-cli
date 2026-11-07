@@ -1,5 +1,5 @@
 """An integer xBR kernel (Hyllian's edge-directed pixel-art scaler, the
-family xBRZ and ScaleFX grew from) for 2x and 4x, with alpha.
+family xBRZ and ScaleFX grew from) for 2x, 3x and 4x, with alpha.
 
 For every pixel E and each of its four corners, the kernel decides from
 the 5x5 neighbourhood whether an edge runs across that corner (the
@@ -19,7 +19,9 @@ bytes on any machine; results do not depend on how textures are split
 across processes, since a texture is one unit of work.
 
 Images are (w, h, rgba bytes). `scale(w, h, rgba, s)` returns the
-upscaled rgba bytes, s in (2, 4).
+upscaled rgba bytes, s in (2, 3, 4). Its keywords are the knobs of the
+built-in upscaler (upscalers/builtin.py); the defaults are the kernel as the
+packs have always had it.
 """
 
 from fractions import Fraction
@@ -127,9 +129,12 @@ def _tables(s):
     return tabs
 
 
-def scale(w, h, rgba, s):
-    if s not in (2, 4):
-        raise ValueError("scale must be 2 or 4")
+def scale(w, h, rgba, s, level=2, eq=EQ, weights=(WY, WU, WV, WA)):
+    """`level` 1 keeps to the 45-degree line; `weights` are the distance's
+    (Y, U, V, alpha); an alpha weight of 0 makes alpha no edge at all."""
+    if s not in (2, 3, 4):
+        raise ValueError("scale must be 2, 3 or 4")
+    wy, wu, wv, wa = weights
     pw, ph = w + 4, h + 4
     n = pw * ph
     ys = [0] * n
@@ -151,10 +156,10 @@ def scale(w, h, rgba, s):
 
     def df(i, j):
         return (
-            abs(ys[i] - ys[j]) * WY
-            + abs(us[i] - us[j]) * WU
-            + abs(vs[i] - vs[j]) * WV
-            + abs(als[i] - als[j]) * WA
+            abs(ys[i] - ys[j]) * wy
+            + abs(us[i] - us[j]) * wu
+            + abs(vs[i] - vs[j]) * wv
+            + abs(als[i] - als[j]) * wa
         )
 
     tabs = _tables(s)
@@ -184,33 +189,33 @@ def scale(w, h, rgba, s):
                 B, C, D, F = e + d["B"], e + d["C"], e + d["D"], e + d["F"]
                 G, H, II = e + d["G"], e + d["H"], e + d["I"]
                 F4, I4, H5, I5 = e + d["F4"], e + d["I4"], e + d["H5"], e + d["I5"]
-                if df(E, F) < EQ and df(E, H) < EQ:
+                if df(E, F) < eq and df(E, H) < eq:
                     continue
                 # The lv2 interpolation restriction: not across a corner
                 # that two equal neighbours already make flat.
-                fb, fc = df(F, B) < EQ, df(F, C) < EQ
-                hd, hg = df(H, D) < EQ, df(H, G) < EQ
-                ei = df(E, II) < EQ
+                fb, fc = df(F, B) < eq, df(F, C) < eq
+                hd, hg = df(H, D) < eq, df(H, G) < eq
+                ei = df(E, II) < eq
                 if not (
                     (not fb and not fc)
                     or (not hd and not hg)
                     or (
                         ei
                         and (
-                            (df(F, F4) >= EQ and df(F, I4) >= EQ)
-                            or (df(H, H5) >= EQ and df(H, I5) >= EQ)
+                            (df(F, F4) >= eq and df(F, I4) >= eq)
+                            or (df(H, H5) >= eq and df(H, I5) >= eq)
                         )
                     )
-                    or df(E, G) < EQ
-                    or df(E, C) < EQ
+                    or df(E, G) < eq
+                    or df(E, C) < eq
                 ):
                     continue
                 edge = df(E, C) + df(E, G) + df(II, H5) + df(II, F4) + 4 * df(H, F)
                 inner = df(H, D) + df(H, I5) + df(F, I4) + df(F, B) + 4 * df(E, II)
                 if edge >= inner:
                     continue
-                left = 2 * df(F, G) <= df(H, C) and df(E, G) >= EQ and df(D, G) >= EQ
-                up = 2 * df(H, C) <= df(F, G) and df(E, C) >= EQ and df(B, C) >= EQ
+                left = level > 1 and 2 * df(F, G) <= df(H, C) and df(E, G) >= eq and df(D, G) >= eq
+                up = level > 1 and 2 * df(H, C) <= df(F, G) and df(E, C) >= eq and df(B, C) >= eq
                 kind = "left" if left and not up else "up" if up and not left else "lv1"
                 src = F if df(E, F) <= df(E, H) else H
                 # src is a padded index: back to the image's rgba.

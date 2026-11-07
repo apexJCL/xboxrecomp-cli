@@ -608,6 +608,9 @@ TOOLKIT_ENHANCE_KEYS = (
     "display.overscan",
     "present.pacing",
     "textures.pack",
+    "textures.font",
+    "textures.text",
+    "textures.world",
     "present.shader",
     "menu.enabled",
     "overlay.stats",
@@ -1470,8 +1473,8 @@ def _check_values(m):
             why = rel_path_problem(arc)
             if why:
                 errors.append("enhance.hud.archives: %r %s" % (arc, why))
-        if hud["scale"] not in (2, 4):
-            errors.append("enhance.hud.scale: 2 or 4")
+        if hud["scale"] not in (2, 3, 4):
+            errors.append("enhance.hud.scale: 2, 3 or 4")
         if hud["max_texels"] < 0:
             errors.append("enhance.hud.max_texels: 0 (no limit) or positive")
         if hud["font_atlas"] and not hud["font_rows"]:

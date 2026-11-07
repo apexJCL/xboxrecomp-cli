@@ -1,0 +1,28 @@
+# A separate, optional package: never a dependency of xboxrecomp-cli, and the
+# CLI's tests never import it. `xbr enhance textures backend install torch`
+# prints the line that installs it; the models are the owner's own files.
+[project]
+name = "xbr-upscale-torch"
+version = "0.1.0"
+description = "Runs an upscaling model file the owner downloaded, for xbr enhance textures"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+# Exact pins: a model's output depends on them, and the record names them.
+# Never spandrel_extra_arches: its architectures carry restrictive licences.
+dependencies = ["torch==2.6.0", "spandrel==0.4.1"]
+
+[project.scripts]
+xbr-upscale-torch = "xbr_upscale_torch.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xbr_upscale_torch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

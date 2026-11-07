@@ -70,6 +70,9 @@ A private bundle for one target in `dist/`. Needs `[package]` in `game.toml`.
 | `--allow-nonstock` | package with a non-stock CMake value (`build.nonstock_vars`, or the enhancements layer off); recorded in `manifest.json` |
 | `--archive` | windows: also a stored `.zip` of the folder |
 | `--hud-pack [DIR]` | put the HUD texture pack (default `dist/enhance/hud/`) in the bundle and enable it in its `config.default.toml`, which the game reads on first installs and upgrades alike |
+| `--texture-pack [DIR]` | put your texture pack (default `dist/enhance/textures/`) in the bundle instead of a HUD pack, and enable it the same way; refused with `--hud-pack`. Over a base with a HUD pack it replaces it, and the plan says so |
+| `--texture-preset NAME` | make the pack of this preset first (`enhance textures build`), then as `--texture-pack`; the plan's `textures` row gives the estimate |
+| `--keep-texture-pack`, `--clear-texture-pack` | as `--keep-hud-pack` and `--clear-hud-pack`, except that a whole-game pack is never made again: a kept one comes from the store or `dist/enhance/textures/` |
 | `--seed-config FILE` | a `config.toml` with the player's options (the build wizard writes it), staged as `config.seed.toml`; each installer copies it to the data folder's `config/config.toml` only when that file does not exist yet. Every key must be one `config.default.toml` has |
 | `--out OUT` | output directory (default `dist/`) |
 | `--plain` | plain line output, no live progress (also when not a terminal, or `CI=1`), and a heartbeat line every 20 s of silence (`  <step> ... m:ss | <last line>`) |
@@ -370,6 +373,38 @@ A cube map is listed and never packable (the runtime looks up no cube in a pack)
 | `--only HASH` | only this hash; wildcards work (repeatable) |
 | `--misses LOG` | only the textures this `RECOMP_TRACE=tex_pack` log missed (repeatable) |
 
+`build`: the owner's texture pack, from their game files and dumps, into `dist/enhance/textures/textures.pack` and `textures-pack.toml`. A pack is owner-generated and never published. See [texture-pack.md](texture-pack.md).
+
+| Option | Effect |
+|---|---|
+| `--preset P` | as `estimate` |
+| `--config FILE` | the config to apply (default `config/enhance-textures.toml`, if there) |
+| `--inventory FILE` | the inventory file |
+| `--dump DIR` | where entries only a dump holds are read (default: the dumps the inventory saw; repeatable) |
+| `--out DIR` | the output folder |
+| `--only PATTERN` | only entries matching this (repeatable) |
+| `--language L` | text of this language (repeatable) |
+| `--font FONT` | a font file or an installed font's name, for the font class's atlas |
+| `--list` | print each entry's class, rule and reason; build nothing |
+| `--jobs N`, `--ignore-disk-space` | as `build` |
+
+`compare`: the same crops through every upscaler you have, into `dist/enhance/compare/<stamp>/`: `grid_<class>.png` (rows samples, columns upscalers, over a checkerboard), `full/`, `compare.json` (identities, licences, seconds per megatexel, whether two runs agreed) and a static `index.html`. Samples are the game's `preview` picks, then the busiest texture per size band, the same every run. A preset whose tool is absent is named and not run; a command that fails is one column marked failed. Keep the folder private: it holds your game's textures.
+
+| Option | Effect |
+|---|---|
+| `--class C` | only this class (repeatable) |
+| `--upscaler NAME` | only this upscaler: a built-in or an `[upscaler.NAME]` (repeatable) |
+| `--scale S` | 2, 3 or 4 (default: each class's) |
+| `--samples N` | samples per class |
+| `--pick PATTERN` | also this texture, by name pattern or hash, first in its class (repeatable) |
+| `--crop N` | the crop's side in source texels (default 128) |
+| `--repeat N` | runs per upscaler, to check they agree (default 2) |
+| `--out DIR`, `--config FILE`, `--inventory FILE`, `--dump DIR` | as `build` |
+
+`pick CLASS UPSCALER [--scale S] [--config FILE]`: writes the class's row into the config, keeping its comments.
+
+`backend [list]`: the built-in upscalers, the presets over tools you install (found or not, licence, homepage) and the models they know of. `backend install torch`: prints the line that installs the optional torch plugin on each platform. It runs nothing, and the CLI downloads no tool and no model.
+
 ### `mygame enhance hud`
 
 The HUD texture pack from the owner's own dump, into `dist/enhance/hud/hud.pack`.
@@ -442,6 +477,10 @@ a one-level world texture grows, since it would shimmer at a distance without
 one. A one-level texture at its own size and a HUD piece get one level. `full`
 gives every entry the chain; `none` none, which shows no old colours but
 shimmers on a mipped guest at a distance.
+
+A texture the inventory or the export's `index.json` classes as world goes in as
+kind `world`, which `textures.world` can turn off, and makes the pack version 3;
+every other entry is kind `art`, and a pack with no world entry stays version 2.
 
 One image can have several hashes: a palette variant, or the same file bound
 with another level count, is a texture of its own, and each needs its PNG.

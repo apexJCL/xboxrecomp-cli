@@ -549,7 +549,7 @@ def test_help_sections():
     ap, _ = main.make_parser()
     text = ap.format_help()
     cmds, dev = text.split("\nCommands:")[1].split("Developer commands:")
-    for w in ("analyze", "recomp", "build [", "pins"):
+    for w in ("analyze", "recomp", "blinx2 build [", "pins"):
         assert w not in cmds and w in dev, w
     assert "blinx2 package" in cmds and "blinx2 doctor" in cmds
 

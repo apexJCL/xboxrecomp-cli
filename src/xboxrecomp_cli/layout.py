@@ -156,8 +156,14 @@ def private(game, path):
 # union of the audits the games had). Each is also a baseline ignore line.
 DATA_EXT = (
     "xbe iso xiso bmp png wav sav pack xpr xwb adx sfd ipk xsv xmv rws awd ppm raw "
-    "dmg exe pdb nsi tar ico icns"
+    "dmg exe pdb nsi tar ico icns xtd"
 ).split()
+# Files refused by name: what a pack was made from, and this machine's tools.
+REFUSED_NAMES = {
+    "hud-pack.toml": "a HUD texture pack's manifest (made from game data)",
+    "textures-pack.toml": "a texture pack's manifest (made from game data)",
+    "enhance-textures.local.toml": "this machine's upscaler paths (never tracked)",
+}
 # Directories refused wherever they are, as the baseline ignores them
 # anywhere; the ones below are refused at the top only (build*/ there is
 # a build tree; openspec/changes/build-resources/ is not).
@@ -208,6 +214,8 @@ def baseline_samples(game):
         "game.toml.bak",
         "game.toml.bak-20261016",
         "a/hud-pack.toml",
+        "a/textures-pack.toml",
+        "config/enhance-textures.local.toml",
         "a/CACHE/x",
         ".claude/settings.local.json",
         "CLAUDE.local.md",
@@ -244,8 +252,8 @@ def refused_path(game, path):
     # Without case: a case-insensitive file system (macOS, Windows) checks
     # out Runs/ where runs/ was meant, and the baseline would not ignore it.
     low = [x.lower() for x in segs]
-    if low[-1] == "hud-pack.toml":
-        return "a HUD texture pack's manifest (made from game data)"
+    if low[-1] in REFUSED_NAMES:
+        return REFUSED_NAMES[low[-1]]
     gf, gen = m["data"]["game_files"], m["pipeline"]["gen"]
     if _under(path, gf):
         return "the dump ([data] game_files)"

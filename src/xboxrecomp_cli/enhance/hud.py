@@ -70,7 +70,7 @@ def resolve_font(arg, name):
 
 def configure(p):
     p.add_argument(
-        "--scale", type=int, choices=(2, 4), help="upscale factor (default: game.toml's)"
+        "--scale", type=int, choices=(2, 3, 4), help="upscale factor (default: game.toml's)"
     )
     p.add_argument("--out", help="output directory (default dist/enhance/hud/)")
     p.add_argument(

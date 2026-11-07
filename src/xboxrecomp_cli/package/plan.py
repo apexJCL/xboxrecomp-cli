@@ -116,7 +116,11 @@ def make_plan(a, lib, imp=None, enhance=True, seed=None, into=None):
     sname, wname = incr.stage_name(target), incr.wrap_name(target)
     hud_on = getattr(a, "hud_pack", None) is not None
     keeping = p.hud["choice"] == "keep"
+    tex_on = getattr(a, "texture_pack", None) is not None
+    preset = getattr(a, "texture_preset", None)
     later = (["hud"] if hud_on or keeping else []) + [cstage, sname, wname]
+    if tex_on or preset is not None:
+        later = ["textures"] + later
     if setup.TOOLKIT_NEEDS & set(needs):
         rest("checked after setup", ["generate", "icon"] + later)
         return finish(p, st, target, version, a, into)
@@ -154,6 +158,8 @@ def make_plan(a, lib, imp=None, enhance=True, seed=None, into=None):
     hud_runs = False
     if hud_on:
         hud_runs, hud_sha = hud_row(a, p, st, imp_key)
+    elif preset is not None or tex_on:
+        hud_runs, hud_sha = textures_row(a, p, preset, timings)
     elif keeping:
         hud_sha = keep_row(p, st, timings)
 
@@ -276,6 +282,49 @@ def hud_row(a, p, st, imp_key):
     return False, host.sha256_path(pack)
 
 
+def textures_row(a, p, preset, timings):
+    """The `textures` row: the whole-game pack --texture-preset would make,
+    with the estimate's minutes and megabytes, or the pack --texture-pack
+    names. Returns (runs, the pack's sha256 when it is on disk)."""
+    from . import tweaks as tw
+
+    G = g()
+    path = os.path.join(
+        os.path.abspath(
+            getattr(a, "texture_pack", None) or os.path.join(G.dist, "enhance", "textures")
+        ),
+        tw.TEXTURES.name,
+    )
+    # The bundle carries one pack: this one takes the HUD pack's place.
+    over = ["it replaces the base's HUD pack"] if tw.base_kind(p.base) is tw.HUD else []
+    if preset is None:
+        there = os.path.isfile(path)
+        p.row("textures", "reuse" if there else "refuse", (over if there else ["no " + path]))
+        return False, host.sha256_path(path) if there else ""
+    est, mb = texture_estimate(preset)
+    why = ["preset %s, about %.0f MB" % (preset, mb)] + over
+    p.add("textures", why, ["enhance textures"], est)
+    return True, ""
+
+
+def texture_estimate(preset):
+    """(seconds, MB) the estimate gives a preset, from the inventory if one is
+    there; (0, 0) when there is nothing to read, which only loses the number."""
+    from ..enhance import classes, estimate, inventory
+
+    G = g()
+    try:
+        doc = inventory.load(os.path.join(G.dist, "enhance", "inventory.json"))
+        cfg = classes.game_config(G.m)
+        est = estimate.estimate(
+            doc["entries"], preset, {}, cfg, load_timings(G.logs), resources.cores() or 1
+        )
+    except (OSError, ValueError, KeyError):
+        return 0.0, 0.0
+    seconds = sum(r["build_seconds"] for r in est["classes"].values())
+    return seconds, est["total_bytes"] / estimate.MB
+
+
 def import_needed(st, lib):
     """Why the run needs the disc although no --dump was given ("" when it
     does not): game_files/ is missing, its dump marker is, or its listing
@@ -325,11 +374,12 @@ def keep_row(p, st, timings):
         return ""
     p.hud["pack"] = hp
     if where == "remake":
+        # Only a HUD pack is made again.
         est = timings.get(TIMING_HUD)
         est = round(est, 1) if isinstance(est, (int, float)) else HUD_DEFAULT_S
         p.row("hud", "keep", ["made again"] + ([why] if why else []), est)
     else:
-        p.row("hud", "keep", ["from the store" if where == "store" else "from dist/enhance/hud/"])
+        p.row("hud", "keep", ["from the store" if where == "store" else "from dist/enhance/"])
     return hp["sha256"]
 
 
@@ -368,7 +418,12 @@ def finish(p, st, target, version, a=None, into=None):
     build_pack = None
     choice = p.hud["choice"]
     if choice == "make" or (choice == "keep" and p.hud["pack"]):
-        build_pack = "../Resources/enhance/hud.pack" if target == "macos" else "enhance/hud.pack"
+        from . import tweaks as tw
+
+        kind = tw.flag_kind(a)
+        if choice == "keep" and tw.base_kind(p.base):
+            kind = tw.base_kind(p.base)
+        build_pack = "../Resources/" + kind.rel if target == "macos" else kind.rel
     try:
         overrides = tweaks.config_overrides(target, build_pack)
     except (KeyError, OSError):

@@ -47,6 +47,17 @@ Commands:
                                         every texture, from your dump and sources
   @slug@ enhance textures estimate [--preset P]
                                         what a texture pack would cost
+  @slug@ enhance textures build [--preset P]
+                                        your texture pack from your own dump
+                                        (dist/enhance/textures/; package
+                                        --texture-pack bundles it; never share it)
+  @slug@ enhance textures compare       every upscaler, side by side, on a few
+                                        of your textures
+  @slug@ enhance textures pick CLASS UPSCALER
+                                        a class's upscaler, in the config
+  @slug@ enhance textures backend [install torch]
+                                        the local upscalers; prints the plugin's
+                                        install line, downloads nothing
   @slug@ clean --bundles|--build|--all  free space: lists what it would delete
                                         (deletes with --yes)
   @slug@ setup [--dev] [--no-toolkit]   fetch the pinned toolchain into this tree

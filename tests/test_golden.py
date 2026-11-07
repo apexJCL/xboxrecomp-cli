@@ -604,6 +604,15 @@ def test_allow_enhance_pack():
         assert rc == 0 and "NOTE" in out and "textures.pack=enhance/hud.pack" in out, out
 
 
+def test_a_run_with_the_world_class_off_fails_unless_allowed():
+    with tempfile.TemporaryDirectory() as tmp:
+        line = "[ENHANCE] textures.world=off"
+        rc, out = check_allowing(tmp, [STOCK, line])
+        assert rc != 0 and "textures.world" in out, out
+        rc, out = check_allowing(tmp, [STOCK, line], "textures.world=off")
+        assert rc == 0 and "NOTE" in out and "textures.world=off" in out, out
+
+
 def test_allow_enhance_menu():
     with tempfile.TemporaryDirectory() as tmp:
         rc, out = check_allowing(tmp, [STOCK, MENU.format("on")], "menu.enabled=on")

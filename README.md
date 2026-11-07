@@ -203,6 +203,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | `mygame frames compact DIR...` | Turns frame dumps into lossless PNGs, each one checked before its BMP goes |
 | `mygame bench <command>` | Builds and runs on a Proton host over ssh: runs, goldens, pacing |
 | `mygame enhance hud` | Makes a HUD texture pack from your own dump |
+| `mygame enhance textures <inventory\|estimate\|build\|compare\|pick\|backend>` | Makes a whole-game texture pack, owner-generated from your own game files; it ships and downloads no model |
 | `mygame extract` | Turns your dump's stages into a local Godot project |
 | `mygame pins refresh` | Moves the toolchain pins and lock, and names newer releases |
 
@@ -213,6 +214,7 @@ it to `xbr` with the game's root. `./mygame --help` lists them;
 | [docs/porting.md](docs/porting.md) | The porting loop, the keys a port meets first, the D3D fence, macOS |
 | [docs/commands.md](docs/commands.md) | Every command, option and tool |
 | [docs/manifest.md](docs/manifest.md) | `game.toml`, key by key |
+| [docs/texture-pack.md](docs/texture-pack.md) | Texture packs for owners: the pipeline, presets, config and legal framing |
 | [docs/symbols.md](docs/symbols.md) | The symbol map: names and notes for guest addresses, carried into gen |
 | [docs/layout.md](docs/layout.md) | A game repo's layout, its ignores and gates, and publishing it |
 | [docs/bundle.md](docs/bundle.md) | What `package` writes: `manifest.json`, patches, each target's layout and applier |

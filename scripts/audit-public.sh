@@ -15,7 +15,8 @@
 # (with or without the hyphen, as run and worktree paths spell them), the review
 # model's name, the test Deck's ssh alias (as an ssh, scp or rsync host) and
 # the private patterns below; the files the range adds for binaries and
-# game data (*.xbe *.iso *.xiso *.bmp *.png *.wav *.sav, and *.pack, a
+# game data (*.xbe *.iso *.xiso *.bmp *.png *.wav *.sav *.xtd, a pack's
+# record, a machine's upscaler paths, and *.pack, a
 # texture pack made from game data); every author and
 # committer address, which must be the noreply one; the bench results db
 # and its config (benchdb.toml, *.db and its -wal/-shm/-journal, *.sqlite,
@@ -60,7 +61,7 @@ PUBLIC_PATTERNS=(
     '(^|[^a-z0-9_.-])[d]eck:[~/$.a-z0-9_{-]'
     '@[d]eck([^a-z0-9_.-]|$)'
 )
-DATA_EXT='\.(xbe|iso|xiso|bmp|png|wav|sav|pack)$'
+DATA_EXT='\.(xbe|iso|xiso|bmp|png|wav|sav|pack|xtd)$|(^|/)(hud-pack|textures-pack|enhance-textures\.local)\.toml$'
 # The bench results db holds every host's paths and runs, and its config
 # names the hosts: neither is ever published.
 DB_PATH='(^|/)benchdb\.toml$|\.(db|db-wal|db-shm|db-journal|sqlite|sqlite3)$'

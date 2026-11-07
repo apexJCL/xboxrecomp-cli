@@ -205,7 +205,7 @@ def test_enhance_hud_table():
         "font_margin"
     ] == [1, 0, 1, 2]
     for extra, key in (
-        ("scale = 3\n", "enhance.hud.scale: 2 or 4"),
+        ("scale = 5\n", "enhance.hud.scale: 2, 3 or 4"),
         ("max_texels = -1\n", "enhance.hud.max_texels"),
         ('font_atlas = "dds/f.dds"\n', "enhance.hud.font_rows: required with font_atlas"),
         ('font_atlas = "dds/f.dds"\nfont_rows = ["AB", " "]\n', "font_rows: row 1 names no glyph"),

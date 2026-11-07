@@ -239,7 +239,7 @@ do `game_files`.
 | `json` | `""` | The golden scenarios. Empty means no golden, pacing or `golden` command. |
 | `frames` | `<json dir>/frames` | The reference frames, which are game output: keep them out of git. |
 | `audio` | `""` | The audio thresholds. |
-| `enhance_stock` | `{}` | The game's own enhancement keys and their stock values, e.g. `{ "fps.mode" = "lock30", "fx.glow" = "on" }`. The golden check fails a run whose `[ENHANCE]` line shows another value for one of them (`--allow-enhance KEY=VALUE` lets an evaluation run through), as it does for the toolkit's own keys (`render.scale`, `render.aniso`, `display.aspect`, `display.overscan`, `present.pacing`, `textures.pack`, `menu.enabled`, `overlay.stats`: `manifest.TOOLKIT_ENHANCE_KEYS`), which it knows already and which may not be repeated here. Values that both read as numbers compare as numbers (`1` is `1.0`). |
+| `enhance_stock` | `{}` | The game's own enhancement keys and their stock values, e.g. `{ "fps.mode" = "lock30", "fx.glow" = "on" }`. The golden check fails a run whose `[ENHANCE]` line shows another value for one of them (`--allow-enhance KEY=VALUE` lets an evaluation run through), as it does for the toolkit's own keys (`render.scale`, `render.aniso`, `display.aspect`, `display.overscan`, `present.pacing`, `textures.pack`, `textures.font`, `textures.text`, `textures.world`, `menu.enabled`, `overlay.stats`: `manifest.TOOLKIT_ENHANCE_KEYS`), which it knows already and which may not be repeated here. Values that both read as numbers compare as numbers (`1` is `1.0`). |
 
 ## [package]
 
@@ -582,8 +582,10 @@ This table is optional. Without it, `enhance textures` takes what it can from `[
 | `exclude` | `[]` | Patterns of entries left out of every pack. |
 | `classes` | `{}` | Per class (`ui`, `text`, `font`, `world`, and `grid` for a sprite sheet's fact), the name patterns that make an entry of it. `world` is special: when set, a named entry that no pattern holds is excluded. |
 | `presets` | `{}` | The game's own presets: a list of classes and name patterns. `hud` and `traced` cannot be redefined. |
-| `preview` | `[]` | The game's picks for comparing upscalers. |
+| `preview` | `[]` | The game's picks for comparing upscalers: name patterns or hashes, first among `enhance textures compare`'s samples. |
 | `reencodes_small_levels` | `false` | The game's load re-encodes the levels under 4x4 of a DDS mip chain. Such a file's hash is then a guess: it joins a dump by content, and stays `needs_dump` until one holds it. Set it when a dump shows it: chains of the game's DDS files with no hash match, while the rest match. |
+
+The owner's choices are not here: `config/enhance-textures.toml` (classes, rules, upscalers) and its untracked `enhance-textures.local.toml` are theirs. See [texture-pack.md](texture-pack.md).
 
 ## [enhance.hud]
 
@@ -597,7 +599,7 @@ This table is optional. Without it, `enhance hud` says the game names no HUD set
 | `textures` | required | fnmatch patterns, `/` separators, lower case, of the entry names to upscale (`"dds/font_*"`). An entry is a DDS file, or a MIXF container (`.mix`) whose XPR0 textures each become an entry named `<entry>/<name in the MIX>`. Only DXT1/3/5 textures without mip chains are taken; the rest are listed as skipped. |
 | `exclude` | `[]` | Patterns like `textures`'; an entry they match is dropped even when `textures` matched it (`"data/interface/font_backup/*"`). |
 | `pow2` | `false` | Skip textures whose sides are not powers of two, with their own note in the report. The NV2A samples DXT only at power-of-two sizes, so a game that loads a 380x256 file resizes it before upload and the guest copy never hashes like the file: a pack entry for it would never hit. |
-| `scale` | `4` | The upscale factor, 2 or 4 (`--scale` overrides). |
+| `scale` | `4` | The upscale factor, 2, 3 or 4 (`--scale` overrides). |
 | `max_texels` | `0` | Entries over this many guest texels are left out; 0 is no limit. Full-screen backgrounds are not HUD, and a 1024x512 one at 4x is 32 MB of texels. |
 | `font_atlas` | `""` | The Latin font atlas's entry name. With a font (`font` or `--font`), it is re-rendered from the font instead of upscaled, at one scale for the whole font (the stock cap height times `scale`) so every glyph keeps the font's proportions and stroke weight. Each glyph is centred across on its stock ink box, on the stock baseline; a descender keeps it too. One that would leave the region its quad samples (`font_margin`) is shifted inside it, or shrunk by one factor on both axes; it is never enlarged. A mark the font draws clear of the baseline (a dash, an underscore, a quote) may move up or down instead. `enhance hud` names any glyph shrunk by more than 8%. `font_stretch` and `font_full_height` trade some of the even weight for the stock spacing and brackets. |
 | `font_rows` | `[]` | Required with `font_atlas`: one string per band of ink rows in the atlas, the glyphs of that band in atlas order (spaces are ignored; `\uFFFD` keeps the stock glyph, for an icon the game draws at a code). Read off the dump. |

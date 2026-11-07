@@ -262,6 +262,32 @@ def _cfg_package(p):
         action="store_true",
         help="no HUD pack: a patch from a base with one removes it",
     )
+    hud.add_argument(
+        "--texture-pack",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="DIR",
+        help="put your texture pack (enhance textures build; default dist/enhance/textures/) "
+        "in the bundle instead of a HUD pack, and enable it in its config.default.toml",
+    )
+    hud.add_argument(
+        "--texture-preset",
+        metavar="NAME",
+        help="make the texture pack of this preset first (enhance textures build), then as "
+        "--texture-pack. It is made from your own game files",
+    )
+    hud.add_argument(
+        "--keep-texture-pack",
+        action="store_true",
+        help="put the base's texture pack in the patch again, the same bytes (from this "
+        "folder's pack store or dist/enhance/textures/); needs a base",
+    )
+    hud.add_argument(
+        "--clear-texture-pack",
+        action="store_true",
+        help="no texture pack: a patch from a base with one removes it",
+    )
     p.add_argument(
         "--seed-config",
         metavar="FILE",
@@ -365,6 +391,11 @@ def cmd_package(a):
         raise host.CliError(
             "--keep-hud-pack keeps the base's pack, and --full has no base: "
             "pass --hud-pack for a pack in the full bundle"
+        )
+    if a.keep_texture_pack and a.full:
+        raise host.CliError(
+            "--keep-texture-pack keeps the base's pack, and --full has no base: "
+            "pass --texture-pack for a pack in the full bundle"
         )
     package.cmd_package(a)
 

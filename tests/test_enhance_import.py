@@ -18,7 +18,7 @@ from test_enhance_png import chunk, file_of  # noqa: E402
 from test_enhance_textures import dump_texture  # noqa: E402
 
 from xboxrecomp_cli import host, main  # noqa: E402
-from xboxrecomp_cli.enhance import hud, imported, pack, png, textures  # noqa: E402
+from xboxrecomp_cli.enhance import hud, imported, mips, pack, png, textures  # noqa: E402
 from xboxrecomp_cli.host import CliError  # noqa: E402
 
 ONE = "00000000000000A1"  # one level
@@ -91,15 +91,22 @@ def pack_bytes(w, h, levels):
     return n
 
 
+def pack_rows(data, index_off, count):
+    return [pack.ENTRY.unpack_from(data, index_off + pack.ENTRY.size * i) for i in range(count)]
+
+
 def read_pack(path):
     """{hash: (w, h, levels, kind, payload)}, the file's own index, its header
     and each entry's extent checked against the format."""
     with open(path, "rb") as f:
         data = f.read()
     magic, version, count, scale, index_off, text_scale = pack.HEADER.unpack_from(data)
-    assert (magic, version, index_off, text_scale) == (pack.MAGIC, 2, pack.HEADER.size, 0)
+    # The last field's high half is v3's bitmap of the kinds.
+    assert (magic, index_off, text_scale & 0xFFFFFFFF) == (pack.MAGIC, pack.HEADER.size, 0)
+    kinds = [r[4] & 3 for r in pack_rows(data, index_off, count)]
+    assert version == (3 if pack.KIND_WORLD in kinds else 2)
     assert (count, scale) == pack.read_header(path) and scale >= 1
-    rows = [pack.ENTRY.unpack_from(data, index_off + pack.ENTRY.size * i) for i in range(count)]
+    rows = pack_rows(data, index_off, count)
     assert [r[0] for r in rows] == sorted(r[0] for r in rows)
     ends = [r[5] for r in rows[1:]] + [len(data)]
     for r, end in zip(rows, ends):
@@ -162,8 +169,8 @@ def test_import_packs_only_the_edited_at_their_own_sizes(d, capsys):
         assert hud.run(hud_args(import_dir=out_dir)) == 0
         got = read_pack(os.path.join(G.dist, "enhance", "import", "hud.pack"))
         assert sorted(got) == [ONE, MIP]
-        assert got[ONE][:4] == (64, 64, 7, pack.KIND_ART)
-        assert got[MIP][:4] == (32, 32, 6, pack.KIND_ART)
+        assert got[ONE][:4] == (64, 64, 7, pack.KIND_WORLD)
+        assert got[MIP][:4] == (32, 32, 6, pack.KIND_WORLD)
         out = capsys.readouterr().out
         assert "1 PNG files are as they were exported" in out
         assert "textures.pack" in out
@@ -609,7 +616,7 @@ def test_from_dumps_upscales_what_can_be_packed(d, capsys):
         hud.run(hud_args(from_dumps=[a_dump(d)]))
         got = read_pack(os.path.join(host.g().dist, "enhance", "import", "hud.pack"))
         assert sorted(got) == [ONE, MIP, TALL]
-        assert got[ONE][:4] == (32, 32, 6, pack.KIND_ART)
+        assert got[ONE][:4] == (32, 32, 6, pack.KIND_WORLD)
         assert got[MIP][:3] == (32, 32, 6)
         assert got[TALL][:2] == (32, 64)
         assert "left out" in capsys.readouterr().out
@@ -729,20 +736,42 @@ def test_a_chain_on_a_non_square_texture_has_each_level_in_its_place(d):
 def test_half_weighs_colour_by_alpha():
     # One opaque red, three clear greens: the mean must stay red, no green fringe.
     rgba = bytes((255, 0, 0, 255)) + bytes((0, 255, 0, 0)) * 3
-    assert imported._half(2, 2, rgba) == (1, 1, bytes((255, 0, 0, 64)))
+    assert mips.down2(2, 2, rgba) == (1, 1, bytes((255, 0, 0, 64)))
 
 
 def test_half_keeps_the_colour_under_no_alpha():
     rgba = bytes((100, 50, 25, 0)) * 4
-    assert imported._half(2, 2, rgba)[2] == bytes((100, 50, 25, 0))
+    assert mips.down2(2, 2, rgba)[2] == bytes((100, 50, 25, 0))
 
 
 def test_half_on_a_line_and_an_odd_side():
     rgba = bytes((10, 0, 0, 255)) + bytes((30, 0, 0, 255))
-    assert imported._half(2, 1, rgba) == (1, 1, bytes((20, 0, 0, 255)))
-    assert imported._half(1, 2, rgba) == (1, 1, bytes((20, 0, 0, 255)))
-    w, h, _ = imported._half(3, 5, solid(3, 5))
+    assert mips.down2(2, 1, rgba) == (1, 1, bytes((20, 0, 0, 255)))
+    assert mips.down2(1, 2, rgba) == (1, 1, bytes((20, 0, 0, 255)))
+    w, h, _ = mips.down2(3, 5, solid(3, 5))
     assert (w, h) == (1, 2)
+
+
+def test_only_a_world_entry_takes_version_3(d):
+    # A HUD piece is art and its pack stays one an older toolkit loads; a world
+    # texture needs the kind that only v3 has, for textures.world to govern it.
+    with fake_tree(d):
+        textures.run(export_args(a_dump(d)))
+        out_dir = os.path.join(host.g().dist, "enhance", "export")
+        path = os.path.join(out_dir, "index.json")
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+        rows = doc["textures"] if "textures" in doc else doc
+        for row in rows.values():
+            row["class"] = "ui"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        edit(os.path.join(out_dir, ONE + ".png"), size=(32, 32))
+        assert hud.run(hud_args(import_dir=out_dir)) == 0
+        path = os.path.join(host.g().dist, "enhance", "import", "hud.pack")
+        assert read_pack(path)[ONE][3] == pack.KIND_ART
+        with open(path, "rb") as f:
+            assert pack.HEADER.unpack_from(f.read(pack.HEADER.size))[1] == 2
 
 
 def test_payload_sizes_follow_the_floored_layout():

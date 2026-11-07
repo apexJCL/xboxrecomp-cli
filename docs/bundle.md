@@ -33,7 +33,7 @@ same files as `<sha256>  <path>` lines.
 | `files` | `{path, sha256, size}` for every file in the bundle, game files included (under `game_files/`), except `manifest.json` and `SHA256SUMS`. |
 | `game_tree` | The identity of the game files the bundle was built from: `xbe_sha256` (the game's XBE), `files` (how many `game_files/` entries) and `listing` (the sha256 of their sorted `path sha256 size` lines). Older manifests lack it; package then computes it from `files`. |
 | `root` | Windows only, outside `files`: `stub_abi`, and `stub` and `apply` as `{sha256, size}` (the root tools, below). |
-| `enhance` | `hud_pack`: the HUD pack the build ships, as `{sha256, scale, entries, made_with}`, or absent for none. `made_with` is what makes the same pack again: `scale`, `languages`, `only`, `font_sha256`, `config` (the `[enhance.hud]` digest) and `cli`, from the `hud-pack.toml` beside the pack. No paths. |
+| `enhance` | `texture_pack`: the whole-game pack the build ships, with `hud_pack`'s fields. `hud_pack`: the HUD pack the build ships, as `{sha256, scale, entries, made_with}`, or absent for none. `made_with` is what makes the same pack again: `scale`, `languages`, `only`, `font_sha256`, `config` (the `[enhance.hud]` digest) and `cli`, from the `hud-pack.toml` beside the pack. No paths. |
 | `notice` | The personal-use notice. |
 
 `source` is one of:
@@ -155,6 +155,12 @@ then in `dist/enhance/hud/`, then made again from the base's
 `made_with` (the same `[enhance.hud]` settings and the same font), and
 used only when its sha256 is the base's. When it can be found nowhere
 and not made again, `--keep-hud-pack` refuses and names the other two.
+
+A texture pack (`--texture-pack`, `--keep-texture-pack`,
+`--clear-texture-pack`, under `enhance.texture_pack` in the manifest)
+follows the same rules, with one exception: a whole-game pack is never
+made again to keep it, as that can take hours and a tool this machine
+may lack. A bundle carries one pack or the other.
 
 ## The appliers' base check
 

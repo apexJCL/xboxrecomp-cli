@@ -16,6 +16,17 @@ BEGIN = "# xbr enhance textures: traced rules, rewritten by --write-rules. Begin
 END = "# xbr enhance textures: traced rules. End."
 SKIP = 0
 RULE_TABLE = re.compile(r"\s*\[\s*rule\s*[.\]]")
+# One source texel over more host pixels than the widest mode an Xbox scans out
+# is a draw whose coordinate barely moves, not a magnification. The trace's
+# figure is an upper bound, and one such draw would set a hash's maximum.
+MAG_BOUND = 2048
+
+
+def sane_mag(v):
+    """The figure, or None when it is no number or past the bound."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= MAG_BOUND:
+        return None
+    return v
 
 
 def propose(mag_scale1, render_scale):

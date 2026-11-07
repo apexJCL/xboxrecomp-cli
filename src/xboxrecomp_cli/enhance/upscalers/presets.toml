@@ -1,0 +1,132 @@
+# Templates over tools the owner installs, and the model files those tools
+# take. Never a binary, a model or a URL fetched: the CLI runs nothing it did
+# not find and downloads nothing. `homepage` is where the owner reads about it.
+
+[tool.realesrgan-ncnn-vulkan]
+binary = "realesrgan-ncnn-vulkan"
+licence = "MIT"
+homepage = "https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan"
+template = "realesrgan-ncnn-vulkan -i {in_dir} -o {out_dir} -s {scale} -n {model} -t {tile} -g {gpu} -f png"
+model = "realesrgan-x4plus"
+models = ["realesrgan-x4plus", "realesrgan-x4plus-anime", "realesr-animevideov3"]
+# Its main.cpp names a model's files by scale for realesr-animevideov3 alone, so
+# the x4plus models are fixed at 4x: the build shrinks from there. The model
+# rows below say which is which.
+scales = [4]
+
+[tool.waifu2x-ncnn-vulkan]
+binary = "waifu2x-ncnn-vulkan"
+licence = "MIT"
+homepage = "https://github.com/nihui/waifu2x-ncnn-vulkan"
+template = "waifu2x-ncnn-vulkan -i {in_dir} -o {out_dir} -s {scale} -n 0 -t {tile} -m {model} -g {gpu} -f png"
+model = "models-cunet"
+scales = [2, 4]
+
+[tool.realcugan-ncnn-vulkan]
+# Upscaled one image per process, and a thin image padded to 128 first: its
+# 20220728 macOS build segfaults on wide thin inputs such as 512x64.
+binary = "realcugan-ncnn-vulkan"
+licence = "MIT"
+homepage = "https://github.com/nihui/realcugan-ncnn-vulkan"
+template = "realcugan-ncnn-vulkan -i {in} -o {out} -s {scale} -n 0 -m {model} -g {gpu} -t {tile}"
+model = "models-se"
+models = ["models-se", "models-pro"]
+scales = [2, 3, 4]
+mode = "file"
+min_side = 128
+
+[tool.upscayl-bin]
+binary = "upscayl-bin"
+licence = "AGPL-3.0"
+homepage = "https://github.com/upscayl/upscayl-ncnn"
+template = "upscayl-bin -i {in} -o {out} -s {scale} -n {model} -g {gpu}"
+model = "upscayl-standard-4x"
+scales = [2, 3, 4]
+mode = "file"
+input_name = "data"
+
+[tool.upscayl-bin-owner]
+# The owner's own converted model: its folder and name, the same input blob.
+binary = "upscayl-bin"
+licence = "AGPL-3.0"
+homepage = "https://github.com/upscayl/upscayl-ncnn"
+template = "upscayl-bin -i {in} -o {out} -s {scale} -m {model_dir} -n {model} -g {gpu}"
+scales = [2, 3, 4]
+mode = "file"
+input_name = "data"
+
+[tool.chainner]
+# The owner exports a chain whose folder nodes this overrides: their chain and
+# models, this CLI only points it at the folders.
+binary = "chainner"
+licence = "GPL-3.0"
+homepage = "https://github.com/chaiNNer-org/chaiNNer"
+template = "chainner run {model} --override {overrides}"
+scales = [2, 3, 4]
+experimental = true
+
+[tool.real-esrgan]
+# From the script's source, never run: it writes <name>_<suffix>.<ext>, so an
+# empty suffix and png keep the names this CLI reads. It has no #! line, so
+# `path` in the local file is a wrapper that runs it with its Python.
+binary = "inference_realesrgan.py"
+licence = "BSD-3-Clause"
+homepage = "https://github.com/xinntao/Real-ESRGAN"
+template = 'inference_realesrgan.py -n {model} -i {in_dir} -o {out_dir} -s {scale} -t {tile} --suffix "" --ext png'
+model = "RealESRGAN_x4plus"
+scales = [4]
+flag = "unverified: written from the script's source, never run with this CLI; path must be a wrapper"
+
+[tool.torch]
+# plugins/torch, a separate package: `xbr enhance textures backend install torch`
+# prints its install line. Its model file is the owner's.
+binary = "xbr-upscale-torch"
+licence = "MIT (the plugin); the model's own"
+homepage = "plugins/torch in this repository"
+template = "xbr-upscale-torch upscale --model {model} --scale {scale} --in-dir {in_dir} --out-dir {out_dir} --device {device} --tile {tile} --dtype fp32 --expected-sha256={sha256}"
+scales = [4]
+contract = "1.0"
+
+# Files the owner downloads from the homepage, and points `model` at. `sha256`
+# is left out where the file's publisher does not state one.
+
+[model.realesr-general-x4v3]
+licence = "BSD-3-Clause"
+homepage = "https://github.com/xinntao/Real-ESRGAN"
+native_scale = 4
+
+[model.realesrgan-x4plus]
+licence = "BSD-3-Clause"
+homepage = "https://github.com/xinntao/Real-ESRGAN"
+native_scale = 4
+
+[model.realesrgan-x4plus-anime]
+licence = "BSD-3-Clause"
+homepage = "https://github.com/xinntao/Real-ESRGAN"
+native_scale = 4
+
+[model.realesr-animevideov3]
+licence = "BSD-3-Clause"
+homepage = "https://github.com/xinntao/Real-ESRGAN"
+scales = [2, 3, 4]
+
+[model.RealESRGAN_x4plus]
+licence = "BSD-3-Clause"
+homepage = "https://github.com/xinntao/Real-ESRGAN"
+native_scale = 4
+
+[model."4x-PBRify_RPLKSRd_V3"]
+licence = "CC0-1.0"
+homepage = "https://github.com/Kim2091/Kim2091-Models"
+native_scale = 4
+
+[model."4x-PBRify_UpscalerSPANV4"]
+licence = "CC0-1.0"
+homepage = "https://github.com/Kim2091/Kim2091-Models"
+native_scale = 4
+
+[model."4xHDCube4Compact"]
+licence = "custom, with restrictions"
+homepage = "https://openmodeldb.info"
+native_scale = 4
+flag = "check its licence: custom, with restrictions"

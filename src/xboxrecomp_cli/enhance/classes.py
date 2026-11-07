@@ -86,6 +86,7 @@ def game_config(m):
         "hook": tex.get("hook") or hud.get("hook", ""),
         "exclude": _low(tex.get("exclude", [])),
         "presets": dict(tex.get("presets", {})),
+        "preview": _low(tex.get("preview", [])),
         "font": classes.get("font", []),
         "text": classes.get("text", []) + _low(hud.get("text", [])),
         "ui": classes.get("ui", []) or _low(hud.get("textures", [])),
@@ -227,15 +228,27 @@ def class_defaults(cls, render_scale, upscaler=None):
     """D2's row for a class at the config's render scale."""
     r = render_scale
     if cls == "font":
-        return dict(scale=4, upscaler="atlas", edges="clamp", mips="none", encode="raw")
+        return dict(
+            scale=4, upscaler="atlas", alpha="split", edges="clamp", mips="none", encode="raw"
+        )
     if cls == "text":
-        return dict(scale=2, upscaler="xbr", edges="clamp", mips="none", encode="bc3")
+        return dict(
+            scale=2, upscaler="xbr", alpha="split", edges="clamp", mips="none", encode="bc3"
+        )
     if cls == "ui":
-        return dict(scale=clamp(r, 2, 4), upscaler="xbr", edges="clamp", mips="none", encode="raw")
+        return dict(
+            scale=clamp(r, 2, 4),
+            upscaler="xbr",
+            alpha="split",
+            edges="clamp",
+            mips="none",
+            encode="raw",
+        )
     up = upscaler or "lanczos"
     return dict(
         scale=clamp(r, 2, 3) if is_cnn(up) else 2,
         upscaler=up,
+        alpha="split",
         edges="auto",
         mips="full",
         encode="auto",
@@ -271,7 +284,7 @@ def treatment(e, config=None, preset=None, cfg=None, proposal=None):
     r = config.get("render_scale", 1)
     table = config.get("class", {}).get(e["class"], {})
     t = class_defaults(e["class"], r, table.get("upscaler"))
-    t.update(max_texels=0, max_side=0, skip=e.get("skip", ""))
+    t.update(max_texels=0, max_side=0, skip=e.get("skip", ""), rules=[])
     picked = config.get("coverage", {}).get("languages")
     if preset == "hud" and cfg and not picked:
         # As `enhance hud`, whose --language defaults to the first listed.
@@ -291,6 +304,7 @@ def treatment(e, config=None, preset=None, cfg=None, proposal=None):
     for key, rule in config.get("rule", {}).items():
         if not _rule_matches(key, e):
             continue
+        t["rules"].append(key)
         t.update({k: v for k, v in rule.items() if k != "skip"})
         if "skip" in rule:
             t["skip"] = 'rule "%s"' % key if rule["skip"] else ""
@@ -308,19 +322,29 @@ def treatment(e, config=None, preset=None, cfg=None, proposal=None):
         t["skip"] = "over max_texels %d" % t["max_texels"]
     if not t["skip"] and t["max_side"]:
         # The largest whole scale that stays inside the cap.
+        asked = t["scale"]
         while t["scale"] > 1 and max(e["width"], e["height"]) * t["scale"] > t["max_side"]:
             t["scale"] -= 1
         if t["scale"] < 2:
             t["skip"] = "over max_side %d" % t["max_side"]
+        elif t["scale"] != asked:
+            t["clamped_from"] = asked
     return t
 
 
 def hud_treatment(t, e, hud):
     """The `hud` preset is what `enhance hud` makes: the game's scale raw,
-    text at its own scale in BC3, no mips, the game's cap."""
+    text at its own scale in BC3, no mips, the game's cap, and alpha straight
+    into the kernel, which sees a glyph's edge in it. Its patterns chose the
+    entries, so what the classes would keep out by default comes back; the
+    classifier's world is plain art to that command."""
     if e["class"] != "text":
         t.update(scale=hud.get("scale", 4), encode="raw")
-    t.update(mips="none", max_texels=hud.get("max_texels", 0))
+    if e["class"] == "world":
+        t.update(upscaler="xbr", edges="clamp", kind_as="ui")
+    if t["skip"] in ("normal", "data", "linear", "excluded"):
+        t["skip"] = ""
+    t.update(alpha="native", mips="none", max_texels=hud.get("max_texels", 0))
 
 
 def in_preset(e, preset, cfg):

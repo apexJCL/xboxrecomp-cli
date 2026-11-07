@@ -8,6 +8,7 @@ templates (installer, launchers, README) are this CLI's own (templates/);
 a game that needs its own copy of one puts it in package.templates, and
 that copy wins (template())."""
 
+import argparse
 import json
 import os
 import re
@@ -580,22 +581,51 @@ def compile_stage(btarget, bdir, icon_args, icon_key, a, lib):
     st.record(cstage, key, inputs, incr.compile_outputs(btarget, bdir), upstream=up)
 
 
-def hud_pack_path(arg):
-    """The pack `--hud-pack [DIR]` names (the CLI's default output when DIR
-    is omitted), checked: this runs before anything is built."""
+def pack_path(arg, kind=tweaks.HUD):
+    """The pack `--hud-pack [DIR]` or `--texture-pack [DIR]` names (the CLI's
+    default output when DIR is omitted), checked: this runs before anything
+    is built."""
     from ..enhance import pack as pack_mod
 
-    d = arg or os.path.join(g().dist, "enhance", "hud")
-    path = os.path.join(os.path.abspath(d), "hud.pack")
+    d = arg or os.path.join(g().dist, "enhance", kind.sub)
+    path = os.path.join(os.path.abspath(d), kind.name)
     if not os.path.isfile(path):
+        verb = "enhance hud" if kind is tweaks.HUD else "enhance textures build"
         raise CliError(
-            "--hud-pack: no %s; make it with '%s enhance hud' first" % (path, host.cli_name())
+            "%s: no %s; make it with '%s %s' first" % (kind.make, path, host.cli_name(), verb)
         )
     try:
         count, scale = pack_mod.read_header(path)
     except (OSError, ValueError) as e:
-        raise CliError("--hud-pack: %s: %s" % (path, e)) from e
-    return {"path": path, "entries": count, "scale": scale}
+        raise CliError("%s: %s: %s" % (kind.make, path, e)) from e
+    return {"path": path, "entries": count, "scale": scale, "kind": kind}
+
+
+def hud_pack_path(arg):
+    return pack_path(arg, tweaks.HUD)
+
+
+def build_texture_preset(a):
+    """--texture-preset: the pack made now, by the same verb the owner would
+    run, so a current one costs nothing. Its record says it is owner-made."""
+    from ..enhance import textures
+
+    args = argparse.Namespace(
+        verb="build",
+        preset=a.texture_preset,
+        config=None,
+        inventory=None,
+        dump=[],
+        out=None,
+        only=None,
+        language=[],
+        font=None,
+        list=False,
+        jobs=getattr(a, "jobs", 0) or 0,
+        ignore_disk_space=getattr(a, "ignore_disk_space", False),
+    )
+    textures.run_build(args)
+    return pack_path(None, tweaks.TEXTURES)
 
 
 # The pack of this package run (hud_pack_path's result plus its sha256),
@@ -652,21 +682,29 @@ def stage_hud_pack(payload, target, info):
     that; elsewhere the payload is the executable's directory. The game
     reads that file under the player's config.toml, so the key reaches
     an upgrade as well as a first install."""
+    kind = info.get("kind", tweaks.HUD)
     d = os.path.join(payload, "enhance")
     os.makedirs(d, exist_ok=True)
-    shutil.copy2(info["path"], os.path.join(d, "hud.pack"))
-    rel = "../Resources/enhance/hud.pack" if target == "macos" else "enhance/hud.pack"
+    shutil.copy2(info["path"], os.path.join(d, kind.name))
+    rel = "../Resources/" + kind.rel if target == "macos" else kind.rel
     sha = host.sha256_path(info["path"])
     defaults = os.path.join(payload, "config.default.toml")
     if os.path.isfile(defaults) and has_textures_table(defaults):
-        raise CliError("--hud-pack: the staged config.default.toml already has a [textures] table")
+        raise CliError(
+            "%s: the staged config.default.toml already has a [textures] table" % kind.make
+        )
+    what = (
+        ("HUD texture pack", "enhance hud", "HUD")
+        if kind is tweaks.HUD
+        else ("texture pack", "enhance textures build", "textures")
+    )
     with open(defaults, "a", encoding="utf-8", newline="\n") as f:
         f.write(
             "\n[textures]\n"
-            "# Your HUD texture pack (%d entries at %dx), made by enhance hud from\n"
-            "# your own game files. It applies to an upgrade too; for the stock HUD\n"
+            "# Your %s (%d entries at %dx), made by %s from\n"
+            "# your own game files. It applies to an upgrade too; for the stock %s\n"
             '# put pack = "none" under [textures] in config/config.toml.\n'
-            'pack = "%s"\n' % (info["entries"], info["scale"], rel)
+            'pack = "%s"\n' % (what[0], info["entries"], info["scale"], what[1], what[2], rel)
         )
     if info.get("base"):
         # A kept pack: the base's record, so the manifest says the same.
@@ -700,11 +738,11 @@ def no_config_note(cache=None):
     return NO_CONFIG_NOTE % gitpin.describe(g().m["toolkit"])
 
 
-def refuse_no_config(hud_pack, seed_path, layer_off=False):
+def refuse_no_config(hud_pack, seed_path, layer_off=False, pack_flag="--hud-pack"):
     """--hud-pack and --seed-config, refused before anything is built when
     the game reads no config file: both only reach the game through one
     (the pack's key in config.default.toml, the seed as config.toml)."""
-    flags = [f for f, on in (("--hud-pack", hud_pack), ("--seed-config", seed_path)) if on]
+    flags = [f for f, on in ((pack_flag, hud_pack), ("--seed-config", seed_path)) if on]
     if flags and (layer_off or not manifest.builds_enhance(g().m)):
         raise CliError(
             "%s: game.toml's build.stock_cmake does not turn the enhancements layer on "
@@ -857,7 +895,8 @@ def write_manifest(root, target, version, overrides, lib, extra=None, hasher=Non
         # unknown one builds and plays, but no golden was recorded on it.
         ex["xbe"] = fingerprint.record(v)
     if HUD_PACK:
-        ex["enhance"] = {"hud_pack": dict(HUD_PACK)}
+        field = "texture_pack" if HUD_PACK["path"].endswith(tweaks.TEXTURES.rel) else "hud_pack"
+        ex["enhance"] = {field: dict(HUD_PACK)}
     if os.path.isfile(os.path.join(root, SEED_NAME)):
         ex["seed_config"] = True
     ex.update(extra or {})
@@ -1461,7 +1500,17 @@ def package(a):
     planning = getattr(a, "plan", False)
     choice = tweaks.hud_choice(a)
     want_hud = choice in ("make", "keep")
-    hud_pack = hud_pack_path(a.hud_pack) if choice == "make" and not planning else None
+    kind = tweaks.flag_kind(a)
+    hud_pack = None
+    if getattr(a, "texture_preset", None) is not None:
+        from ..enhance import textures
+
+        textures.check_preset(a.texture_preset)
+    if choice == "make" and not planning and getattr(a, "texture_preset", None) is None:
+        if kind is tweaks.TEXTURES:
+            hud_pack = pack_path(a.texture_pack, kind)
+        else:
+            hud_pack = hud_pack_path(a.hud_pack)
     seed_path = getattr(a, "seed_config", None)
     base, remake = None, False
     try:
@@ -1476,15 +1525,15 @@ def package(a):
             if choice == "keep":
                 if base is None:
                     raise host.Refusal(
-                        "--keep-hud-pack keeps the base's pack, and this run has no base: "
-                        "name it with --patch-from",
+                        "%s keeps the base's pack, and this run has no base: "
+                        "name it with --patch-from" % kind.keep,
                         patch.NO_BASE,
                     )
                 hud_pack, remake = tweaks.keep_early(st0, base)
                 want_hud = hud_pack is not None
         enhance = reads_config()
         if not enhance:
-            refuse_no_config(hud_pack or want_hud, seed_path)
+            refuse_no_config(hud_pack or want_hud, seed_path, pack_flag=kind.make)
         seed = check_seed(seed_path) if seed_path else None
         check_content(hud_pack or want_hud, enhance)
         if planning:
@@ -1525,6 +1574,8 @@ def package(a):
     incr.record_generate(st)
     if remake:
         hud_pack = tweaks.remake(st, base, getattr(a, "jobs", 0))
+    if getattr(a, "texture_preset", None) is not None:
+        hud_pack = build_texture_preset(a)
     os.makedirs(a.out, exist_ok=True)
     stage, payload, version, overrides, exe = stage_payload(a.target, a, lib, seed, hud_pack)
     # The build's own cache has the last word: a layer the configure left
@@ -1533,7 +1584,7 @@ def package(a):
     layer, cache = config_layer(enhance, lib, a.target)
     if enhance and not layer:
         if hud_pack or seed is not None:
-            refuse_no_config(hud_pack, seed_path, layer_off=True)
+            refuse_no_config(hud_pack, seed_path, layer_off=True, pack_flag=kind.make)
         enhance = False
     if not enhance:
         host.say(no_config_note(cache))
@@ -1541,12 +1592,13 @@ def package(a):
     if seed is not None:
         host.say("seed config: %s (copied to config/config.toml on a first install)" % SEED_NAME)
     if hud_pack:
-        host.say("hud pack: %d entries at %dx" % (hud_pack["entries"], hud_pack["scale"]))
+        name = hud_pack.get("kind", tweaks.HUD).label.lower()
+        host.say("%s: %d entries at %dx" % (name, hud_pack["entries"], hud_pack["scale"]))
         if HUD_PACK:
             # A later --keep-hud-pack finds these bytes here (D4).
             incr.store_pack(st, hud_pack["path"], HUD_PACK["sha256"])
     elif choice == "clear":
-        host.say("hud pack: none (--clear-hud-pack)")
+        host.say("%s: none (%s)" % (kind.label.lower(), kind.clear))
     global HASHER
     hc = buildstate.HashCache(st.dir)
     hc.verify = st.verify

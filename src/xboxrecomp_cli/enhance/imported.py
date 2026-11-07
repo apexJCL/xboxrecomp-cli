@@ -5,8 +5,10 @@
   enhance hud --from-dumps the dumped textures upscaled into a pack, all of
                            them or those a RECOMP_TRACE=tex_pack log missed
 
-Every entry is kind art: the runtime draws it whatever the texture is, and it
-is what pack version 2, the version written here, has for a world texture.
+An entry the inventory or export's index classes as world is kind world, so the
+game's world switch (textures.world) governs it, and that takes pack version 3.
+Every other entry is kind art, which the runtime draws whatever the texture is,
+and a pack with no world entry stays version 2: an older toolkit still loads it.
 
 The guest's size comes from export's index.json beside the PNGs or from a dump
 (--from-dumps with --import). The runtime compares an entry's aspect exactly
@@ -27,7 +29,7 @@ import time
 
 from .. import host, resources
 from ..host import CliError
-from . import classes, inventory, pack, png, scaler
+from . import classes, inventory, mips, pack, png, scaler
 from .sources import SourceError
 from .sources.dump import HASH_NAME, Xtd
 
@@ -207,44 +209,6 @@ def _few(names):
 # ---- level 0 to a pack payload ------------------------------------------------
 
 
-def _half(w, h, rgba):
-    """The next level down: each texel a 2x2 box, weighted by alpha so a
-    cutout's fringe does not take the colour of the texels it cannot show. An
-    axis of 1 stays 1, an odd side loses its last row or column, as the
-    runtime's layout floors them."""
-    nw, nh = max(1, w // 2), max(1, h // 2)
-    out = bytearray(nw * nh * 4)
-    o = 0
-    dy = 4 * w if h > 1 else 0
-    dx = 4 if w > 1 else 0
-    for y in range(nh):
-        row = (y * 2 if h > 1 else 0) * 4 * w
-        for x in range(nw):
-            p0 = row + (x * 2 if w > 1 else 0) * 4
-            p1, p2, p3 = p0 + dx, p0 + dy, p0 + dy + dx
-            a0, a1, a2, a3 = rgba[p0 + 3], rgba[p1 + 3], rgba[p2 + 3], rgba[p3 + 3]
-            a = a0 + a1 + a2 + a3
-            if a == 1020 or a == 0:
-                # Opaque, or nothing to weigh by: the colour stays for a
-                # blend the game may still do on it.
-                for c in range(3):
-                    out[o + c] = (
-                        rgba[p0 + c] + rgba[p1 + c] + rgba[p2 + c] + rgba[p3 + c] + 2
-                    ) >> 2
-            else:
-                for c in range(3):
-                    v = (
-                        rgba[p0 + c] * a0
-                        + rgba[p1 + c] * a1
-                        + rgba[p2 + c] * a2
-                        + rgba[p3 + c] * a3
-                    )
-                    out[o + c] = (v + a // 2) // a
-            out[o + 3] = (a + 2) >> 2
-            o += 4
-    return nw, nh, bytes(out)
-
-
 def chain_length(w, h):
     """Levels a full chain has: the most the runtime's reader allows."""
     n = 1
@@ -271,11 +235,15 @@ def levels_for(guest, w, h, mips):
     return 1
 
 
+def _kind(guest):
+    return pack.KIND_WORLD if guest and guest.get("class") == "world" else pack.KIND_ART
+
+
 def payload(w, h, rgba, levels):
     """Every level's texels, the pack's byte order, level 0 first."""
     parts = [pack.rgba_to_argb(rgba)]
     for _ in range(levels - 1):
-        w, h, rgba = _half(w, h, rgba)
+        w, h, rgba = mips.down2(w, h, rgba)
         parts.append(pack.rgba_to_argb(rgba))
     return b"".join(parts)
 
@@ -542,7 +510,7 @@ def run(a):
                 name=t[0],
                 source=source,
                 guest=(guest["width"], guest["height"]) if guest else (0, 0),
-                kind=pack.KIND_ART,
+                kind=_kind(guest),
             )
             spill.add(e, texels)
             built.append(e)
@@ -557,7 +525,9 @@ def run(a):
                 "every PNG in %s is as it was exported: edit some, then import" % a.import_dir
             )
         spill.close()
-        sha = pack.write(path, built, scale, spill=spill.path)
+        worlds = sum(1 for e in built if e.kind == pack.KIND_WORLD)
+        version = pack.VERSION_CHAINS if worlds else pack.VERSION
+        sha = pack.write(path, built, scale, spill=spill.path, version=version)
     finally:
         spill.discard()
     xbe_sha = host.sha256_path(G.xbe) if os.path.exists(G.xbe) else ""
@@ -575,11 +545,14 @@ def run(a):
             host.say("%d of the entries had nothing to compare them with, as said above" % blind)
     chained = sum(1 for e in built if e.levels > 1)
     host.say(
-        "wrote %s: %d entries (%d with a new mip chain), kind art, %.1f MB, sha256 %s, %.0f s"
+        "wrote %s: %d entries (%d with a new mip chain), %d world, %d art, %.1f MB, "
+        "sha256 %s, %.0f s"
         % (
             G.rel(path),
             len(built),
             chained,
+            worlds,
+            len(built) - worlds,
             os.path.getsize(path) / 1e6,
             sha[:12],
             time.time() - t0,
