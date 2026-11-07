@@ -109,16 +109,27 @@ def resolve(cfg):
         cfg.remote_game = run_dir(cfg, sha256_file(exe))
 
 
+# The one directory the runtime set holds; everything else in it is flat.
+RUNTIME_DIR = "shaders"
+
+
 def runtime_files(cfg, exe):
     """What the exe needs beside it on the host: itself, its PDB (symbolize
     names addresses with it), config.default.toml (the game writes the
-    player's config from it) and any DLL the build put there."""
+    player's config from it), any DLL the build put there and shaders/, the
+    presets the toolkit stages there for present.shader. What is there is
+    what goes: a tree reconfigured from ENHANCE=ON to OFF keeps the
+    shaders/ and librashader DLL of its earlier builds, and ships them. The
+    runtime without the layer never reads them, so they cost bytes only."""
     d = os.path.dirname(exe)
     out = [exe]
     for p in (os.path.splitext(exe)[0] + ".pdb", os.path.join(d, "config.default.toml")):
         if os.path.isfile(p):
             out.append(p)
     out += sorted(glob.glob(os.path.join(glob.escape(d), "*.dll")))
+    for top, dirs, names in os.walk(os.path.join(d, RUNTIME_DIR)):
+        dirs.sort()
+        out += [os.path.join(top, n) for n in sorted(names)]
     return out
 
 
@@ -253,13 +264,16 @@ def build_local(b, cmake_args=(), stale_ok=False, command="bench build", lineage
 
 
 def stage(files, into):
-    """The ship's file set in one directory, so rsync --delete makes the
-    host's match it exactly. Hard links where the filesystem allows; the
-    exe is always a copy (a snapshot: a build that rewrites it during the
-    transfer must not change what was hashed)."""
+    """The ship's file set in one directory, each at its path relative to
+    the exe (the first file), so rsync --delete makes the host's match it
+    exactly. Hard links where the filesystem allows; the exe is always a
+    copy (a snapshot: a build that rewrites it during the transfer must not
+    change what was hashed)."""
     os.makedirs(into, exist_ok=True)
+    base = os.path.dirname(files[0])
     for i, f in enumerate(files):
-        dst = os.path.join(into, os.path.basename(f))
+        dst = os.path.join(into, os.path.relpath(f, base))
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
         if i:
             try:
                 os.link(f, dst)
@@ -267,6 +281,15 @@ def stage(files, into):
             except OSError:
                 pass
         shutil.copy2(f, dst)
+
+
+def tree_names(root):
+    """Every file under root, as sorted /-separated relative paths."""
+    out = []
+    for top, _, names in os.walk(root):
+        rel = os.path.relpath(top, root).replace(os.sep, "/")
+        out += [n if rel == "." else "%s/%s" % (rel, n) for n in names]
+    return sorted(out)
 
 
 def check_dest(c):

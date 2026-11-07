@@ -33,6 +33,7 @@ other's bundles.
 
 import hashlib
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -373,10 +374,16 @@ class BuildHost:
         with tempfile.TemporaryDirectory(dir=dest) as t:
             from .hosts import sftp_batch
 
-            rc, err = self.w.sftp(sftp_batch([("%s/%s" % (remote_dir, n), t) for n, _ in files]))
+            # A name may hold a directory (shaders/crt/...); sftp makes none.
+            local = {n: os.path.dirname(os.path.join(t, n)) for n, _ in files}
+            for d in set(local.values()):
+                os.makedirs(d, exist_ok=True)
+            rc, err = self.w.sftp(
+                sftp_batch([("%s/%s" % (remote_dir, n), local[n]) for n, _ in files])
+            )
             if rc:
                 raise BenchError("build host: pulling the build failed: %s" % err.strip())
-            from .ship import sha256_file
+            from .ship import RUNTIME_DIR, sha256_file
 
             for n, want in files:
                 got = sha256_file(os.path.join(t, n))
@@ -389,8 +396,11 @@ class BuildHost:
                 p = os.path.join(dest, n)
                 if n not in names and os.path.isfile(p):
                     os.remove(p)
+            shutil.rmtree(os.path.join(dest, RUNTIME_DIR), ignore_errors=True)
             for n in names:
-                os.replace(os.path.join(t, n), os.path.join(dest, n))
+                to = os.path.join(dest, n)
+                os.makedirs(os.path.dirname(to), exist_ok=True)
+                os.replace(os.path.join(t, n), to)
         return exe
 
     def pull_paths(self, names):

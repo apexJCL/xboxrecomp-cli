@@ -435,3 +435,36 @@ def test_game_env_keeps_the_shader_cache_in_the_base():
     # A scenario's own setting wins.
     env = dict(game_env("RECOMP_DXBC_CACHE=0", "D:/l", "D:/gf", "0", "", "D:/c"))
     assert env["RECOMP_DXBC_CACHE"] == "0"
+
+
+def test_ship_sends_shaders_to_their_own_directories(win, monkeypatch):
+    # The presets are the ship's only subdirectory: a bench run with
+    # present.shader finds them beside the exe, as a package does.
+    t = win
+    d = os.path.join(t["cat"], "build-win", "shaders", "crt")
+    os.makedirs(d)
+    for p in (os.path.join(d, "a.slang"), os.path.join(d, "..", "crt.slangp")):
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("x\n")
+    monkeypatch.setenv(
+        "FAKE_NEED", "need build-win/shaders/crt.slangp\nneed build-win/shaders/crt/a.slang\n"
+    )
+    assert run(t, "build") == 0
+    cs = calls(t)
+    p = [e for k, _, e in cs if k == "scp" and e][-1]
+    names = [f[1] for f in p["files"]]
+    assert "shaders/crt.slangp" in names and "shaders/crt/a.slang" in names
+    sends = [argv for k, argv, e in cs if k == "scp" and not e and "slang" in " ".join(argv)]
+    assert sorted(a[-1].rsplit("/build-win/", 1)[1] for a in sends) == ["shaders/", "shaders/crt/"]
+
+
+def test_ship_scripts_handle_shaders():
+    ps = (BENCH_PKG / "host" / "windows" / "ship.ps1").read_text(encoding="utf-8")
+    assert "-Recurse -LiteralPath (Join-Path $exact 'shaders')" in ps
+    # The seed copies the flat files and shaders/ only: the pruning keeps
+    # just those exact, so another directory would linger unlisted.
+    assert "Get-ChildItem -File -LiteralPath $seed | Copy-Item -Destination $exact" in ps
+    assert "Copy-Item -Recurse -LiteralPath $s -Destination $exact" in ps
+    assert "Get-ChildItem -LiteralPath $seed |" not in ps
+    build = (BENCH_PKG / "host" / "windows" / "build.ps1").read_text(encoding="utf-8")
+    assert "$rel.Replace('\\', '/')" in build

@@ -99,9 +99,8 @@ Take the rows from the build, never from memory:
   which is where a mod says why it exists.
 - The toolkit's `src/enhance/enhance_menu.c` (`k_items`) has the Render,
   Shaders and Pack labels, choices and defaults.
-- No Profile row when the dump lists no shader presets: a game whose
-  CMakeLists does not call `xboxrecomp_present_shaders` ships neither the
-  presets nor librashader, and the menu hides its Shaders page.
+- The Profile row stays: every game has the Shaders page, and `features`
+  fails when this row is missing.
 
 After the table, one entry per row, in the table's order, under a
 `####` heading with the mod's name:

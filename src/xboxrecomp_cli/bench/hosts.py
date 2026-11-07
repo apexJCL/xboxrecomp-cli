@@ -12,6 +12,7 @@ D:/x, sftp names the same file /D:/x, and the game is handed D:\\x."""
 import hashlib
 import json
 import os
+import posixpath
 import shlex
 import shutil
 import socket
@@ -262,7 +263,7 @@ class WindowsHost:
             b.step("ship: %s -> %s:%s" % (os.path.relpath(exe, c.game_dir), c.host, c.remote_game))
             files = [
                 [dest, n, ship_mod.sha256_file(os.path.join(out, n))]
-                for n in sorted(os.listdir(out))
+                for n in ship_mod.tree_names(out)
             ]
             if os.path.dirname(prov) != out:
                 files.append([windows_dir, "provenance.txt", ship_mod.sha256_file(prov)])
@@ -289,7 +290,8 @@ class WindowsHost:
                         and os.path.dirname(prov) != out
                         else os.path.join(out, n)
                     )
-                    by_dir.setdefault(d, []).append(src)
+                    # scp takes one directory: a shaders/ file goes to its own.
+                    by_dir.setdefault(posixpath.dirname("%s/%s" % (d, n)), []).append(src)
             for d, srcs in by_dir.items():
                 b.say("ship: %d file(s) -> %s/" % (len(srcs), d))
                 if self.scp(srcs, "%s/%s" % (c.remote_game, d)):

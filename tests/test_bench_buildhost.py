@@ -594,3 +594,19 @@ def test_host_mode_build_accepts_stale_gen_ok_and_does_not_send_it(bh, monkeypat
     monkeypatch.setattr(b.r, "in_box_locked", lambda script, **k: (0, ""))
     assert b.cmd_build(["--stale-gen-ok", "-DX=1"]) == 0
     assert sent == [("build.sh", "EXTRA_ARGS=(-DX=1 )\n")]
+
+
+def test_pull_carries_shaders_and_drops_stale_ones(bh, monkeypatch):
+    # present.shader's presets come back with the exe, and a preset the new
+    # build lacks does not linger for the ship or package to send.
+    t = bh
+    monkeypatch.setenv(
+        "FAKE_BUILD_OUT",
+        files_out("cat_recomp.exe", "shaders/crt.slangp", "shaders/crt/a.slang"),
+    )
+    d = os.path.dirname(ship_mod.local_exe(config(t, **HOST)))
+    os.makedirs(os.path.join(d, "shaders"))
+    with open(os.path.join(d, "shaders", "gone.slangp"), "w", encoding="utf-8") as f:
+        f.write("old\n")
+    assert run(t, "buildhost", "build") == 0
+    assert ship_mod.tree_names(os.path.join(d, "shaders")) == ["crt.slangp", "crt/a.slang"]

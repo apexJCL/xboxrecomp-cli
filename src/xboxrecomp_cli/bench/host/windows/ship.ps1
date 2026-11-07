@@ -1,7 +1,8 @@
 # bench/host/windows/ship.ps1: `<game> bench` on a Windows host
 # (BENCH_HOST_OS=windows), before it sends a locally built exe by scp.
 # Params (JSON): run_dir; exact (the exe's directory under it, which ends up
-# holding exactly the listed files there); exe; files ([dir, name, sha256]).
+# holding exactly the listed files there, flat ones and shaders/'s); exe;
+# files ([dir, name, sha256], name relative to dir with / separators).
 # Prints `need <dir>/<name>` for each file the host lacks or holds other
 # bytes of; the controller sends only those.
 param([Parameter(Mandatory)][string]$Params)
@@ -25,7 +26,11 @@ if (-not (Test-Path -LiteralPath (Join-Path $exact $p.exe))) {
         Sort-Object { (Get-Item -LiteralPath (Join-Path $_ $p.exe)).LastWriteTime } |
         Select-Object -Last 1
     if ($seed) {
+        # Only what the pruning below keeps exact: the flat files and
+        # shaders/. Any other directory (a save, a dump) would stay unlisted.
         Get-ChildItem -File -LiteralPath $seed | Copy-Item -Destination $exact
+        $s = Join-Path $seed 'shaders'
+        if (Test-Path -LiteralPath $s) { Copy-Item -Recurse -LiteralPath $s -Destination $exact }
         Write-Host "ship: seeded from $(Split-Path (Split-Path $seed))"
     }
 }
@@ -33,16 +38,20 @@ $listed = @{}
 foreach ($f in $p.files) { $listed["$($f[0])/$($f[1])"] = $f[2] }
 # What an earlier build had and this one lacks (a PDB, a DLL) goes, so the
 # directory holds exactly this build's files.
-foreach ($f in Get-ChildItem -File -LiteralPath $exact) {
-    if (-not $listed.ContainsKey("$($p.exact)/$($f.Name)")) {
+$held = @(Get-ChildItem -File -LiteralPath $exact)
+$held += @(Get-ChildItem -File -Recurse -LiteralPath (Join-Path $exact 'shaders') -ErrorAction SilentlyContinue)
+$root = (Get-Item -LiteralPath $exact).FullName.TrimEnd('\')
+foreach ($f in $held) {
+    $rel = $f.FullName.Substring($root.Length + 1).Replace('\', '/')
+    if (-not $listed.ContainsKey("$($p.exact)/$rel")) {
         Remove-Item -LiteralPath $f.FullName
-        Write-Host "ship: removed $($p.exact)/$($f.Name)"
+        Write-Host "ship: removed $($p.exact)/$rel"
     }
 }
 foreach ($f in $p.files) {
-    $d = Join-Path $run $f[0]
-    New-Item -ItemType Directory -Force -Path $d | Out-Null
-    $t = Join-Path $d $f[1]
+    # A name may hold a directory (shaders/crt/...): scp makes none.
+    $t = Join-Path (Join-Path $run $f[0]) $f[1]
+    New-Item -ItemType Directory -Force -Path (Split-Path $t) | Out-Null
     if (-not (Test-Path -LiteralPath $t) -or (Get-FileHash -LiteralPath $t).Hash.ToLower() -ne $f[2]) {
         Write-Output "need $($f[0])/$($f[1])"
     }

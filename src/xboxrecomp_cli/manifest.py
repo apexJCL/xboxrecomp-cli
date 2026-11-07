@@ -1312,9 +1312,9 @@ def rel_path_problem(path):
 def builds_enhance(m):
     """Whether the stock build turns the toolkit's enhancements layer on,
     before any build exists: the toolkit's option defaults OFF, so a game
-    whose build.stock_cmake does not set -DXBOXRECOMP_ENHANCE=ON (SSX 3's
-    and Spartan's empty list) builds without it even on a toolkit that has
-    src/enhance. CMake's truth, the last -D or -U winning, as
+    whose build.stock_cmake does not set -DXBOXRECOMP_ENHANCE=ON (an empty
+    list, as older game.toml files had) builds without it even on a toolkit
+    that has src/enhance. CMake's truth, the last -D or -U winning, as
     package/lib.py enhance_on reads a cache."""
     on = False
     for d in m["build"]["stock_cmake"]:

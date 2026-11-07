@@ -481,3 +481,22 @@ def test_ship_refuses_the_run_root_as_dest(tree, windows_dir, exe_dir):
     with pytest.raises(ship_mod.BenchError, match="rsync --delete would empty the run"):
         ship_mod.ship(b)
     assert calls(t) == []
+
+
+def test_ship_mirrors_shaders_beside_the_exe(tree):
+    # rsync --delete keeps the tree: stage must place them at their relative
+    # path, not flatten them by basename.
+    t = tree
+    d = os.path.join(t["cat"], "build-win", "shaders", "crt")
+    os.makedirs(d)
+    with open(os.path.join(d, "a.slang"), "w", encoding="utf-8") as f:
+        f.write("x\n")
+    exe = os.path.join(t["cat"], "build-win", "cat_recomp.exe")
+    with open(exe, "w", encoding="utf-8") as f:
+        f.write("exe\n")
+    files = ship_mod.runtime_files(None, exe)
+    assert files[0] == exe and files[-1] == os.path.join(d, "a.slang")
+    out = os.path.join(t["cat"], "staged")
+    ship_mod.stage(files, out)
+    assert os.path.isfile(os.path.join(out, "shaders", "crt", "a.slang"))
+    assert "shaders/crt/a.slang" in ship_mod.tree_names(out)

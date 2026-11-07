@@ -530,6 +530,7 @@ def test_command_table():
         "all",
         "setup",
         "doctor",
+        "features",
         "pins",
         "package",
         "clean",

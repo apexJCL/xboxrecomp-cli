@@ -89,6 +89,8 @@ def tk(d, monkeypatch):
     write(os.path.join(t, "templates", "new-game", "CMakeLists.txt"), FAKE_CMAKE)
     write(os.path.join(t, "templates", "new-game", "src", "main.c"), FAKE_MAIN)
     write(os.path.join(t, "templates", "new-game", "src", "recomp_manual.c"), FAKE_MANUAL)
+    write(os.path.join(t, "src", "kernel", "nv2a_present_chain.c"), "\n")
+    write(os.path.join(t, "cmake", "librashader.cmake"), "_xboxrecomp_links_enhance\n")
     monkeypatch.setenv("XBOXRECOMP_DIR", t)
     return t
 
@@ -123,7 +125,7 @@ def test_offline_scaffold_loads_and_names_what_is_left(d, tk, game):
     assert G.m["cli"]["commit"] == CLI and G.m["toolkit"]["commit"] == TK
     assert G.m["build"]["targets"] == ["windows", "macos"]
     # No enhancements layer, but the APU's DSP JIT is stock.
-    assert G.m["build"]["stock_cmake"] == ["-DXBOXRECOMP_APU_DSP=ON"]
+    assert G.m["build"]["stock_cmake"] == ["-DXBOXRECOMP_ENHANCE=ON", "-DXBOXRECOMP_APU_DSP=ON"]
     assert G.m["pipeline"]["icall_seeds"] is False
     assert G.m["xbe"]["title_id"] == 0 and "package" not in G.m
     assert wrapper.check(G) == (True, [])

@@ -105,10 +105,9 @@ the option; most apply at once, and Save keeps them for the next start.
 | **Overscan crop** | Render | Crops the border a TV would hide (4:3 only). | 0 |
 | **2D on guest grid** | Render | Keeps 2D art on the Xbox's pixel grid at render scale 2 and up, so tiled menus and HUD show no seams. | off |
 | **Scaling filter** | Render | How the picture is stretched to the window: nearest is crisp, linear smooth, integer whole multiples only. | nearest |
-<!-- write: HUD margin (Render) only when a mod registers a HUD table;
-     Profile (Shaders) only when the descriptor dump lists shader presets:
-| **HUD margin** | Render | Pulls the HUD in from the screen edges on a wide picture (0 to 64). | 0 |
 | **Profile** | Shaders | A post-processing shader over the picture: a CRT look, or FSR upscaling. | Off |
+<!-- write: HUD margin (Render) only when a mod registers a HUD table:
+| **HUD margin** | Render | Pulls the HUD in from the screen edges on a wide picture (0 to 64). | 0 |
      -->
 <!-- write: the game's rows (Mods page, Game page, Pack, and Controls when the
      game changes a Controls default) -->

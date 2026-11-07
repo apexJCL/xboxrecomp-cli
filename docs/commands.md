@@ -633,6 +633,16 @@ on a macOS host, windows elsewhere.
 | `--ignore-disk-space` | build even when the disk looks too small |
 | `-- ARGS` | extra CMake arguments |
 
+### `mygame features`
+
+The features every game gets from the toolkit, and whether this one has them:
+for each, the toolkit's code, the staging (the toolkit's own, or a call in the
+game's CMake), the row in `packaging/config.default.toml` and the row in the
+README's mods table. Exits 1 on a gap. `doctor` lists the same gaps as layout
+problems, and `public audit` and `public export` refuse them. A game whose stock
+build has no enhancements layer has nothing to check. The table is in
+`src/xboxrecomp_cli/shared_features.py`: a new shared feature is one row.
+
 ### `mygame pins refresh`
 
 Maintainers: rewrite `config/setup-pins.json` (the llvm-mingw and NSIS

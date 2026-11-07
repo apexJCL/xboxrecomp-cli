@@ -55,7 +55,7 @@ keys in a header named by `game.env_header` and documents them in
 (`XBOXRECOMP_ENHANCE`: render scale, present filter, pacing, read from
 the player's `config.toml` over the `config.default.toml` the bundle
 ships beside the executable, `package.content`'s copy) is off by default and never changes stock behaviour; a game
-that builds it lists the option in `build.stock_cmake`.
+that builds it lists the option in `build.stock_cmake`, as `xbr new` does.
 
 `enhance hud` makes a texture pack of the game's HUD from the owner's own
 files (`[enhance.hud]` names the set; a TrueType font the owner installs,

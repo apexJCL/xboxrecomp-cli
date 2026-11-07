@@ -263,6 +263,19 @@ try {
             Copy-Item -LiteralPath $f.FullName -Destination $out
             Write-Output "@xbr-file $($f.Name) $((Get-FileHash -LiteralPath (Join-Path $out $f.Name)).Hash.ToLower())"
         }
+        # shaders/, the presets the toolkit stages beside the exe, by
+        # relative path: the controller's ship and package want them too.
+        $shaders = Join-Path $dir 'shaders'
+        if (Test-Path -LiteralPath $shaders) {
+            $base = (Get-Item -LiteralPath $dir).FullName.TrimEnd('\')
+            foreach ($f in @(Get-ChildItem -File -Recurse -LiteralPath $shaders | Sort-Object FullName)) {
+                $rel = $f.FullName.Substring($base.Length + 1)
+                $to = Join-Path $out $rel
+                New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null
+                Copy-Item -LiteralPath $f.FullName -Destination $to
+                Write-Output "@xbr-file $($rel.Replace('\', '/')) $((Get-FileHash -LiteralPath $to).Hash.ToLower())"
+            }
+        }
     }
     if ($code -eq 0 -and $p.pull) {
         $seen = @{}

@@ -167,6 +167,19 @@ def _cfg_doctor(p):
     )
 
 
+def _cfg_features(p):
+    pass
+
+
+def cmd_features(a):
+    from . import shared_features
+
+    lines, ok = shared_features.text_lines(host.g())
+    for line in lines:
+        host.say(line)
+    return 0 if ok else 1
+
+
 def cmd_doctor(a):
     lines, targets, blocked = doctor_mod.doctor_report()
     if getattr(a, "json", False):
@@ -596,6 +609,9 @@ def register():
     command("doctor", "what this host has, and which targets it can package", _cfg_doctor)(
         cmd_doctor
     )
+    command(
+        "features", "the toolkit features this game should have; fails on a gap", _cfg_features
+    )(cmd_features)
     command("pins", "maintainers: rewrite config/setup-pins.json and uv.lock", _cfg_pins)(cmd_pins)
     command(
         "package",

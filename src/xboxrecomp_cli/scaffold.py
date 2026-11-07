@@ -104,9 +104,10 @@ exe = "@EXE@"
 # windows builds on every host (llvm-mingw); macos builds on a Mac (Apple
 # clang). Drop one to stop `build` offering it.
 targets = ["windows", "macos"]
-# No enhancements layer: the stock build is the plain one, with the APU's
-# DSP JIT (the toolkit's default where it has an archive for the target).
-stock_cmake = ["-DXBOXRECOMP_APU_DSP=ON"]
+# The enhancements layer (the menu, render scale, present shaders; stock
+# until a player changes them) and the APU's DSP JIT (the toolkit's default
+# where it has an archive for the target).
+stock_cmake = ["-DXBOXRECOMP_ENHANCE=ON", "-DXBOXRECOMP_APU_DSP=ON"]
 
 # How much memory one generated-code compile job takes sets how many run
 # at once. Unset, it is estimated (140 MiB per MB of the largest gen/
@@ -446,6 +447,15 @@ the function starts the disassembler missed, and `./@SLUG@ analyze` then
 `./@SLUG@ recomp` regenerate `src/recomp/gen/` (never edit it by hand).
 The CLI's `docs/porting.md` has the loop; `game.toml` has every setting,
 documented in the CLI's `docs/manifest.md`.
+
+## Mods and enhancements
+
+F10 on the keyboard opens a menu over the game. Every mod is off, or at the
+Xbox's setting, unless the table says otherwise.
+
+| Mod | Menu page | What it does | Default |
+|---|---|---|---|
+| **Profile** | Shaders | A post-processing shader over the picture: a CRT look, or FSR upscaling. | Off |
 """
 
 # The template's commented fence-mirror line, which `new` replaces with the

@@ -17,7 +17,7 @@ import re
 import struct
 import subprocess
 
-from . import manifest
+from . import manifest, shared_features
 
 # ── the entries ──────────────────────────────────────────────────────────
 
@@ -679,6 +679,7 @@ def _report(game, strict=False):
         )
     problems += template_problems(game)
     problems += ignore_problems(game)
+    problems += shared_features.problems(game)
     top = toplevel(root)
     if top != os.path.realpath(root):
         notes.append(
