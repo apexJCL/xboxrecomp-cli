@@ -426,6 +426,60 @@ def test_counts_and_volatile_from_the_dump(d):
     assert movie["skip"] == "volatile" and {"linear", "volatile"} <= set(movie["facts"])
 
 
+def merged_facts(d, *scenes):
+    """One hash's entry over scenes, each scene the sidecar fields it adds."""
+    dumps = []
+    for i, facts in enumerate(scenes):
+        dump = os.path.join(d, "scene%d" % i)
+        dump_texture(dump, "00000000000000F1", 8, 8, **facts)
+        dumps.append(DumpSource(dump))
+    entries, _ = inventory.join([], dumps)
+    return entries["00000000000000F1"]
+
+
+@pytest.mark.parametrize(
+    "scenes, want",
+    [
+        ([{"drawn_2d": True}, {"drawn_2d": True}], True),
+        ([{"drawn_2d": True}, {"drawn_2d": False}], False),
+        ([{"drawn_2d": False}, {"drawn_2d": True}], False),
+        ([{"drawn_2d": False}, {"drawn_2d": True}, {"drawn_2d": True}], False),
+        # A scene that only loaded it has no say, in either order.
+        ([{}, {"drawn_2d": True}], True),
+        ([{"drawn_2d": True}, {}], True),
+        ([{}, {"drawn_2d": False}], False),
+        ([{"drawn_2d": False}, {}], False),
+    ],
+)
+def test_drawn_2d_merges_with_and(d, scenes, want):
+    assert merged_facts(d, *scenes)["drawn_2d"] is want
+
+
+def test_no_scene_that_drew_it_leaves_drawn_2d_unknown(d):
+    assert "drawn_2d" not in merged_facts(d, {}, {})
+
+
+@pytest.mark.parametrize("key", ["bump", "rt"])
+@pytest.mark.parametrize(
+    "first, second, want",
+    [(False, False, False), (True, False, True), (False, True, True), (True, True, True)],
+)
+def test_bump_and_rt_merge_with_or(d, key, first, second, want):
+    e = merged_facts(d, {key: first}, {key: second})
+    assert bool(e[key]) is want
+
+
+def test_facts_merged_over_scenes_decide_the_class(d):
+    cfg = classes.game_config({})
+    hud = merged_facts(d, {"drawn_2d": True, "rt": False}, {"drawn_2d": True, "rt": False})
+    assert classes.classify(hud, cfg)["class"] == "ui"
+    assert "rt" not in classes.classify(hud, cfg)["facts"]
+    model = merged_facts(d, {"drawn_2d": True, "rt": False}, {"drawn_2d": False, "rt": False})
+    assert classes.classify(model, cfg)["class"] == "world"
+    target = merged_facts(d, {"drawn_2d": True, "rt": False}, {"drawn_2d": True, "rt": True})
+    assert classes.classify(target, cfg)["skip"] == "rt"
+
+
 def test_two_scenes_add_up(d):
     one, two = os.path.join(d, "one"), os.path.join(d, "two")
     # The fields docs/formats/texture-dump.md gives the trace, in the toolkit.
@@ -503,6 +557,113 @@ def cfg_of(**tex):
 def test_exclusions(e, skip, fact):
     got = classes.classify(e, cfg_of())
     assert fact in got["facts"] and got["skip"] == skip and classes.why(skip)
+
+
+def named_cfg():
+    return classes.game_config(
+        {
+            "enhance": {
+                "hud": {"textures": ["*hud*"], "exclude": ["*loading*"]},
+                "textures": {
+                    "classes": {"world": ["world/*"], "font": ["fnt/*"], "text": ["txt/*"]}
+                },
+            }
+        }
+    )
+
+
+@pytest.mark.parametrize("name", ["hud/loading_bg", "world/tree"])
+def test_a_named_world_or_exclude_outranks_the_fact(name):
+    assert classes.classify(entry(name=name, drawn_2d=True), named_cfg())["class"] == "world"
+
+
+def test_the_fact_decides_only_what_no_name_settles():
+    cfg = named_cfg()
+    # Unnamed, and named by none of the lists (the world list then keeps a named
+    # one out of a build; that is `skip`, not its class).
+    assert classes.classify(entry(drawn_2d=True), cfg)["class"] == "ui"
+    assert classes.classify(entry(name="other/a", drawn_2d=True), cfg)["class"] == "ui"
+    assert classes.classify(entry(name="other/a", drawn_2d=False), cfg)["class"] == "world"
+    # A name that says more than `ui` keeps its class.
+    assert classes.classify(entry(name="fnt/a", drawn_2d=True), cfg)["class"] == "font"
+    assert classes.classify(entry(name="txt/a", drawn_2d=True), cfg)["class"] == "text"
+    assert classes.classify(entry(name="hud/a", drawn_2d=False), cfg)["class"] == "ui"
+
+
+def test_a_rule_brings_an_rt_entry_back():
+    e = classes.classify(entry(rt=True), cfg_of())
+    assert e["skip"] == "rt"
+    key = "hash:" + e["hash"]
+    got = classes.treatment(e, {"rule": {key: {"skip": False, "scale": 2}}})
+    assert got["skip"] == "" and got["scale"] == 2
+    # With no rule it stays out.
+    assert classes.treatment(e, {})["skip"] == "rt"
+
+
+@pytest.mark.parametrize("fact", ["volatile", "cube"])
+def test_a_rule_cannot_bring_back_what_never_matches(fact):
+    e = classes.classify(entry(**{fact: True}), cfg_of())
+    got = classes.treatment(e, {"rule": {"hash:" + e["hash"]: {"skip": False, "scale": 2}}})
+    assert got["skip"] == fact
+
+
+@pytest.mark.parametrize("bad", ["false", "true", None, 1, 0, [], {}])
+@pytest.mark.parametrize("key", ["drawn_2d", "bump", "rt"])
+def test_a_fact_that_is_no_bool_reads_as_unknown(d, key, bad):
+    dump_texture(d, "00000000000000F1", 8, 8, **{key: bad})
+    source = DumpSource(d)
+    assert source.bad_facts == 1 and any("not true or false" in p for p in source.problems)
+    assert key not in source.textures["00000000000000F1"].meta
+    entries, _ = inventory.join([], [source])
+    assert key not in entries["00000000000000F1"]
+
+
+def test_a_bad_fact_does_not_settle_a_merge(d):
+    # "false" would read true; null would read false and stick.
+    assert merged_facts(d, {"drawn_2d": True}, {"drawn_2d": None})["drawn_2d"] is True
+    assert merged_facts(d, {"drawn_2d": "false"}, {"drawn_2d": True})["drawn_2d"] is True
+    assert "rt" not in merged_facts(d, {"rt": "false"}, {"rt": 0})
+
+
+def test_good_facts_are_not_counted_bad(d):
+    dump_texture(d, "00000000000000F1", 8, 8, drawn_2d=False, bump=True, rt=False)
+    source = DumpSource(d)
+    assert source.bad_facts == 0 and source.problems == []
+
+
+def test_the_report_counts_bad_facts(d):
+    dump_texture(d, "00000000000000F1", 8, 8, drawn_2d="false")
+    dump_texture(d, "00000000000000F2", 8, 8, drawn_2d=True, rt=1, bump=2)
+    dump_texture(d, "00000000000000F3", 8, 8, drawn_2d=True)
+    doc = inventory.build(classes.game_config({}), [], [DumpSource(d)])
+    assert doc["dumps"][0]["bad_facts"] == 2
+
+
+def test_classify_alone_does_not_take_a_string_for_true():
+    cfg = cfg_of()
+    assert classes.classify(entry(drawn_2d="false"), cfg)["class"] == "world"
+    assert classes.classify(entry(drawn_2d=1), cfg)["class"] == "world"
+    assert "rt" not in classes.classify(entry(rt="false"), cfg)["facts"]
+    assert "normal" not in classes.classify(entry(bump="false"), cfg)["facts"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '{"targets": [{"offset": 6291456, "width": 64, "height": 64, "binds": 3}], '
+        '"dropped_binds": 2}',
+        '[{"offset": 6291456, "width": 64, "height": 64, "binds": 3}]',
+        "not json at all",
+    ],
+)
+def test_render_targets_json_is_not_read(d, body):
+    # A target has no hash, so no row could become an entry; the sidecar's `rt`
+    # is how it reaches the inventory.
+    dump_texture(d, "00000000000000F1", 8, 8)
+    with open(os.path.join(d, "render_targets.json"), "w", encoding="utf-8") as f:
+        f.write(body)
+    source = DumpSource(d)
+    assert list(source.textures) == ["00000000000000F1"] and source.problems == []
 
 
 def test_a_wall_is_world_and_packable():

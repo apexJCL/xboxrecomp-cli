@@ -10,7 +10,9 @@ a texture inside a .mix: game.toml's patterns may name either.
 
 The treatment of an entry is the class defaults, then the config's class
 table, then its rules in order; a rule may bring a skipped entry back, except
-what could never match (`rt`, `volatile`, `cube`).
+what could never match (`volatile`, `cube`). An `rt` entry is skipped until a
+rule says otherwise: the fact is one sighting of its address and size as a
+render target, not proof, and it carries a hash a pack can match.
 """
 
 import fnmatch
@@ -27,12 +29,13 @@ CONFIG_SCHEMA = 1
 
 # Sampled as slopes: an upscale would invent them.
 NORMAL_FORMATS = {"G8B8", "LIN_G8B8", "V8U8", "LIN_V8U8", "DSDT", "LIN_DSDT"}
-# Never an image: `rt`, `volatile` and `cube` cannot match a pack entry at all,
-# the others are left out until a rule brings them in.
-NEVER = ("rt", "volatile", "cube")
-SKIP_FACTS = NEVER + ("normal", "data", "linear")
+# `volatile` and `cube` cannot usefully match a pack entry at all; the others
+# are left out until a rule brings them in.
+NEVER = ("volatile", "cube")
+SKIP_FACTS = NEVER + ("rt", "normal", "data", "linear")
 SKIP_WHY = {
-    "rt": "a render target: bound directly, never hashed",
+    "rt": "uploaded at an address and size also sampled as a render target: "
+    "its texels may be the game's own rendering; a rule may bring it back",
     "volatile": "its hash keeps changing: an entry would match one frame at most",
     "normal": "a bump or normal map: an upscale invents slopes",
     "data": "a ramp or lookup table: read as data, not as an image",
@@ -134,7 +137,7 @@ def facts_of(e, cfg):
         used = False
     if used if used is not None else fmt in ALPHA_FORMATS:
         out.add("alpha")
-    if fmt in NORMAL_FORMATS or e.get("bump"):
+    if fmt in NORMAL_FORMATS or e.get("bump") is True:
         out.add("normal")
     # D14's third way in: point-sampled, no mips, one texel to one pixel.
     one_to_one = (
@@ -149,7 +152,7 @@ def facts_of(e, cfg):
         out.add("linear")
     if fmt == "P8" or e.get("palette"):
         out.add("palette")
-    if e.get("rt"):
+    if e.get("rt") is True:
         out.add("rt")
     if e.get("volatile"):
         out.add("volatile")
@@ -167,7 +170,10 @@ def class_of(e, cfg):
         return "text"
     if matches(e, cfg["ui"]) and not matches(e, cfg["ui_exclude"]):
         return "ui"
-    if e.get("drawn_2d"):
+    # The owner's names outrank what one run saw of the draws.
+    if matches(e, cfg["ui_exclude"]) or matches(e, cfg["world"]):
+        return "world"
+    if e.get("drawn_2d") is True:
         return "ui"
     return "world"
 

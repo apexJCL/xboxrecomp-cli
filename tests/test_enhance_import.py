@@ -260,6 +260,33 @@ def test_a_volatile_texture_is_said_not_refused(d, capsys):
         assert "rarely applies" in capsys.readouterr().out
 
 
+def test_a_render_target_upload_is_said_not_refused(d, capsys):
+    # It was hashed and uploaded, so the runtime can use an entry for it, and
+    # the fact is one sighting: an owner who means it gets it.
+    with fake_tree(d):
+        p = os.path.join(d, "scene")
+        dump_texture(p, ONE, 16, 16, texels=bgra(16, 16), rt=True)
+        folder = os.path.join(d, "mine")
+        os.makedirs(folder)
+        png.write(os.path.join(folder, ONE + ".png"), 8, 8, solid(8, 8))
+        hud.run(hud_args(import_dir=folder, from_dumps=[p]))
+        assert "render target" in capsys.readouterr().out
+        got = read_pack(os.path.join(host.g().dist, "enhance", "import", "hud.pack"))
+        assert ONE in got
+
+
+def test_export_leaves_out_a_render_target_upload(d, capsys):
+    with fake_tree(d):
+        p = os.path.join(d, "scene")
+        dump_texture(p, ONE, 16, 16, texels=bgra(16, 16))
+        dump_texture(p, TALL, 16, 32, texels=bgra(16, 32), rt=True)
+        out = os.path.join(d, "out")
+        assert textures.run(export_args(p, out=out)) == 0
+        assert os.listdir(out).count(ONE + ".png") == 1
+        assert not os.path.exists(os.path.join(out, TALL + ".png"))
+        assert "1 left out" in capsys.readouterr().out
+
+
 def test_other_png_names_and_a_bad_file(d, capsys):
     with fake_tree(d):
         folder = os.path.join(d, "mine")

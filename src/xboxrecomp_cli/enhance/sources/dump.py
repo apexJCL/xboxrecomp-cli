@@ -9,6 +9,10 @@ RECOMP_DEBUG=tex_dump=<dir> (the toolkit's docs/formats/texture-dump.md).
   volatile.json  [{offset, width, height, hashes}]: addresses whose hash
                  kept changing
 
+render_targets.json is in the folder too and is not read: a target has no
+hash, so no pack entry could ever match a row of it. What it can say about a
+texture the sidecar's `rt` already says.
+
 The file name's hash is the key the runtime's pack looks up, so this source
 alone gives a full inventory for a game nobody wrote a reader for. A run cut
 short leaves files half written: those go in `problems`, a texture whose .xtd
@@ -124,13 +128,27 @@ def _load_json(path):
         return json.load(f)
 
 
+DRAW_FACTS = ("drawn_2d", "bump", "rt")
+
+
 def _whole(v):
     return isinstance(v, int) and not isinstance(v, bool) and v > 0
 
 
+def _drop_bad_facts(meta):
+    """Takes out a draw fact that is no real bool: "false" is true to Python,
+    and null would settle a texture as 3D. Absent reads as unknown. 1 if the
+    sidecar held one."""
+    bad = [k for k in DRAW_FACTS if k in meta and not isinstance(meta[k], bool)]
+    for k in bad:
+        del meta[k]
+    return 1 if bad else 0
+
+
 class DumpSource(Source):
     """`textures` maps each hash to its Texture; `volatile` is the set of
-    hashes volatile.json marks, `volatile_addresses` its row count."""
+    hashes volatile.json marks, `volatile_addresses` its row count,
+    `bad_facts` the sidecars holding a draw fact that is no true or false."""
 
     def __init__(self, directory, name=None):
         self.directory = directory
@@ -140,6 +158,7 @@ class DumpSource(Source):
         self.textures = {}
         self.volatile = set()
         self.volatile_addresses = 0
+        self.bad_facts = 0
         if not os.path.isdir(directory):
             raise SourceError("%s: no such folder" % directory)
         counts = self._counts()
@@ -159,6 +178,7 @@ class DumpSource(Source):
             if why:
                 self.problems.append("%s: %s" % (f, why))
                 continue
+            self.bad_facts += _drop_bad_facts(meta)
             xtd = os.path.join(directory, stem + ".xtd")
             if not os.path.isfile(xtd):
                 if meta.get("texels"):
@@ -172,6 +192,11 @@ class DumpSource(Source):
                     self.problems.append(str(e))
                     tex.path = None
             self.textures[h] = tex
+        if self.bad_facts:
+            self.problems.append(
+                "%d sidecars hold a draw fact that is not true or false: read as unknown"
+                % self.bad_facts
+            )
         self.entries = [
             Entry(h + ".xtd", 0, os.path.getsize(t.path))
             for h, t in sorted(self.textures.items())

@@ -40,7 +40,8 @@ LIST_CAP = 20
 IMPORT_KERNEL = "import"
 # What the runtime never looks up. A volatile texture is looked up, under a
 # hash that keeps changing, so an entry for it can still hit: said, not refused.
-NOT_LOOKED_UP = ("rt", "cube")
+# An `rt` one was hashed and uploaded like any other, so likewise.
+NOT_LOOKED_UP = ("cube",)
 # Looked up, but drawn at guest texel positions: docs/formats/texture-pack.md
 # keeps a linear texture out of a pack.
 KEPT_OUT = NOT_LOOKED_UP + ("linear",)
@@ -420,7 +421,7 @@ def _import_tasks(a, entries, xtd):
     if not hashes:
         raise CliError("%s: no <hash>.png to import" % a.import_dir)
     index = _read_index(a.import_dir)
-    problems, unknown, moving, no_record = [], [], [], []
+    problems, unknown, moving, targets, no_record = [], [], [], [], []
     tasks = []
     for h in hashes:
         guest = _guest(h, index, entries, xtd)
@@ -442,6 +443,8 @@ def _import_tasks(a, entries, xtd):
             )
         elif h in entries and "volatile" in entries[h]["facts"]:
             moving.append(h)
+        elif h in entries and "rt" in entries[h]["facts"]:
+            targets.append(h)
         tasks.append((files[h], os.path.join(a.import_dir, files[h]), guest, a.mips))
     if unknown:
         host.say(
@@ -460,6 +463,11 @@ def _import_tasks(a, entries, xtd):
         host.say(
             "%d change under the game's hands, so their hash does too, and an entry "
             "rarely applies: %s" % (len(moving), _few(moving))
+        )
+    if targets:
+        host.say(
+            "%d were uploaded at an address and size also sampled as a render target, so "
+            "their texels may be the game's own rendering: %s" % (len(targets), _few(targets))
         )
     if problems:
         raise CliError("\n  ".join(["these cannot go in a pack:"] + problems))
@@ -631,7 +639,7 @@ def run_export(a):
     G = host.g()
     out_dir = os.path.abspath(a.out) if a.out else os.path.join(G.dist, "enhance", "export")
     entries, xtd = _facts_of_dumps(a.dump)
-    moving = KEPT_OUT + ("volatile",)
+    moving = KEPT_OUT + ("volatile", "rt")
     never = sum(1 for e in entries.values() if any(f in moving for f in e["facts"]))
     usable = [
         h for h, e in entries.items() if h in xtd and not any(f in moving for f in e["facts"])

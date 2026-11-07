@@ -43,8 +43,8 @@ from .sources.dump import hash_text
 SCHEMA = 1
 JOINED, NOT_SEEN, UNNAMED = "joined", "not seen", "unnamed"
 FILE_NAME = "inventory.json"
-# The facts a sidecar hands to the entry as they are. `bump`, `rt` and
-# `drawn_2d` are read when a sidecar says so; today's dumps do not.
+# The facts a sidecar hands to the entry as they are. Dumps older than the
+# draw facts have no `bump`, `rt` or `drawn_2d`, which reads as unknown.
 SIDECAR_KEYS = (
     "format",
     "layout",
@@ -386,6 +386,14 @@ def _merge_dump(e, other, name, tex, volatile):
     if isinstance(mag, (int, float)):
         e["mag_scale1"] = max(e.get("mag_scale1", 0), mag)
         e["draws"] = e.get("draws", 0) + tex.meta.get("mag_draws", 0)
+    # 2D only if every scene that drew it says so: no `drawn_2d` is a scene
+    # that only loaded the texture, which has no say. One read as slopes or
+    # rendered to anywhere is that everywhere.
+    if "drawn_2d" in tex.meta:
+        e["drawn_2d"] = e.get("drawn_2d", True) and tex.meta["drawn_2d"]
+    for k in ("bump", "rt"):
+        if tex.meta.get(k):
+            e[k] = True
 
 
 def _alpha_used(tex):
@@ -529,6 +537,7 @@ def build(cfg, feeders, dumps):
                 "name": d.name,
                 "textures": len(d.textures),
                 "volatile_addresses": d.volatile_addresses,
+                "bad_facts": d.bad_facts,
                 "problems": d.problems,
             }
             for d in dumps
